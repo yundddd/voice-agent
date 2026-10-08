@@ -63,6 +63,9 @@ class VoiceAssistant extends ChangeNotifier {
   bool _segEchoRisk = false; // current utterance started while we were talking
   bool _segGotAudio = false; // current utterance produced a VAD segment
   int _generation = 0; // cancels in-flight responses when bumped
+  Timer? _micWatchdog;
+  DateTime _lastMicAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _micRecovering = false;
 
   InteractionMode get mode => _mode;
   AssistantPhase get phase => _phase;
@@ -151,6 +154,14 @@ class VoiceAssistant extends ChangeNotifier {
 
   // ── Microphone plumbing (shared by both modes) ─────────────────────────
 
+  /// Whether a live mic stream is expected right now (drives the watchdog).
+  bool get _micStreamWanted => switch (_phase) {
+        AssistantPhase.listening => true,
+        AssistantPhase.transcribing || AssistantPhase.speaking =>
+          _mode == InteractionMode.conversation,
+        _ => false,
+      };
+
   Future<void> _openMicStream() async {
     _chunks.clear();
     _vadBuf.clear();
@@ -161,8 +172,19 @@ class VoiceAssistant extends ChangeNotifier {
     if (!await _recorder.isEncoderSupported(encoder)) {
       throw Exception('PCM16 capture not supported on this platform');
     }
+    // Clean stop first: makes reopening idempotent (watchdog restarts,
+    // retries after errors, mode switches).
+    await _recSub?.cancel();
+    _recSub = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
     // voiceCommunication source + AEC/AGC: lets the mic hear the user while
-    // our own TTS plays through the speaker (barge-in).
+    // our own TTS plays through the speaker (barge-in). Note: we deliberately
+    // do NOT force AudioManagerMode.modeInCommunication — the plugin's mode
+    // juggling around our media playback revokes communication mode and can
+    // silently kill capture after the first reply; the source alone still gets
+    // us the platform AEC.
     const config = RecordConfig(
       encoder: encoder,
       sampleRate: 16000,
@@ -171,20 +193,61 @@ class VoiceAssistant extends ChangeNotifier {
       echoCancel: true,
       androidConfig: AndroidRecordConfig(
         audioSource: AndroidAudioSource.voiceCommunication,
-        audioManagerMode: AudioManagerMode.modeInCommunication,
         speakerphone: true,
       ),
     );
     final stream = await _recorder.startStream(config);
+    _lastMicAt = DateTime.now();
     _recSub = stream.listen(
       _onMicData,
-      onError: (Object e) => _fail('Recording error: $e'),
+      // Android can close the capture stream when our playback changes audio
+      // focus/mode/routing — that is exactly what the watchdog is for.
+      onError: (Object e) => unawaited(_recoverMic('error: $e')),
+      onDone: () => unawaited(_recoverMic('ended')),
     );
+    _startMicWatchdog();
+  }
+
+  void _startMicWatchdog() {
+    _micWatchdog?.cancel();
+    _micWatchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_micRecovering || !_micStreamWanted) return;
+      if (DateTime.now().difference(_lastMicAt) > const Duration(seconds: 3)) {
+        unawaited(_recoverMic('stalled'));
+      }
+    });
+  }
+
+  /// Reopen the mic after the OS ends, pauses or stalls the capture stream
+  /// (common after our own playback: focus/mode/routing changes).
+  Future<void> _recoverMic(String why) async {
+    if (_micRecovering || !_micStreamWanted) return;
+    _micRecovering = true;
+    debugPrint('mic stream $why — reopening');
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    try {
+      await _openMicStream(); // also resets _lastMicAt and the watchdog
+      _worker?.resetVad();
+      _userSpeaking = false;
+      if (_phase == AssistantPhase.listening) {
+        _status = _mode == InteractionMode.conversation
+            ? 'Listening — just talk.'
+            : 'Listening… tap again to send.';
+        notifyListeners();
+      }
+    } catch (e) {
+      _fail('Mic restart failed: $e');
+    } finally {
+      _micRecovering = false;
+    }
   }
 
   void _onMicData(Uint8List bytes) {
+    _lastMicAt = DateTime.now();
     if (_mode == InteractionMode.pushToTalk) {
-      _chunks.add(pcm16ToFloat32(bytes));
+      if (_phase == AssistantPhase.listening) {
+        _chunks.add(pcm16ToFloat32(bytes));
+      }
       return;
     }
     // Conversation: feed the VAD in exactly 512-sample windows.
@@ -236,6 +299,7 @@ class VoiceAssistant extends ChangeNotifier {
       // Barge-in: mute our own reply the instant the user talks.
       _segEchoRisk = _playerPlaying;
       _segGotAudio = false;
+      _userSpeaking = true; // set first: keeps _stopPlayback from resetting
       if (_playerPlaying) {
         _stopPlayback();
         _generation++; // abandon the response we were speaking
@@ -247,7 +311,6 @@ class VoiceAssistant extends ChangeNotifier {
           _phase != AssistantPhase.error) {
         _phase = AssistantPhase.listening;
       }
-      _userSpeaking = true;
       notifyListeners();
       return;
     }
@@ -331,13 +394,24 @@ class VoiceAssistant extends ChangeNotifier {
     _playSub = _player.onPlayerComplete.listen((_) {
       if (gen == _generation) _onPlaybackNaturalEnd();
     });
-    await _player.play(DeviceFileSource(file.path));
+    try {
+      await _player.play(DeviceFileSource(file.path));
+    } catch (e) {
+      _playSub?.cancel();
+      _playSub = null;
+      _playerPlaying = false;
+      _cleanupPlayFile();
+      rethrow;
+    }
   }
 
   void _onPlaybackNaturalEnd() {
     if (!_playerPlaying) return;
     _playerPlaying = false;
     _cleanupPlayFile();
+    // Any utterance the VAD formed from the tail of our own reply must not
+    // leak into the next turn (the user talking over the reply keeps theirs).
+    if (!_userSpeaking) _worker?.resetVad();
     if (_phase == AssistantPhase.speaking) {
       _phase = AssistantPhase.listening;
       _status = 'Listening — just talk.';
@@ -350,6 +424,7 @@ class VoiceAssistant extends ChangeNotifier {
     _playerPlaying = false;
     unawaited(_player.stop());
     _cleanupPlayFile();
+    if (!_userSpeaking) _worker?.resetVad();
   }
 
   void _cleanupPlayFile() {
@@ -380,6 +455,8 @@ class VoiceAssistant extends ChangeNotifier {
 
   Future<void> _stopAndRespond() async {
     if (_phase != AssistantPhase.listening) return;
+    _micWatchdog?.cancel();
+    _micWatchdog = null;
     await _recSub?.cancel();
     _recSub = null;
     await _recorder.stop();
@@ -408,6 +485,8 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Utilities ────────────────────────────────────────────────────────────
 
   void _shutdownAudio() {
+    _micWatchdog?.cancel();
+    _micWatchdog = null;
     _stopPlayback();
     unawaited(_recSub?.cancel() ?? Future.value());
     _recSub = null;
