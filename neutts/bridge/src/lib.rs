@@ -58,14 +58,26 @@ fn cstr<'a>(p: *const c_char) -> Option<&'a str> {
 
 /// Redirect the espeak-ng bundled-data extraction directory.  Must be called
 /// before the first [`nt_engine_new`] on platforms where the default temp dir
-/// is not writable (Android).  Pass an app-private writable directory.
+/// is not writable (Android).  Pass an app-private writable directory — it
+/// gets POPULATED here (from the data compiled into this .so), because
+/// neutts treats an explicitly-set path as already provisioned and skips its
+/// own install (which would target the unwritable temp dir).  Idempotent.
 #[no_mangle]
 pub extern "C" fn nt_set_espeak_data_path(path: *const c_char) {
     let Some(p) = cstr(path) else {
         push_err("nt_set_espeak_data_path: null path".to_string());
         return;
     };
-    neutts::phonemize::set_data_path(Path::new(p));
+    let dir = Path::new(p);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        push_err(format!("create espeak data dir {p}: {e}"));
+        return;
+    }
+    if let Err(e) = espeak_ng::install_bundled_data(dir) {
+        push_err(format!("install espeak-ng data into {p}: {e}"));
+        return;
+    }
+    neutts::phonemize::set_data_path(dir);
 }
 
 /// Load the backbone GGUF + NeuCodec decoder safetensors.  `lang` is an

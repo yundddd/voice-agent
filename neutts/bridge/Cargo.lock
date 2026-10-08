@@ -1102,8 +1102,6 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "llama-cpp-4"
 version = "0.2.61"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01f9e2e1cb2240e1cb0c7e135e46901419067d3e160249643c5b83c861a3607a"
 dependencies = [
  "enumflags2",
  "llama-cpp-sys-4",
@@ -1258,6 +1256,7 @@ dependencies = [
 name = "neutts_bridge"
 version = "0.1.0"
 dependencies = [
+ "espeak-ng",
  "neutts",
 ]
 

@@ -18,6 +18,18 @@ neutts = { version = "0.1.1", default-features = false, features = [
   "espeak",
   "fast",
 ] }
+# Direct dep (same features neutts uses → same resolved crate, zero extra
+# bytes): lets nt_set_espeak_data_path populate that directory from the
+# data compiled into this .so before handing it to neutts.
+espeak-ng = { version = "0.1", features = ["bundled-data"] }
+
+# Keep llama.cpp static: neutts enables llama-cpp-4's default features
+# (dynamic-link/openmp/mtmd) transitively, and feature unification cannot
+# subtract them.  The patched shim below re-declares `default = []`, giving
+# one self-contained cdylib (no libllama.so.0 / libomp.so NEEDED entries —
+# fatal for a pack-distributed .so on older Android).
+[patch.crates-io]
+llama-cpp-4 = { path = "../llama-cpp-static" }
 
 [profile.release]
 opt-level = 3

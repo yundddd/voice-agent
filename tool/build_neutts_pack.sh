@@ -19,19 +19,30 @@ NDK_DIR=${NDK_DIR:-$HOME/android-sdk/ndk/25.1.8937393}
 NEUTTS_RS=${NEUTTS_RS:-/tmp/opencode/neutts-rs}   # github.com/eugenehp/neutts-rs
 
 cd "$(dirname "$0")/.."
+REPO_ROOT=$PWD
 
 mkdir -p "$STAGE/voices"
+
+# Static C++ runtime: without this the cdylib NEEDs libc++_shared.so, which
+# Android's linker cannot resolve from an app-private directory.
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-static-libstdc++ -C link-args=-Wl,-rpath,\\\$ORIGIN"
 
 # 1. Android arm64 bridge .so (llama.cpp + NeuCodec decoder + espeak-ng).
 #    NDK r25 is deliberate: r28's bindgen target triple lacks an API level.
 (
   cd "$BRIDGE"
   ANDROID_NDK_HOME=$NDK_DIR ANDROID_NDK=$NDK_DIR \
+    CARGO_TARGET_DIR=/tmp/opencode/neutts-android-target \
     PATH=$HOME/.cargo/bin:$PATH \
-    cargo ndk -t arm64-v8a --platform 21 -o "$OLDPWD/$STAGE" build --release
+    cargo ndk -t arm64-v8a --platform 21 build --release
 )
-mv "$STAGE/arm64-v8a/libneutts_bridge.so" "$STAGE/libneutts_bridge.so"
-rmdir "$STAGE/arm64-v8a"
+cp /tmp/opencode/neutts-android-target/aarch64-linux-android/release/libneutts_bridge.so \
+  "$STAGE/libneutts_bridge.so"
+# rustc's cdylib link references the NDK's shared libc++; ship it beside the
+# bridge ($ORIGIN RUNPATH above) so Android resolves it from the app-private
+# dir instead of the (W^X-forbidden) runtime-extractable jniLibs path.
+cp "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+  "$STAGE/libc++_shared.so"
 echo "packed $(du -h "$STAGE/libneutts_bridge.so" | cut -f1) bridge .so"
 
 # 2. NeuCodec decoder weights: pytorch_model.bin (gated; HF_TOKEN needed) is
@@ -39,20 +50,28 @@ echo "packed $(du -h "$STAGE/libneutts_bridge.so" | cut -f1) bridge .so"
 #    The converted weights are a Derivative Work under NeuTTS Open License
 #    v1.0 s.4(a): ship the license text alongside them.
 if [ ! -f "$STAGE/neucodec_decoder.safetensors" ]; then
-  (cd "$NEUTTS_RS" && ~/.cargo/bin/cargo run --release --example \
-    convert_weights -- --out "$OLDPWD/$STAGE/neucodec_decoder.safetensors")
+  (cd "$NEUTTS_RS" && env CARGO_TARGET_DIR=/tmp/opencode/neutts-rs/target \
+    ~/.cargo/bin/cargo run --release --example convert_weights -- \
+    --out "$STAGE/neucodec_decoder.safetensors")
   [ -f /tmp/opencode/neutts-LICENCE.txt ] &&
-    cp /tmp/opencode/neutts-LICENCE.txt \
-      "$STAGE/LICENCE-neucodec-decoder.txt"
+    cp /tmp/opencode/neutts-LICENCE.txt "$STAGE/LICENCE-neucodec-decoder.txt"
 fi
+
+# 2b. Half the download: the loader upcasts BF16, so requantise in place.
+"${VENV:-/tmp/opencode/venv-bf16}/bin/python" \
+  tool/shrink_neucodec_bf16.py "$STAGE/neucodec_decoder.safetensors"
 
 # 3. Backbone GGUF (gated) + preset voice references (MIT repo, ungated).
 for f in neutts-nano-Q4_0.gguf LICENCE; do
+  # (re-runs: the licence file gets renamed below, so check the target too)
+  if [ "$f" = LICENCE ] && [ -f "$STAGE/LICENCE-neutts-nano.txt" ]; then
+    continue
+  fi
   [ -f "$STAGE/$f" ] || curl -sfL -H "Authorization: Bearer ${HF_TOKEN}" \
     -o "$STAGE/$f" \
     "https://huggingface.co/neuphonic/neutts-nano-q4-gguf/resolve/main/$f"
 done
-[ -f "$STAGE/LICENCE" ] && mv "$STAGE/LICENCE" "$STAGE/LICENCE-neutts-nano.txt"
+[ -f "$STAGE/LICENCE" ] && mv "$STAGE/LICENCE" "$STAGE/LICENCE-neutts-nano.txt" || true
 for v in dave jo; do
   for e in npy txt; do
     [ -f "$STAGE/voices/$v.$e" ] || curl -sfL -o "$STAGE/voices/$v.$e" \

@@ -219,7 +219,7 @@ const ttsVoices = <TtsVoice>[
     note:
         'Neuphonic neural codec voice — Dave/Jo styles once loaded; the '
         'Rust engine ships inside the download. Android (arm64) only.',
-    sizeLabel: '~250 MB',
+    sizeLabel: '~500 MB',
     packs: [
       ModelPack(
         label: 'voice: NeuTTS Nano (engine + voices)',

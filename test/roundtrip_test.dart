@@ -253,6 +253,13 @@ void main() {
       final sw = Stopwatch()..start();
       final (audio, sampleRate) = await worker.synthesize(line);
       sw.stop();
+      // Phone-relevant cost: peak RSS of this whole process (the worker
+      // isolate is in-process; safetensors land as f32 on the native heap).
+      final rss = RegExp(r'VmHWM:\s+(\d+) kB')
+          .firstMatch(File('/proc/self/status').readAsStringSync())
+          ?.group(1);
+      // ignore: avoid_print
+      print('neutts memory: peak RSS ${rss ?? "??"} kB');
       final seconds = audio.length / sampleRate;
       // ignore: avoid_print
       print(
