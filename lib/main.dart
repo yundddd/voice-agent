@@ -87,10 +87,10 @@ class _AssistantScreenState extends State<AssistantScreen>
 
     final (fabEnabled, hint) = switch (a.mode) {
       InteractionMode.pushToTalk => switch (a.phase) {
-        AssistantPhase.listening => (true, 'Stop — send that'),
+        AssistantPhase.listening => (true, 'Release to send'),
         AssistantPhase.transcribing ||
         AssistantPhase.speaking => (false, 'One moment…'),
-        _ => (true, 'Talk'),
+        _ => (true, 'Hold to talk'),
       },
       InteractionMode.conversation => switch (a.phase) {
         AssistantPhase.listening => (true, 'End conversation'),
@@ -183,32 +183,66 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ),
               ),
               _LatencyStrip(assistant: a),
-              if (_debugMode && a.asrAudioSeconds > 0)
+              if (_debugMode && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: TextButton.icon(
-                    onPressed: a.playAsrAudio,
-                    icon: Icon(
-                      a.debugPlaying
-                          ? Icons.stop_circle_outlined
-                          : Icons.play_circle_outline,
-                      size: 22,
-                    ),
-                    label: Text(
-                      a.debugPlaying
-                          ? 'Stop replay'
-                          : 'Replay exactly what the ASR heard '
-                                '(${a.asrAudioSeconds.toStringAsFixed(1)}s)',
-                    ),
+                  child: Column(
+                    children: [
+                      if (a.asrAudioSeconds > 0)
+                        TextButton.icon(
+                          onPressed: a.playAsrAudio,
+                          icon: Icon(
+                            a.debugPlaying
+                                ? Icons.stop_circle_outlined
+                                : Icons.play_circle_outline,
+                            size: 22,
+                          ),
+                          label: Text(
+                            a.debugPlaying
+                                ? 'Stop replay'
+                                : 'Replay exactly what the ASR heard '
+                                      '(${a.asrAudioSeconds.toStringAsFixed(1)}s)',
+                          ),
+                        ),
+                      if (a.lastTtsSeconds > 0)
+                        TextButton.icon(
+                          onPressed: a.playTtsAudio,
+                          icon: Icon(
+                            a.debugPlaying
+                                ? Icons.stop_circle_outlined
+                                : Icons.record_voice_over_outlined,
+                            size: 22,
+                          ),
+                          label: Text(
+                            a.debugPlaying
+                                ? 'Stop replay'
+                                : 'Replay my last reply, raw TTS out '
+                                      '(${a.lastTtsSeconds.toStringAsFixed(1)}s)',
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               const SizedBox(height: 24),
-              FloatingActionButton.large(
-                onPressed: fabEnabled ? _assistant.toggle : null,
-                backgroundColor: color,
-                foregroundColor: scheme.onPrimary,
-                shape: const CircleBorder(),
-                child: Icon(icon, size: 40),
+              // In push-to-talk the mic is driven by press/release edges,
+              // observed as raw pointer events so the button's own tap (and
+              // its ripple) stay untouched; conversation mode keeps the
+              // plain tap-to-toggle.
+              Listener(
+                onPointerDown: (_) => _assistant.pttDown(),
+                onPointerUp: (_) => _assistant.pttUp(),
+                onPointerCancel: (_) => _assistant.pttCancel(),
+                child: FloatingActionButton.large(
+                  onPressed: !fabEnabled
+                      ? null
+                      : _assistant.mode == InteractionMode.pushToTalk
+                      ? () {} // hold edges above; a plain tap does nothing
+                      : _assistant.toggle,
+                  backgroundColor: color,
+                  foregroundColor: scheme.onPrimary,
+                  shape: const CircleBorder(),
+                  child: Icon(icon, size: 40),
+                ),
               ),
               const SizedBox(height: 8),
               Text(hint, style: Theme.of(context).textTheme.labelLarge),

@@ -75,6 +75,8 @@ class VoiceAssistant extends ChangeNotifier {
   String? _playFile;
   Float32List? _asrAudio; // exact audio the last ASR call consumed
   int _asrAudioRate = 16000;
+  Float32List? _lastTts; // exact audio the last synth produced (reply/preview)
+  int _lastTtsRate = 16000;
   bool _debugPlaying = false;
   Completer<void>? _debugCompleted;
   StreamSubscription<void>? _debugSub;
@@ -97,6 +99,19 @@ class VoiceAssistant extends ChangeNotifier {
   Float32List? get asrAudio => _asrAudio;
   double get asrAudioSeconds =>
       _asrAudio == null ? 0 : _asrAudio!.length / _asrAudioRate;
+
+  /// Exact audio the TTS engine last generated (reply or voice preview) —
+  /// the raw engine output, before playback; for replay/diagnostics.
+  Float32List? get lastTtsAudio => _lastTts;
+  double get lastTtsSeconds =>
+      _lastTts == null ? 0 : _lastTts!.length / _lastTtsRate;
+
+  /// Keep the most recent synth output for [playTtsAudio].
+  void _noteTts(Float32List audio, int rate) {
+    _lastTts = audio;
+    _lastTtsRate = rate;
+  }
+
   bool get debugPlaying => _debugPlaying;
   AssistantPhase get phase => _phase;
   String get status => _status;
@@ -398,6 +413,7 @@ class VoiceAssistant extends ChangeNotifier {
       _status = '';
       notifyListeners();
       final (audio, sampleRate) = await _worker!.synthesize(text);
+      _noteTts(audio, sampleRate); // voice preview counts as TTS output too
       _voiceStatus = '';
       final dir = await getTemporaryDirectory();
       final file = File(p.join(dir.path, 'voice_preview.wav'));
@@ -478,7 +494,7 @@ class VoiceAssistant extends ChangeNotifier {
         ? 'Paused — I\'ll resume when you\'re back.'
         : _mode == InteractionMode.conversation
         ? 'Tap the mic to start a conversation. Pause about a second and I\'ll answer.'
-        : 'Ready. Tap the mic, speak, tap again to send.';
+        : 'Ready. Hold the button, speak, release to send.';
     notifyListeners();
   }
 
@@ -518,19 +534,54 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
+  // ── Push-to-talk hold wiring (mic lives ONLY while the button is held) ──
+  // Raw pointer edges from a Listener around the button: unlike a gesture
+  // recognizer these never contest (or lose to) the button's own tap, and
+  // the pointer stays bound to this path from down to up, so releasing a
+  // few centimetres off the button still closes the mic.
+
+  int _pttPointers = 0; // one hold; extra fingers are ignored
+
+  void pttDown() {
+    if (_mode != InteractionMode.pushToTalk || _worker == null) return;
+    if (_phase == AssistantPhase.transcribing ||
+        _phase == AssistantPhase.speaking) {
+      return; // 'One moment…': the button is disabled right now anyway
+    }
+    _pttPointers++;
+    if (_pttPointers > 1) return;
+    unawaited(_startListening());
+  }
+
+  void pttUp() {
+    if (_pttPointers == 0) return;
+    _pttPointers--;
+    if (_pttPointers > 0) return; // still holding with another finger
+    unawaited(_stopAndRespond());
+  }
+
+  void pttCancel() {
+    // Back gesture / system interruption: behave exactly like a release,
+    // so the mic can never be left open.
+    _pttPointers = 0;
+    unawaited(_stopAndRespond());
+  }
+
   void _idleReady() {
     if (_worker == null) return;
     _phase = AssistantPhase.idle;
     _status = _mode == InteractionMode.conversation
         ? 'Tap the mic to start a conversation. Pause about a second and I\'ll answer.'
-        : 'Ready. Tap the mic, speak, tap again to send.';
+        : 'Ready. Hold the button, speak, release to send.';
     notifyListeners();
   }
 
   void _fail(String message) {
     _phase = AssistantPhase.error;
     _error = message;
-    _status = 'Error. Tap the mic to retry.';
+    _status = _mode == InteractionMode.conversation
+        ? 'Error. Tap the mic to retry.'
+        : 'Error. Hold the button to retry.';
     notifyListeners();
   }
 
@@ -620,7 +671,7 @@ class VoiceAssistant extends ChangeNotifier {
       if (_phase == AssistantPhase.listening) {
         _status = _mode == InteractionMode.conversation
             ? 'Listening — just talk.'
-            : 'Listening… tap again to send.';
+            : 'Listening… release to send.';
         notifyListeners();
       }
     } catch (e) {
@@ -662,24 +713,45 @@ class VoiceAssistant extends ChangeNotifier {
   /// Replays the exact bytes ASR saw for the last turn (VAD segment or gated
   /// PTT buffer, post pre-roll/gating). Capture stays open but is muted while
   /// it plays, so nothing leaks back into the VAD. Tap again to stop.
-  Future<void> playAsrAudio() async {
+  Future<void> playAsrAudio() => _playDebugWav(
+    _asrAudio,
+    _asrAudioRate,
+    'asr_replay.wav',
+    'Playing back what I heard…',
+  );
+
+  /// Replays the raw bytes the TTS engine generated for the last reply (or
+  /// voice preview) — engine artifacts become tellable apart from playback
+  /// and automatic-gain effects. Tap again to stop.
+  Future<void> playTtsAudio() => _playDebugWav(
+    _lastTts,
+    _lastTtsRate,
+    'tts_replay.wav',
+    'Replaying my last reply…',
+  );
+
+  Future<void> _playDebugWav(
+    Float32List? audio,
+    int rate,
+    String fileName,
+    String playingStatus,
+  ) async {
     if (_debugPlaying) {
       _stopDebugPlayback();
       return;
     }
-    final audio = _asrAudio;
-    if (audio == null || _debugPlaying) return;
+    if (audio == null) return;
     _debugPlaying = true;
     var failed = false;
     var finished = false;
     _stopPlayback();
-    _status = 'Playing back what I heard…';
+    _status = playingStatus;
     notifyListeners();
     final done = _debugCompleted = Completer<void>();
     try {
       final dir = await getTemporaryDirectory();
-      final file = File(p.join(dir.path, 'asr_replay.wav'));
-      await file.writeAsBytes(encodeWav(audio, _asrAudioRate));
+      final file = File(p.join(dir.path, fileName));
+      await file.writeAsBytes(encodeWav(audio, rate));
       _playAsrFile = file.path;
       _debugSub = _player.onPlayerComplete.listen((_) {
         final d = _debugCompleted;
@@ -705,13 +777,13 @@ class VoiceAssistant extends ChangeNotifier {
         if (!finished) {
           _status = _mode == InteractionMode.conversation
               ? 'Stopped.'
-              : 'Stopped. Tap the mic to speak.';
+              : 'Stopped. Hold the button to speak.';
         } else if (_mode == InteractionMode.conversation) {
           _phase = AssistantPhase.listening;
           _status = 'Listening — just talk.';
         } else {
           _phase = AssistantPhase.idle;
-          _status = 'Ready. Tap the mic to speak.';
+          _status = 'Ready. Hold the button to speak.';
         }
         _worker?.resetVad();
         notifyListeners();
@@ -853,6 +925,7 @@ class VoiceAssistant extends ChangeNotifier {
       final swTts = Stopwatch()..start();
       final (audio, sampleRate) = await _worker!.synthesize(text);
       swTts.stop();
+      _noteTts(audio, sampleRate); // kept for the debug replay button
       if (gen != _generation) return; // user resumed during synthesis
       _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
       _playSeconds = audio.length / sampleRate;
@@ -953,7 +1026,7 @@ class VoiceAssistant extends ChangeNotifier {
       await _openMicStream();
       _phase = AssistantPhase.listening;
       _error = '';
-      _status = 'Listening… tap again to send.';
+      _status = 'Listening… release to send.';
       notifyListeners();
     } catch (e) {
       _fail('$e');
@@ -975,7 +1048,7 @@ class VoiceAssistant extends ChangeNotifier {
     final total = _chunks.fold<int>(0, (n, c) => n + c.length);
     if (total < 16000 ~/ 4) {
       _phase = AssistantPhase.idle;
-      _status = 'Heard nothing. Tap the mic and speak.';
+      _status = 'Heard nothing. Hold the button and speak.';
       notifyListeners();
       return;
     }
