@@ -36,9 +36,14 @@ echo "packed $(du -h "$STAGE/libneutts_bridge.so" | cut -f1) bridge .so"
 
 # 2. NeuCodec decoder weights: pytorch_model.bin (gated; HF_TOKEN needed) is
 #    converted to the runtime safetensors by the neutts-rs example.
+#    The converted weights are a Derivative Work under NeuTTS Open License
+#    v1.0 s.4(a): ship the license text alongside them.
 if [ ! -f "$STAGE/neucodec_decoder.safetensors" ]; then
   (cd "$NEUTTS_RS" && ~/.cargo/bin/cargo run --release --example \
     convert_weights -- --out "$OLDPWD/$STAGE/neucodec_decoder.safetensors")
+  [ -f /tmp/opencode/neutts-LICENCE.txt ] &&
+    cp /tmp/opencode/neutts-LICENCE.txt \
+      "$STAGE/LICENCE-neucodec-decoder.txt"
 fi
 
 # 3. Backbone GGUF (gated) + preset voice references (MIT repo, ungated).
