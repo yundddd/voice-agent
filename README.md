@@ -64,6 +64,9 @@ test/roundtrip_test.dart  Headless round trip + VAD endpointing on wav fixtures
   with platform AEC/AGC so the mic hears the user over the speaker; a
   word-overlap guard drops segments that are just the assistant hearing its
   own reply. Short breaths get a "say a bit more" nudge instead of a turn.
+  A watchdog reopens the mic automatically if Android ends the capture
+  session (our own media playback can trigger that), so the session
+  self-heals within seconds.
 - **Push to talk.** Tap to start, tap to stop and send — the original
   behavior. Switchable at the top of the screen; both modes share the same
   worker, ASR and TTS path.
