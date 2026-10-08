@@ -22,6 +22,10 @@ class TtsVoice {
 
   /// True = ZipVoice zero-shot cloning engine (needs a recorded reference).
   final bool isClone;
+
+  /// True = NeuTTS (Neuphonic) engine: GGUF backbone + pure-Rust codec via
+  /// our own FFI bridge, preset reference voices picked with [specIn]'s sid.
+  final bool isNeutts;
   const TtsVoice({
     required this.id,
     required this.label,
@@ -31,6 +35,7 @@ class TtsVoice {
     this.vitsModel,
     this.vitsTokens = 'tokens.txt',
     this.isClone = false,
+    this.isNeutts = false,
   });
 
   String get dirName => packs.first.dirName;
@@ -39,11 +44,15 @@ class TtsVoice {
       p.join(modelsDir, dirName, file);
 
   /// Absolute-path job spec for the speech worker.
+  ///
+  /// [neuttsLib] overrides the FFI bridge library file (host tests; empty =
+  /// dlopen the APK-packaged one).
   TtsSpec specIn(
     String modelsDir, {
     int sid = 0,
     String referenceWav = '',
     String referenceText = '',
+    String neuttsLib = '',
   }) {
     if (isClone) {
       return TtsSpec.zipvoice(
@@ -55,6 +64,22 @@ class TtsVoice {
         vocoder: _f(modelsDir, dirName, 'vocos_24khz.onnx'),
         referenceWav: referenceWav,
         referenceText: referenceText,
+      );
+    }
+    if (isNeutts) {
+      // The Rust bridge .so rides *inside the pack* (not the APK): it only
+      // downloads when the voice is picked. espeakDataDir doubles as the
+      // phonemizer's unpack destination; modelsDir is app-writable.
+      return TtsSpec.neutts(
+        neuttsGguf: _f(modelsDir, dirName, 'neutts-nano-Q4_0.gguf'),
+        neuttsDecoder: _f(modelsDir, dirName, 'neucodec_decoder.safetensors'),
+        neuttsVoices: _f(modelsDir, dirName, 'voices'),
+        neuttsRefs: const ['dave', 'jo'],
+        espeakDataDir: p.join(modelsDir, 'espeak-neutts'),
+        neuttsLib: neuttsLib.isNotEmpty
+            ? neuttsLib
+            : _f(modelsDir, dirName, 'libneutts_bridge.so'),
+        sid: sid,
       );
     }
     return TtsSpec.vits(
@@ -88,6 +113,9 @@ class TtsVoice {
 
 const _k2fsaTts =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
+
+const _modelsRelease =
+    'https://github.com/yundddd/voice-agent/releases/download/models-v1';
 
 /// Voices on offer, in display order. Lessac is the default and downloads on
 /// first run; the rest are lazy (only fetched if the user picks them).
@@ -184,6 +212,23 @@ const ttsVoices = <TtsVoice>[
       ),
     ],
     isClone: true,
+  ),
+  TtsVoice(
+    id: 'neutts',
+    label: 'NeuTTS Nano',
+    note:
+        'Neuphonic neural codec voice — Dave/Jo styles once loaded; the '
+        'Rust engine ships inside the download. Android (arm64) only.',
+    sizeLabel: '~250 MB',
+    packs: [
+      ModelPack(
+        label: 'voice: NeuTTS Nano (engine + voices)',
+        url: '$_modelsRelease/neutts-nano-v1.zip',
+        dirName: 'neutts-nano',
+        markerFile: 'neutts-nano-Q4_0.gguf',
+      ),
+    ],
+    isNeutts: true,
   ),
 ];
 

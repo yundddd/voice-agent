@@ -9,6 +9,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 import 'audio_dsp.dart';
 import 'audio_io.dart' show decodeWav;
 import 'model_paths.dart';
+import 'neutts_engine.dart';
 
 const double _ln10 = 2.302585092994046;
 
@@ -113,13 +114,22 @@ class _JobResult {
 ///   ([zipEncoder]/[zipDecoder]/[vocoder]/...) speaks in the voice of
 ///   [referenceWav], a wave file of the target speaker, whose spoken words
 ///   must be given verbatim in [referenceText].
+/// * `kind: 'neutts'` — NeuTTS (Neuphonic) via the Rust bridge: the GGUF
+///   backbone [neuttsGguf] + NeuCodec decoder [neuttsDecoder] speak using a
+///   preset reference from [neuttsVoices]/[neuttsRefs] (picked by [sid]).
+///   Runs through [NeuttsEngine], not sherpa-onnx.
 class TtsSpec {
-  final String kind; // 'vits' | 'zipvoice'
+  final String kind; // 'vits' | 'zipvoice' | 'neutts'
   final String vitsModel, vitsTokens, espeakDataDir;
   final String zipTokens, zipEncoder, zipDecoder, zipDataDir, zipLexicon;
   final String vocoder;
   final String referenceWav, referenceText;
   final int sid;
+  // kind == 'neutts': GGUF backbone, decoder safetensors, preset voices dir,
+  // preset names, and (host probes) an explicit bridge .so path.
+  // espeakDataDir doubles as the phonemizer's unpack target.
+  final String neuttsGguf, neuttsDecoder, neuttsVoices, neuttsLib;
+  final List<String> neuttsRefs;
 
   const TtsSpec.vits({
     required this.vitsModel,
@@ -134,7 +144,12 @@ class TtsSpec {
        zipLexicon = '',
        vocoder = '',
        referenceWav = '',
-       referenceText = '';
+       referenceText = '',
+       neuttsGguf = '',
+       neuttsDecoder = '',
+       neuttsVoices = '',
+       neuttsLib = '',
+       neuttsRefs = const [];
 
   const TtsSpec.zipvoice({
     required this.zipTokens,
@@ -149,7 +164,32 @@ class TtsSpec {
        vitsModel = '',
        vitsTokens = '',
        espeakDataDir = '',
-       sid = 0;
+       sid = 0,
+       neuttsGguf = '',
+       neuttsDecoder = '',
+       neuttsVoices = '',
+       neuttsLib = '',
+       neuttsRefs = const [];
+
+  const TtsSpec.neutts({
+    required this.neuttsGguf,
+    required this.neuttsDecoder,
+    required this.neuttsVoices,
+    required this.neuttsRefs,
+    required this.espeakDataDir,
+    this.sid = 0,
+    this.neuttsLib = '',
+  }) : kind = 'neutts',
+       vitsModel = '',
+       vitsTokens = '',
+       zipTokens = '',
+       zipEncoder = '',
+       zipDecoder = '',
+       zipDataDir = '',
+       zipLexicon = '',
+       vocoder = '',
+       referenceWav = '',
+       referenceText = '';
 }
 
 /// One-way speech pipeline notification.
@@ -374,7 +414,23 @@ Future<void> _runWorker(
     ),
   );
 
-  var tts = buildTts(spec);
+  // NeuTTS runs through our own Rust bridge, not sherpa-onnx.
+  NeuttsEngine buildNeutts(TtsSpec s) => NeuttsEngine(
+    gguf: s.neuttsGguf,
+    decoder: s.neuttsDecoder,
+    voicesDir: s.neuttsVoices,
+    refNames: s.neuttsRefs,
+    sid: s.sid,
+    espeakDir: s.espeakDataDir,
+    libPath: s.neuttsLib,
+  );
+
+  /// Speaker-style count for the UI slider: presets for NeuTTS, the model's
+  /// speaker count for Piper/VITS.
+  int numSpeakersOf(Object engine, TtsSpec s) => s.kind == 'neutts'
+      ? (engine as NeuttsEngine).refCount
+      : (engine as sherpa_onnx.OfflineTts).numSpeakers;
+
   // Cloned voice: reference wav decoded once per engine (samples + rate).
   (Float32List, int)? reference;
   void loadReference(TtsSpec s) {
@@ -385,6 +441,8 @@ Future<void> _runWorker(
     );
     reference = (samples, sampleRate);
   }
+
+  var tts = spec.kind == 'neutts' ? buildNeutts(spec) : buildTts(spec);
 
   loadReference(spec);
 
@@ -571,27 +629,41 @@ Future<void> _runWorker(
           final next = message.spec!;
           loadReference(next);
           final old = tts;
-          tts = buildTts(next);
+          tts = next.kind == 'neutts' ? buildNeutts(next) : buildTts(next);
           spec = next;
-          old.free();
+          if (old is NeuttsEngine) {
+            old.free();
+          } else {
+            (old as sherpa_onnx.OfflineTts).free();
+          }
           // Drop any half-heard utterance across the switch.
           vad?.reset();
           resetSpeechState();
-          toParent.send(_JobResult.ok(message.id, tts.numSpeakers));
+          toParent.send(_JobResult.ok(message.id, numSpeakersOf(tts, spec)));
         case 'synthesize':
-          final audio = spec.kind == 'zipvoice'
-              ? tts.generateWithConfig(
-                  text: message.text!,
-                  config: sherpa_onnx.OfflineTtsGenerationConfig(
-                    referenceAudio: reference!.$1,
-                    referenceSampleRate: reference!.$2,
-                    referenceText: spec.referenceText,
-                  ),
-                )
-              : tts.generate(text: message.text!, sid: spec.sid, speed: 1.0);
-          toParent.send(
-            _JobResult.audio(message.id, audio.samples, audio.sampleRate),
-          );
+          final (samples, sampleRate) = switch (spec.kind) {
+            'neutts' => (tts as NeuttsEngine).synth(message.text!),
+            'zipvoice' => () {
+              final audio = (tts as sherpa_onnx.OfflineTts).generateWithConfig(
+                text: message.text!,
+                config: sherpa_onnx.OfflineTtsGenerationConfig(
+                  referenceAudio: reference!.$1,
+                  referenceSampleRate: reference!.$2,
+                  referenceText: spec.referenceText,
+                ),
+              );
+              return (audio.samples, audio.sampleRate);
+            }(),
+            _ => () {
+              final audio = (tts as sherpa_onnx.OfflineTts).generate(
+                text: message.text!,
+                sid: spec.sid,
+                speed: 1.0,
+              );
+              return (audio.samples, audio.sampleRate);
+            }(),
+          };
+          toParent.send(_JobResult.audio(message.id, samples, sampleRate));
       }
     } catch (e, s) {
       toParent.send(_JobResult.error(message.id, '$e\n$s'));

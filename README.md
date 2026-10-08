@@ -141,6 +141,22 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   stock voices (RTF ≈0.2 measured on desktop, so expect replies to take
   a second or two more on the phone). Backgrounding during recording
   cancels the sample; the recording and delete buttons free the disk.
+- **NeuTTS Nano** (Neuphonic). A speech-token neural codec voice, running
+  through a *second native stack*: `neutts/bridge/` is a small Rust crate
+  (C FFI, built by `tool/build_neutts_pack.sh`) over the MIT `neutts`
+  crate — a llama.cpp GGUF backbone (Q4), a pure-Rust NeuCodec decoder,
+  and a bundled-espeak phonemizer, so inference is self-contained next to
+  sherpa-onnx, on the same worker isolate. The bridge `.so`, the GGUF, the
+  converted decoder weights and the preset voices all ride **inside the
+  voice pack** (zero APK weight); two preset reference styles (Dave/Jo)
+  are selected with the same speaker slider used by LibriTTS-R. Android
+  (arm64) only: iOS needs a `.xcframework` build of the same crate, and
+  user-voice cloning is pending the pure-Rust NeuCodec *encoder* (the
+  Rust port still defers reference encoding to Python). Upstream model
+  repos are gated on Hugging Face (one-time terms click + login), so the
+  pack is mirrored to our GitHub release by the script above — the app
+  itself only ever downloads anonymously. The reply audio is 24 kHz;
+  expect ~45 tok/s (RTF ≈1) on a mid-range phone.
 
 ## Run
 

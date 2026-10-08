@@ -213,4 +213,95 @@ void main() {
       worker.dispose();
     }
   }, timeout: const Timeout(Duration(minutes: 4)));
+
+  // NeuTTS leg: hot-swaps to the NeuTTS Nano engine (our Rust FFI bridge,
+  // not sherpa-onnx) and verifies the reply is intelligible. Skipped until
+  // the gated model files land: fetch the GGUF + converted decoder into
+  // NEUTTS_DIR (default /tmp/opencode/neutts-assets — see README).
+  test('TTS voice swap: Piper -> NeuTTS Nano speaks preset voices', () async {
+    final dir =
+        Platform.environment['NEUTTS_DIR'] ?? '/tmp/opencode/neutts-assets';
+    final bridge =
+        Platform.environment['NEUTTS_BRIDGE'] ??
+        '/tmp/opencode/neutts-rs/target/release/libneutts_bridge.so';
+    if (!haveModels ||
+        !File(bridge).existsSync() ||
+        !File('$dir/neutts-nano-Q4_0.gguf').existsSync() ||
+        !File('$dir/neucodec_decoder.safetensors').existsSync() ||
+        !File('$dir/voices/dave.npy').existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: NeuTTS assets not staged under $dir');
+      return;
+    }
+
+    final worker = await SpeechWorker.start(paths);
+    try {
+      final speakers = await worker.useTts(
+        TtsSpec.neutts(
+          neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
+          neuttsDecoder: '$dir/neucodec_decoder.safetensors',
+          neuttsVoices: '$dir/voices',
+          neuttsRefs: const ['dave', 'jo'],
+          espeakDataDir: '/tmp/opencode/espeak-neutts-test',
+          neuttsLib: bridge,
+        ),
+      );
+      expect(speakers, 2); // dave + jo presets drive the style slider
+
+      const line =
+          'Hello Tim. NeuTTS nano speaking, generated entirely on this device.';
+      final sw = Stopwatch()..start();
+      final (audio, sampleRate) = await worker.synthesize(line);
+      sw.stop();
+      final seconds = audio.length / sampleRate;
+      // ignore: avoid_print
+      print(
+        'neutts TTS: ${seconds.toStringAsFixed(1)}s generated in '
+        '${sw.elapsedMilliseconds} ms '
+        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+      );
+      expect(audio.length, greaterThan(sampleRate));
+      expect(sampleRate, 24000); // NeuCodec output
+
+      File('build/roundtrip_neutts.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio, sampleRate));
+
+      // Second preset (jo) should differ but be equally intelligible.
+      await worker.useTts(
+        TtsSpec.neutts(
+          neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
+          neuttsDecoder: '$dir/neucodec_decoder.safetensors',
+          neuttsVoices: '$dir/voices',
+          neuttsRefs: const ['dave', 'jo'],
+          espeakDataDir: '/tmp/opencode/espeak-neutts-test',
+          neuttsLib: bridge,
+          sid: 1,
+        ),
+      );
+      final (audio2, _) = await worker.synthesize(line);
+      File('build/roundtrip_neutts_jo.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
+
+      // Intelligible? Transcribe both with Whisper.
+      var preset = 0;
+      for (final a in [audio, audio2]) {
+        final heard = (await worker.transcribe(a, sampleRate)).toLowerCase();
+        final hits = line
+            .split(' ')
+            .where((w) => w.length > 3)
+            .where((w) => heard.contains(w.toLowerCase()))
+            .length;
+        // ignore: avoid_print
+        print(
+          'neutts ASR (preset $preset): "$heard" ($hits long words matched)',
+        );
+        expect(hits, greaterThan(3));
+        preset++;
+      }
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 8)));
 }

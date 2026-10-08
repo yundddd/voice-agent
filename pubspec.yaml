@@ -21,6 +21,7 @@ dependencies:
 
   # Extract the model zip assets at runtime
   archive: ^3.6.1
+  ffi: ^2.1.0
 
   # Runtime asset extraction (models copied out of assets to app support dir)
   path_provider: ^2.1.3

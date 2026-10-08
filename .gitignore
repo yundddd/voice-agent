@@ -49,3 +49,6 @@ app.*.map.json
 /models/
 /models/
 /assets/models/
+
+# Built by tool/build_neutts_pack.sh (shipped inside the voice pack)
+android/app/src/main/jniLibs/

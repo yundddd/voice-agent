@@ -1,0 +1,25 @@
+[package]
+name = "neutts_bridge"
+version = "0.1.0"
+edition = "2021"
+description = "C FFI bridge over the neutts crate for the voice-agent Flutter app"
+license = "MIT"
+
+[lib]
+name = "neutts_bridge"
+crate-type = ["cdylib"]
+
+[dependencies]
+# On-device NeuTTS inference: GGUF backbone (llama.cpp) + pure-Rust NeuCodec
+# decoder + bundled espeak-ng phonemizer.  Decoder weights load at runtime
+# (no build-time downloads), so this builds fully offline-capable.
+neutts = { version = "0.1.1", default-features = false, features = [
+  "backbone",
+  "espeak",
+  "fast",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"

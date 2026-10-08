@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -56,7 +57,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final voices = a.voices.where((v) => !v.isClone).toList();
+    // NeuTTS needs our arm64 Rust bridge; iOS/macOS builds don't ship it yet.
+    final voices = a.voices
+        .where((v) => !v.isClone && !(v.isNeutts && !Platform.isAndroid))
+        .toList();
     final clone = a.voices.firstWhere((v) => v.isClone);
 
     return Scaffold(
@@ -108,7 +112,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 'Voices download only when you pick them and can be deleted '
                 'again with the trash icon; re-picking a deleted voice '
                 'downloads it fresh. Cloned replies take a little longer to '
-                'generate than the stock voices.',
+                'generate than the stock voices. The NeuTTS entry ships its '
+                'own engine inside the download (arm64 phones).',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
