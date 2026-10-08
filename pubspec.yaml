@@ -1,0 +1,35 @@
+name: voice_agent
+description: "On-device voice assistant prototype: speech -> text -> speech, fully offline."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # On-device ASR + TTS (onnxruntime bundled per platform)
+  sherpa_onnx: 1.13.8
+
+  # Microphone capture (PCM16 stream)
+  record: ^6.0.0
+
+  # WAV playback of synthesized speech
+  audioplayers: ^6.0.0
+
+  # Extract the model zip assets at runtime
+  archive: ^3.6.1
+
+  # Runtime asset extraction (models copied out of assets to app support dir)
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
