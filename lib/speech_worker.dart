@@ -1,51 +1,62 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
+import 'audio_dsp.dart';
 import 'model_paths.dart';
+
+const double _ln10 = 2.302585092994046;
 
 /// Jobs sent to the worker over its control port.
 class _Job {
   final int id; // -1 for fire-and-forget ops
-  final String op; // 'audio' | 'resetVad' | 'transcribe' | 'synthesize'
+  final String op;
+  // 'audio' | 'resetVad' | 'transcribe' | 'synthesize' | 'playing' | 'denoise'
   final String? text;
   final Float32List? samples;
   final int? sampleRate;
   const _Job.audio(this.samples)
-      : id = -1,
-        op = 'audio',
-        text = null,
-        sampleRate = null;
+    : id = -1,
+      op = 'audio',
+      text = null,
+      sampleRate = null;
   const _Job.resetVad()
-      : id = -1,
-        op = 'resetVad',
-        samples = null,
-        text = null,
-        sampleRate = null;
+    : id = -1,
+      op = 'resetVad',
+      samples = null,
+      text = null,
+      sampleRate = null;
+  const _Job.playing(bool on)
+    : id = -1,
+      op = 'playing',
+      text = on ? 'on' : 'off',
+      samples = null,
+      sampleRate = null;
   const _Job.transcribe(this.id, this.samples, this.sampleRate)
-      : text = null,
-        op = 'transcribe';
+    : text = null,
+      op = 'transcribe';
   const _Job.synthesize(this.id, this.text)
-      : samples = null,
-        sampleRate = null,
-        op = 'synthesize';
+    : samples = null,
+      sampleRate = null,
+      op = 'synthesize';
+  const _Job.denoise(this.id, this.samples)
+    : text = null,
+      sampleRate = null,
+      op = 'denoise';
 }
 
-/// One-way events pushed from the worker (VAD output).
+/// One-way events pushed from the worker (gated VAD output + diagnostics).
 class _Event {
-  final String kind; // 'speechStart' | 'speechEnd' | 'segment'
+  final String kind; // 'speechStart' | 'speechEnd' | 'segment' | 'note'
   final Float32List? samples;
-  _Event.speechStart()
-      : kind = 'speechStart',
-        samples = null;
-  _Event.speechEnd()
-      : kind = 'speechEnd',
-        samples = null;
-  _Event.segment(Float32List s)
-      : kind = 'segment',
-        samples = s;
+  final String? note;
+  _Event.speechStart() : kind = 'speechStart', samples = null, note = null;
+  _Event.speechEnd() : kind = 'speechEnd', samples = null, note = null;
+  _Event.segment(Float32List s) : kind = 'segment', samples = s, note = null;
+  _Event.note(String s) : kind = 'note', samples = null, note = s;
 }
 
 /// A job result coming back from the worker.
@@ -56,42 +67,56 @@ class _JobResult {
   final int? sampleRate;
   final String? error;
   _JobResult.text(this.id, this.text)
-      : audio = null,
-        sampleRate = null,
-        error = null;
+    : audio = null,
+      sampleRate = null,
+      error = null;
   _JobResult.audio(this.id, this.audio, this.sampleRate)
-      : text = null,
-        error = null;
+    : text = null,
+      error = null;
   _JobResult.error(this.id, this.error)
-      : text = null,
-        audio = null,
-        sampleRate = null;
+    : text = null,
+      audio = null,
+      sampleRate = null;
 }
 
-/// One-way VAD notification. `speechStarted`/`speechStopped` track the live
-/// speech flag; `segment` carries a finished utterance (endpointed after
-/// [endpointSilence] seconds of silence), ready for transcription.
+/// One-way speech pipeline notification.
+///
+/// [speechStarted]/[speechStopped] track the live speech flag — they fire
+/// only when Silero AND the SNR gate agree, so neither a door slam nor the
+/// app's own TTS echo can fake them. [segment] carries a finished utterance
+/// (endpointed after [endpointSilence] seconds of *joint* silence) that also
+/// passed the duty-cycle check — clean enough to transcribe. [note] carries
+/// periodic gate diagnostics (level/floor in dBFS) for logcat.
 class SpeechEvent {
   final bool speechStarted;
   final Float32List? segment;
+  final String? note;
   const SpeechEvent.started()
-      : speechStarted = true,
-        segment = null;
+    : speechStarted = true,
+      segment = null,
+      note = null;
   const SpeechEvent.stopped()
-      : speechStarted = false,
-        segment = null;
-  const SpeechEvent.ofSegment(this.segment) : speechStarted = false;
+    : speechStarted = false,
+      segment = null,
+      note = null;
+  const SpeechEvent.ofSegment(this.segment)
+    : speechStarted = false,
+      note = null;
+  const SpeechEvent.diagnostic(this.note)
+    : speechStarted = false,
+      segment = null;
 }
 
-/// Owns the on-device models (ASR + TTS + optional VAD) inside a dedicated
-/// isolate so inference never blocks the UI. Create with [SpeechWorker.start].
+/// Owns the on-device models (ASR + TTS + optional VAD) and the noise/echo
+/// front end inside a dedicated isolate so inference never blocks the UI.
+/// Create with [SpeechWorker.start].
 class SpeechWorker {
   SpeechWorker._(this._eventsSub, this.onEvent);
 
   final StreamSubscription<Object?> _eventsSub;
 
-  /// Receives VAD notifications; set before awaiting [SpeechWorker.start]
-  /// completion via the [onEvent] parameter.
+  /// Receives speech-pipeline notifications; set before awaiting
+  /// [SpeechWorker.start] completion via the [onEvent] parameter.
   final void Function(SpeechEvent)? onEvent;
 
   final Map<int, Completer<_JobResult>> _pending = {};
@@ -117,13 +142,12 @@ class SpeechWorker {
         } else if (message == 'ready') {
           if (!ready.isCompleted) ready.complete();
         } else if (message is _Event) {
-          worker.onEvent?.call(
-            message.kind == 'speechStart'
-                ? const SpeechEvent.started()
-                : message.kind == 'speechEnd'
-                    ? const SpeechEvent.stopped()
-                    : SpeechEvent.ofSegment(message.samples),
-          );
+          worker.onEvent?.call(switch (message.kind) {
+            'speechStart' => const SpeechEvent.started(),
+            'speechEnd' => const SpeechEvent.stopped(),
+            'note' => SpeechEvent.diagnostic(message.note ?? ''),
+            _ => SpeechEvent.ofSegment(message.samples),
+          });
         } else if (message is List && message.length == 2) {
           // Isolate onError: [error, stackTrace]
           worker._failAll('Speech worker error: ${message[0]}');
@@ -156,6 +180,10 @@ class SpeechWorker {
   /// Drop any in-progress utterance (e.g. when the session is toggled).
   void resetVad() => _toWorker?.send(_Job.resetVad());
 
+  /// Tell the worker our TTS started/stopped playing: while it plays the
+  /// gate goes into hard mode (self-interruption protection).
+  void setPlaying(bool on) => _toWorker?.send(_Job.playing(on));
+
   Future<String> transcribe(Float32List samples, int sampleRate) async {
     final result = await _send(_Job.transcribe(++_nextId, samples, sampleRate));
     if (result.error != null) throw StateError(result.error!);
@@ -166,6 +194,14 @@ class SpeechWorker {
     final result = await _send(_Job.synthesize(++_nextId, text));
     if (result.error != null) throw StateError(result.error!);
     return (result.audio!, result.sampleRate!);
+  }
+
+  /// Offline cleanup for a finished push-to-talk clip (high-pass + frame
+  /// noise gate). The returned audio is what should go to [transcribe].
+  Future<Float32List> denoise(Float32List pcm) async {
+    final result = await _send(_Job.denoise(++_nextId, pcm));
+    if (result.error != null) throw StateError(result.error!);
+    return result.audio!;
   }
 
   Future<_JobResult> _send(_Job job) {
@@ -234,16 +270,16 @@ Future<void> _runWorker(
   );
 
   sherpa_onnx.VoiceActivityDetector? vad;
-  bool wasDetecting = false;
   if (p.vadModel.isNotEmpty) {
     vad = sherpa_onnx.VoiceActivityDetector(
       config: sherpa_onnx.VadModelConfig(
-        // Soft onsets (breathy vowels, "s/th" fricatives, weak plosives) need
-        // many frames to cross 0.5; by the time they do, the word attack is
-        // gone. 0.35 + a shorter min-speech makes the detector raise earlier —
+        // 0.35 raises early (weak plosives/fricatives score low at first),
         // and sherpa's C++ layer rewinds segment starts by
-        // minSpeechDuration + 2 windows (voice-activity-detector.cc), which
-        // then comfortably covers the speech that triggered the raise.
+        // minSpeechDuration + 2 windows (voice-activity-detector.cc) — so an
+        // early raise means the word attack survives into Whisper. False
+        // positives used to be fought *here*; they are now the SNR gate's
+        // job (see audio_dsp.dart): detection may be jumpy, but speech
+        // *start* requires sustained level over the tracked floor.
         sileroVad: sherpa_onnx.SileroVadModelConfig(
           model: p.vadModel,
           threshold: 0.35,
@@ -261,20 +297,69 @@ Future<void> _runWorker(
     );
   }
 
-  final port = ReceivePort();
-  toParent.send(port.sendPort);
-  toParent.send('ready');
+  // The front end: rumble kill -> noise floor -> SNR gate -> Silero.
+  final hp = HighPassFilter();
+  final floor = NoiseFloorTracker();
+  final gate = SpeechGate(floor);
+  final holdFrames = (endpointSilence * 31.25).ceil();
+  const confirmStreak = 5; // ~160 ms: filters clicks & AEC lock-in blips
+
+  var gateStarted = false; // gate has raised speech for this utterance
+  var passStreak = 0; // consecutive gate-passing frames
+  var silentFrames = 0; // consecutive jointly-quiet frames (endpoint hold)
+  var speechFrames = 0, speechLoud = 0; // utterance duty cycle
+  var diagWindows = 0;
+  var playing = false; // our TTS reply is audible (barge-in hard mode)
+
+  // A VAD segment is only delivered when it looks like real speech: the
+  // utterance must have had enough gate-loud frames (duty cycle). Echo
+  // residue and clatter score as speech to Silero but sit near the floor,
+  // so their duty cycle collapses. A whole-segment SNR test alone would be
+  // useless — endpoint silence pads dilute it — the per-frame duty cycle is
+  // the robust signal.
+  Float32List? checkSegment(List<double> list) {
+    final seg = Float32List.fromList(list);
+    if (seg.length < 16000 ~/ 5) return null; // < 0.2 s: tap/breath
+    if (speechFrames > 0) {
+      final duty = speechLoud / speechFrames;
+      if (duty < 0.35) {
+        toParent.send(
+          _Event.note(
+            'segment dropped: duty ${(duty * 100).toStringAsFixed(0)}%',
+          ),
+        );
+        return null;
+      }
+    } else {
+      var sum = 0.0;
+      for (final v in seg) {
+        sum += v * v;
+      }
+      final segDb = sum <= 0 ? -100.0 : 10 * math.log(sum / seg.length) / _ln10;
+      if (segDb < floor.noiseFloorDb + 6) return null;
+    }
+    return seg;
+  }
+
+  void resetSpeechState() {
+    gateStarted = false;
+    passStreak = 0;
+    silentFrames = 0;
+    speechFrames = 0;
+    speechLoud = 0;
+  }
 
   void drainSegments() {
     while (vad != null && !vad.isEmpty()) {
-      final samples = vad.front().samples;
+      final seg = checkSegment(vad.front().samples);
       vad.pop();
-      if (samples.length > 16000 ~/ 5) {
-        // ≥ 0.2 s: ignore breaths and taps (min-speech is 0.15 s).
-        toParent.send(_Event.segment(Float32List.fromList(samples)));
-      }
+      if (seg != null) toParent.send(_Event.segment(seg));
     }
   }
+
+  final port = ReceivePort();
+  toParent.send(port.sendPort);
+  toParent.send('ready');
 
   await for (final message in port) {
     if (message is! _Job) continue;
@@ -282,18 +367,75 @@ Future<void> _runWorker(
       switch (message.op) {
         case 'audio':
           if (vad == null) break;
-          vad.acceptWaveform(message.samples!);
+          // The floor pins (stops tracking) while an utterance or our reply
+          // is active, so neither the user's voice nor our own echo can lift
+          // the baseline against the *next* utterance.
+          final clean = hp.process(message.samples!);
+          gate.offer(clean, freezeFloor: gateStarted || playing);
+          final passing = gate.passes();
+          passStreak = passing ? passStreak + 1 : 0;
+          vad.acceptWaveform(clean);
           final detecting = vad.isDetected();
-          if (detecting != wasDetecting) {
-            wasDetecting = detecting;
-            toParent.send(
-              detecting ? _Event.speechStart() : _Event.speechEnd(),
-            );
+          if (!gateStarted) {
+            // Speech begins when Silero and the SNR gate agree — for the
+            // first 500 ms of a reply the bar sits +30 dB above the floor,
+            // so the AEC lock-in leak can't self-interrupt.
+            if (detecting && passStreak >= confirmStreak) {
+              gateStarted = true;
+              silentFrames = 0;
+              speechFrames = 0;
+              speechLoud = 0;
+              toParent.send(_Event.speechStart());
+            }
+          } else {
+            // Duty-cycle bookkeeping for the segment check. The VAD's own
+            // endpoint rules when speech ends (noise bursts shorter than
+            // minSilenceDuration can't cut the user off); the gate only
+            // vetoes a *start* — plus the joint-quiet hold below, which ends
+            // the utterance when the VAD stays locked (e.g. our own reply's
+            // echo holding detection up):
+            speechFrames++;
+            if (passing) speechLoud++;
+            final jointQuiet = !gate.held() && !passing;
+            silentFrames = jointQuiet ? silentFrames + 1 : 0;
+          }
+          if (gateStarted && (!detecting || silentFrames >= holdFrames)) {
+            gateStarted = false;
+            silentFrames = 0;
+            toParent.send(_Event.speechEnd());
           }
           drainSegments();
+          if (++diagWindows % 94 == 0) {
+            toParent.send(
+              _Event.note(
+                'level=${gate.levelDb.toStringAsFixed(0)}dB '
+                'floor=${gate.noiseFloorDb.toStringAsFixed(0)}dB '
+                'pass=${passing ? 1 : 0} streak=$passStreak '
+                'play=${playing ? 1 : 0} det=${detecting ? 1 : 0}',
+              ),
+            );
+          }
+        case 'playing':
+          playing = message.text == 'on';
+          if (playing) {
+            gate.playbackStarted();
+          } else {
+            gate.playbackEnded();
+          }
         case 'resetVad':
           vad?.reset();
-          wasDetecting = false;
+          resetSpeechState();
+        case 'denoise':
+          final g = denoiseClip(
+            message.samples!,
+            floor: NoiseFloorTracker(initialDb: -18),
+          );
+          toParent.send(_JobResult.audio(message.id, g.samples, 16000));
+          toParent.send(
+            _Event.note(
+              'denoise kept ${(g.keptFraction * 100).toStringAsFixed(0)}%',
+            ),
+          );
         case 'transcribe':
           final stream = asr.createStream();
           stream.acceptWaveform(

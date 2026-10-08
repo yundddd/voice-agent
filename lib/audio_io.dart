@@ -49,11 +49,11 @@ Uint8List encodeWav(Float32List samples, int sampleRate) {
 (Float32List samples, int sampleRate) decodeWav(Uint8List bytes) {
   final data = ByteData.sublistView(bytes);
   String tag(int o) => String.fromCharCodes([
-        data.getUint8(o),
-        data.getUint8(o + 1),
-        data.getUint8(o + 2),
-        data.getUint8(o + 3),
-      ]);
+    data.getUint8(o),
+    data.getUint8(o + 1),
+    data.getUint8(o + 2),
+    data.getUint8(o + 3),
+  ]);
   assert(tag(0) == 'RIFF' && tag(8) == 'WAVE');
 
   var offset = 12;
@@ -69,8 +69,7 @@ Uint8List encodeWav(Float32List samples, int sampleRate) {
         sampleRate = data.getUint32(offset + 12, Endian.little);
         bitsPerSample = data.getUint16(offset + 22, Endian.little);
       case 'data':
-        pcm = Uint8List.sublistView(
-            bytes, offset + 8, offset + 8 + size);
+        pcm = Uint8List.sublistView(bytes, offset + 8, offset + 8 + size);
     }
     offset += 8 + size + (size.isOdd ? 1 : 0);
   }

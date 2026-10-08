@@ -104,7 +104,9 @@ Future<void> _fetchAndUnpack(
       await out.writeAsBytes(entry.content as List<int>);
     }
     if (!await File(p.join(dir.path, pack.markerFile)).exists()) {
-      throw StateError('model pack ${pack.label} unpacked without ${pack.markerFile}');
+      throw StateError(
+        'model pack ${pack.label} unpacked without ${pack.markerFile}',
+      );
     }
   } finally {
     try {

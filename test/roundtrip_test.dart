@@ -19,8 +19,9 @@ import 'package:voice_agent/speech_worker.dart';
 
 void main() {
   final asrDir = Directory('models/sherpa-onnx-whisper-tiny.en').absolute.path;
-  final ttsDir =
-      Directory('models/vits-piper-en_US-lessac-medium').absolute.path;
+  final ttsDir = Directory(
+    'models/vits-piper-en_US-lessac-medium',
+  ).absolute.path;
   final paths = ModelPaths(
     whisperEncoder: '$asrDir/tiny.en-encoder.int8.onnx',
     whisperDecoder: '$asrDir/tiny.en-decoder.int8.onnx',
@@ -32,7 +33,8 @@ void main() {
   );
 
   final haveModels =
-      File(paths.whisperDecoder).existsSync() && File(paths.vitsModel).existsSync();
+      File(paths.whisperDecoder).existsSync() &&
+      File(paths.vitsModel).existsSync();
 
   test('voice round trip: wav -> text -> wav', () async {
     if (!haveModels) {
@@ -51,8 +53,10 @@ void main() {
       final text = await worker.transcribe(samples, sampleRate);
       swAsr.stop();
       // ignore: avoid_print
-      print('ASR: "$text" (${samples.length / sampleRate}s of audio, '
-          '${swAsr.elapsedMilliseconds} ms)');
+      print(
+        'ASR: "$text" (${samples.length / sampleRate}s of audio, '
+        '${swAsr.elapsedMilliseconds} ms)',
+      );
       expect(text.trim(), isNotEmpty);
 
       // 2. Speak the transcription back.
@@ -61,13 +65,16 @@ void main() {
       swTts.stop();
       final audioSeconds = audio.length / ttsSampleRate;
       // ignore: avoid_print
-      print('TTS: ${audioSeconds}s of audio generated in '
-          '${swTts.elapsedMilliseconds} ms '
-          '(${(swTts.elapsedMilliseconds / audioSeconds).round()} ms/audio-sec)');
+      print(
+        'TTS: ${audioSeconds}s of audio generated in '
+        '${swTts.elapsedMilliseconds} ms '
+        '(${(swTts.elapsedMilliseconds / audioSeconds).round()} ms/audio-sec)',
+      );
       expect(audio.length, greaterThan(ttsSampleRate)); // > 1 second
 
       // 3. Persist the reply so it can be listened to.
-      final out = File('build/roundtrip_reply.wav')..createSync(recursive: true);
+      final out = File('build/roundtrip_reply.wav')
+        ..createSync(recursive: true);
       out.writeAsBytesSync(encodeWav(audio, ttsSampleRate));
       // ignore: avoid_print
       print('Reply audio written to ${out.absolute.path}');
@@ -93,6 +100,8 @@ void main() {
       paths,
       endpointSilence: 1.0,
       onEvent: (e) {
+        // ignore: avoid_print
+        if (e.note != null) print('[note] ${e.note}');
         if (e.speechStarted && !started.isCompleted) started.complete();
         if (e.segment != null && !segment.isCompleted) {
           segment.complete(e.segment!);
@@ -113,11 +122,12 @@ void main() {
       }
 
       await started.future.timeout(const Duration(seconds: 5));
-      final seg =
-          await segment.future.timeout(const Duration(seconds: 10));
+      final seg = await segment.future.timeout(const Duration(seconds: 10));
       // ignore: avoid_print
-      print('VAD segment: ${(seg.length / 16000).toStringAsFixed(2)}s of '
-          '${(samples.length / 16000).toStringAsFixed(2)}s streamed');
+      print(
+        'VAD segment: ${(seg.length / 16000).toStringAsFixed(2)}s of '
+        '${(samples.length / 16000).toStringAsFixed(2)}s streamed',
+      );
       expect(seg.length, greaterThan(16000)); // > 1 s of trimmed speech
       // Segments may carry a little trailing pre-endpoint silence.
       expect(seg.length, lessThan(samples.length + (1.5 * sampleRate).round()));

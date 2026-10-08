@@ -32,12 +32,15 @@ class AssistantScreen extends StatefulWidget {
   State<AssistantScreen> createState() => _AssistantScreenState();
 }
 
-class _AssistantScreenState extends State<AssistantScreen> {
+class _AssistantScreenState extends State<AssistantScreen>
+    with WidgetsBindingObserver {
   final VoiceAssistant _assistant = VoiceAssistant();
+  bool _debugMode = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _assistant
       ..addListener(() => setState(() {}))
       ..init();
@@ -45,8 +48,23 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _assistant.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _assistant.pauseConversation();
+      case AppLifecycleState.resumed:
+        _assistant.resumeConversation();
+      case AppLifecycleState.inactive:
+        break; // transient (notification shade, permission prompt)
+    }
   }
 
   @override
@@ -58,30 +76,40 @@ class _AssistantScreenState extends State<AssistantScreen> {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
       (AssistantPhase.listening, true) => (Icons.graphic_eq, scheme.tertiary),
       (AssistantPhase.listening, false) => (Icons.mic, scheme.error),
-      (AssistantPhase.transcribing, _) =>
-        (Icons.psychology_alt, scheme.primary),
+      (AssistantPhase.transcribing, _) => (
+        Icons.psychology_alt,
+        scheme.primary,
+      ),
       (AssistantPhase.speaking, _) => (Icons.volume_up, scheme.primary),
       (AssistantPhase.idle, _) => (Icons.mic_none, scheme.primary),
     };
 
     final (fabEnabled, hint) = switch (a.mode) {
       InteractionMode.pushToTalk => switch (a.phase) {
-          AssistantPhase.listening => (true, 'Stop — send that'),
-          AssistantPhase.transcribing || AssistantPhase.speaking =>
-            (false, 'One moment…'),
-          _ => (true, 'Talk'),
-        },
+        AssistantPhase.listening => (true, 'Stop — send that'),
+        AssistantPhase.transcribing ||
+        AssistantPhase.speaking => (false, 'One moment…'),
+        _ => (true, 'Talk'),
+      },
       InteractionMode.conversation => switch (a.phase) {
-          AssistantPhase.listening => (true, 'End conversation'),
-          AssistantPhase.transcribing || AssistantPhase.speaking =>
-            (true, 'Stop my reply'),
-          _ => (true, 'Start conversation'),
-        },
+        AssistantPhase.listening => (true, 'End conversation'),
+        AssistantPhase.transcribing ||
+        AssistantPhase.speaking => (true, 'Stop my reply'),
+        _ => (true, 'Start conversation'),
+      },
     };
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Voice Agent'),
+        actions: [
+          IconButton(
+            tooltip: 'Debug tools',
+            isSelected: _debugMode,
+            onPressed: () => setState(() => _debugMode = !_debugMode),
+            icon: const Icon(Icons.bug_report_outlined),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(64),
           child: Padding(
@@ -137,8 +165,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                             padding: const EdgeInsets.all(16),
                             child: SelectableText(
                               a.transcript,
-                              style:
-                                  Theme.of(context).textTheme.bodyLarge,
+                              style: Theme.of(context).textTheme.bodyLarge,
                             ),
                           ),
                         ),
@@ -148,6 +175,25 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 ),
               ),
               _LatencyStrip(assistant: a),
+              if (_debugMode && a.asrAudioSeconds > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: TextButton.icon(
+                    onPressed: a.playAsrAudio,
+                    icon: Icon(
+                      a.debugPlaying
+                          ? Icons.stop_circle_outlined
+                          : Icons.play_circle_outline,
+                      size: 22,
+                    ),
+                    label: Text(
+                      a.debugPlaying
+                          ? 'Stop replay'
+                          : 'Replay exactly what the ASR heard '
+                                '(${a.asrAudioSeconds.toStringAsFixed(1)}s)',
+                    ),
+                  ),
+                ),
               const SizedBox(height: 24),
               FloatingActionButton.large(
                 onPressed: fabEnabled ? _assistant.toggle : null,
@@ -174,14 +220,13 @@ class _LatencyStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget cell(String label, String value) => Expanded(
-          child: Column(
-            children: [
-              Text(value, style: Theme.of(context).textTheme.titleSmall),
-              Text(label,
-                  style: Theme.of(context).textTheme.labelSmall),
-            ],
-          ),
-        );
+      child: Column(
+        children: [
+          Text(value, style: Theme.of(context).textTheme.titleSmall),
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+        ],
+      ),
+    );
 
     return Row(
       children: [

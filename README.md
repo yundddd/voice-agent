@@ -45,14 +45,58 @@ gateway later is a two-line change. Only the 0.6 MB VAD model is bundled.
 ```
 lib/
   main.dart           UI: mode switch (Conversation / Push to talk), mic button,
-                      transcript, latency strip
-  assistant.dart      Conversation state machine: endpointing, barge-in, turns
+                    transcript, latency strip, app-lifecycle observer
+  assistant.dart    Conversation state machine: endpointing, barge-in, turns,
+                    background pause / foreground resume
   speech_worker.dart  Isolate owning both models (FFI calls never touch UI isolate)
-  model_paths.dart    Model file locations (injected → testable)
-  model_packs.dart    Downloaded zips → app support dir (first run only)
-  audio_io.dart       PCM16↔float32, WAV encode/decode
+  audio_dsp.dart    Mic front end: high-pass, noise floor, speech gate, PTT denoise
+  model_paths.dart  Model file locations (injected → testable)
+  model_packs.dart  Downloaded zips → app support dir (first run only)
+  audio_io.dart     PCM16↔float32, WAV encode/decode
 test/roundtrip_test.dart  Headless round trip + VAD endpointing on wav fixtures
+test/gate_test.dart       Noise floor / high-pass / gate / denoise unit tests
 ```
+
+### Signal pre-processing (why it doesn't hear itself, and survives noise)
+
+Every mic window goes through a small DSP chain in the worker isolate
+(`audio_dsp.dart` + the state machine in `speech_worker.dart`) **before**
+Silero ever sees it:
+
+1. **High-pass (120 Hz, RBJ biquad)** — kills handling rumble, desk
+   vibration and AGC DC before they can waste VAD/Whisper bandwidth.
+2. **Noise floor tracker** — min-statistics over frame RMS: instant drop,
+   ~0.6 dB/s rise, so the estimate always sits at the true room floor
+   (speech has syllable gaps; continuous noise of any kind is absorbed).
+   The floor is *pinned* while an utterance or our own reply is active, so
+   neither the user's loud frames nor TTS echo can lift the baseline that
+   the next utterance is measured against.
+3. **SNR speech gate** (`SpeechGate`) — Silero alone can't tell a door slam
+   or our own speaker bleed from the user's voice (they all score as
+   "speech"), and it's the raw VAD threshold that used to be the
+   false-interrupt dial. The threshold stays low (0.35 — raises early so
+   sherpa's onset rewind preserves word attacks, see below) and the gate is
+   the *trust* dial: a new utterance starts only when Silero **and**
+   `frame ≥ floor + 8 dB` (and ≥ −55 dBFS absolute) agree for 160 ms.
+   Concretely:
+   - *No self-interruption:* while the app speaks, `setPlaying(true)` raises
+     the bar to +14 dB over the floor, and for the reply's first 500 ms the
+     bar is +30 dB — Android's AEC is effectively deaf during its lock-in,
+     so no barge-in can trigger on that leak. A muted/ended reply keeps the
+     warm-up window armed for its echo re-lock transient too.
+   - *Noise, not cut-offs:* endpointing is still pure silence timing
+     (minSilenceDuration = 1 s) — a burst that fails the gate simply never
+     starts an utterance, so noise can't cut the user off mid-sentence.
+   - *Segment duty cycle:* a delivered segment must have had ≥35 %
+     gate-loud frames during it; clatter and echo residue score as speech
+     to Silero but sit near the floor, so their duty collapses and the
+     segment is discarded (the worker reports `segment dropped: duty …`).
+   Gate telemetry (`level/floor/pass/streak`, and drop reasons) surfaces as
+   `[worker] …` lines in logcat every ~3 s for field debugging.
+4. **Push to talk** gets the same high-pass plus an offline frame gate
+   (`denoiseClip`) applied *after* the user finished — quiet fill between
+   words gets −30 dB, onsets are never clipped. The debug replay button now
+   plays back exactly what Whisper actually received.
 
 ### Interaction modes
 
@@ -67,6 +111,8 @@ test/roundtrip_test.dart  Headless round trip + VAD endpointing on wav fixtures
   A watchdog reopens the mic automatically if Android ends the capture
   session (our own media playback can trigger that), so the session
   self-heals within seconds.
+  Backgrounding the app **pauses the conversation** (mic released, in-flight
+  turn abandoned); returning to the foreground resumes it automatically.
 - **Push to talk.** Tap to start, tap to stop and send — the original
   behavior. Switchable at the top of the screen; both modes share the same
   worker, ASR and TTS path.
@@ -91,6 +137,12 @@ zips live in `assets/models/`.
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
   flutter test test/roundtrip_test.dart
 # writes build/roundtrip_reply.wav — listen to hear the TTS reply
+
+LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
+  flutter test test/gate_test.dart   # DSP unit tests (no models needed)
+
+LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
+  dart run tool/onset_probe.dart      # asserts the first word survives endpointing
 ```
 
 ### Linux desktop (full app with mic)
