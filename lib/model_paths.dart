@@ -8,6 +8,7 @@ class ModelPaths {
   final String vitsModel;
   final String vitsTokens;
   final String espeakDataDir;
+  final String vadModel; // optional; '' disables VAD/conversation mode
 
   const ModelPaths({
     required this.whisperEncoder,
@@ -16,6 +17,7 @@ class ModelPaths {
     required this.vitsModel,
     required this.vitsTokens,
     required this.espeakDataDir,
+    this.vadModel = '',
   });
 
   /// Paths for the layout produced by [unpackModels] (lib/model_packs.dart).
@@ -26,5 +28,6 @@ class ModelPaths {
         vitsModel: '$dir/tts-lessac-medium/en_US-lessac-medium.onnx',
         vitsTokens: '$dir/tts-lessac-medium/tokens.txt',
         espeakDataDir: '$dir/tts-lessac-medium/espeak-ng-data',
+        vadModel: '$dir/silero_vad.onnx',
       );
 }

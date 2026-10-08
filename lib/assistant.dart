@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -12,37 +13,73 @@ import 'model_packs.dart';
 import 'model_paths.dart';
 import 'speech_worker.dart';
 
+/// Interaction styles.
+enum InteractionMode {
+  /// Hands-free: the mic runs continuously; an utterance ends when the user
+  /// pauses for a second; talking over the reply mutes it right away.
+  conversation,
+
+  /// Classic push-to-talk: the mic only records while the user holds the floor
+  /// open with the button.
+  pushToTalk,
+}
+
 enum AssistantPhase { idle, listening, transcribing, speaking, error }
 
 /// Orchestrates the voice round trip:
-///   mic -> PCM16 buffer -> Whisper (ASR) -> text -> Piper VITS (TTS) -> WAV -> speaker
+///   mic -> VAD endpointing -> Whisper (ASR) -> text -> Piper VITS (TTS) -> speaker
+/// in two interaction modes (see [InteractionMode]).
 class VoiceAssistant extends ChangeNotifier {
-  SpeechWorker? _worker;
-  AudioRecorder? _recorder;
+  VoiceAssistant() {
+    _recorder = AudioRecorder();
+    _player.onPlayerComplete.listen((_) => _onPlaybackNaturalEnd());
+  }
+
+  // Silence duration that ends an utterance in conversation mode.
+  static const _endpointSilence = 1.0;
+
   final AudioPlayer _player = AudioPlayer();
+  late final AudioRecorder _recorder;
+  SpeechWorker? _worker;
 
-  List<Float32List> _chunks = [];
-  StreamSubscription<Uint8List>? _recSub;
-  int _generation = 0;
-
+  InteractionMode _mode = InteractionMode.conversation;
   AssistantPhase _phase = AssistantPhase.idle;
   String _status = 'Loading models…';
   String _transcript = '';
   String _error = '';
+  String _lastSpoken = '';
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
   double _playSeconds = 0;
-  final Stopwatch _sw = Stopwatch();
 
+  StreamSubscription<Uint8List>? _recSub;
+  final List<Float32List> _chunks = []; // push-to-talk buffer
+  final BytesBuilder _vadBuf = BytesBuilder(copy: false); // 512-sample aligner
+  StreamSubscription<void>? _playSub;
+  String? _playFile;
+  bool _playerPlaying = false;
+  bool _userSpeaking = false; // live VAD flag (conversation mode)
+  bool _segEchoRisk = false; // current utterance started while we were talking
+  bool _segGotAudio = false; // current utterance produced a VAD segment
+  int _generation = 0; // cancels in-flight responses when bumped
+
+  InteractionMode get mode => _mode;
   AssistantPhase get phase => _phase;
   String get status => _status;
   String get transcript => _transcript;
   String get error => _error;
+  bool get userSpeaking => _userSpeaking;
+  bool get sessionActive =>
+      _phase == AssistantPhase.listening ||
+      _phase == AssistantPhase.transcribing ||
+      _phase == AssistantPhase.speaking;
   double get recordSeconds => _recordSeconds;
   double get asrSeconds => _asrSeconds;
   double get ttsSeconds => _ttsSeconds;
   double get playSeconds => _playSeconds;
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
 
   Future<void> init() async {
     try {
@@ -54,13 +91,55 @@ class VoiceAssistant extends ChangeNotifier {
             : '$label…';
         notifyListeners();
       });
-      _worker = await SpeechWorker.start(ModelPaths.fromModelsDir(modelsDir));
-      _phase = AssistantPhase.idle;
-      _status = 'Models loaded. Tap the mic and speak.';
-      notifyListeners();
+      _worker = await SpeechWorker.start(
+        ModelPaths.fromModelsDir(modelsDir),
+        onEvent: _onSpeechEvent,
+        endpointSilence: _endpointSilence,
+      );
+      _idleReady();
     } catch (e) {
       _fail('Model init failed: $e');
     }
+  }
+
+  void setMode(InteractionMode mode) {
+    if (_mode == mode) return;
+    _mode = mode;
+    _shutdownAudio();
+    _generation++;
+    _idleReady();
+  }
+
+  /// Big-button action, interpreted per mode + phase.
+  Future<void> toggle() async {
+    switch (_mode) {
+      case InteractionMode.conversation:
+        switch (_phase) {
+          case AssistantPhase.idle:
+          case AssistantPhase.error:
+            await _beginConversation();
+          case AssistantPhase.listening:
+            await _endConversation('Conversation closed. Tap to talk again.');
+          case AssistantPhase.transcribing:
+          case AssistantPhase.speaking:
+            _cancelResponse('Got it. Tap to close, or just keep talking.');
+        }
+      case InteractionMode.pushToTalk:
+        if (_phase == AssistantPhase.listening) {
+          await _stopAndRespond();
+        } else {
+          await _startListening();
+        }
+    }
+  }
+
+  void _idleReady() {
+    if (_worker == null) return;
+    _phase = AssistantPhase.idle;
+    _status = _mode == InteractionMode.conversation
+        ? 'Tap the mic to start a conversation. Pause about a second and I\'ll answer.'
+        : 'Ready. Tap the mic, speak, tap again to send.';
+    notifyListeners();
   }
 
   void _fail(String message) {
@@ -70,56 +149,247 @@ class VoiceAssistant extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startListening() async {
-    if (_phase == AssistantPhase.listening) return;
-    if (_worker == null) return; // still loading
+  // ── Microphone plumbing (shared by both modes) ─────────────────────────
+
+  Future<void> _openMicStream() async {
+    _chunks.clear();
+    _vadBuf.clear();
+    if (!await _recorder.hasPermission()) {
+      throw Exception('Microphone permission denied');
+    }
+    const encoder = AudioEncoder.pcm16bits;
+    if (!await _recorder.isEncoderSupported(encoder)) {
+      throw Exception('PCM16 capture not supported on this platform');
+    }
+    // voiceCommunication source + AEC/AGC: lets the mic hear the user while
+    // our own TTS plays through the speaker (barge-in).
+    const config = RecordConfig(
+      encoder: encoder,
+      sampleRate: 16000,
+      numChannels: 1,
+      autoGain: true,
+      echoCancel: true,
+      androidConfig: AndroidRecordConfig(
+        audioSource: AndroidAudioSource.voiceCommunication,
+        audioManagerMode: AudioManagerMode.modeInCommunication,
+        speakerphone: true,
+      ),
+    );
+    final stream = await _recorder.startStream(config);
+    _recSub = stream.listen(
+      _onMicData,
+      onError: (Object e) => _fail('Recording error: $e'),
+    );
+  }
+
+  void _onMicData(Uint8List bytes) {
+    if (_mode == InteractionMode.pushToTalk) {
+      _chunks.add(pcm16ToFloat32(bytes));
+      return;
+    }
+    // Conversation: feed the VAD in exactly 512-sample windows.
+    _vadBuf.add(bytes);
+    var bytesPending = _vadBuf.toBytes(); // no-op when empty
+    while (bytesPending.length >= 512 * 2) {
+      final window = Uint8List.sublistView(bytesPending, 0, 512 * 2);
+      bytesPending = bytesPending.sublist(512 * 2);
+      _worker?.sendAudio(pcm16ToFloat32(window));
+    }
+    _vadBuf.clear();
+    _vadBuf.add(bytesPending);
+  }
+
+  // ── Conversation mode ────────────────────────────────────────────────────
+
+  Future<void> _beginConversation() async {
     try {
-      final rec = _recorder ??= AudioRecorder();
-      if (!await rec.hasPermission()) {
-        _fail('Microphone permission denied');
-        return;
-      }
-      const encoder = AudioEncoder.pcm16bits;
-      if (!await rec.isEncoderSupported(encoder)) {
-        _fail('PCM16 capture not supported on this platform');
-        return;
-      }
-      await _player.stop();
-      _generation++; // abandon any in-flight transcribe/speak
-      _chunks = [];
-      _sw
-        ..reset()
-        ..start();
-      final stream = await rec.startStream(
-        const RecordConfig(
-          encoder: encoder,
-          sampleRate: 16000,
-          numChannels: 1,
-        ),
-      );
+      await _openMicStream();
       _phase = AssistantPhase.listening;
       _error = '';
-      _status = 'Listening… tap to stop.';
+      _status = 'Listening — just talk.';
       notifyListeners();
-
-      _recSub = stream.listen(
-        (bytes) => _chunks.add(pcm16ToFloat32(bytes)),
-        onError: (Object e) => _fail('Recording error: $e'),
-      );
     } catch (e) {
-      _fail('Could not start recording: $e');
+      _fail('$e');
     }
   }
 
-  Future<void> stopAndRespond() async {
+  Future<void> _endConversation(String message) async {
+    _shutdownAudio();
+    _userSpeaking = false;
+    _generation++;
+    _phase = AssistantPhase.idle;
+    _status = message;
+    notifyListeners();
+  }
+
+  void _cancelResponse(String message) {
+    _generation++; // abandon any in-flight turn
+    _stopPlayback();
+    _worker?.resetVad();
+    _phase = AssistantPhase.listening;
+    _status = message;
+    notifyListeners();
+  }
+
+  void _onSpeechEvent(SpeechEvent event) {
+    if (event.speechStarted) {
+      // Barge-in: mute our own reply the instant the user talks.
+      _segEchoRisk = _playerPlaying;
+      _segGotAudio = false;
+      if (_playerPlaying) {
+        _stopPlayback();
+        _generation++; // abandon the response we were speaking
+        _status = 'Interrupted — go ahead.';
+      } else if (_phase == AssistantPhase.transcribing) {
+        _generation++; // user resumed; drop the half-baked response
+      }
+      if (_phase != AssistantPhase.listening &&
+          _phase != AssistantPhase.error) {
+        _phase = AssistantPhase.listening;
+      }
+      _userSpeaking = true;
+      notifyListeners();
+      return;
+    }
+    if (event.segment != null) {
+      _userSpeaking = false;
+      _segGotAudio = true;
+      _recordSeconds = event.segment!.length / 16000.0;
+      unawaited(_startTurn(event.segment!));
+      return;
+    }
+    // Speech stopped but no segment followed (too short): nudge the user.
+    _userSpeaking = false;
+    if (!_segGotAudio && _phase == AssistantPhase.listening) {
+      _status = 'I heard a bit — say a little more?';
+      notifyListeners();
+    }
+  }
+
+  // ── Turn processing (shared by both modes) ─────────────────────────────
+
+  Future<void> _startTurn(Float32List samples) async {
+    final gen = ++_generation; // any newer turn supersedes this one
+    _phase = AssistantPhase.transcribing;
+    _status = 'Thinking…';
+    notifyListeners();
+    try {
+      final swAsr = Stopwatch()..start();
+      final text = (await _worker!.transcribe(samples, 16000)).trim();
+      swAsr.stop();
+      if (gen != _generation) return; // superseded
+      _asrSeconds = swAsr.elapsedMilliseconds / 1000.0;
+
+      if (text.isEmpty) {
+        _status = 'Didn\'t catch that — try again?';
+        _phase = _mode == InteractionMode.pushToTalk
+            ? AssistantPhase.idle
+            : AssistantPhase.listening;
+        notifyListeners();
+        return;
+      }
+      if (_segEchoRisk && _looksLikeEcho(text, _lastSpoken)) {
+        _segEchoRisk = false;
+        _status = 'That was my own voice — I\'m listening.';
+        _phase = AssistantPhase.listening;
+        notifyListeners();
+        return;
+      }
+      _segEchoRisk = false;
+      _transcript = text;
+
+      final swTts = Stopwatch()..start();
+      final (audio, sampleRate) = await _worker!.synthesize(text);
+      swTts.stop();
+      if (gen != _generation) return; // user resumed during synthesis
+      _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+      _playSeconds = audio.length / sampleRate;
+
+      _lastSpoken = text;
+      _phase = AssistantPhase.speaking;
+      _status = 'Speaking: “$text” — jump in any time.';
+      notifyListeners();
+      await _playWav(audio, sampleRate, gen);
+    } catch (e) {
+      _fail('Round trip failed: $e');
+    }
+  }
+
+  Future<void> _playWav(
+    Float32List samples,
+    int sampleRate,
+    int gen,
+  ) async {
+    _stopPlayback(); // safety: never overlap replies
+    final dir = await getTemporaryDirectory();
+    final file = File(
+      p.join(dir.path, 'reply_${DateTime.now().millisecondsSinceEpoch}.wav'),
+    );
+    await file.writeAsBytes(encodeWav(samples, sampleRate));
+    _playFile = file.path;
+    _playerPlaying = true;
+    _playSub = _player.onPlayerComplete.listen((_) {
+      if (gen == _generation) _onPlaybackNaturalEnd();
+    });
+    await _player.play(DeviceFileSource(file.path));
+  }
+
+  void _onPlaybackNaturalEnd() {
+    if (!_playerPlaying) return;
+    _playerPlaying = false;
+    _cleanupPlayFile();
+    if (_phase == AssistantPhase.speaking) {
+      _phase = AssistantPhase.listening;
+      _status = 'Listening — just talk.';
+      notifyListeners();
+    }
+  }
+
+  void _stopPlayback() {
+    if (!_playerPlaying) return;
+    _playerPlaying = false;
+    unawaited(_player.stop());
+    _cleanupPlayFile();
+  }
+
+  void _cleanupPlayFile() {
+    final f = _playFile;
+    _playFile = null;
+    unawaited(_playSub?.cancel() ?? Future.value());
+    _playSub = null;
+    if (f != null) {
+      unawaited(File(f).delete().catchError((_) => File(f)));
+    }
+  }
+
+  // ── Push-to-talk mode ────────────────────────────────────────────────────
+
+  Future<void> _startListening() async {
+    if (_phase == AssistantPhase.listening || _worker == null) return;
+    try {
+      _stopPlayback();
+      await _openMicStream();
+      _phase = AssistantPhase.listening;
+      _error = '';
+      _status = 'Listening… tap again to send.';
+      notifyListeners();
+    } catch (e) {
+      _fail('$e');
+    }
+  }
+
+  Future<void> _stopAndRespond() async {
     if (_phase != AssistantPhase.listening) return;
     await _recSub?.cancel();
-    await _recorder?.stop();
-    _recordSeconds = _sw.elapsedMilliseconds / 1000.0;
-
-    final total = _chunks.fold<int>(0, (n, c) => n + c.length);
+    _recSub = null;
+    await _recorder.stop();
+    _recordSeconds = 0;
+    for (final c in _chunks) {
+      _recordSeconds += c.length / 16000.0;
+    }
+    final total =
+        _chunks.fold<int>(0, (n, c) => n + c.length);
     if (total < 16000 ~/ 4) {
-      // Less than a quarter second of audio.
       _phase = AssistantPhase.idle;
       _status = 'Heard nothing. Tap the mic and speak.';
       notifyListeners();
@@ -131,75 +401,42 @@ class VoiceAssistant extends ChangeNotifier {
       pcm.setRange(offset, offset + c.length, c);
       offset += c.length;
     }
-    _chunks = [];
-
-    final generation = ++_generation;
-    _phase = AssistantPhase.transcribing;
-    _status = 'Transcribing…';
-    notifyListeners();
-
-    try {
-      final swAsr = Stopwatch()..start();
-      final text = await _worker!.transcribe(pcm, 16000);
-      swAsr.stop();
-      if (generation != _generation) return; // superseded
-      _asrSeconds = swAsr.elapsedMilliseconds / 1000.0;
-      _transcript = text.trim();
-
-      if (_transcript.isEmpty) {
-        _phase = AssistantPhase.idle;
-        _status = 'No speech recognized. Try again.';
-        notifyListeners();
-        return;
-      }
-
-      _phase = AssistantPhase.speaking;
-      _status = 'Speaking: “$_transcript”';
-      notifyListeners();
-
-      final swTts = Stopwatch()..start();
-      final (samples, sampleRate) =
-          await _worker!.synthesize(_transcript);
-      swTts.stop();
-      if (generation != _generation) return;
-      _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
-
-      _playSeconds = samples.length / sampleRate;
-      await _playWav(samples, sampleRate);
-
-      _phase = AssistantPhase.idle;
-      _status = 'Done. Tap the mic to go again.';
-      notifyListeners();
-    } catch (e) {
-      _fail('Round trip failed: $e');
-    }
+    _chunks.clear();
+    await _startTurn(pcm);
   }
 
-  Future<void> _playWav(Float32List samples, int sampleRate) async {
-    final dir = await getTemporaryDirectory();
-    final file = File(
-      p.join(dir.path, 'reply_${DateTime.now().millisecondsSinceEpoch}.wav'),
-    );
-    await file.writeAsBytes(encodeWav(samples, sampleRate));
-    final done = Completer<void>();
-    final sub = _player.onPlayerComplete.listen((_) => done.complete());
-    await _player.play(DeviceFileSource(file.path));
-    await done.future;
-    await sub.cancel();
-    try {
-      await file.delete();
-    } catch (_) {}
+  // ── Utilities ────────────────────────────────────────────────────────────
+
+  void _shutdownAudio() {
+    _stopPlayback();
+    unawaited(_recSub?.cancel() ?? Future.value());
+    _recSub = null;
+    unawaited(_recorder.stop());
+    _worker?.resetVad();
+    _chunks.clear();
+    _vadBuf.clear();
   }
 
-  Future<void> toggle() => _phase == AssistantPhase.listening
-      ? stopAndRespond()
-      : startListening();
+  /// Word-overlap test: did the mic just pick up our own TTS output?
+  static bool _looksLikeEcho(String heard, String spoken) {
+    Set<String> words(String s) => s
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toSet();
+    final a = words(heard);
+    final b = words(spoken);
+    if (a.isEmpty || b.isEmpty) return false;
+    final overlap = a.intersection(b).length;
+    return overlap / (a.length < b.length ? a.length : b.length) >= 0.75;
+  }
 
   @override
   void dispose() {
-    _recSub?.cancel();
-    _recorder?.dispose();
+    _shutdownAudio();
     _player.dispose();
+    _recorder.dispose();
     _worker?.dispose();
     super.dispose();
   }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -40,11 +41,24 @@ const modelPacks = [
 /// Download progress callback: label, bytes done, total bytes (0 if unknown).
 typedef ModelProgress = void Function(String, int, int);
 
+const _vadAsset = 'assets/models/silero_vad.onnx';
+
 /// Returns the directory that contains the unpacked model subdirectories.
 Future<String> unpackModels({ModelProgress? onProgress}) async {
   final support = await getApplicationSupportDirectory();
   final modelsDir = Directory(p.join(support.path, 'models'));
   await modelsDir.create(recursive: true);
+
+  // The Silero VAD model ships inside the APK (tiny) and is copied out.
+  final vadFile = File(p.join(modelsDir.path, 'silero_vad.onnx'));
+  final vadData = await rootBundle.load(_vadAsset);
+  if (!await vadFile.exists() ||
+      vadFile.lengthSync() != vadData.lengthInBytes) {
+    await vadFile.create(recursive: true);
+    await vadFile.writeAsBytes(
+      vadData.buffer.asUint8List(vadData.offsetInBytes, vadData.lengthInBytes),
+    );
+  }
 
   for (final pack in modelPacks) {
     final dir = Directory(p.join(modelsDir.path, pack.dirName));

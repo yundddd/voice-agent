@@ -8,7 +8,9 @@
 //
 // The synthesized reply is written to build/roundtrip_reply.wav so you can
 // listen to exactly what the app would have spoken.
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/audio_io.dart';
@@ -26,6 +28,7 @@ void main() {
     vitsModel: '$ttsDir/en_US-lessac-medium.onnx',
     vitsTokens: '$ttsDir/tokens.txt',
     espeakDataDir: '$ttsDir/espeak-ng-data',
+    vadModel: Directory('models/silero_vad.onnx').absolute.path,
   );
 
   final haveModels =
@@ -72,4 +75,59 @@ void main() {
       worker.dispose();
     }
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('VAD endpointing: streamed speech + 1s silence -> segment', () async {
+    if (!haveModels) {
+      // ignore: avoid_print
+      print('SKIPPED: extracted models not found under models/');
+      return;
+    }
+
+    final wav = File('$asrDir/test_wavs/1.wav').readAsBytesSync();
+    final (samples, sampleRate) = decodeWav(wav);
+    expect(sampleRate, 16000);
+
+    final segment = Completer<Float32List>();
+    final started = Completer<void>();
+    final worker = await SpeechWorker.start(
+      paths,
+      endpointSilence: 1.0,
+      onEvent: (e) {
+        if (e.speechStarted && !started.isCompleted) started.complete();
+        if (e.segment != null && !segment.isCompleted) {
+          segment.complete(e.segment!);
+        }
+      },
+    );
+    try {
+      // Stream the utterance in 512-sample windows, like the mic feed does,
+      // then 1.5 s of silence to trip the endpoint.
+      for (var i = 0; i + 512 <= samples.length; i += 512) {
+        worker.sendAudio(Float32List.sublistView(samples, i, i + 512));
+      }
+      final silence = Float32List(512);
+      final silenceWindows = (1.6 * sampleRate / 512).ceil(); // > 1 s endpoint
+      for (var i = 0; i < silenceWindows; i++) {
+        worker.sendAudio(silence);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      await started.future.timeout(const Duration(seconds: 5));
+      final seg =
+          await segment.future.timeout(const Duration(seconds: 10));
+      // ignore: avoid_print
+      print('VAD segment: ${(seg.length / 16000).toStringAsFixed(2)}s of '
+          '${(samples.length / 16000).toStringAsFixed(2)}s streamed');
+      expect(seg.length, greaterThan(16000)); // > 1 s of trimmed speech
+      // Segments may carry a little trailing pre-endpoint silence.
+      expect(seg.length, lessThan(samples.length + (1.5 * sampleRate).round()));
+
+      final text = await worker.transcribe(seg, 16000);
+      // ignore: avoid_print
+      print('Endpointed utterance transcribed: "$text"');
+      expect(text.trim(), isNotEmpty);
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
