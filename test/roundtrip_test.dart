@@ -140,4 +140,77 @@ void main() {
       worker.dispose();
     }
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  // Voice-cloning leg: hot-swaps the worker engine from Piper to ZipVoice
+  // and checks the clone is intelligible by transcribing it back. Skips
+  // when the extracted clone pack is not around (it downloads on demand in
+  // the app; the host probe tool/clone_probe.dart covers the same ground).
+  test('TTS voice swap: Piper -> ZipVoice clone speaks the user voice', () async {
+    const zipDir =
+        '/tmp/opencode/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia';
+    const vocoder = '/tmp/opencode/vocos_24khz.onnx';
+    if (!haveModels ||
+        !File('$zipDir/encoder.int8.onnx').existsSync() ||
+        !File(vocoder).existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: zipvoice pack not extracted under /tmp/opencode');
+      return;
+    }
+
+    final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
+    final (refSamples, refRate) = decodeWav(wav);
+
+    final worker = await SpeechWorker.start(paths);
+    try {
+      // The reference transcript comes from the very Whisper that ships
+      // in the app, exactly like the clone capture flow does.
+      final refText = (await worker.transcribe(refSamples, refRate)).trim();
+      expect(refText, isNotEmpty);
+
+      final speakers = await worker.useTts(
+        TtsSpec.zipvoice(
+          zipTokens: '$zipDir/tokens.txt',
+          zipEncoder: '$zipDir/encoder.int8.onnx',
+          zipDecoder: '$zipDir/decoder.int8.onnx',
+          zipDataDir: '$zipDir/espeak-ng-data',
+          zipLexicon: '$zipDir/lexicon.txt',
+          vocoder: vocoder,
+          referenceWav: '$asrDir/test_wavs/0.wav',
+          referenceText: refText,
+        ),
+      );
+      expect(speakers, greaterThan(0));
+
+      const line = 'Hello Tim. This is what your cloned voice will sound like.';
+      final sw = Stopwatch()..start();
+      final (audio, sampleRate) = await worker.synthesize(line);
+      sw.stop();
+      final seconds = audio.length / sampleRate;
+      // ignore: avoid_print
+      print(
+        'clone TTS: ${seconds.toStringAsFixed(1)}s generated in '
+        '${sw.elapsedMilliseconds} ms '
+        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+      );
+      expect(audio.length, greaterThan(sampleRate));
+      expect(sampleRate, 24000); // vocos_24khz output
+
+      final out = File('build/roundtrip_clone.wav')
+        ..createSync(recursive: true);
+      out.writeAsBytesSync(encodeWav(audio, sampleRate));
+
+      // Intelligible in *any* voice? Transcribe the clone with Whisper.
+      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
+      final hits = line
+          .split(' ')
+          .where((w) => w.length > 3)
+          .where((w) => heard.contains(w.toLowerCase()))
+          .length;
+      // ignore: avoid_print
+      print('clone ASR: "$heard" ($hits long words matched)');
+      expect(hits, greaterThan(3));
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 4)));
 }

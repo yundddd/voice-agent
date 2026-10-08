@@ -12,6 +12,7 @@ import 'audio_io.dart';
 import 'model_packs.dart';
 import 'model_paths.dart';
 import 'speech_worker.dart';
+import 'tts_voices.dart';
 
 /// Interaction styles.
 enum InteractionMode {
@@ -52,6 +53,20 @@ class VoiceAssistant extends ChangeNotifier {
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
   double _playSeconds = 0;
+
+  // ── Voice selection & cloning ────────────────────────────────────────────
+  String _modelsDir = '';
+  TtsPrefs _prefs = TtsPrefs();
+  String _activeVoiceId = 'lessac';
+  int _ttsNumSpeakers = 1; // >1 when the loaded engine has several speakers
+  String _voiceStatus = ''; // one-line feedback for the voice screen
+  bool _voiceBusy = false; // download / engine swap / sample processing
+  bool _cloneCapturing = false; // recording a clone sample right now
+  bool _cloneResumeOnDone = false; // conversation to restore after capture
+  double _cloneSeconds = 0;
+  Timer? _cloneTimer;
+  final List<Float32List> _cloneChunks = [];
+  Completer<void>? _previewDone; // set while a preview line plays
 
   StreamSubscription<Uint8List>? _recSub;
   final List<Float32List> _chunks = []; // push-to-talk buffer
@@ -97,28 +112,329 @@ class VoiceAssistant extends ChangeNotifier {
   double get ttsSeconds => _ttsSeconds;
   double get playSeconds => _playSeconds;
 
+  // ── Voice selection API (see lib/voice_screen.dart) ─────────────────────
+  List<TtsVoice> get voices => ttsVoices;
+  String get modelsDir => _modelsDir;
+  String get ttsVoiceId => _activeVoiceId;
+  int get ttsSid => _prefs.sid;
+  int get ttsNumSpeakers => _ttsNumSpeakers;
+  String get voiceStatus => _voiceStatus;
+  bool get voiceBusy => _voiceBusy;
+  bool get cloneCapturing => _cloneCapturing;
+  double get cloneSeconds => _cloneSeconds;
+  String get cloneSampleText => _prefs.sampleText;
+  bool get hasCloneSample =>
+      _prefs.sampleWav.isNotEmpty && File(_prefs.sampleWav).existsSync();
+
+  TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(
+    _modelsDir,
+    sid: sid,
+    referenceWav: _prefs.sampleWav,
+    referenceText: _prefs.sampleText,
+  );
+
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
   Future<void> init() async {
     try {
-      final modelsDir = await unpackModels(
-        onProgress: (label, done, total) {
-          _status = total > 0
-              ? 'Downloading $label: '
-                    '${(done / (1024 * 1024)).toStringAsFixed(1)} / '
-                    '${(total / (1024 * 1024)).toStringAsFixed(1)} MB'
-              : '$label…';
-          notifyListeners();
-        },
-      );
+      final modelsDir = await unpackModels(onProgress: _modelProgress);
+      _modelsDir = modelsDir;
+      _prefs = await loadTtsPrefs(modelsDir);
+      // The saved voice must be fully on disk (pack present and, for the
+      // clone, its reference wav too); otherwise fall back to the default,
+      // which downloads on first run just like before.
+      var voice = voiceById(_prefs.voiceId) ?? voiceById('lessac')!;
+      if (!await voice.installedIn(modelsDir) ||
+          (voice.isClone && !hasCloneSample)) {
+        voice = voiceById('lessac')!;
+      }
+      _prefs.voiceId = voice.id;
+      await voice.ensureIn(modelsDir, onProgress: _modelProgress);
       _worker = await SpeechWorker.start(
         ModelPaths.fromModelsDir(modelsDir),
+        tts: _spec(voice, sid: _prefs.sid),
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
       );
+      _activeVoiceId = voice.id;
       _idleReady();
     } catch (e) {
       _fail('Model init failed: $e');
+    }
+  }
+
+  void _modelProgress(String label, int done, int total) {
+    _status = total > 0
+        ? 'Downloading $label: '
+              '${(done / (1024 * 1024)).toStringAsFixed(1)} / '
+              '${(total / (1024 * 1024)).toStringAsFixed(1)} MB'
+        : '$label…';
+    notifyListeners();
+  }
+
+  // ── Voice selection & cloning ────────────────────────────────────────────
+
+  /// Switch the speaking voice, downloading its pack first if needed
+  /// (progress shows in [voiceStatus]). [sid] picks a speaker for models
+  /// that have several; pass `force` to re-apply the current voice (e.g.
+  /// after editing the clone transcript).
+  Future<void> selectVoice(
+    String id, {
+    int sid = -1,
+    bool force = false,
+  }) async {
+    if (_worker == null || _voiceBusy) return;
+    final v = voiceById(id);
+    if (v == null) return;
+    final newSid = sid < 0 ? _prefs.sid : sid;
+    if (!force && id == _activeVoiceId && newSid == _prefs.sid) return;
+    if (v.isClone && !hasCloneSample) {
+      _voiceStatus = 'Record a voice sample first (button below).';
+      notifyListeners();
+      return;
+    }
+    _voiceBusy = true;
+    _voiceStatus = 'Setting up ${v.label}…';
+    notifyListeners();
+    try {
+      await v.ensureIn(_modelsDir, onProgress: _voiceProgress);
+      _ttsNumSpeakers = await _worker!.useTts(_spec(v, sid: newSid));
+      _activeVoiceId = v.id;
+      _prefs.voiceId = v.id;
+      _prefs.sid = newSid;
+      await saveTtsPrefs(_modelsDir, _prefs);
+      _voiceStatus = '';
+    } catch (e) {
+      _voiceStatus = 'Could not switch voice: $e';
+    } finally {
+      _voiceBusy = false;
+      notifyListeners();
+    }
+  }
+
+  void _voiceProgress(String label, int done, int total) {
+    _voiceStatus = total > 0
+        ? 'Downloading $label: '
+              '${(done / (1024 * 1024)).toStringAsFixed(1)} / '
+              '${(total / (1024 * 1024)).toStringAsFixed(1)} MB'
+        : '$label…';
+    notifyListeners();
+  }
+
+  /// Free the disk space of a voice's downloaded pack (the one in use and
+  /// the built-in Lessac default stay protected).
+  Future<void> deleteVoice(String id) async {
+    final v = voiceById(id);
+    if (v == null || _voiceBusy) return;
+    if (id == _activeVoiceId) {
+      _voiceStatus = 'Switch to another voice before deleting this one.';
+      notifyListeners();
+      return;
+    }
+    _voiceBusy = true;
+    try {
+      await v.deleteIn(_modelsDir);
+      _voiceStatus = '';
+    } finally {
+      _voiceBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Record the reference clip the clone will speak with: takes the mic from
+  /// any running capture (auto-stops at 20 s). Finish with [stopCloneCapture]
+  /// — the clip is saved and Whisper transcribes it (ZipVoice needs the text
+  /// of the reference audio).
+  Future<void> startCloneCapture() async {
+    if (_worker == null || _cloneCapturing || _voiceBusy) return;
+    _cloneResumeOnDone = _micStreamWanted; // conversation/PTT we displaced
+    _generation++; // abandon any in-flight turn
+    _shutdownAudio();
+    _cloneChunks.clear();
+    _cloneSeconds = 0;
+    _cloneCapturing = true; // _onMicData routes bytes into the sample
+    _phase = AssistantPhase.listening;
+    _error = '';
+    _status = 'Recording your voice sample…';
+    _voiceStatus = 'Read one sentence clearly, about 8–15 seconds.';
+    _cloneTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!_cloneCapturing) return;
+      _status =
+          'Recording your voice sample… '
+          '${_cloneSeconds.toStringAsFixed(1)}s (stop between 2 and 20 s)';
+      notifyListeners();
+    });
+    notifyListeners();
+    try {
+      await _openMicStream(); // reuses the watchdog-protected capture path
+    } catch (e) {
+      _cloneCapturing = false;
+      _cloneTimer?.cancel();
+      _cloneTimer = null;
+      _fail('Could not open the mic: $e');
+    }
+  }
+
+  Future<void> stopCloneCapture() async {
+    if (!_cloneCapturing) return;
+    _cloneCapturing = false; // first: ignores trailing stream data
+    _cloneTimer?.cancel();
+    _cloneTimer = null;
+    _micWatchdog?.cancel();
+    _micWatchdog = null;
+    await _recSub?.cancel();
+    _recSub = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    _phase = AssistantPhase.idle;
+    final total = _cloneChunks.fold<int>(0, (n, c) => n + c.length);
+    _cloneSeconds = total / 16000.0;
+    if (total < 32000) {
+      // under 2 seconds: nothing worth cloning
+      _cloneChunks.clear();
+      _voiceStatus = 'That was too short — record at least 2 seconds.';
+      notifyListeners();
+      _afterCapture();
+      return;
+    }
+    _voiceBusy = true;
+    _status = 'Saving your voice sample…';
+    notifyListeners();
+    try {
+      final pcm = Float32List(total);
+      var off = 0;
+      for (final c in _cloneChunks) {
+        pcm.setRange(off, off + c.length, c);
+        off += c.length;
+      }
+      _cloneChunks.clear();
+      final wavPath = p.join(_modelsDir, 'clone_reference.wav');
+      await File(wavPath).writeAsBytes(encodeWav(pcm, 16000));
+      _status = 'Transcribing the sample…';
+      notifyListeners();
+      final text = (await _worker!.transcribe(pcm, 16000)).trim();
+      if (text.split(' ').length < 3) {
+        throw StateError(
+          'I could not understand the sample — speak a bit louder and '
+          'try again.',
+        );
+      }
+      _prefs.sampleWav = wavPath;
+      _prefs.sampleText = text;
+      await saveTtsPrefs(_modelsDir, _prefs);
+      _voiceStatus =
+          'Sample saved (${_cloneSeconds.toStringAsFixed(1)}s). Press '
+          '"Use my voice" to download the cloning model (about 155 MB, '
+          'one time) and hear it speak.';
+      _status = 'Voice sample saved.';
+    } catch (e) {
+      _cloneChunks.clear();
+      _voiceStatus = 'Clone failed: $e';
+      _status = 'Voice sample failed — tap the voices screen to retry.';
+    } finally {
+      _voiceBusy = false;
+      notifyListeners();
+    }
+    _afterCapture();
+  }
+
+  Future<void> cancelCloneCapture() async {
+    if (!_cloneCapturing) return;
+    _cloneCapturing = false;
+    _cloneTimer?.cancel();
+    _cloneTimer = null;
+    _cloneChunks.clear();
+    _shutdownAudio();
+    _phase = AssistantPhase.idle;
+    _status = 'Sample recording cancelled.';
+    notifyListeners();
+    _afterCapture();
+  }
+
+  /// Correct what Whisper heard in the reference clip (ZipVoice speaks the
+  /// reference *transcript*, so a mis-heard word colors the clone).
+  Future<void> updateCloneSampleText(String text) async {
+    if (_voiceBusy) return;
+    _prefs.sampleText = text.trim();
+    await saveTtsPrefs(_modelsDir, _prefs);
+    if (_activeVoiceId == 'clone') {
+      await selectVoice('clone', force: true); // reload the reference
+    }
+    notifyListeners();
+  }
+
+  Future<void> deleteCloneSample() async {
+    if (_voiceBusy) return;
+    _voiceBusy = true;
+    try {
+      await File(_prefs.sampleWav).delete();
+    } catch (_) {}
+    _prefs.sampleWav = '';
+    _prefs.sampleText = '';
+    _voiceBusy = false;
+    _voiceStatus = 'Voice recording deleted.';
+    if (_activeVoiceId == 'clone') {
+      _activeVoiceId = ''; // force the switch past the same-voice guard
+      await selectVoice('lessac', force: true);
+    }
+    await saveTtsPrefs(_modelsDir, _prefs);
+    notifyListeners();
+  }
+
+  /// Synthesize + play a demo line with the *current* engine (no phase
+  /// changes; the gate is pinned so a hot mic cannot hear it as speech).
+  Future<void> previewVoice({
+    String text = 'Hi! This is how your assistant will sound with this voice.',
+  }) async {
+    if (_worker == null || _voiceBusy) return;
+    _voiceBusy = true;
+    _voiceStatus = 'Making the preview…';
+    _stopDebugPlayback();
+    _stopPlayback(); // a live reply would fight the preview for the speaker
+    notifyListeners();
+    try {
+      _worker!.setPlaying(true); // hard-mode gate while we hear ourselves
+      _status = '';
+      notifyListeners();
+      final (audio, sampleRate) = await _worker!.synthesize(text);
+      _voiceStatus = '';
+      final dir = await getTemporaryDirectory();
+      final file = File(p.join(dir.path, 'voice_preview.wav'));
+      await file.writeAsBytes(encodeWav(audio, sampleRate));
+      // Treat it like a reply for stop/barge-in bookkeeping (but keep the
+      // phase — the screen's buttons must not change while it plays).
+      _playerPlaying = true;
+      final done = _previewDone = Completer<void>();
+      final sub = _player.onPlayerComplete.listen((_) {
+        if (!done.isCompleted) done.complete();
+      });
+      try {
+        await _player.play(DeviceFileSource(file.path));
+        await done.future.timeout(
+          const Duration(seconds: 120),
+          onTimeout: () {},
+        );
+      } finally {
+        await sub.cancel();
+        _previewDone = null;
+        unawaited(file.delete().catchError((_) => file));
+      }
+    } catch (e) {
+      _voiceStatus = 'Preview failed: $e';
+    } finally {
+      _playerPlaying = false;
+      _worker?.setPlaying(false);
+      _voiceBusy = false;
+      notifyListeners();
+    }
+  }
+
+  void _afterCapture() {
+    final resume = _cloneResumeOnDone;
+    _cloneResumeOnDone = false;
+    if (resume && _mode == InteractionMode.conversation && !_backgrounded) {
+      unawaited(_beginConversation());
     }
   }
 
@@ -135,17 +451,30 @@ class VoiceAssistant extends ChangeNotifier {
   /// stay open invisibly), but remember that it was live so [resumeConversation]
   /// can bring it back. An in-flight reply is abandoned either way.
   void pauseConversation() {
-    final live =
+    // A clone sample in flight dies with the app going hidden (the mic is
+    // yanked); remember whether a conversation waited behind it.
+    var live =
         _mode == InteractionMode.conversation &&
         (_phase == AssistantPhase.listening ||
             _phase == AssistantPhase.transcribing ||
             _phase == AssistantPhase.speaking);
+    final cloneDropped = _cloneCapturing;
+    if (_cloneCapturing) {
+      live = _cloneResumeOnDone; // listening phase belongs to the capture
+      _cloneCapturing = false;
+      _cloneTimer?.cancel();
+      _cloneTimer = null;
+      _cloneChunks.clear();
+    }
+    _cloneResumeOnDone = false;
     _conversationWasLive = live;
     _backgrounded = true;
     _generation++; // abandon any in-flight turn: no talking to an empty app
     _shutdownAudio();
     _phase = AssistantPhase.idle;
-    _status = live
+    _status = cloneDropped
+        ? 'Voice sample cancelled — the app went to the background.'
+        : live
         ? 'Paused — I\'ll resume when you\'re back.'
         : _mode == InteractionMode.conversation
         ? 'Tap the mic to start a conversation. Pause about a second and I\'ll answer.'
@@ -210,7 +539,9 @@ class VoiceAssistant extends ChangeNotifier {
   /// Whether a live mic stream is expected right now (drives the watchdog).
   /// In conversation mode the mic must stay alive through our reply, both for
   /// barge-in and so capture recovers if Android kills it during playback.
+  /// Clone-sample capture counts too (same stream, different sink).
   bool get _micStreamWanted =>
+      _cloneCapturing ||
       _phase == AssistantPhase.listening ||
       (_mode == InteractionMode.conversation &&
           (_phase == AssistantPhase.transcribing ||
@@ -302,6 +633,14 @@ class VoiceAssistant extends ChangeNotifier {
   void _onMicData(Uint8List bytes) {
     _lastMicAt = DateTime.now();
     if (_debugPlaying) return; // stream stays live for the watchdog only
+    if (_cloneCapturing) {
+      // Voice-sample recorder: buffer instead of feeding VAD/PTT chunks.
+      final c = pcm16ToFloat32(bytes);
+      _cloneChunks.add(c);
+      _cloneSeconds += c.length / 16000.0;
+      if (_cloneSeconds >= 20) unawaited(stopCloneCapture()); // hard cap
+      return;
+    }
     if (_mode == InteractionMode.pushToTalk) {
       if (_phase == AssistantPhase.listening) {
         _chunks.add(pcm16ToFloat32(bytes));
@@ -575,6 +914,9 @@ class VoiceAssistant extends ChangeNotifier {
     _playerPlaying = false;
     _worker?.setPlaying(false);
     unawaited(_player.stop());
+    // Stop, not natural end: release any preview waiter right away.
+    final d = _previewDone;
+    if (d != null && !d.isCompleted) d.complete();
     _cleanupPlayFile();
     if (!_userSpeaking) _worker?.resetVad();
     _fastMicCheck();
@@ -672,6 +1014,15 @@ class VoiceAssistant extends ChangeNotifier {
     _worker?.resetVad();
     _chunks.clear();
     _vadBuf.clear();
+    _cloneTimer?.cancel();
+    _cloneTimer = null;
+    if (_cloneCapturing) {
+      // Something else took the mic away mid-capture (conversation closed,
+      // mode switch, error path): the partial sample is worthless.
+      _cloneCapturing = false;
+      _cloneChunks.clear();
+      _voiceStatus = 'Sample recording cancelled — the mic was closed.';
+    }
   }
 
   /// Word-overlap test: did the mic just pick up our own TTS output?

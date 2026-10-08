@@ -117,6 +117,31 @@ Silero ever sees it:
   behavior. Switchable at the top of the screen; both modes share the same
   worker, ASR and TTS path.
 
+### Voices & voice cloning
+
+The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
+
+- **Standard voices.** Five Piper VITS voices — Lessac (default), Ryan,
+  Amy, Alba, and LibriTTS-R (a slider picks any of its 60 reader styles),
+  taken from the k2-fsa sherpa-onnx releases. Downloads are **lazy**:
+  nothing lands on disk until the user selects that voice, and any
+  downloaded voice can be **deleted** again (trash icon; the voice in use
+  is protected — re-selecting simply re-downloads). The worker isolate
+  hot-swaps its TTS engine to match (`TtsSpec` + `useTts` job in
+  `speech_worker.dart`); the chosen voice and speaker id persist in
+  `models/tts_prefs.json`. A headphones button previews any loaded voice.
+- **Clone my voice** (ZipVoice). Record one clear sentence (2–20 s, live
+  timer; the mic is handed to the recorder and any running conversation
+  resumes when done). On-device Whisper writes the transcript — ZipVoice
+  speaks the reference *transcript*, so the UI lets you fix a mis-heard
+  word before applying. The cloning engine (ZipVoice distill int8 + the
+  Vocos vocoder, ~155 MB total) downloads on first use only. "Use my
+  voice" switches all replies to the clone; the preview button speaks a
+  test line. Cloned replies are noticeably slower to generate than the
+  stock voices (RTF ≈0.2 measured on desktop, so expect replies to take
+  a second or two more on the phone). Backgrounding during recording
+  cancels the sample; the recording and delete buttons free the disk.
+
 ## Run
 
 ```bash
@@ -125,11 +150,13 @@ flutter run -d android        # phone attached; mic permission prompted
 # iOS: run from macOS (flutter run -d <iphone-or-simulator>)
 ```
 
-On first launch the app downloads the ASR and TTS zips (~124 MB total, see
-`modelPacks` in `lib/model_packs.dart`) from the GitHub release and unpacks
-them once into the app-support dir; only the 0.6 MB Silero VAD ships inside
-the APK. The raw model tarballs sit in `models/` for the headless test; the
-zips live in `assets/models/`.
+On first launch the app downloads the ASR pack plus the selected voice
+pack (Lessac by default, ~124 MB total, see `modelPacks` + `ttsVoices` in
+`lib/model_packs.dart` / `lib/tts_voices.dart`) from GitHub releases and
+unpacks them once into the app-support dir; only the 0.6 MB Silero VAD
+ships inside the APK. Extra voices download on demand. The raw model
+tarballs sit in `models/` for the headless test; the zips live in
+`assets/models/`.
 
 ### Headless round-trip test (no mic, no speaker)
 
@@ -142,8 +169,18 @@ LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x
   flutter test test/gate_test.dart   # DSP unit tests (no models needed)
 
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
+  flutter test test/model_unpack_test.dart  # lazy voice-pack downloads (tar.bz2/raw)
+
+LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
   dart run tool/onset_probe.dart      # asserts the first word survives endpointing
+
+LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
+  dart run tool/clone_probe.dart      # ZipVoice clone + Whisper intelligibility check
 ```
+
+(The clone leg of `roundtrip_test.dart` runs when the extracted ZipVoice
+pack + `vocos_24khz.onnx` sit under `/tmp/opencode` — see the k2-fsa
+`tts-models` / `vocoder-models` releases; otherwise it skips.)
 
 ### Linux desktop (full app with mic)
 

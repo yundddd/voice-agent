@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -6,6 +7,7 @@ import 'dart:typed_data';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import 'audio_dsp.dart';
+import 'audio_io.dart' show decodeWav;
 import 'model_paths.dart';
 
 const double _ln10 = 2.302585092994046;
@@ -15,37 +17,50 @@ class _Job {
   final int id; // -1 for fire-and-forget ops
   final String op;
   // 'audio' | 'resetVad' | 'transcribe' | 'synthesize' | 'playing' | 'denoise'
+  // | 'useTts'
   final String? text;
   final Float32List? samples;
   final int? sampleRate;
+  final TtsSpec? spec; // 'useTts' only
   const _Job.audio(this.samples)
     : id = -1,
       op = 'audio',
       text = null,
-      sampleRate = null;
+      sampleRate = null,
+      spec = null;
   const _Job.resetVad()
     : id = -1,
       op = 'resetVad',
       samples = null,
       text = null,
-      sampleRate = null;
+      sampleRate = null,
+      spec = null;
   const _Job.playing(bool on)
     : id = -1,
       op = 'playing',
       text = on ? 'on' : 'off',
       samples = null,
-      sampleRate = null;
+      sampleRate = null,
+      spec = null;
   const _Job.transcribe(this.id, this.samples, this.sampleRate)
     : text = null,
-      op = 'transcribe';
+      op = 'transcribe',
+      spec = null;
   const _Job.synthesize(this.id, this.text)
     : samples = null,
       sampleRate = null,
-      op = 'synthesize';
+      op = 'synthesize',
+      spec = null;
   const _Job.denoise(this.id, this.samples)
     : text = null,
       sampleRate = null,
-      op = 'denoise';
+      op = 'denoise',
+      spec = null;
+  const _Job.useTts(this.id, this.spec)
+    : text = null,
+      samples = null,
+      sampleRate = null,
+      op = 'useTts';
 }
 
 /// One-way events pushed from the worker (gated VAD output + diagnostics).
@@ -66,17 +81,75 @@ class _JobResult {
   final Float32List? audio;
   final int? sampleRate;
   final String? error;
+  final int number; // 'useTts': number of speakers the new engine has
   _JobResult.text(this.id, this.text)
     : audio = null,
       sampleRate = null,
-      error = null;
+      error = null,
+      number = 0;
   _JobResult.audio(this.id, this.audio, this.sampleRate)
     : text = null,
+      error = null,
+      number = 0;
+  _JobResult.ok(this.id, this.number)
+    : text = null,
+      audio = null,
+      sampleRate = null,
       error = null;
   _JobResult.error(this.id, this.error)
     : text = null,
       audio = null,
-      sampleRate = null;
+      sampleRate = null,
+      number = 0;
+}
+
+/// Which TTS voice the worker should speak with — plain data so it can be
+/// sent to the worker isolate at startup or swapped via [SpeechWorker.useTts].
+///
+/// * `kind: 'vits'` — a fixed Piper/VITS voice ([vitsModel] + [vitsTokens],
+///   [espeakDataDir] for phonemisation, [sid] to pick a speaker when the
+///   model has several).
+/// * `kind: 'zipvoice'` — zero-shot voice cloning: the ZipVoice engine
+///   ([zipEncoder]/[zipDecoder]/[vocoder]/...) speaks in the voice of
+///   [referenceWav], a wave file of the target speaker, whose spoken words
+///   must be given verbatim in [referenceText].
+class TtsSpec {
+  final String kind; // 'vits' | 'zipvoice'
+  final String vitsModel, vitsTokens, espeakDataDir;
+  final String zipTokens, zipEncoder, zipDecoder, zipDataDir, zipLexicon;
+  final String vocoder;
+  final String referenceWav, referenceText;
+  final int sid;
+
+  const TtsSpec.vits({
+    required this.vitsModel,
+    required this.vitsTokens,
+    required this.espeakDataDir,
+    this.sid = 0,
+  }) : kind = 'vits',
+       zipTokens = '',
+       zipEncoder = '',
+       zipDecoder = '',
+       zipDataDir = '',
+       zipLexicon = '',
+       vocoder = '',
+       referenceWav = '',
+       referenceText = '';
+
+  const TtsSpec.zipvoice({
+    required this.zipTokens,
+    required this.zipEncoder,
+    required this.zipDecoder,
+    required this.zipDataDir,
+    required this.zipLexicon,
+    required this.vocoder,
+    required this.referenceWav,
+    required this.referenceText,
+  }) : kind = 'zipvoice',
+       vitsModel = '',
+       vitsTokens = '',
+       espeakDataDir = '',
+       sid = 0;
 }
 
 /// One-way speech pipeline notification.
@@ -126,9 +199,17 @@ class SpeechWorker {
 
   static Future<SpeechWorker> start(
     ModelPaths paths, {
+    TtsSpec? tts,
     void Function(SpeechEvent)? onEvent,
     double endpointSilence = 1.0,
   }) async {
+    // Default: the Piper voice baked into [paths] (back-compat for tests
+    // and probes that don't care about voice choice).
+    tts ??= TtsSpec.vits(
+      vitsModel: paths.vitsModel,
+      vitsTokens: paths.vitsTokens,
+      espeakDataDir: paths.espeakDataDir,
+    );
     final ready = Completer<void>();
     final controlPort = ReceivePort();
     late final SpeechWorker worker;
@@ -161,10 +242,10 @@ class SpeechWorker {
 
     worker._isolate = await Isolate.spawn(
       (arg) {
-        final (SendPort toParent, (ModelPaths, double) cfg) = arg;
-        _runWorker(toParent, cfg.$1, cfg.$2);
+        final (SendPort toParent, (ModelPaths, double, TtsSpec) cfg) = arg;
+        _runWorker(toParent, cfg.$1, cfg.$2, cfg.$3);
       },
-      (controlPort.sendPort, (paths, endpointSilence)),
+      (controlPort.sendPort, (paths, endpointSilence, tts)),
       errorsAreFatal: true,
       onError: controlPort.sendPort,
       onExit: controlPort.sendPort,
@@ -183,6 +264,15 @@ class SpeechWorker {
   /// Tell the worker our TTS started/stopped playing: while it plays the
   /// gate goes into hard mode (self-interruption protection).
   void setPlaying(bool on) => _toWorker?.send(_Job.playing(on));
+
+  /// Swap the speaking voice (and for ZipVoice, the cloned reference).
+  /// Blocks until the new engine is loaded (a second or so for Piper,
+  /// longer for the cloning model). Returns the new engine's speaker count.
+  Future<int> useTts(TtsSpec spec) async {
+    final result = await _send(_Job.useTts(++_nextId, spec));
+    if (result.error != null) throw StateError(result.error!);
+    return result.number;
+  }
 
   Future<String> transcribe(Float32List samples, int sampleRate) async {
     final result = await _send(_Job.transcribe(++_nextId, samples, sampleRate));
@@ -232,6 +322,7 @@ Future<void> _runWorker(
   SendPort toParent,
   ModelPaths p,
   double endpointSilence,
+  TtsSpec spec,
 ) async {
   await sherpa_onnx.initBindingsAsync();
 
@@ -253,21 +344,49 @@ Future<void> _runWorker(
     ),
   );
 
-  final tts = sherpa_onnx.OfflineTts(
+  // The TTS engine is swappable at runtime ('useTts' job below): a fixed
+  // Piper voice, or ZipVoice cloning the user's voice from a reference wav.
+  sherpa_onnx.OfflineTts buildTts(TtsSpec s) => sherpa_onnx.OfflineTts(
     sherpa_onnx.OfflineTtsConfig(
       model: sherpa_onnx.OfflineTtsModelConfig(
-        vits: sherpa_onnx.OfflineTtsVitsModelConfig(
-          model: p.vitsModel,
-          tokens: p.vitsTokens,
-          dataDir: p.espeakDataDir,
-        ),
-        numThreads: 2,
+        vits: s.kind == 'vits'
+            ? sherpa_onnx.OfflineTtsVitsModelConfig(
+                model: s.vitsModel,
+                tokens: s.vitsTokens,
+                dataDir: s.espeakDataDir,
+              )
+            : const sherpa_onnx.OfflineTtsVitsModelConfig(),
+        zipvoice: s.kind == 'zipvoice'
+            ? sherpa_onnx.OfflineTtsZipVoiceModelConfig(
+                encoder: s.zipEncoder,
+                decoder: s.zipDecoder,
+                vocoder: s.vocoder,
+                tokens: s.zipTokens,
+                dataDir: s.zipDataDir,
+                lexicon: s.zipLexicon,
+              )
+            : const sherpa_onnx.OfflineTtsZipVoiceModelConfig(),
+        numThreads: s.kind == 'zipvoice' ? 4 : 2,
         debug: false,
         provider: 'cpu',
       ),
       maxNumSenetences: 4,
     ),
   );
+
+  var tts = buildTts(spec);
+  // Cloned voice: reference wav decoded once per engine (samples + rate).
+  (Float32List, int)? reference;
+  void loadReference(TtsSpec s) {
+    reference = null;
+    if (s.kind != 'zipvoice') return;
+    final (samples, sampleRate) = decodeWav(
+      File(s.referenceWav).readAsBytesSync(),
+    );
+    reference = (samples, sampleRate);
+  }
+
+  loadReference(spec);
 
   sherpa_onnx.VoiceActivityDetector? vad;
   if (p.vadModel.isNotEmpty) {
@@ -446,8 +565,30 @@ Future<void> _runWorker(
           final text = asr.getResult(stream).text;
           stream.free();
           toParent.send(_JobResult.text(message.id, text));
+        case 'useTts':
+          // Load reference + new engine *before* freeing the old one, so a
+          // bad path or missing wav leaves the current voice usable.
+          final next = message.spec!;
+          loadReference(next);
+          final old = tts;
+          tts = buildTts(next);
+          spec = next;
+          old.free();
+          // Drop any half-heard utterance across the switch.
+          vad?.reset();
+          resetSpeechState();
+          toParent.send(_JobResult.ok(message.id, tts.numSpeakers));
         case 'synthesize':
-          final audio = tts.generate(text: message.text!, sid: 0, speed: 1.0);
+          final audio = spec.kind == 'zipvoice'
+              ? tts.generateWithConfig(
+                  text: message.text!,
+                  config: sherpa_onnx.OfflineTtsGenerationConfig(
+                    referenceAudio: reference!.$1,
+                    referenceSampleRate: reference!.$2,
+                    referenceText: spec.referenceText,
+                  ),
+                )
+              : tts.generate(text: message.text!, sid: spec.sid, speed: 1.0);
           toParent.send(
             _JobResult.audio(message.id, audio.samples, audio.sampleRate),
           );

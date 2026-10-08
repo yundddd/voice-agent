@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import 'assistant.dart';
+import 'voice_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -103,6 +104,13 @@ class _AssistantScreenState extends State<AssistantScreen>
       appBar: AppBar(
         title: const Text('Voice Agent'),
         actions: [
+          IconButton(
+            tooltip: 'Assistant voice',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => VoiceScreen(assistant: a)),
+            ),
+            icon: const Icon(Icons.record_voice_over_outlined),
+          ),
           IconButton(
             tooltip: 'Debug tools',
             isSelected: _debugMode,
