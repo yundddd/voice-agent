@@ -156,10 +156,13 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Microphone plumbing (shared by both modes) ─────────────────────────
 
   /// Whether a live mic stream is expected right now (drives the watchdog).
-  /// Only the listening phase needs capture: during transcribing/speaking we
-  /// already have the segment, and restarting capture mid-reply would only
-  /// confuse AEC.
-  bool get _micStreamWanted => _phase == AssistantPhase.listening;
+  /// In conversation mode the mic must stay alive through our reply, both for
+  /// barge-in and so capture recovers if Android kills it during playback.
+  bool get _micStreamWanted =>
+      _phase == AssistantPhase.listening ||
+      (_mode == InteractionMode.conversation &&
+          (_phase == AssistantPhase.transcribing ||
+              _phase == AssistantPhase.speaking));
 
   Future<void> _openMicStream() async {
     _chunks.clear();
