@@ -66,6 +66,7 @@ class VoiceAssistant extends ChangeNotifier {
   Timer? _micWatchdog;
   DateTime _lastMicAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _micRecovering = false;
+  bool _disposed = false;
 
   InteractionMode get mode => _mode;
   AssistantPhase get phase => _phase;
@@ -155,12 +156,10 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Microphone plumbing (shared by both modes) ─────────────────────────
 
   /// Whether a live mic stream is expected right now (drives the watchdog).
-  bool get _micStreamWanted => switch (_phase) {
-        AssistantPhase.listening => true,
-        AssistantPhase.transcribing || AssistantPhase.speaking =>
-          _mode == InteractionMode.conversation,
-        _ => false,
-      };
+  /// Only the listening phase needs capture: during transcribing/speaking we
+  /// already have the segment, and restarting capture mid-reply would only
+  /// confuse AEC.
+  bool get _micStreamWanted => _phase == AssistantPhase.listening;
 
   Future<void> _openMicStream() async {
     _chunks.clear();
@@ -225,6 +224,7 @@ class VoiceAssistant extends ChangeNotifier {
     _micRecovering = true;
     debugPrint('mic stream $why — reopening');
     await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (_disposed) return;
     try {
       await _openMicStream(); // also resets _lastMicAt and the watchdog
       _worker?.resetVad();
@@ -513,6 +513,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _shutdownAudio();
     _player.dispose();
     _recorder.dispose();
