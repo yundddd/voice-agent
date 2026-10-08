@@ -541,8 +541,17 @@ class VoiceAssistant extends ChangeNotifier {
   // few centimetres off the button still closes the mic.
 
   int _pttPointers = 0; // one hold; extra fingers are ignored
+  Timer? _pttMaxTimer; // a lost release must not latch the mic on
+  /// Debug counters (shown under the button in debug mode): press/release
+  /// edges observed — proves on-device whether holds reach the Listener.
+  int pttEdgeCount = 0;
 
   void pttDown() {
+    pttEdgeCount++;
+    debugPrint(
+      'PTT-DOWN mode=${_mode.name} phase=${_phase.name} '
+      'worker=${_worker != null} ptr=$_pttPointers',
+    );
     if (_mode != InteractionMode.pushToTalk || _worker == null) return;
     if (_phase == AssistantPhase.transcribing ||
         _phase == AssistantPhase.speaking) {
@@ -550,13 +559,24 @@ class VoiceAssistant extends ChangeNotifier {
     }
     _pttPointers++;
     if (_pttPointers > 1) return;
+    // Android can renumber pointers mid-sequence (index reassignment when a
+    // second finger lifts) and may drop the matching release; rather than
+    // record forever, close the mic ourselves after a generous cap.
+    _pttMaxTimer?.cancel();
+    _pttMaxTimer = Timer(const Duration(minutes: 2), () {
+      if (_pttPointers > 0) pttCancel();
+    });
     unawaited(_startListening());
   }
 
   void pttUp() {
+    pttEdgeCount++;
+    debugPrint('PTT-UP ptr=$_pttPointers');
     if (_pttPointers == 0) return;
     _pttPointers--;
     if (_pttPointers > 0) return; // still holding with another finger
+    _pttMaxTimer?.cancel();
+    _pttMaxTimer = null;
     unawaited(_stopAndRespond());
   }
 
@@ -564,6 +584,8 @@ class VoiceAssistant extends ChangeNotifier {
     // Back gesture / system interruption: behave exactly like a release,
     // so the mic can never be left open.
     _pttPointers = 0;
+    _pttMaxTimer?.cancel();
+    _pttMaxTimer = null;
     unawaited(_stopAndRespond());
   }
 

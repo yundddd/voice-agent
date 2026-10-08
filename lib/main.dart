@@ -223,29 +223,51 @@ class _AssistantScreenState extends State<AssistantScreen>
                     ],
                   ),
                 ),
-              const SizedBox(height: 24),
-              // In push-to-talk the mic is driven by press/release edges,
-              // observed as raw pointer events so the button's own tap (and
-              // its ripple) stay untouched; conversation mode keeps the
-              // plain tap-to-toggle.
-              Listener(
-                onPointerDown: (_) => _assistant.pttDown(),
-                onPointerUp: (_) => _assistant.pttUp(),
-                onPointerCancel: (_) => _assistant.pttCancel(),
-                child: FloatingActionButton.large(
-                  onPressed: !fabEnabled
-                      ? null
-                      : _assistant.mode == InteractionMode.pushToTalk
-                      ? () {} // hold edges above; a plain tap does nothing
-                      : _assistant.toggle,
-                  backgroundColor: color,
-                  foregroundColor: scheme.onPrimary,
-                  shape: const CircleBorder(),
-                  child: Icon(icon, size: 40),
+              // Bottom-anchored block sits in a bottom SafeArea: with edge-to-edge
+              // Android (targetSdk 35) the system reserves the bottom edge for
+              // navigation gestures, and a HOLD starting in that strip is taken by
+              // the system (a bare tap is not) — which is why the old tap-to-latch
+              // button seemed fine right where hold-to-talk now sits idle.
+              SafeArea(
+                top: false,
+                bottom: true,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 24),
+                    // In push-to-talk the mic is driven by press/release edges,
+                    // observed as raw pointer events so the button's own tap (and
+                    // its ripple) stay untouched; conversation mode keeps the
+                    // plain tap-to-toggle.
+                    Listener(
+                      onPointerDown: (_) => _assistant.pttDown(),
+                      onPointerUp: (_) => _assistant.pttUp(),
+                      onPointerCancel: (_) => _assistant.pttCancel(),
+                      child: FloatingActionButton.large(
+                        onPressed: !fabEnabled
+                            ? null
+                            : _assistant.mode == InteractionMode.pushToTalk
+                            ? () {} // hold edges above; a plain tap does nothing
+                            : _assistant.toggle,
+                        backgroundColor: color,
+                        foregroundColor: scheme.onPrimary,
+                        shape: const CircleBorder(),
+                        child: Icon(icon, size: 40),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(hint, style: Theme.of(context).textTheme.labelLarge),
+                    if (_debugMode)
+                      Text(
+                        'hold edges: ${_assistant.pttEdgeCount}  '
+                        'pointers: ${_assistant.mode == InteractionMode.pushToTalk ? "ptt" : "conv"}',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.labelSmall?.copyWith(color: scheme.outline),
+                      ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(hint, style: Theme.of(context).textTheme.labelLarge),
             ],
           ),
         ),
