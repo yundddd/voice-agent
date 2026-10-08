@@ -69,9 +69,36 @@ class NeuttsEngine {
 
   // One dlopen per process: shared by every engine instance.
   static ffi.DynamicLibrary _load(String libPath) =>
-      _lib ??= ffi.DynamicLibrary.open(
-        libPath.isNotEmpty ? libPath : 'libneutts_bridge.so',
-      );
+      _lib ??= ffi.DynamicLibrary.open(_prepare(libPath));
+
+  /// Makes a pack-installed bridge loadable on Android, then returns the path
+  /// to open. Two rules bite for `.so` files living in the app data dir:
+  /// * Android enforces W^X on dynamically loaded code: a still-*writable*
+  ///   mapping cannot be executable, and our download leaves the files
+  ///   owner-writable -> chmod 555 first.
+  /// * The bridge's `libc++_shared.so` NEEDED must resolve next to it;
+  ///   dlopen'ing that file by absolute path first makes the linker reuse
+  ///   the already-loaded instance (by soname) instead of searching system
+  ///   namespaces, where the platform copy is not exported to apps.
+  /// Host builds link neither knob into play; both steps are no-ops there.
+  static String _prepare(String libPath) {
+    if (Platform.isAndroid && libPath.isNotEmpty) {
+      final dir = p.dirname(libPath);
+      for (final name in const ['libneutts_bridge.so', 'libc++_shared.so']) {
+        final f = File(p.join(dir, name));
+        if (f.existsSync()) {
+          try {
+            Process.runSync('chmod', ['555', f.path]);
+          } on ProcessException {
+            // Best effort: older Androids happily dlopen writable files.
+          }
+        }
+      }
+      final cpp = File(p.join(dir, 'libc++_shared.so'));
+      if (cpp.existsSync()) ffi.DynamicLibrary.open(cpp.path);
+    }
+    return libPath.isNotEmpty ? libPath : 'libneutts_bridge.so';
+  }
 
   // All function pointers are resolved once, in the constructor body (the
   // loaded library lives in [_lib]).

@@ -88,7 +88,15 @@ Future<void> _fetchAndUnpack(
     }
 
     onProgress?.call('Unpacking ${pack.label}', 0, 0);
-    await unpackPackBytes(await tmp.readAsBytes(), pack, dir);
+    if (pack.fileName == null && !pack.url.endsWith('.tar.bz2')) {
+      // Zip: stream members straight off the downloaded file. Loading the
+      // whole archive into RAM (old behaviour) peaked at 1.5x the pack size
+      // with the inflated entry on top — on a phone that is an OOM kill
+      // mid-unpack, and the half-written pack then *looks* installed.
+      await unpackPackFromPath(tmp.path, pack, dir);
+    } else {
+      await unpackPackBytes(await tmp.readAsBytes(), pack, dir);
+    }
   } finally {
     try {
       await tmp.delete();
@@ -101,6 +109,7 @@ Future<void> _fetchAndUnpack(
 /// k2-fsa tarballs (and any zip) whose entries all sit under one top-level
 /// directory get that directory stripped, so contents land directly in
 /// [dir] — this is what the marker-file paths assume.
+///
 Future<void> unpackPackBytes(
   Uint8List bytes,
   ModelPack pack,
@@ -111,31 +120,69 @@ Future<void> unpackPackBytes(
     final out = File(p.join(dir.path, pack.fileName!));
     await out.create(recursive: true);
     await out.writeAsBytes(bytes);
+  } else if (pack.url.endsWith('.tar.bz2')) {
+    await _unpackArchive(
+      TarDecoder().decodeBytes(BZip2Decoder().decodeBytes(bytes)),
+      pack,
+      dir,
+    );
   } else {
-    // Packs are ≤ ~110 MB, so reading them fully into memory is fine.
-    final archive = pack.url.endsWith('.tar.bz2')
-        ? TarDecoder().decodeBytes(BZip2Decoder().decodeBytes(bytes))
-        : ZipDecoder().decodeBytes(bytes);
-    final root = commonTopDir(archive);
-    for (final entry in archive) {
-      if (!entry.isFile) continue;
-      var name = entry.name;
-      if (root != null && name.startsWith(root)) {
-        name = name.substring(root.length);
-      }
-      if (name.isEmpty) continue;
-      final out = File(p.join(dir.path, name));
-      await out.create(recursive: true);
-      await out.writeAsBytes(entry.content as List<int>);
+    final tmp = File('${dir.path}.tmp.zip');
+    await tmp.create(recursive: true);
+    await tmp.writeAsBytes(bytes);
+    try {
+      await unpackPackFromPath(tmp.path, pack, dir);
+    } finally {
+      try {
+        await tmp.delete();
+      } catch (_) {}
     }
   }
-  if (!await File(
-    p.join(dir.path, pack.fileName ?? pack.markerFile),
-  ).exists()) {
+}
+
+/// Like [unpackPackBytes] but streams the zip from [zipPath] instead of a
+/// byte buffer: the 500 MB+ engine packs decode member-by-member, so peak
+/// RAM is one member (the ~420 MB decoder), not the whole archive.
+Future<void> unpackPackFromPath(
+  String zipPath,
+  ModelPack pack,
+  Directory dir,
+) => _unpackArchive(
+  ZipDecoder().decodeBuffer(InputFileStream(zipPath)),
+  pack,
+  dir,
+);
+
+Future<void> _unpackArchive(
+  Archive archive,
+  ModelPack pack,
+  Directory dir,
+) async {
+  final root = commonTopDir(archive);
+  Uint8List? marker;
+  for (final entry in archive) {
+    if (!entry.isFile) continue;
+    var name = entry.name;
+    if (root != null && name.startsWith(root)) {
+      name = name.substring(root.length);
+    }
+    if (name.isEmpty) continue;
+    if (name == pack.markerFile) {
+      marker = (entry.content as List<int>) as Uint8List;
+      continue; // Written LAST: its existence alone means "fully unpacked".
+    }
+    final out = File(p.join(dir.path, name));
+    await out.create(recursive: true);
+    await out.writeAsBytes(entry.content as List<int>);
+  }
+  if (marker == null) {
     throw StateError(
       'model pack ${pack.label} unpacked without ${pack.markerFile}',
     );
   }
+  final markerFile = File(p.join(dir.path, pack.markerFile));
+  await markerFile.create(recursive: true);
+  await markerFile.writeAsBytes(marker);
 }
 
 /// If every entry sits under one common top-level directory, return "name/".

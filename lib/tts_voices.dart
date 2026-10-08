@@ -219,15 +219,16 @@ const ttsVoices = <TtsVoice>[
     id: 'neutts',
     label: 'NeuTTS Nano',
     note:
-        'Neuphonic neural codec voice — Dave/Jo styles once loaded; the '
-        'Rust engine ships inside the download. Android (arm64) only.',
+        'Neuphonic neural codec voice — four preset styles (Greta/Jo/'
+        'Mateo/Juliette) once loaded; the Rust engine ships inside the '
+        'download. Android (arm64) only.',
     sizeLabel: '~500 MB',
     packs: [
       ModelPack(
         label: 'voice: NeuTTS Nano (engine + voices)',
         url: '$_modelsRelease/neutts-nano-v1.zip',
         dirName: 'neutts-nano',
-        markerFile: 'neutts-nano-Q4_0.gguf',
+        markerFile: 'pack-v2.ok', // sentinel: forces re-download of v1 packs
       ),
     ],
     isNeutts: true,

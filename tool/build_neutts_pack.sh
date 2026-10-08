@@ -36,12 +36,12 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-static-libstdc++ -C link-args=-Wl
     PATH=$HOME/.cargo/bin:$PATH \
     cargo ndk -t arm64-v8a --platform 21 build --release
 )
-cp /tmp/opencode/neutts-android-target/aarch64-linux-android/release/libneutts_bridge.so \
+rm -f "$STAGE/libneutts_bridge.so" /tmp/opencode/neutts-pack/neutts-nano/libneutts_bridge.so 2>/dev/null; cp /tmp/opencode/neutts-android-target/aarch64-linux-android/release/libneutts_bridge.so \
   "$STAGE/libneutts_bridge.so"
 # rustc's cdylib link references the NDK's shared libc++; ship it beside the
 # bridge ($ORIGIN RUNPATH above) so Android resolves it from the app-private
 # dir instead of the (W^X-forbidden) runtime-extractable jniLibs path.
-cp "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+rm -f "$STAGE/libc++_shared.so" 2>/dev/null; cp "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
   "$STAGE/libc++_shared.so"
 echo "packed $(du -h "$STAGE/libneutts_bridge.so" | cut -f1) bridge .so"
 
@@ -79,7 +79,12 @@ for v in greta jo juliette mateo; do
   done
 done
 
-# 4. Zip with one top-level dir (stripped on unpack, see model_unpack.dart).
+# 4. Sentinel: bump the name when the pack layout/bridge ABI changes — the
+#    app's presence check keys on this file (pack-v1 packs lacked it).
+touch "$STAGE/pack-v2.ok"
+chmod 555 "$STAGE/libneutts_bridge.so" "$STAGE/libc++_shared.so" 2>/dev/null || true
+
+# 5. Zip with one top-level dir (stripped on unpack, see model_unpack.dart).
 (cd "$(dirname "$STAGE")" && rm -f neutts-nano-v1.zip && zip -qry9 \
   neutts-nano-v1.zip neutts-nano)
 echo "pack: $(du -h "$(dirname "$STAGE")/neutts-nano-v1.zip" | cut -f1)"
