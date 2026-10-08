@@ -1,0 +1,52 @@
+# ── macOS deployment target ────────────────────────────────────────────────────
+# The pre-built ONNX Runtime binary bundled by `ort` (ORT 1.23.2 / ms@1.23.2)
+# targets macOS 13.4.  Setting MACOSX_DEPLOYMENT_TARGET here to match silences
+# the "was built for newer macOS version" linker warnings for both libort and
+# the espeak-ng objects we compile from source.
+#
+# macOS 13 (Ventura) covers all Apple Silicon Macs and all Intel Macs shipped
+# after 2017, so this is a safe minimum for a desktop TTS library.
+#
+# CMAKE_OSX_DEPLOYMENT_TARGET is also needed: llama-cpp-sys-2/build.rs forwards
+# all CMAKE_* env vars directly to cmake configure via config.define(key,value).
+# cmake then appends -mmacosx-version-min=13.4 AFTER CMAKE_C_FLAGS (which the
+# cmake-rs crate can bake in a lower value like 10.13 from the Rust target
+# triple). Clang uses the last -mmacosx-version-min flag, so 13.4 wins.
+# Xcode 26+ enforces availability annotations strictly; without this the build
+# fails with "'path' is unavailable: introduced in macOS 10.15" errors from
+# llama.cpp's use of std::filesystem.
+#
+# force=true prevents a system-level MACOSX_DEPLOYMENT_TARGET (e.g. set by
+# Xcode to 10.13) from silently overriding these values.
+#
+# ⚠️  After changing either value delete the stale cmake cache:
+#     rm -rf target/release/build/llama-cpp-sys-2-*/
+
+[env]
+MACOSX_DEPLOYMENT_TARGET    = { value = "13.4", force = true }
+CMAKE_OSX_DEPLOYMENT_TARGET = { value = "13.4", force = true }
+
+# ── Cross-compilation: Windows x86_64 GNU via Zig ─────────────────────────────
+#
+# Zig ships a built-in C/C++ compiler that can target any LLVM-supported triple,
+# making it ideal for cross-compiling Rust crates that include C dependencies.
+#
+# `zig cc -target x86_64-windows-gnu` acts as:
+#   - a drop-in ANSI C89 compiler  (cc / clang compatible)
+#   - a PE/COFF linker             (produces valid .dll / .exe / .lib)
+#
+# Usage:
+#   cargo build --target x86_64-pc-windows-gnu --no-default-features --features fast
+#
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar     = "x86_64-w64-mingw32-ar"
+
+# ── Cross-compilation: Linux x86_64 musl (from aarch64) ───────────────────────
+#
+# Used to produce a statically-linked Linux x86_64 binary without a glibc
+# dependency.  Zig handles the cross-compilation automatically.
+#
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+ar     = "x86_64-linux-musl-ar"

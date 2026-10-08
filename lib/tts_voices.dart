@@ -24,7 +24,8 @@ class TtsVoice {
   final bool isClone;
 
   /// True = NeuTTS (Neuphonic) engine: GGUF backbone + pure-Rust codec via
-  /// our own FFI bridge, preset reference voices picked with [specIn]'s sid.
+  /// our own FFI bridge, preset reference voices picked with [specIn]'s sid
+  /// (4 MIT-licensed reference samples; seed pinned for stable output).
   final bool isNeutts;
   const TtsVoice({
     required this.id,
@@ -74,7 +75,8 @@ class TtsVoice {
         neuttsGguf: _f(modelsDir, dirName, 'neutts-nano-Q4_0.gguf'),
         neuttsDecoder: _f(modelsDir, dirName, 'neucodec_decoder.safetensors'),
         neuttsVoices: _f(modelsDir, dirName, 'voices'),
-        neuttsRefs: const ['dave', 'jo'],
+        neuttsRefs: const ['jo', 'greta', 'mateo', 'juliette'],
+        neuttsSeed: 7,
         espeakDataDir: p.join(modelsDir, 'espeak-neutts'),
         neuttsLib: neuttsLib.isNotEmpty
             ? neuttsLib

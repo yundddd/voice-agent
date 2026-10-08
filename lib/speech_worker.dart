@@ -131,6 +131,9 @@ class TtsSpec {
   final String neuttsGguf, neuttsDecoder, neuttsVoices, neuttsLib;
   final List<String> neuttsRefs;
 
+  /// Pins the NeuTTS sampler seed (null = upstream: re-randomised per synth).
+  final int? neuttsSeed;
+
   const TtsSpec.vits({
     required this.vitsModel,
     required this.vitsTokens,
@@ -149,7 +152,8 @@ class TtsSpec {
        neuttsDecoder = '',
        neuttsVoices = '',
        neuttsLib = '',
-       neuttsRefs = const [];
+       neuttsRefs = const [],
+       neuttsSeed = null;
 
   const TtsSpec.zipvoice({
     required this.zipTokens,
@@ -169,7 +173,8 @@ class TtsSpec {
        neuttsDecoder = '',
        neuttsVoices = '',
        neuttsLib = '',
-       neuttsRefs = const [];
+       neuttsRefs = const [],
+       neuttsSeed = null;
 
   const TtsSpec.neutts({
     required this.neuttsGguf,
@@ -179,6 +184,7 @@ class TtsSpec {
     required this.espeakDataDir,
     this.sid = 0,
     this.neuttsLib = '',
+    this.neuttsSeed,
   }) : kind = 'neutts',
        vitsModel = '',
        vitsTokens = '',
@@ -423,6 +429,7 @@ Future<void> _runWorker(
     sid: s.sid,
     espeakDir: s.espeakDataDir,
     libPath: s.neuttsLib,
+    seed: s.neuttsSeed,
   );
 
   /// Speaker-style count for the UI slider: presets for NeuTTS, the model's

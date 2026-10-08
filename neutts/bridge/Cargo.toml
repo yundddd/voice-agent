@@ -30,6 +30,7 @@ espeak-ng = { version = "0.1", features = ["bundled-data"] }
 # fatal for a pack-distributed .so on older Android).
 [patch.crates-io]
 llama-cpp-4 = { path = "../llama-cpp-static" }
+neutts = { path = "../neutts-0.1.1-patched" }
 
 [profile.release]
 opt-level = 3

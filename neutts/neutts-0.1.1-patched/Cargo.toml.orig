@@ -1,0 +1,171 @@
+[package]
+name = "neutts"
+version = "0.1.1"
+edition = "2021"
+authors = ["Eugene Hauptmann"]
+description = "Rust port of NeuTTS — on-device voice-cloning TTS with GGUF backbone and NeuCodec decoder"
+repository = "https://github.com/eugenehp/neutts-rs"
+homepage = "https://github.com/eugenehp/neutts-rs"
+keywords = ["tts", "text-to-speech", "voice-cloning", "gguf", "speech-synthesis"]
+license = "MIT"
+
+exclude = ["ios", "android"]
+
+# ── Feature flags ────────────────────────────────────────────────────────────
+#
+# backbone — links llama-cpp-4 (builds llama.cpp via cmake + C++ compiler).
+#            Enables load_backbone(), generate_*().
+#
+# espeak   — links libespeak-ng; enables raw-text input (text → IPA → model).
+#
+# wgpu     — Burn wgpu GPU backend for NeuCodec decoder.
+#            Tries wgpu (Metal/Vulkan/DX12) → Burn NdArray CPU → raw ndarray.
+#
+# metal / cuda — GPU acceleration for the backbone only (passed to llama-cpp-4).
+[features]
+default  = ["backbone", "fast"]
+backbone = ["dep:llama-cpp-4"]
+espeak   = ["dep:espeak-ng"]
+wgpu     = ["dep:burn"]  # GPU-accelerated NeuCodec decoder via Burn wgpu backend
+metal    = ["llama-cpp-4?/metal"]
+cuda     = ["llama-cpp-4?/cuda"]
+vulkan   = ["llama-cpp-4?/vulkan"]   # Vulkan GPU backend for the backbone (Linux/Windows)
+# verbose — when absent, llama.cpp / ggml log output is silenced at runtime.
+# Pass `--features verbose` to cargo build/run to restore the raw log stream.
+verbose  = []
+
+# ── RoPE computation mode (mutually exclusive) ────────────────────────────────
+#
+# Controls how sin/cos values are computed when building the Rotary Positional
+# Embedding tables used by the NeuCodec transformer decoder.
+#
+# fast    — degree-7/6 Horner-form polynomial with f32 range reduction.
+#           No transcendental function calls; ~6–12× fewer CPU cycles per
+#           value on platforms where hardware sin/cos is slow.
+#           Max absolute error ≈ 1 × 10⁻⁴ (well within perceptual threshold
+#           for speech synthesis).  Enabled by default.
+#
+# precise — delegates to f32::sin_cos(), which is correctly-rounded (ULP ≤ 1)
+#           on all major platforms (x86 SSE/AVX, ARM NEON, Apple Silicon).
+#           Use when bit-exact reproducibility with reference implementations
+#           is required.
+#
+# Setting both features simultaneously is a compile-time error (caught by build.rs).
+#
+# Examples:
+#   cargo run --example speak -- ...                        # fast (default)
+#   cargo run --example speak --features precise -- ...     # precise
+#   cargo run --example speak --no-default-features \
+#             --features precise -- ...                     # precise, no backbone
+fast    = []
+precise = []
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+# ── Platform-independent dependencies ────────────────────────────────────────
+
+[dependencies]
+# WAV I/O
+hound = "3"
+
+# Regex for text preprocessing, tokenisation, speech-token extraction
+fancy-regex = "0.14"
+regex = "1"
+once_cell = "1"
+
+# JSON config parsing
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Pure-Rust eSpeak NG (optional, behind `espeak` feature)
+espeak-ng = { version = "0.1", optional = true, features = ["bundled-data"] }
+
+# Random seed for sampling
+rand = "0.8"
+
+# NPY / NPZ parsing
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# SHA-256 for reference-code cache keying
+sha2 = "0.10"
+
+# Platform cache dirs
+dirs = "6"
+
+# ── NeuCodec decoder (pure-Rust CPU inference) ────────────────────────────────
+#
+# Weights are loaded at runtime from `models/neucodec_decoder.safetensors`
+# (convert once with `python scripts/convert_weights.py`).
+#
+# safetensors — loads the weight file (HuggingFace format)
+# rustfft     — ISTFT for the Vocos decoder head
+# ndarray     — tensor operations (matmul, conv1d, norms)
+safetensors = "0.5"
+rustfft = "6"
+ndarray = "0.16"
+memmap2 = "0.9"
+
+# ── Burn — GPU/CPU codec acceleration (optional, enabled by `wgpu` feature) ──
+#
+# The `wgpu` feature flag activates burn with both the wgpu (GPU) and ndarray
+# (CPU fallback) backends.  At runtime the decoder tries the wgpu backend
+# first; if no compatible GPU adapter is found it silently falls back to the
+# Burn NdArray CPU backend.  If Burn itself fails to initialise, the existing
+# pure-ndarray CPU decoder is used as a last resort.
+[dependencies.burn]
+version  = "0.20"
+optional = true
+default-features = false
+features = ["std", "wgpu", "ndarray"]
+
+# ── GGUF backbone — optional ─────────────────────────────────────────────────
+[dependencies.llama-cpp-4]
+version = "0.2.17"
+optional = true
+
+# ── Desktop-only dependencies ─────────────────────────────────────────────────
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+hf-hub = "0.5"
+
+# ── Examples ──────────────────────────────────────────────────────────────────
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+required-features = ["backbone", "espeak"]
+
+[[example]]
+name = "test_pipeline"
+path = "examples/test_pipeline.rs"
+
+[[example]]
+name = "encode_reference"
+path = "examples/encode_reference.rs"
+
+[[example]]
+name = "clone_voice"
+path = "examples/clone_voice.rs"
+required-features = ["backbone", "espeak"]
+
+[[example]]
+name = "download_models"
+path = "examples/download_models.rs"
+
+[[example]]
+name = "convert_weights"
+path = "examples/convert_weights.rs"
+
+[[example]]
+name = "debug_decode"
+path = "examples/debug_decode.rs"
+
+[[example]]
+name = "stream_pcm"
+path = "examples/stream_pcm.rs"
+required-features = ["backbone", "espeak"]

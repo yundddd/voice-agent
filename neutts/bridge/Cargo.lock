@@ -1228,8 +1228,6 @@ dependencies = [
 [[package]]
 name = "neutts"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95569110f3d2af0100f7d5094880c28827ab844a8f579bd2b8a9a9beef704073"
 dependencies = [
  "anyhow",
  "dirs",

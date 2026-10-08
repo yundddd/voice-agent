@@ -72,7 +72,7 @@ for f in neutts-nano-Q4_0.gguf LICENCE; do
     "https://huggingface.co/neuphonic/neutts-nano-q4-gguf/resolve/main/$f"
 done
 [ -f "$STAGE/LICENCE" ] && mv "$STAGE/LICENCE" "$STAGE/LICENCE-neutts-nano.txt" || true
-for v in dave jo; do
+for v in greta jo juliette mateo; do
   for e in npy txt; do
     [ -f "$STAGE/voices/$v.$e" ] || curl -sfL -o "$STAGE/voices/$v.$e" \
       "https://raw.githubusercontent.com/eugenehp/neutts-rs/main/samples/$v.$e"

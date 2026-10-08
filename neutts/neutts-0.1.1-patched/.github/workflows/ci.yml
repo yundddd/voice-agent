@@ -1,0 +1,189 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  ESPEAK_VERSION: "1.52.0"
+
+jobs:
+  # ── macOS arm64 (native) ─────────────────────────────────────────────────────
+  macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-aarch64
+
+      - name: Cache espeak-ng static lib
+        id: cache-espeak
+        uses: actions/cache@v4
+        with:
+          path: espeak-static
+          key: macos-arm64-espeak-${{ env.ESPEAK_VERSION }}-${{ hashFiles('scripts/build-espeak.sh') }}
+
+      - name: Build espeak-ng
+        if: steps.cache-espeak.outputs.cache-hit != 'true'
+        run: bash scripts/build-espeak.sh
+
+      - name: cargo check (all features)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}/espeak-static/lib
+        run: cargo check --features espeak,backbone,fast,wgpu
+
+      - name: cargo test (espeak feature)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}/espeak-static/lib
+          NEUTTS_ESPEAK_DATA_DIR: ${{ github.workspace }}/espeak-static/share/espeak-ng-data
+        run: cargo test --features espeak -- --test-threads=1
+
+  # ── Linux x86_64 (native) ────────────────────────────────────────────────────
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential git ninja-build
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
+
+      - name: Cache espeak-ng static lib
+        id: cache-espeak
+        uses: actions/cache@v4
+        with:
+          path: espeak-static
+          key: linux-x86_64-espeak-${{ env.ESPEAK_VERSION }}-${{ hashFiles('scripts/build-espeak.sh') }}
+
+      - name: Build espeak-ng
+        if: steps.cache-espeak.outputs.cache-hit != 'true'
+        run: bash scripts/build-espeak.sh
+
+      - name: cargo check (all features)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}/espeak-static/lib
+        run: cargo check --features espeak,backbone,fast,wgpu
+
+      - name: cargo test (espeak feature)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}/espeak-static/lib
+          NEUTTS_ESPEAK_DATA_DIR: ${{ github.workspace }}/espeak-static/share/espeak-ng-data
+        run: cargo test --features espeak -- --test-threads=1
+
+  # ── Windows x86_64 MSVC (native) ─────────────────────────────────────────────
+  windows-msvc:
+    name: Windows x86_64 MSVC
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable (windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-msvc-x86_64
+
+      - name: Install CMake + Ninja
+        run: |
+          choco install cmake ninja --no-progress -y
+          # Refresh PATH so cmake/ninja are visible to subsequent steps.
+          echo "C:\Program Files\CMake\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache espeak-ng static lib
+        id: cache-espeak
+        uses: actions/cache@v4
+        with:
+          path: espeak-static
+          key: windows-msvc-espeak-${{ env.ESPEAK_VERSION }}-${{ hashFiles('scripts/build-espeak-windows.ps1') }}
+
+      - name: Build espeak-ng (MSVC)
+        if: steps.cache-espeak.outputs.cache-hit != 'true'
+        # Run from a Developer shell so cl.exe / lib.exe are on PATH.
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          powershell -File scripts\build-espeak-windows.ps1
+
+      - name: cargo check (espeak feature, MSVC)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}\espeak-static\lib
+        run: cargo check --features espeak,backbone,fast,wgpu
+
+      - name: cargo test (espeak feature, MSVC)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}\espeak-static\lib
+          NEUTTS_ESPEAK_DATA_DIR: ${{ github.workspace }}\espeak-static\share\espeak-ng-data
+        run: cargo test --features espeak -- --test-threads=1
+
+  # ── Windows x86_64 GNU cross-compiled from Linux ──────────────────────────────
+  #
+  # This job validates that the crate compiles for the windows-gnu target when
+  # cross-compiled from a Linux host using MinGW-w64.  It does not run tests
+  # (cross-execution would require Wine), but the compile step is sufficient to
+  # catch ABI / link-flag regressions early.
+  windows-gnu-cross:
+    name: Windows x86_64 GNU (cross from Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + windows-gnu target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-gnu-cross
+
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+            cmake ninja-build git
+
+      - name: Cache espeak-ng static lib (windows-gnu)
+        id: cache-espeak
+        uses: actions/cache@v4
+        with:
+          path: espeak-static
+          key: windows-gnu-cross-espeak-${{ env.ESPEAK_VERSION }}-${{ hashFiles('scripts/build-espeak.sh') }}
+
+      - name: Build espeak-ng (cross to windows-gnu)
+        if: steps.cache-espeak.outputs.cache-hit != 'true'
+        run: CROSS_TARGET=x86_64-w64-mingw32 bash scripts/build-espeak.sh
+
+      - name: cargo check (espeak feature, windows-gnu)
+        env:
+          ESPEAK_LIB_DIR: ${{ github.workspace }}/espeak-static/lib
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+        run: |
+          cargo check \
+            --target x86_64-pc-windows-gnu \
+            --features espeak,backbone,fast,wgpu

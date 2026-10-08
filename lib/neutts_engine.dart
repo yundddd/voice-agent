@@ -20,6 +20,8 @@ typedef _EngineNewFn =
       ffi.Pointer<ffi.Char>,
       ffi.Pointer<ffi.Char>,
     );
+typedef _SetSeed = ffi.Int Function(ffi.Pointer<ffi.Void>, ffi.Uint32);
+typedef _SetSeedFn = int Function(ffi.Pointer<ffi.Void>, int);
 typedef _SetRefFile =
     ffi.Int Function(
       ffi.Pointer<ffi.Void>,
@@ -75,6 +77,7 @@ class NeuttsEngine {
   // loaded library lives in [_lib]).
   late final _SetDataPathFn _setEspeakDataPath;
   late final _EngineNewFn _engineNew;
+  late final _SetSeedFn _setSeed;
   late final _SetRefFileFn _setRefFile;
   late final _SynthFn _synthNative;
   late final _FreeAudioFn _freeAudio;
@@ -109,6 +112,8 @@ class NeuttsEngine {
   ///   bundled data into (Android's temp dir is not writable).
   /// * [libPath] — non-empty opens that file (host probes); empty dlopens the
   ///   APK-packaged `libneutts_bridge.so`.
+  /// * [seed] — pins the sampler seed so the first utterance after load is
+  ///   reproducible; null keeps upstream behaviour (random per synth).
   NeuttsEngine({
     required String gguf,
     required String decoder,
@@ -118,6 +123,7 @@ class NeuttsEngine {
     String lang = 'en-us',
     String espeakDir = '',
     String libPath = '',
+    int? seed,
   }) : refCount = refNames.length,
        _handle = ffi.nullptr {
     if (refNames.isEmpty) throw StateError('neutts: no reference voices');
@@ -128,6 +134,7 @@ class NeuttsEngine {
     _engineNew = dylib.lookupFunction<_EngineNew, _EngineNewFn>(
       'nt_engine_new',
     );
+    _setSeed = dylib.lookupFunction<_SetSeed, _SetSeedFn>('nt_engine_set_seed');
     _setRefFile = dylib.lookupFunction<_SetRefFile, _SetRefFileFn>(
       'nt_engine_set_reference_file',
     );
@@ -160,6 +167,14 @@ class NeuttsEngine {
     calloc.free(langPtr);
     if (h.address == 0) _fail('neutts engine load failed');
     _handle = h;
+    if (seed != null) {
+      final rc = _setSeed(h, seed);
+      if (rc != 0) {
+        _engineFree(_handle);
+        _handle = ffi.nullptr;
+        _fail('neutts set_seed failed');
+      }
+    }
 
     final name = refNames[sid.clamp(0, refNames.length - 1)];
     final npyPtr = p.join(voicesDir, '$name.npy').toNativeUtf8();

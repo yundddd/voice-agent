@@ -148,15 +148,19 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   and a bundled-espeak phonemizer, so inference is self-contained next to
   sherpa-onnx, on the same worker isolate. The bridge `.so`, the GGUF, the
   converted decoder weights and the preset voices all ride **inside the
-  voice pack** (zero APK weight); two preset reference styles (Dave/Jo)
-  are selected with the same speaker slider used by LibriTTS-R. Android
+  voice pack** (zero APK weight, ~520 MB downloaded); four preset reference
+  styles (Greta/Jo/Mateo/Juliette — the MIT-licensed reference samples of
+  the Rust port) are selected with the same speaker slider used by
+  LibriTTS-R. The sampler seed is pinned (upstream re-rolls it per call),
+  which keeps each voice's character stable between replies. Android
   (arm64) only: iOS needs a `.xcframework` build of the same crate, and
   user-voice cloning is pending the pure-Rust NeuCodec *encoder* (the
   Rust port still defers reference encoding to Python). Upstream model
   repos are gated on Hugging Face (one-time terms click + login), so the
   pack is mirrored to our GitHub release by the script above — the app
   itself only ever downloads anonymously. The reply audio is 24 kHz;
-  expect ~45 tok/s (RTF ≈1) on a mid-range phone.
+  expect ~45 tok/s (RTF ≈1) on a mid-range phone (measured RTF 0.9-1.3
+  on desktop x86; the Q8_0 backbone measured no better, so Q4 ships).
 
 ## Run
 

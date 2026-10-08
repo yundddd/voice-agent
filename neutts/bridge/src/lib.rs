@@ -108,6 +108,22 @@ pub extern "C" fn nt_engine_new(
     }
 }
 
+/// Pin the sampler's random seed.  Upstream re-randomises every
+/// [`nt_synth`] call, which makes the first utterance after load vary run to
+/// run; pinning makes that utterance (and the voice character generally)
+/// reproducible — the app pins it for stable output and tests rely on it.
+/// Returns 0, or -1 on null engine.
+#[no_mangle]
+pub extern "C" fn nt_engine_set_seed(e: *mut Engine, seed: u32) -> c_int {
+    match unsafe { e.as_mut() } {
+        Some(eng) => {
+            eng.tts.backbone.seed = Some(seed);
+            0
+        }
+        None => -1,
+    }
+}
+
 /// Set the reference voice from a `.npy` codes file plus a UTF-8 transcript
 /// text file.  Returns 0 on success, nonzero on failure.
 #[no_mangle]

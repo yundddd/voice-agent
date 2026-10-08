@@ -32,13 +32,14 @@ Future<void> main(List<String> args) async {
     vadModel: Directory('models/silero_vad.onnx').absolute.path,
   );
   final worker = await SpeechWorker.start(paths);
-  TtsSpec spec(int sid) => TtsSpec.neutts(
+  TtsSpec spec(int sid, int seed) => TtsSpec.neutts(
     neuttsGguf: gguf,
     neuttsDecoder: '$dir/neucodec_decoder.safetensors',
     neuttsVoices: '$dir/voices',
-    neuttsRefs: const ['dave', 'jo'],
+    neuttsRefs: const ['greta', 'jo', 'juliette', 'mateo'],
     espeakDataDir: '/tmp/opencode/espeak-neutts-test',
     neuttsLib: lib,
+    neuttsSeed: seed,
     sid: sid,
   );
 
@@ -68,10 +69,14 @@ Future<void> main(List<String> args) async {
     print('[file ${path.split('/').last}] "$heard"');
   }
 
-  const line = 'The quick brown fox jumps over the lazy dog near the river.';
-  for (final (i, sid) in [0, 1, 0].indexed) {
-    await worker.useTts(spec(sid));
-    await report('run$i sid${const [0, 1, 0][i]}', line);
+  const line =
+      'Hello Tim. NeuTTS nano speaking, generated entirely on this device.';
+  for (final (seed, sid) in [
+    (7, 0), (7, 1), (7, 2), (7, 3),
+    (42, 0), (42, 1), (42, 2), (42, 3),
+  ]) {
+    await worker.useTts(spec(sid, seed));
+    await report('seed$seed sid$sid', line);
   }
   for (final f in [
     'build/roundtrip_neutts.wav',

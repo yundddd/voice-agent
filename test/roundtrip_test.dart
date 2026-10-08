@@ -228,7 +228,7 @@ void main() {
         !File(bridge).existsSync() ||
         !File('$dir/neutts-nano-Q4_0.gguf').existsSync() ||
         !File('$dir/neucodec_decoder.safetensors').existsSync() ||
-        !File('$dir/voices/dave.npy').existsSync()) {
+        !File('$dir/voices/jo.npy').existsSync()) {
       // ignore: avoid_print
       print('SKIPPED: NeuTTS assets not staged under $dir');
       return;
@@ -241,12 +241,13 @@ void main() {
           neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
           neuttsDecoder: '$dir/neucodec_decoder.safetensors',
           neuttsVoices: '$dir/voices',
-          neuttsRefs: const ['dave', 'jo'],
+          neuttsRefs: const ['jo', 'mateo'],
           espeakDataDir: '/tmp/opencode/espeak-neutts-test',
           neuttsLib: bridge,
+          neuttsSeed: 7,
         ),
       );
-      expect(speakers, 2); // dave + jo presets drive the style slider
+      expect(speakers, 2); // jo + mateo presets drive the style slider
 
       const line =
           'Hello Tim. NeuTTS nano speaking, generated entirely on this device.';
@@ -280,9 +281,10 @@ void main() {
           neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
           neuttsDecoder: '$dir/neucodec_decoder.safetensors',
           neuttsVoices: '$dir/voices',
-          neuttsRefs: const ['dave', 'jo'],
+          neuttsRefs: const ['jo', 'mateo'],
           espeakDataDir: '/tmp/opencode/espeak-neutts-test',
           neuttsLib: bridge,
+          neuttsSeed: 7,
           sid: 1,
         ),
       );
