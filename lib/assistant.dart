@@ -65,6 +65,7 @@ class VoiceAssistant extends ChangeNotifier {
   int _generation = 0; // cancels in-flight responses when bumped
   Timer? _micWatchdog;
   DateTime _lastMicAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _replyStartedAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _micRecovering = false;
   bool _disposed = false;
 
@@ -212,9 +213,10 @@ class VoiceAssistant extends ChangeNotifier {
 
   void _startMicWatchdog() {
     _micWatchdog?.cancel();
-    _micWatchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+    _micWatchdog = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (_micRecovering || !_micStreamWanted) return;
-      if (DateTime.now().difference(_lastMicAt) > const Duration(seconds: 3)) {
+      if (DateTime.now().difference(_lastMicAt) >
+          const Duration(milliseconds: 1250)) {
         unawaited(_recoverMic('stalled'));
       }
     });
@@ -226,12 +228,13 @@ class VoiceAssistant extends ChangeNotifier {
     if (_micRecovering || !_micStreamWanted) return;
     _micRecovering = true;
     debugPrint('mic stream $why — reopening');
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await Future<void>.delayed(const Duration(milliseconds: 150));
     if (_disposed) return;
     try {
       await _openMicStream(); // also resets _lastMicAt and the watchdog
-      _worker?.resetVad();
-      _userSpeaking = false;
+      // Don't seed a fresh VAD while the user is mid-utterance: their
+      // in-progress segment lives in the VAD ring and stays valid.
+      if (!_userSpeaking) _worker?.resetVad();
       if (_phase == AssistantPhase.listening) {
         _status = _mode == InteractionMode.conversation
             ? 'Listening — just talk.'
@@ -302,13 +305,24 @@ class VoiceAssistant extends ChangeNotifier {
       // Barge-in: mute our own reply the instant the user talks.
       _segEchoRisk = _playerPlaying;
       _segGotAudio = false;
-      _userSpeaking = true; // set first: keeps _stopPlayback from resetting
       if (_playerPlaying) {
+        if (DateTime.now().difference(_replyStartedAt).inMilliseconds < 450) {
+          // Too early to trust: AEC has not locked yet, so this "speech" may
+          // be our own reply. Keep talking; the word-overlap echo guard still
+          // discards the resulting text, and a genuine interruption a few
+          // hundred ms later mutes us as usual.
+          notifyListeners();
+          return;
+        }
+        _userSpeaking = true; // set first: keeps _stopPlayback from resetting
         _stopPlayback();
         _generation++; // abandon the response we were speaking
         _status = 'Interrupted — go ahead.';
       } else if (_phase == AssistantPhase.transcribing) {
+        _userSpeaking = true;
         _generation++; // user resumed; drop the half-baked response
+      } else {
+        _userSpeaking = true;
       }
       if (_phase != AssistantPhase.listening &&
           _phase != AssistantPhase.error) {
@@ -394,6 +408,7 @@ class VoiceAssistant extends ChangeNotifier {
     await file.writeAsBytes(encodeWav(samples, sampleRate));
     _playFile = file.path;
     _playerPlaying = true;
+    _replyStartedAt = DateTime.now();
     _playSub = _player.onPlayerComplete.listen((_) {
       if (gen == _generation) _onPlaybackNaturalEnd();
     });
@@ -420,6 +435,7 @@ class VoiceAssistant extends ChangeNotifier {
       _status = 'Listening — just talk.';
       notifyListeners();
     }
+    _fastMicCheck();
   }
 
   void _stopPlayback() {
@@ -428,6 +444,18 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_player.stop());
     _cleanupPlayFile();
     if (!_userSpeaking) _worker?.resetVad();
+    _fastMicCheck();
+  }
+
+  /// If capture went silent during our reply (our playback is a common
+  /// trigger for Android tearing it down), reopen right now instead of
+  /// waiting for the next watchdog tick.
+  void _fastMicCheck() {
+    if (_micRecovering || !_micStreamWanted) return;
+    if (DateTime.now().difference(_lastMicAt) >
+        const Duration(milliseconds: 750)) {
+      unawaited(_recoverMic('post-reply'));
+    }
   }
 
   void _cleanupPlayFile() {

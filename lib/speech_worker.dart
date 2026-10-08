@@ -238,11 +238,17 @@ Future<void> _runWorker(
   if (p.vadModel.isNotEmpty) {
     vad = sherpa_onnx.VoiceActivityDetector(
       config: sherpa_onnx.VadModelConfig(
+        // Soft onsets (breathy vowels, "s/th" fricatives, weak plosives) need
+        // many frames to cross 0.5; by the time they do, the word attack is
+        // gone. 0.35 + a shorter min-speech makes the detector raise earlier —
+        // and sherpa's C++ layer rewinds segment starts by
+        // minSpeechDuration + 2 windows (voice-activity-detector.cc), which
+        // then comfortably covers the speech that triggered the raise.
         sileroVad: sherpa_onnx.SileroVadModelConfig(
           model: p.vadModel,
-          threshold: 0.5,
+          threshold: 0.35,
           minSilenceDuration: endpointSilence, // endpoint after N s of silence
-          minSpeechDuration: 0.25,
+          minSpeechDuration: 0.15,
           windowSize: 512,
           maxSpeechDuration: 20.0,
         ),
@@ -263,7 +269,8 @@ Future<void> _runWorker(
     while (vad != null && !vad.isEmpty()) {
       final samples = vad.front().samples;
       vad.pop();
-      if (samples.length > 16000 ~/ 4) {
+      if (samples.length > 16000 ~/ 5) {
+        // ≥ 0.2 s: ignore breaths and taps (min-speech is 0.15 s).
         toParent.send(_Event.segment(Float32List.fromList(samples)));
       }
     }
