@@ -348,8 +348,13 @@ impl NeuTTS {
         }
 
         // Decode with NeuCodec Burn decoder.
-        self.codec.decode(&speech_ids)
-            .context("NeuCodec Burn decode failed")
+        let t_dec = std::time::Instant::now();
+        let audio = self.codec.decode(&speech_ids)
+            .context("NeuCodec Burn decode failed")?;
+        if std::env::var("NEUTTS_TIMING").is_ok() {
+            eprintln!("[timing] codec decode: {:.2}s", t_dec.elapsed().as_secs_f32());
+        }
+        Ok(audio)
     }
 
     /// Decode a pre-generated sequence of speech token IDs directly to audio.

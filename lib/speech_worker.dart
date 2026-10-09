@@ -75,6 +75,97 @@ class _Event {
   _Event.note(String s) : kind = 'note', samples = null, note = s;
 }
 
+/// Split [text] into speakable chunks of at most 40 words, breaking only at
+/// sentence ends; a single sentence beyond twice that is hard-split at word
+/// boundaries, and text without sentence punctuation stays one chunk (each
+/// engine's own guards cover it: VITS caps a pass near 44 s of audio, and
+/// the Rust NeuTTS infer re-chunks defensively inside any call). Port of
+/// split_for_tts in the vendored neutts crate, same constants.
+
+List<String> splitForTts(String text) {
+  const maxWords = 40;
+  // 1. Sentences, terminators kept attached; break after [.!?] + whitespace,
+  //    end-of-text, or a closing quote/bracket. Runs like "..." or "!\""
+  //    stay with their sentence.
+  final sentences = <String>[];
+  final b = List<int>.from(
+    text.codeUnits,
+  ); // utf-16 code units; ASCII punctuation matches by code
+  var start = 0, i = 0;
+  while (i < b.length) {
+    final c = b[i];
+    final term = c == 0x2E || c == 0x21 || c == 0x3F; // . ! ?
+    final boundary =
+        term &&
+        (i + 1 == b.length ||
+            b[i + 1] == 0x20 ||
+            b[i + 1] == 0x0A ||
+            b[i + 1] == 0x09 ||
+            (i + 2 < b.length &&
+                (b[i + 1] == 0x22 || b[i + 1] == 0x27 || b[i + 1] == 0x29)));
+    if (boundary) {
+      var end = i + 1;
+      while (end < b.length &&
+          (b[end] == 0x2E ||
+              b[end] == 0x21 ||
+              b[end] == 0x3F ||
+              b[end] == 0x29 ||
+              b[end] == 0x22 ||
+              b[end] == 0x27)) {
+        end += 1;
+      }
+      sentences.add(text.substring(start, end).trim());
+      start = end;
+      while (start < b.length && _isWs(b[start])) {
+        start += 1;
+      }
+      i = start;
+      continue;
+    }
+    i += 1;
+  }
+  if (start < text.length) sentences.add(text.substring(start).trim());
+  sentences.removeWhere((s) => s.isEmpty);
+
+  final wordCount = text.trim().isEmpty ? 0 : text.trim().split(_ws).length;
+  if (sentences.length <= 1 && wordCount <= maxWords * 2) {
+    return [text.trim()];
+  }
+
+  // 2. Hard-split oversized sentences at word boundaries.
+  final units = <String>[];
+  for (final s in sentences) {
+    final words = s.split(_ws).where((w) => w.isNotEmpty).toList();
+    if (words.length <= maxWords) {
+      units.add(s);
+    } else {
+      for (var w = 0; w < words.length; w += maxWords) {
+        units.add(words.skip(w).take(maxWords).join(' '));
+      }
+    }
+  }
+
+  // 3. Greedy-pack sentences up to maxWords per chunk.
+  final chunks = <String>[];
+  final cur = <String>[];
+  var curWords = 0;
+  for (final u in units) {
+    final n = u.split(_ws).where((w) => w.isNotEmpty).length;
+    if (curWords + n > maxWords && cur.isNotEmpty) {
+      chunks.add(cur.join(' '));
+      cur.clear();
+      curWords = 0;
+    }
+    curWords += n;
+    cur.add(u);
+  }
+  if (cur.isNotEmpty) chunks.add(cur.join(' '));
+  return chunks;
+}
+
+final RegExp _ws = RegExp(r'\s+');
+bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
+
 /// A job result coming back from the worker.
 class _JobResult {
   final int id;
@@ -83,25 +174,40 @@ class _JobResult {
   final int? sampleRate;
   final String? error;
   final int number; // 'useTts': number of speakers the new engine has
+  final bool isChunk; // partial TTS audio; the pending job completes on the
+  final bool lastChunk; // last chunk of a stream (rate/flags only, no concat)
+  _JobResult.chunk(this.id, this.audio, this.sampleRate, this.lastChunk)
+    : isChunk = true,
+      text = null,
+      error = null,
+      number = 0;
   _JobResult.text(this.id, this.text)
     : audio = null,
       sampleRate = null,
       error = null,
-      number = 0;
+      number = 0,
+      isChunk = false,
+      lastChunk = false;
   _JobResult.audio(this.id, this.audio, this.sampleRate)
     : text = null,
       error = null,
-      number = 0;
+      number = 0,
+      isChunk = false,
+      lastChunk = false;
   _JobResult.ok(this.id, this.number)
     : text = null,
       audio = null,
       sampleRate = null,
-      error = null;
+      error = null,
+      isChunk = false,
+      lastChunk = false;
   _JobResult.error(this.id, this.error)
     : text = null,
       audio = null,
       sampleRate = null,
-      number = 0;
+      number = 0,
+      isChunk = false,
+      lastChunk = false;
 }
 
 /// Which TTS voice the worker should speak with — plain data so it can be
@@ -239,6 +345,8 @@ class SpeechWorker {
   final void Function(SpeechEvent)? onEvent;
 
   final Map<int, Completer<_JobResult>> _pending = {};
+  final Map<int, void Function(Float32List chunk, int sampleRate)> _chunkFans =
+      {};
   int _nextId = 0;
   Isolate? _isolate;
   SendPort? _toWorker;
@@ -263,7 +371,18 @@ class SpeechWorker {
     worker = SpeechWorker._(
       controlPort.listen((message) {
         if (message is _JobResult) {
-          worker._pending.remove(message.id)?.complete(message);
+          if (message.isChunk) {
+            worker._chunkFans[message.id]?.call(
+              message.audio!,
+              message.sampleRate!,
+            );
+            if (message.lastChunk) {
+              worker._chunkFans.remove(message.id);
+              worker._pending.remove(message.id)?.complete(message);
+            }
+          } else {
+            worker._pending.remove(message.id)?.complete(message);
+          }
         } else if (message is SendPort) {
           worker._toWorker = message;
         } else if (message == 'ready') {
@@ -326,10 +445,39 @@ class SpeechWorker {
     return result.text ?? '';
   }
 
-  Future<(Float32List samples, int sampleRate)> synthesize(String text) async {
-    final result = await _send(_Job.synthesize(++_nextId, text));
+  Future<(Float32List samples, int sampleRate)> synthesize(String text) =>
+      synthesizeStream(text);
+
+  /// Synthesises [text] in sentence chunks (see splitForTts), invoking
+  /// [onChunk] per chunk AS IT IS RENDERED — a later sentence is still
+  /// synthesising while an earlier one already plays. The returned future
+  /// resolves with the concatenation once the whole reply is done (used
+  /// verbatim when [onChunk] is null). Errors abort the stream the same way
+  /// [synthesize] used to.
+  Future<(Float32List samples, int sampleRate)> synthesizeStream(
+    String text, {
+    void Function(Float32List chunk, int sampleRate)? onChunk,
+  }) async {
+    final id = ++_nextId;
+    final parts = <Float32List>[];
+    final completer = Completer<_JobResult>();
+    _chunkFans[id] = (chunk, rate) {
+      parts.add(chunk);
+      onChunk?.call(chunk, rate);
+    };
+    _pending[id] = completer;
+    _toWorker!.send(_Job.synthesize(id, text));
+    final result = await completer.future;
+    _chunkFans.remove(id);
     if (result.error != null) throw StateError(result.error!);
-    return (result.audio!, result.sampleRate!);
+    final total = parts.fold<int>(0, (n, c) => n + c.length);
+    final out = Float32List(total);
+    var off = 0;
+    for (final c in parts) {
+      out.setRange(off, off + c.length, c);
+      off += c.length;
+    }
+    return (out, result.sampleRate ?? 24000);
   }
 
   /// Offline cleanup for a finished push-to-talk clip (high-pass + frame
@@ -348,6 +496,7 @@ class SpeechWorker {
   }
 
   void _failAll(String message) {
+    _chunkFans.clear(); // abandoned streams; the error results below release
     for (final c in _pending.values) {
       if (!c.isCompleted) c.complete(_JobResult.error(-1, message));
     }
@@ -655,29 +804,50 @@ Future<void> _runWorker(
           resetSpeechState();
           toParent.send(_JobResult.ok(message.id, numSpeakersOf(tts, spec)));
         case 'synthesize':
-          final (samples, sampleRate) = switch (spec.kind) {
-            'neutts' => (tts as NeuttsEngine).synth(message.text!),
-            'zipvoice' => () {
-              final audio = (tts as sherpa_onnx.OfflineTts).generateWithConfig(
-                text: message.text!,
-                config: sherpa_onnx.OfflineTtsGenerationConfig(
-                  referenceAudio: reference!.$1,
-                  referenceSampleRate: reference!.$2,
-                  referenceText: spec.referenceText,
-                ),
-              );
-              return (audio.samples, audio.sampleRate);
-            }(),
-            _ => () {
-              final audio = (tts as sherpa_onnx.OfflineTts).generate(
-                text: message.text!,
-                sid: spec.sid,
-                speed: 1.0,
-              );
-              return (audio.samples, audio.sampleRate);
-            }(),
-          };
-          toParent.send(_JobResult.audio(message.id, samples, sampleRate));
+          // Sentence-chunked synthesis: every engine streams piece by
+          // piece, so the assistant can start playing the first sentence
+          // while the rest is still rendering. This also keeps each VITS
+          // graph pass inside its trained length envelope — long replies
+          // measured truncated at ~44 s otherwise (length-regulator cap,
+          // separate from NeuTTS's early-EOS bug, which the Rust infer
+          // chunks internally as well). Non-final pieces get a ~62 ms
+          // silent tail: a natural sentence gap that hides the seam.
+          final pieces = splitForTts(message.text!);
+          for (var i = 0; i < pieces.length; i++) {
+            final piece = pieces[i];
+            final isLast = i == pieces.length - 1;
+            final (samples, sampleRate) = switch (spec.kind) {
+              'neutts' => (tts as NeuttsEngine).synth(piece),
+              'zipvoice' => () {
+                final audio = (tts as sherpa_onnx.OfflineTts)
+                    .generateWithConfig(
+                      text: piece,
+                      config: sherpa_onnx.OfflineTtsGenerationConfig(
+                        referenceAudio: reference!.$1,
+                        referenceSampleRate: reference!.$2,
+                        referenceText: spec.referenceText,
+                      ),
+                    );
+                return (audio.samples, audio.sampleRate);
+              }(),
+              _ => () {
+                final audio = (tts as sherpa_onnx.OfflineTts).generate(
+                  text: piece,
+                  sid: spec.sid,
+                  speed: 1.0,
+                );
+                return (audio.samples, audio.sampleRate);
+              }(),
+            };
+            var data = samples;
+            if (!isLast) {
+              data = Float32List(samples.length + sampleRate ~/ 16)
+                ..setRange(0, samples.length, samples);
+            }
+            toParent.send(
+              _JobResult.chunk(message.id, data, sampleRate, isLast),
+            );
+          }
       }
     } catch (e, s) {
       toParent.send(_JobResult.error(message.id, '$e\n$s'));

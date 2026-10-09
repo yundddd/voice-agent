@@ -78,6 +78,11 @@ class VoiceAssistant extends ChangeNotifier {
   Float32List? _lastTts; // exact audio the last synth produced (reply/preview)
   int _lastTtsRate = 16000;
   bool _debugPlaying = false;
+  // ── Streamed reply playback: chunks synthesise while earlier ones play ──
+  final List<(Float32List, int)> _replyQueue = [];
+  bool _replyStreamDone = false; // worker finished sending chunks
+  Completer<void>? _replyWake; // pokes the player loop
+  Completer<void>? _replyChunkDone; // resolves when the current chunk ends
   Completer<void>? _debugCompleted;
   StreamSubscription<void>? _debugSub;
   String? _playAsrFile;
@@ -943,27 +948,100 @@ class VoiceAssistant extends ChangeNotifier {
       }
       _segEchoRisk = false;
       _transcript = text;
-
-      final swTts = Stopwatch()..start();
-      final (audio, sampleRate) = await _worker!.synthesize(text);
-      swTts.stop();
-      _noteTts(audio, sampleRate); // kept for the debug replay button
-      if (gen != _generation) return; // user resumed during synthesis
-      _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
-      _playSeconds = audio.length / sampleRate;
-
       _lastSpoken = text;
-      _phase = AssistantPhase.speaking;
-      _status = 'Speaking: “$text” — jump in any time.';
-      notifyListeners();
-      await _playWav(audio, sampleRate, gen);
+
+      // Streamed reply: the worker renders sentence chunks and we play
+      // each one the moment it lands, so the reply STARTS speaking while
+      // later sentences are still synthesising (and no VITS pass can run
+      // long enough to hit its length cap). The status still quotes the
+      // whole reply — the text is final, only the audio streams.
+      final swTts = Stopwatch()..start();
+      _replyQueue.clear();
+      _replyStreamDone = false;
+      var sawFirstChunk = false;
+      unawaited(
+        _worker!
+            .synthesizeStream(
+              text,
+              onChunk: (chunk, sampleRate) {
+                if (gen != _generation) return; // superseded: drop on the floor
+                if (!sawFirstChunk) {
+                  sawFirstChunk = true;
+                  _phase = AssistantPhase.speaking;
+                  _status = 'Speaking: “$text” — jump in any time.';
+                  notifyListeners();
+                }
+                _replyQueue.add((chunk, sampleRate));
+                _replyWake?.complete();
+                _replyWake = null;
+              },
+            )
+            .then((result) {
+              swTts.stop();
+              _noteTts(result.$1, result.$2); // full audio: debug replay
+              if (gen != _generation) return;
+              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+              _playSeconds = result.$1.length / result.$2;
+              _replyStreamDone = true;
+              _replyWake?.complete();
+              _replyWake = null;
+            })
+            .catchError((Object e) {
+              _replyStreamDone = true;
+              _replyWake?.complete();
+              _replyWake = null;
+              if (gen == _generation) _fail('Round trip failed: $e');
+            }),
+      );
+      await _playReplyChunks(gen);
     } catch (e) {
       _fail('Round trip failed: $e');
     }
   }
 
-  Future<void> _playWav(Float32List samples, int sampleRate, int gen) async {
-    _stopPlayback(); // safety: never overlap replies
+  /// Plays streamed reply chunks in order as they arrive. Sequential
+  /// playback leaves audio-identical boundaries (the worker appends a short
+  /// silence to every non-final chunk), while the player being momentarily
+  /// idle between chunks never loosens the gate: [_playerPlaying] stays set
+  /// for the whole stream, so barge-in treats mid-synthesis gaps exactly
+  /// like a held reply.
+  Future<void> _playReplyChunks(int gen) async {
+    var firstChunk = true;
+    while (true) {
+      while (_replyQueue.isEmpty && !_replyStreamDone) {
+        await (_replyWake ??= Completer<void>()).future;
+      }
+      if (gen != _generation) {
+        _replyQueue.clear();
+        return;
+      }
+      if (_replyQueue.isEmpty) break; // stream drained and closed
+      final (chunk, sampleRate) = _replyQueue.removeAt(0);
+      firstChunk = false;
+      _replyChunkDone = Completer<void>();
+      await _playWav(
+        chunk,
+        sampleRate,
+        gen,
+        onComplete: () {
+          if (!_replyChunkDone!.isCompleted) _replyChunkDone!.complete();
+        },
+      );
+      if (gen != _generation) return; // user resumed: drop the rest
+      await _replyChunkDone!.future; // ends on natural end... or a stop
+      if (!_playerPlaying) return; // barge-in won: _stopPlayback cleaned up
+    }
+    if (firstChunk) return; // engine produced nothing (error path covers)
+    _onPlaybackNaturalEnd();
+  }
+
+  Future<void> _playWav(
+    Float32List samples,
+    int sampleRate,
+    int gen, {
+    void Function()? onComplete,
+  }) async {
+    if (onComplete == null) _stopPlayback(); // one-shot mode safety
     final dir = await getTemporaryDirectory();
     final file = File(
       p.join(dir.path, 'reply_${DateTime.now().millisecondsSinceEpoch}.wav'),
@@ -971,10 +1049,21 @@ class VoiceAssistant extends ChangeNotifier {
     await file.writeAsBytes(encodeWav(samples, sampleRate));
     _playFile = file.path;
     _playerPlaying = true;
-    _replyStartedAt = DateTime.now();
+    // _replyStartedAt marks only the FIRST chunk: the 450 ms AEC guard must
+    // not re-arm per chunk (a chunk boundary would otherwise re-open the
+    // "too early to trust an interruption" window every few seconds).
+    if (_phase != AssistantPhase.speaking ||
+        DateTime.now().difference(_replyStartedAt).inMilliseconds > 2000) {
+      _replyStartedAt = DateTime.now();
+    }
     _worker?.setPlaying(true); // gate goes hard-mode while we hear ourselves
+    await _playSub?.cancel();
     _playSub = _player.onPlayerComplete.listen((_) {
-      if (gen == _generation) _onPlaybackNaturalEnd();
+      if (onComplete != null) {
+        onComplete(); // streamed mode: _playReplyChunks decides on end
+      } else if (gen == _generation) {
+        _onPlaybackNaturalEnd();
+      }
     });
     try {
       await _player.play(DeviceFileSource(file.path));
@@ -1008,6 +1097,10 @@ class VoiceAssistant extends ChangeNotifier {
     if (!_playerPlaying) return;
     _playerPlaying = false;
     _worker?.setPlaying(false);
+    _replyQueue.clear(); // streamed reply: drop everything not yet audible
+    final cd = _replyChunkDone;
+    _replyChunkDone = null;
+    if (cd != null && !cd.isCompleted) cd.complete(); // unblock the loop
     unawaited(_player.stop());
     // Stop, not natural end: release any preview waiter right away.
     final d = _previewDone;

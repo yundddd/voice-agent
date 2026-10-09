@@ -139,7 +139,16 @@ impl BackboneModel {
                 .add(tok, i as i32, &[0], i == last_idx)
                 .context("Failed to add token to batch")?;
         }
+        // VENDORED PATCH (timing): NEUTTS_TIMING=1 splits prompt-prefill vs
+        // token-loop time — the answer to "would a GPU/NPU even help".
+        let     timing = std::env::var("NEUTTS_TIMING").is_ok();
+        let     t_pre  = std::time::Instant::now();
         ctx.decode(&mut batch).context("Prompt decode failed")?;
+        if timing {
+            eprintln!("[timing] prompt prefill: {:.2}s", t_pre.elapsed().as_secs_f32());
+        }
+        #[allow(unused_variables)]
+        let     t_gen  = std::time::Instant::now();
 
         // ── Sampler: top-k(50) → top-p(0.9) → temperature(1.0) → dist ────────
         // llama-cpp-4: top_p wired after top_k.
@@ -231,6 +240,13 @@ impl BackboneModel {
             n_cur += 1;
         }
 
+        if timing {
+            eprintln!(
+                "[timing] backbone token loop: {:.2}s ({} tokens)",
+                t_gen.elapsed().as_secs_f32(),
+                sampled
+            );
+        }
         Ok(output)
     }
 
@@ -304,7 +320,16 @@ impl BackboneModel {
                 .add(tok, i as i32, &[0], i == last_idx)
                 .context("Failed to add token to batch")?;
         }
+        // VENDORED PATCH (timing): NEUTTS_TIMING=1 splits prompt-prefill vs
+        // token-loop time — the answer to "would a GPU/NPU even help".
+        let     timing = std::env::var("NEUTTS_TIMING").is_ok();
+        let     t_pre  = std::time::Instant::now();
         ctx.decode(&mut batch).context("Prompt decode failed")?;
+        if timing {
+            eprintln!("[timing] prompt prefill: {:.2}s", t_pre.elapsed().as_secs_f32());
+        }
+        #[allow(unused_variables)]
+        let     t_gen  = std::time::Instant::now();
 
         // ── Sampler: top-k(50) → top-p(0.9) → temperature(1.0) → dist ────────
         let seed = self.seed

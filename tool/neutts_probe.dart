@@ -72,8 +72,14 @@ Future<void> main(List<String> args) async {
   const line =
       'Hello Tim. NeuTTS nano speaking, generated entirely on this device.';
   for (final (seed, sid) in [
-    (7, 0), (7, 1), (7, 2), (7, 3),
-    (42, 0), (42, 1), (42, 2), (42, 3),
+    (7, 0),
+    (7, 1),
+    (7, 2),
+    (7, 3),
+    (42, 0),
+    (42, 1),
+    (42, 2),
+    (42, 3),
   ]) {
     await worker.useTts(spec(sid, seed));
     await report('seed$seed sid$sid', line);
