@@ -618,7 +618,10 @@ class VoiceAssistant extends ChangeNotifier {
       _phase == AssistantPhase.listening ||
       (_mode == InteractionMode.conversation &&
           (_phase == AssistantPhase.transcribing ||
-              _phase == AssistantPhase.speaking));
+              _phase == AssistantPhase.speaking ||
+              // A debug replay is interruptible in conversation mode: the
+              // mic must stay open so the gate can hear a voice cutting in.
+              _debugPlaying));
 
   Future<void> _openMicStream() async {
     _chunks.clear();
@@ -705,7 +708,12 @@ class VoiceAssistant extends ChangeNotifier {
 
   void _onMicData(Uint8List bytes) {
     _lastMicAt = DateTime.now();
-    if (_debugPlaying) return; // stream stays live for the watchdog only
+    if (_debugPlaying &&
+        (_cloneCapturing || _mode != InteractionMode.conversation)) {
+      // Push-to-talk replay stays mic-deaf: tap the button again to stop.
+      // Conversation replay feeds the gate below so a voice can cut in.
+      return;
+    }
     if (_cloneCapturing) {
       // Voice-sample recorder: buffer instead of feeding VAD/PTT chunks.
       final c = pcm16ToFloat32(bytes);
@@ -767,6 +775,17 @@ class VoiceAssistant extends ChangeNotifier {
     var failed = false;
     var finished = false;
     _stopPlayback();
+    // Treat the replay like a reply for barge-in bookkeeping: hard-mode
+    // gate (+20 dB in-play bar, ~320 ms confirm streak) means our own
+    // replay through the speaker can't stop itself, but a voice cutting
+    // in can. Opens the mic too, when conversation mode isn't holding it
+    // open already.
+    _playerPlaying = true;
+    _replyStartedAt = DateTime.now();
+    _worker?.setPlaying(true);
+    if (_mode == InteractionMode.conversation && _recSub == null) {
+      await _openMicStream();
+    }
     _status = playingStatus;
     notifyListeners();
     final done = _debugCompleted = Completer<void>();
@@ -787,6 +806,14 @@ class VoiceAssistant extends ChangeNotifier {
       _fail('Debug playback failed: $e');
     } finally {
       _debugPlaying = false;
+      _playerPlaying = false;
+      _worker?.setPlaying(false);
+      // If this replay opened the mic and no conversation is holding it,
+      // close it again. Not while the user talks over the replay: their
+      // utterance is mid-flight and the turn machinery inherits the mic.
+      if (!_userSpeaking && !_micStreamWanted && _recSub != null) {
+        _shutdownAudio();
+      }
       await _debugSub?.cancel();
       _debugSub = null;
       _debugCompleted = null;
@@ -795,7 +822,10 @@ class VoiceAssistant extends ChangeNotifier {
       if (f != null) {
         unawaited(File(f).delete().catchError((_) => File(f)));
       }
-      if (!_disposed && !failed) {
+      if (!_disposed && !failed && _userSpeaking) {
+        // The replay was cut in on: leave the interruption status up to
+        // the conversation flow (it owns the phase now).
+      } else if (!_disposed && !failed) {
         if (!finished) {
           _status = _mode == InteractionMode.conversation
               ? 'Stopped.'
@@ -860,7 +890,26 @@ class VoiceAssistant extends ChangeNotifier {
       debugPrint('[worker] ${event.note}'); // gate telemetry (level/floor)
       return;
     }
-    if (_debugPlaying) return; // don't let the replay re-enter the pipeline
+    if (event.speechStarted && _debugPlaying) {
+      // A voice cut into the replay. The first 450 ms is AEC-unstable —
+      // the replay's own echo can masquerade as speech — so early
+      // candidates are ignored, exactly as for a real reply.
+      if (DateTime.now().difference(_replyStartedAt).inMilliseconds >= 450) {
+        _userSpeaking = true;
+        _segGotAudio = false;
+        _segEchoRisk = true; // the replay's tail can leak into the first words
+        _stopDebugPlayback();
+        _generation++;
+        _status = 'Interrupted — go ahead.';
+        if (_mode == InteractionMode.conversation &&
+            _phase != AssistantPhase.error) {
+          _phase = AssistantPhase.listening;
+        }
+        notifyListeners();
+      }
+      return;
+    }
+    if (_debugPlaying) return; // replay's own segments/nudges: swallow
     if (event.speechStarted) {
       // Barge-in: the SNR gate already forced this speech to sit well above
       // the echo/noise floor, so muting our reply here is safe.
@@ -902,6 +951,9 @@ class VoiceAssistant extends ChangeNotifier {
     // Speech stopped but no segment followed (too quiet/short to count as a
     // real try): nudge — unless that utterance was likely our own echo.
     _userSpeaking = false;
+    // If this mic was opened just to police a debug replay and no
+    // conversation claimed it in the meantime, let it go.
+    if (!_micStreamWanted && _recSub != null) _shutdownAudio();
     if (!_segGotAudio && !_segEchoRisk && _phase == AssistantPhase.listening) {
       _status = 'I heard a bit — say a little more?';
       notifyListeners();
@@ -1009,9 +1061,11 @@ class VoiceAssistant extends ChangeNotifier {
     _playerPlaying = false;
     _worker?.setPlaying(false);
     unawaited(_player.stop());
-    // Stop, not natural end: release any preview waiter right away.
+    // Stop, not natural end: release any preview or debug-replay waiter.
     final d = _previewDone;
     if (d != null && !d.isCompleted) d.complete();
+    final dd = _debugCompleted;
+    if (dd != null && !dd.isCompleted) dd.complete();
     _cleanupPlayFile();
     if (!_userSpeaking) _worker?.resetVad();
     _fastMicCheck();
