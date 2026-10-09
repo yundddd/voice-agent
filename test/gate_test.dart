@@ -121,22 +121,21 @@ void main() {
       expect(openedAt, inInclusiveRange(0, 2)); // well under its 160 ms budget
     });
 
-    test('a burst at +12 dB over the floor cannot interrupt a reply', () {
+    test('a burst at +16 dB over the floor cannot interrupt a reply', () {
       final g = SpeechGate(quietFloor());
       g.playbackStarted();
       // AEC lock-in window: deaf to everything under +30 dB (i.e. under
-      // -30 dBFS here). A +12 dB barge-in attempt must fail while locked.
-      for (var i = 0; i < 8; i++) {
-        g.offer(toneWindow(-48, skip: i * 512), freezeFloor: true);
+      // -30 dBFS here). A +16 dB barge-in attempt must fail while locked,
+      // and after it too: the playback bar now sits at +20 dB (-40 dBFS),
+      // because real phones feed back +14-18 dB from the speaker at high
+      // media volume and were self-tripping the interruption logic.
+      for (var i = 0; i < 20; i++) {
+        g.offer(toneWindow(-44, skip: i * 512), freezeFloor: true);
         expect(g.passes(), isFalse);
       }
-      // After lock-in the playback bar is +14 dB over the floor (-46 dBFS):
-      // a +12 dB level still fails, +16 dB (i.e. -44 dBFS) passes.
-      for (var i = 8; i < 20; i++) {
-        g.offer(toneWindow(-48, skip: i * 512), freezeFloor: true);
-        expect(g.passes(), isFalse);
-      }
-      g.offer(toneWindow(-44, skip: 9999), freezeFloor: true);
+      // A close-talk barge-in (floor -60 → voice at -32 dBFS, i.e. +28 dB)
+      // still walks straight through the +20 dB bar.
+      g.offer(toneWindow(-32, skip: 9999), freezeFloor: true);
       expect(g.passes(), isTrue);
       expect(g.held(), isFalse); // echo can never keep an utterance "alive"
     });

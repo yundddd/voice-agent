@@ -82,7 +82,7 @@ class SpeechGate {
   SpeechGate(
     this._floor, {
     this.startMarginDb = 8.0,
-    this.playbackMarginDb = 14.0,
+    this.playbackMarginDb = 20.0,
     this.warmupMarginDb = 30.0,
     this.warmupFrames = 16, // 500 ms of AEC lock-in at 32 ms frames
     this.absoluteFloorDb = -55.0,
@@ -90,6 +90,13 @@ class SpeechGate {
 
   final NoiseFloorTracker _floor;
   final double startMarginDb;
+
+  /// Bar while our reply plays. 14 dB self-fired on real phones: speaker→mic
+  /// feedback at high media volume sways ±6-8 dB around +15-18 dB above the
+  /// (pinned) floor, and every wobble through the bar risked chopping the
+  /// reply's tail. 20 dB + the worker's longer in-reply confirm streak
+  /// (see confirmStreakPlaying) keeps genuine barge-ins (close voice: +25 dB
+  /// and holding) while shrugging off echoes.
   final double playbackMarginDb;
   final double warmupMarginDb;
   final int warmupFrames;

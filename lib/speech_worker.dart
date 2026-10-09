@@ -487,6 +487,8 @@ Future<void> _runWorker(
   final gate = SpeechGate(floor);
   final holdFrames = (endpointSilence * 31.25).ceil();
   const confirmStreak = 5; // ~160 ms: filters clicks & AEC lock-in blips
+  const confirmStreakPlaying = 10; // ~320 ms mid-reply: an interruption is
+  // sustained speech; feedback sway from our own speaker is not.
 
   var gateStarted = false; // gate has raised speech for this utterance
   var passStreak = 0; // consecutive gate-passing frames
@@ -564,7 +566,12 @@ Future<void> _runWorker(
             // Speech begins when Silero and the SNR gate agree — for the
             // first 500 ms of a reply the bar sits +30 dB above the floor,
             // so the AEC lock-in leak can't self-interrupt.
-            if (detecting && passStreak >= confirmStreak) {
+            // While our reply plays, use the longer streak: the bar alone
+            // (+20 dB) still lets slow feedback swells through, but none
+            // that last under ~320 ms. A real barge-in doesn't mind the
+            // third of a second.
+            final needed = playing ? confirmStreakPlaying : confirmStreak;
+            if (detecting && passStreak >= needed) {
               gateStarted = true;
               silentFrames = 0;
               speechFrames = 0;
