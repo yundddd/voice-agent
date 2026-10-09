@@ -78,6 +78,24 @@ class VoiceAssistant extends ChangeNotifier {
   Float32List? _lastTts; // exact audio the last synth produced (reply/preview)
   int _lastTtsRate = 16000;
   bool _debugPlaying = false;
+  // Screenshot-able event ring for barge-in/edge forensics: every worker
+  // diagnostic note that matters (barge-in candidates), chunk seams, and mic
+  // lifecycle, newest last. See the debug view.
+  final List<String> _debugLog = [];
+  List<String> get debugLog => _debugLog;
+  bool _micRecoverPending = false;
+  void _logDebug(String what) {
+    final t = DateTime.now();
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    final ss = t.second.toString().padLeft(2, '0');
+    _debugLog.add('$hh:$mm:$ss $what');
+    while (_debugLog.length > 80) {
+      _debugLog.removeAt(0);
+    }
+    notifyListeners();
+  }
+
   // ── Streamed reply playback: chunks synthesise while earlier ones play ──
   final List<(Float32List, int)> _replyQueue = [];
   bool _replyStreamDone = true; // no stream in flight until _startTurn
@@ -661,6 +679,7 @@ class VoiceAssistant extends ChangeNotifier {
     );
     final stream = await _recorder.startStream(config);
     _lastMicAt = DateTime.now();
+    _micRecoverPending = false; // a fresh stream voids any deferred reopen
     _recSub = stream.listen(
       _onMicData,
       // Android can close the capture stream when our playback changes audio
@@ -674,7 +693,7 @@ class VoiceAssistant extends ChangeNotifier {
   void _startMicWatchdog() {
     _micWatchdog?.cancel();
     _micWatchdog = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (_micRecovering || !_micStreamWanted) return;
+      if (_micRecovering || _micRecoverPending || !_micStreamWanted) return;
       if (DateTime.now().difference(_lastMicAt) >
           const Duration(milliseconds: 1250)) {
         unawaited(_recoverMic('stalled'));
@@ -686,8 +705,20 @@ class VoiceAssistant extends ChangeNotifier {
   /// (common after our own playback: focus/mode/routing changes).
   Future<void> _recoverMic(String why) async {
     if (_micRecovering || !_micStreamWanted || _backgrounded) return;
+    // Reopening a voiceComm capture stream can duck or pause media playback
+    // (audio focus churn on many devices) — while our reply is audible that
+    // is worse than a temporarily deaf barge-in mic, so the reopen waits for
+    // the reply to end. PTT never bites: no stream is wanted while it plays.
+    if (_playerPlaying || _replyQueue.isNotEmpty) {
+      if (!_micRecoverPending) {
+        _micRecoverPending = true;
+        _logDebug('mic recover deferred ($why)');
+      }
+      return;
+    }
     _micRecovering = true;
     debugPrint('mic stream $why — reopening');
+    _micRecoverPending = false;
     await Future<void>.delayed(const Duration(milliseconds: 150));
     if (_disposed) return;
     try {
@@ -871,6 +902,9 @@ class VoiceAssistant extends ChangeNotifier {
   void _onSpeechEvent(SpeechEvent event) {
     if (event.note != null) {
       debugPrint('[worker] ${event.note}'); // gate telemetry (level/floor)
+      if (event.note!.startsWith('bargein: ')) {
+        _logDebug('INTERRUPT ${event.note}');
+      }
       return;
     }
     if (_debugPlaying) return; // don't let the replay re-enter the pipeline
@@ -889,6 +923,10 @@ class VoiceAssistant extends ChangeNotifier {
           return;
         }
         _userSpeaking = true; // set first: keeps _stopPlayback from resetting
+        final heardMs = DateTime.now()
+            .difference(_replyStartedAt)
+            .inMilliseconds;
+        _logDebug('kill reply after ${heardMs}ms of reply');
         _stopPlayback();
         _generation++; // abandon the response we were speaking
         _status = 'Interrupted — go ahead.';
@@ -1065,6 +1103,12 @@ class VoiceAssistant extends ChangeNotifier {
       _replyStartedAt = DateTime.now();
     }
     _worker?.setPlaying(true); // gate goes hard-mode while we hear ourselves
+    if (onComplete != null) {
+      _logDebug(
+        'chunk play ${(samples.length / sampleRate).toStringAsFixed(1)}s'
+        '${_replyQueue.isEmpty ? ' (last)' : ' +${_replyQueue.length}'}',
+      );
+    }
     await _playSub?.cancel();
     _playSub = _player.onPlayerComplete.listen((_) {
       if (onComplete != null) {
@@ -1088,6 +1132,10 @@ class VoiceAssistant extends ChangeNotifier {
   void _onPlaybackNaturalEnd() {
     if (!_playerPlaying) return;
     _playerPlaying = false;
+    if (_micRecoverPending) {
+      _logDebug('mic recover flush');
+      unawaited(_recoverMic('deferred'));
+    }
     _worker?.setPlaying(false); // gate relaxes; floor drops back to room
     _cleanupPlayFile();
     // Any utterance the VAD formed from the tail of our own reply must not
@@ -1105,6 +1153,9 @@ class VoiceAssistant extends ChangeNotifier {
     if (!_playerPlaying) return;
     _playerPlaying = false;
     _worker?.setPlaying(false);
+    if (_micRecoverPending) {
+      _micRecoverPending = false; // the _recoverMic below reloads it fresh
+    }
     _replyQueue.clear(); // streamed reply: drop everything not yet audible
     final cd = _replyChunkDone;
     _replyChunkDone = null;

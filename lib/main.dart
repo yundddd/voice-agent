@@ -265,6 +265,15 @@ class _AssistantScreenState extends State<AssistantScreen>
                         ).textTheme.labelSmall?.copyWith(color: scheme.outline),
                       ),
                     const SizedBox(height: 8),
+                    if (_debugMode && a.debugLog.isNotEmpty)
+                      SelectableText(
+                        a.debugLog.reversed.take(14).join('\n'),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: scheme.outline,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),

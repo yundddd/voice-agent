@@ -729,6 +729,18 @@ Future<void> _runWorker(
               silentFrames = 0;
               speechFrames = 0;
               speechLoud = 0;
+              if (playing) {
+                // This candidate interrupted our reply: name its acoustics
+                // so the app's debug view can tell a real cut-in from an
+                // echo/AGC leak after the fact (no more guesswork).
+                toParent.send(
+                  _Event.note(
+                    'bargein: lvl=${gate.levelDb.toStringAsFixed(0)} '
+                    'floor=${gate.noiseFloorDb.toStringAsFixed(0)} '
+                    'streak=$passStreak/$needed',
+                  ),
+                );
+              }
               toParent.send(_Event.speechStart());
             }
           } else {
