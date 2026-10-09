@@ -55,6 +55,100 @@ impl Default for GenerationConfig {
     }
 }
 
+// ── VENDORED PATCH: reply-length helpers (see NeuTTS::infer) ────────────────
+
+/// Replies up to this many words are synthesised in one pass (short replies
+/// keep single-pass prosody); longer ones are chunked at sentence borders.
+const CHUNK_WORDS: usize = 40;
+
+/// Early-EOS floor for `text`: ~8 audio tokens per spoken word (about half
+/// the model's measured speaking rate), never below MIN_EOG_TOKENS.
+fn min_eog_for(text: &str) -> u32 {
+    use crate::backbone::MIN_EOG_TOKENS;
+    (text.split_whitespace().count() as u32).saturating_mul(8).max(MIN_EOG_TOKENS)
+}
+
+/// Split `text` into speakable chunks of at most `max_words` words, breaking
+/// only at sentence ends (falling back to hard word-splits for one huge
+/// sentence).  Text without sentence punctuation stays one chunk.
+fn split_for_tts(text: &str, max_words: usize) -> Vec<String> {
+    // Sentences: keep terminators attached, break after [.!?] + whitespace
+    // (or closing quote/bracket).  Runs like "..." or "!\"" stay together.
+    let mut sentences: Vec<&str> = Vec::new();
+    {
+        let b = text.as_bytes();
+        let mut start = 0usize;
+        let mut i = 0usize;
+        while i < b.len() {
+            let term = b[i] == b'.' || b[i] == b'!' || b[i] == b'?';
+            let boundary = term && {
+                let j = i + 1;
+                j == b.len()
+                    || b[j] == b' '
+                    || b[j] == b'\n'
+                    || b[j] == b'\t'
+                    || (j + 1 < b.len() && (b[j] == b'"' || b[j] == b'\'' || b[j] == b')'))
+            };
+            if boundary {
+                let mut end = i + 1;
+                while end < b.len()
+                    && matches!(b[end], b'.' | b'!' | b'?' | b')' | b'"' | b'\'')
+                {
+                    end += 1;
+                }
+                sentences.push(text[start..end].trim());
+                start = end;
+                while start < b.len() && b[start].is_ascii_whitespace() {
+                    start += 1;
+                }
+                i = start;
+                continue;
+            }
+            i += 1;
+        }
+        if start < text.len() {
+            sentences.push(text[start..].trim());
+        }
+    }
+    let sentences: Vec<&str> = sentences.into_iter().filter(|s| !s.is_empty()).collect();
+
+    // One sentence (or none): only split when the single blob is implausibly
+    // long, so ordinary short replies keep one-pass prosody.
+    if sentences.len() <= 1 && text.split_whitespace().count() <= max_words * 2 {
+        return vec![text.trim().to_string()];
+    }
+
+    // Hard-split oversized sentences at word boundaries.
+    let mut units: Vec<String> = Vec::new();
+    for s in sentences {
+        let words: Vec<&str> = s.split_whitespace().collect();
+        if words.len() <= max_words {
+            units.push(s.to_string());
+        } else {
+            units.extend(words.chunks(max_words).map(|w| w.join(" ")));
+        }
+    }
+
+    // Greedy-pack sentences up to max_words per chunk.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    let mut cur_words = 0usize;
+    for u in units {
+        let n = u.split_whitespace().count();
+        if cur_words + n > max_words && !cur.is_empty() {
+            chunks.push(cur.join(" "));
+            cur.clear();
+            cur_words = 0;
+        }
+        cur_words += n;
+        cur.push(u);
+    }
+    if !cur.is_empty() {
+        chunks.push(cur.join(" "));
+    }
+    chunks
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NeuTTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,12 +285,37 @@ impl NeuTTS {
     /// Returns a flat `Vec<f32>` at [`SAMPLE_RATE`] Hz (24 kHz, mono).
     #[cfg(all(feature = "backbone", feature = "espeak"))]
     pub fn infer(&self, text: &str, ref_codes: &[i32], ref_text: &str) -> Result<Vec<f32>> {
-        let ref_phones   = phonemize::phonemize(ref_text, &self.language)
+        // VENDORED PATCH: two reply-length safeguards, both measured on device
+        // usage (long assistant replies):
+        //
+        // 1. Duration-aware EOS floor — ~8 audio tokens per spoken word is
+        //    about half of the model's measured rate (~16 tokens/word), so
+        //    generation cannot stop before roughly half the reply was spoken
+        //    (backbone.rs redraws the EOS roll below this floor).
+        //
+        // 2. Sentence chunking — a reply over CHUNK_WORDS words is split at
+        //    sentence boundaries and synthesised chunk by chunk.  Each chunk
+        //    gets a fresh 2048-token KV budget: unchunked, a long reply
+        //    either dies with NoKvCacheSlot (prompt + codes exhausted the
+        //    window) or hits the token cap mid-word.  Chunks are joined with
+        //    a short pause, which doubles as a natural sentence gap and
+        //    hides the codec's edge-frame seams.
+        let ref_phones = phonemize::phonemize(ref_text, &self.language)
             .context("Phonemisation of ref_text failed")?;
-        let input_phones = phonemize::phonemize(text, &self.language)
-            .context("Phonemisation of input text failed")?;
 
-        self.infer_from_ipa(&input_phones, ref_codes, &ref_phones)
+        let chunks = split_for_tts(text, CHUNK_WORDS);
+        let mut out: Vec<f32> = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            self.backbone.set_min_eog(min_eog_for(chunk));
+            let input_phones = phonemize::phonemize(chunk, &self.language)
+                .with_context(|| format!("Phonemisation of input text failed (chunk {i})"))?;
+            let audio = self.infer_from_ipa(&input_phones, ref_codes, &ref_phones)?;
+            if i > 0 {
+                out.resize(out.len() + (SAMPLE_RATE as usize) / 16, 0.0); // ~62 ms gap
+            }
+            out.extend_from_slice(&audio);
+        }
+        Ok(out)
     }
 
     /// Generate audio from pre-phonemized IPA strings.

@@ -38,6 +38,13 @@ pub const DEFAULT_N_CTX: u32 = 2048;
 /// 1-second outputs from 3-second lines.
 pub const MIN_EOG_TOKENS: u32 = 64;
 
+/// VENDORED PATCH: abort generation once this many IDENTICAL audio tokens
+/// arrive back to back.  A grinding repetition loop (measured: 60+ repeats
+/// of one codec frame) is always an artefact — real phonemes change codes
+/// every ~2-3 frames — and the duration-aware EOS floor would otherwise
+/// ride the loop out burning the whole token budget.
+pub const REPETITION_RUN: u32 = 16;
+
 /// NeuTTS GGUF backbone model.
 ///
 /// Holds the loaded [`LlamaModel`] and configuration.  A new [`LlamaContext`]
@@ -52,6 +59,10 @@ pub struct BackboneModel {
     n_ctx: u32,
     /// Random seed for the sampler.  `None` → a fresh random seed per call.
     pub seed: Option<u32>,
+    /// VENDORED PATCH: per-call floor of audio tokens that must be produced
+    /// before an EOS token may end generation.  Set via [`Self::set_min_eog`]
+    /// from the spoken-text length; defaults to [`MIN_EOG_TOKENS`].
+    min_eog: std::sync::atomic::AtomicU32,
 }
 
 impl BackboneModel {
@@ -71,7 +82,7 @@ impl BackboneModel {
         let model_params = LlamaModelParams::default();
         let model = LlamaModel::load_from_file(&backend, path, &model_params)
             .with_context(|| format!("Cannot load GGUF model: {}", path.display()))?;
-        Ok(Self { _backend: backend, model, n_ctx, seed: None })
+        Ok(Self { _backend: backend, model, n_ctx, seed: None, min_eog: std::sync::atomic::AtomicU32::new(MIN_EOG_TOKENS) })
     }
 
     /// Run the backbone on `prompt` and return the generated token string.
@@ -85,6 +96,15 @@ impl BackboneModel {
     ///
     /// For low-latency applications, prefer [`generate_streaming`](Self::generate_streaming),
     /// which delivers each text piece to a callback as soon as it is produced.
+    /// VENDORED PATCH: set the early-EOS floor for subsequent generate
+    /// calls.  `model.rs` derives it from the spoken-text length so a long
+    /// reply cannot stop after a fraction of its expected duration.  Always
+    /// at least [`MIN_EOG_TOKENS`].
+    pub fn set_min_eog(&self, tokens: u32) {
+        self.min_eog
+            .store(tokens.max(MIN_EOG_TOKENS), std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn generate(&self, prompt: &str, max_new_tokens: u32) -> Result<String> {
         // ── Create a fresh context for this inference ─────────────────────────
         let ctx_params = LlamaContextParams::default()
@@ -138,16 +158,52 @@ impl BackboneModel {
         let max_tokens = n_cur + max_new_tokens as i32;
         let mut output = String::new();
         let mut sampled: u32 = 0;
+        // VENDORED PATCH: run-length guard (see REPETITION_RUN).
+        let mut last_tok: Option<llama_cpp_4::token::LlamaToken> = None;
+        let mut rep_run  = 0u32;
 
         loop {
             // Sample the next token.
-            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-            sampler.accept(token);
+            let mut token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
-            // VENDORED PATCH: early-EOS suppression, see MIN_EOG_TOKENS.
+            // VENDORED PATCH: duration-aware early-EOS suppression.  While
+            // below the per-call floor (set_min_eog, derived from the text
+            // length), a sampled EOS is REJECTED and the roll redrawn —
+            // accepting a rejected draw only advances the sampler's RNG,
+            // never the sequence.  Eight straight EOS draws mean the model
+            // genuinely wants to stop, so the token finally wins.  (Was:
+            // accept-and-break once past a fixed MIN_EOG_TOKENS, which let
+            // mid-sentence stops truncate the reply's tail.)
+            let floor = self.min_eog.load(std::sync::atomic::Ordering::Relaxed).max(1);
+            if self.model.is_eog_token(token) && sampled + 1 < floor {
+                let mut tries = 0u32;
+                while self.model.is_eog_token(token) && tries < 8 {
+                    sampler.accept(token); // reject: advance RNG only
+                    token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                    tries += 1;
+                }
+            }
+            sampler.accept(token);
             sampled += 1;
-            if self.model.is_eog_token(token) && sampled >= MIN_EOG_TOKENS {
+            if self.model.is_eog_token(token) {
                 break;
+            }
+
+            // VENDORED PATCH: repetition-loop guard.  The duration-aware
+            // floor keeps generation alive past a premature EOS; when the
+            // model instead falls into a grinding loop, it repeats one
+            // audio token indefinitely (measured: 60+ identical frames).
+            // No natural phoneme holds an identical codec frame for
+            // REPETITION_RUN tokens (0.3 s), so cut the run and let the
+            // sentence-chunking restart the next phrase cleanly.
+            if Some(token) == last_tok {
+                rep_run += 1;
+                if rep_run >= REPETITION_RUN {
+                    break;
+                }
+            } else {
+                last_tok = Some(token);
+                rep_run = 1;
             }
 
             // Decode token bytes → UTF-8 string.
@@ -264,15 +320,51 @@ impl BackboneModel {
         let mut n_cur    = tokens.len() as i32;
         let     max_cur  = n_cur + max_new_tokens as i32;
         let mut sampled: u32 = 0;
+        // VENDORED PATCH: run-length guard (see REPETITION_RUN).
+        let mut last_tok: Option<llama_cpp_4::token::LlamaToken> = None;
+        let mut rep_run  = 0u32;
 
         loop {
-            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-            sampler.accept(token);
+            let mut token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
-            // VENDORED PATCH: early-EOS suppression, see MIN_EOG_TOKENS.
+            // VENDORED PATCH: duration-aware early-EOS suppression.  While
+            // below the per-call floor (set_min_eog, derived from the text
+            // length), a sampled EOS is REJECTED and the roll redrawn —
+            // accepting a rejected draw only advances the sampler's RNG,
+            // never the sequence.  Eight straight EOS draws mean the model
+            // genuinely wants to stop, so the token finally wins.  (Was:
+            // accept-and-break once past a fixed MIN_EOG_TOKENS, which let
+            // mid-sentence stops truncate the reply's tail.)
+            let floor = self.min_eog.load(std::sync::atomic::Ordering::Relaxed).max(1);
+            if self.model.is_eog_token(token) && sampled + 1 < floor {
+                let mut tries = 0u32;
+                while self.model.is_eog_token(token) && tries < 8 {
+                    sampler.accept(token); // reject: advance RNG only
+                    token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                    tries += 1;
+                }
+            }
+            sampler.accept(token);
             sampled += 1;
-            if self.model.is_eog_token(token) && sampled >= MIN_EOG_TOKENS {
+            if self.model.is_eog_token(token) {
                 break;
+            }
+
+            // VENDORED PATCH: repetition-loop guard.  The duration-aware
+            // floor keeps generation alive past a premature EOS; when the
+            // model instead falls into a grinding loop, it repeats one
+            // audio token indefinitely (measured: 60+ identical frames).
+            // No natural phoneme holds an identical codec frame for
+            // REPETITION_RUN tokens (0.3 s), so cut the run and let the
+            // sentence-chunking restart the next phrase cleanly.
+            if Some(token) == last_tok {
+                rep_run += 1;
+                if rep_run >= REPETITION_RUN {
+                    break;
+                }
+            } else {
+                last_tok = Some(token);
+                rep_run = 1;
             }
 
             let piece = token_to_piece(&self.model, token)?;

@@ -228,7 +228,8 @@ const ttsVoices = <TtsVoice>[
         label: 'voice: NeuTTS Nano (engine + voices)',
         url: '$_modelsRelease/neutts-nano-v1.zip',
         dirName: 'neutts-nano',
-        markerFile: 'pack-v2.ok', // sentinel: forces re-download of v1 packs
+        markerFile: 'pack-v3.ok', // sentinel: presence forces pack re-download
+        // (v2 shipped the pre-EOS-fix engine; bump on any bridge rebuild)
       ),
     ],
     isNeutts: true,
