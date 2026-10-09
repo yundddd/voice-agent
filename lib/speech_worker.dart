@@ -636,8 +636,12 @@ Future<void> _runWorker(
   final gate = SpeechGate(floor);
   final holdFrames = (endpointSilence * 31.25).ceil();
   const confirmStreak = 5; // ~160 ms: filters clicks & AEC lock-in blips
-  const confirmStreakPlaying = 10; // ~320 ms mid-reply: an interruption is
-  // sustained speech; feedback sway from our own speaker is not.
+  const confirmStreakPlaying = 14; // ~450 ms mid-reply: an interruption is
+  // sustained speech. Raised from 10 after streamed replies revealed two
+  // artefacts that ride the +20 dB bar for 300-400 ms but never talk
+  // through 450: AEC re-lock leaks when Android stalls capture across a
+  // chunk seam, and AGC gain-boost overshoot when our audio resumes after
+  // an inter-sentence gap (the auto-gain pumps up during the silence).
 
   var gateStarted = false; // gate has raised speech for this utterance
   var passStreak = 0; // consecutive gate-passing frames

@@ -80,7 +80,7 @@ class VoiceAssistant extends ChangeNotifier {
   bool _debugPlaying = false;
   // ── Streamed reply playback: chunks synthesise while earlier ones play ──
   final List<(Float32List, int)> _replyQueue = [];
-  bool _replyStreamDone = false; // worker finished sending chunks
+  bool _replyStreamDone = true; // no stream in flight until _startTurn
   Completer<void>? _replyWake; // pokes the player loop
   Completer<void>? _replyChunkDone; // resolves when the current chunk ends
   Completer<void>? _debugCompleted;
@@ -692,6 +692,14 @@ class VoiceAssistant extends ChangeNotifier {
     if (_disposed) return;
     try {
       await _openMicStream(); // also resets _lastMicAt and the watchdog
+      // Reopening the capture mid-reply is an AEC re-lock event: the fresh
+      // stream leaks speaker echo hard for a few hundred ms, and streamed
+      // replies make this common (Android stalls capture across the media
+      // hand-off of every chunk seam). Without the re-arm, the leak rides
+      // the +20 dB playback bar and our own reply interrupts itself.
+      if (_playerPlaying || _replyQueue.isNotEmpty || !_replyStreamDone) {
+        _worker?.setPlaying(true);
+      }
       // Don't seed a fresh VAD while the user is mid-utterance: their
       // in-progress segment lives in the VAD ring and stays valid.
       if (!_userSpeaking) _worker?.resetVad();
