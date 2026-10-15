@@ -115,7 +115,12 @@ Silero ever sees it:
   turn abandoned); returning to the foreground resumes it automatically.
 - **Push to talk.** Tap to start, tap to stop and send — the original
   behavior. Switchable at the top of the screen; both modes share the same
-  worker, ASR and TTS path.
+  worker, ASR and TTS path. On turn end (release / endpoint) the assistant
+  plays a 100 ms silent tick through the player: Android's output route
+  needs a moment to connect after the mic ran, and without the tick that
+  warm-up eats the reply's first word (seen as Pocket TTS "truncation at
+  the very beginning" in PTT only — the Settings preview, no active mic,
+  stayed clean).
 
 ### Voices & voice cloning
 

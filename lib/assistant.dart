@@ -600,6 +600,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (_pttPointers > 0) return; // still holding with another finger
     _pttMaxTimer?.cancel();
     _pttMaxTimer = null;
+    _warmUpRoute(); // connect the output route while we transcribe (see below)
     unawaited(_stopAndRespond());
   }
 
@@ -609,6 +610,7 @@ class VoiceAssistant extends ChangeNotifier {
     _pttPointers = 0;
     _pttMaxTimer?.cancel();
     _pttMaxTimer = null;
+    _warmUpRoute();
     unawaited(_stopAndRespond());
   }
 
@@ -947,6 +949,7 @@ class VoiceAssistant extends ChangeNotifier {
       _userSpeaking = false;
       _segGotAudio = true;
       _recordSeconds = event.segment!.length / 16000.0;
+      _warmUpRoute(); // connect the output route while we transcribe
       unawaited(_startTurn(event.segment!));
       return;
     }
@@ -1079,6 +1082,32 @@ class VoiceAssistant extends ChangeNotifier {
     }
     if (firstChunk) return; // engine produced nothing (error path covers)
     _onPlaybackNaturalEnd();
+  }
+
+  /// Play an inaudible tick through the output route the moment the user's
+  /// turn ends (PTT release / VAD endpoint), so the reply's FIRST chunk
+  /// does not pay for Android's output-route connect / call-mode ramp with
+  /// its attack — the tick warms the route while ASR and the first sentence
+  /// render. Measured: PTT replies truncated the first word (capture had
+  /// just run, so the media route was cold), while the Settings voice
+  /// preview — same synthesised bytes, no mic session before it — played
+  /// clean. Fire-and-forget: the tick's completion lands while [_playSub]
+  /// is deliberately null, so it is a no-op; a later real play() simply
+  /// preempts it if it is still going. If the round dies before any chunk
+  /// arrives, 100 ms of silence is simply inaudible.
+  void _warmUpRoute() {
+    unawaited(() async {
+      try {
+        final dir = await getTemporaryDirectory();
+        final file = File(p.join(dir.path, 'reply_warmup.wav'));
+        await file.writeAsBytes(encodeWav(Float32List(2400), 2400)); // 100 ms
+        final prev = _playSub;
+        _playSub = null; // the tick's own completion event must be a no-op
+        await prev?.cancel();
+        await _player.play(DeviceFileSource(file.path));
+        // Same path each round: it just gets overwritten, no litter.
+      } catch (_) {}
+    }());
   }
 
   Future<void> _playWav(
