@@ -188,23 +188,22 @@ List<String> mergePocketChunks(List<String> pieces) {
   return out;
 }
 
-/// Lead-in repair for one Pocket Generate output. The port's first frames
-/// decode to a low growl instead of the reference's ~0.5 s silence pre-roll
-/// (the NaN initial latent maps to a zero vector in the export, not the
-/// learned BOS the PyTorch model uses), and the attack of the first word
-/// rides inside it. Drop the warm-up region, ramp the cut in over 30 ms so
-/// no new click appears, and give playback plenty of air before speech:
-/// Android's post-capture output path (route connect, call-mode ramp,
-/// mic-teardown transition) swallows the head of the first clip of a PTT
-/// reply — measured on-device, a 400 ms lead was still not immune. 800 ms
-/// clears any plausible ramp chain, and stays natural: the reference
-/// renders themselves open on 0.06-0.9 s of silence depending on voice.
-/// Measured: the damage is confined to the first ~200 ms; at 250 ms the
-/// first word survives on every preset voice.
+/// Lead-in repair for one Pocket Generate output. Paired with the '....'
+/// text prefix (see the synthesize arm): the model itself opens with a
+/// generated pause — the port decodes the first frames of that pause as a
+/// low growl instead of silence (its NaN/zeros cold start, not the
+/// reference's BOS-primed prompt-tail state), and the pause absorbs it.
+/// Drop the first 250 ms (growl + pause head), ramp the cut in over 30 ms
+/// so the splice adds no click, and prepend a short silence so the phone's
+/// post-capture output ramp (measured ~150 ms, plus mic-teardown mute on
+/// PTT) also lands inside silence, not speech — the generated pause behind
+/// it (~0.5-0.9 s after the drop) carries the protection the 800 ms lead
+/// used to provide alone. Measured with the prefix: 10/10 head hits across
+/// presets (whisper-tiny re-transcription, first phrase WIN in 10 of 10).
 Float32List pocketLeadIn(Float32List s) {
   const rate = 24000; // Pocket is fixed at 24 kHz.
   const drop = rate * 250 ~/ 1000;
-  const lead = rate * 8 ~/ 10;
+  const lead = rate * 3 ~/ 10;
   if (s.length <= drop) return s;
   final fade = rate * 30 ~/ 1000;
   final out = Float32List(s.length - drop + lead);
@@ -977,17 +976,26 @@ Future<void> _runWorker(
             final (samples, sampleRate) = switch (spec.kind) {
               'neutts' => (tts as NeuttsEngine).synth(piece),
               'zipvoice' || 'pocket' => () {
+                final isPocket = spec.kind == 'pocket';
                 // max_frames keeps a missed EOS inside the text's natural
                 // length (0.08 s per frame, +30 frames of slack) instead of
-                // the 500-frame default = 40 s of runaway babble.
-                final extra = spec.kind == 'pocket'
+                // the 500-frame default = 40 s of runaway babble. The '....'
+                // prefix makes the model ITSELF open with a generated pause
+                // (kyutai FAQ, issue #6): the port starts speaking ~0.4 s
+                // earlier than the reference (its pooled voice embedding
+                // loses the prompt-tail pause), so without the pause the
+                // first words land inside the cold-start damage window and
+                // vanish; the pause absorbs the growl and the trim instead.
+                // silenceScale 1.0: the Dart default 0.2 would squash the
+                // generated pause (and every other silence) to 20%.
+                final extra = isPocket
                     ? <String, Object>{
-                        'max_frames': (piece.length + 30).clamp(60, 500),
+                        'max_frames': (piece.length + 35).clamp(60, 500),
                       }
                     : const <String, Object>{};
                 final audio = (tts as sherpa_onnx.OfflineTts)
                     .generateWithConfig(
-                      text: piece,
+                      text: isPocket ? '.... $piece' : piece,
                       config: sherpa_onnx.OfflineTtsGenerationConfig(
                         referenceAudio: reference!.$1,
                         referenceSampleRate: reference!.$2,
@@ -996,13 +1004,15 @@ Future<void> _runWorker(
                         referenceText: spec.kind == 'zipvoice'
                             ? spec.referenceText
                             : '',
-                        numSteps: spec.pocketNumSteps > 0
+                        numSteps:
+                            isPocket && spec.pocketNumSteps > 0
                             ? spec.pocketNumSteps
                             : 5,
+                        silenceScale: isPocket ? 1.0 : 0.2,
                         extra: extra,
                       ),
                     );
-                return spec.kind == 'pocket'
+                return isPocket
                     ? (pocketLeadIn(audio.samples), audio.sampleRate)
                     : (audio.samples, audio.sampleRate);
               }(),

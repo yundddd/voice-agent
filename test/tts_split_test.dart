@@ -89,21 +89,22 @@ void main() {
 
   test('pocket lead-in drops the warm-up growl and fades the cut', () {
     // 1.0 full-scale square through the drop region, then the 'speech' that
-    // must survive, minus 250 ms, plus an 800 ms silence lead and 30 ms
-    // fade.
+    // must survive, minus 250 ms, plus a 300 ms silence lead and 30 ms
+    // fade (the generated '....' pause behind it carries the rest — see the
+    // pocket synthesize arm).
     final s = Float32List(24000 * 2); // 1 s at 24 kHz
     for (var i = 1000; i < s.length; i++) {
       s[i] = 0.5; // 'Hello' content starts 42 ms in
     }
     final out = pocketLeadIn(s);
-    expect(out.length, s.length - 6000 + 19200);
-    // First 800 ms is the inserted silence (clears the post-capture output
-    // path's connect/ramp, so the attack is never in the chew zone):
-    expect(out.getRange(0, 19200).every((v) => v == 0), isTrue);
+    expect(out.length, s.length - 6000 + 7200);
+    // First 300 ms is the inserted silence (covers the post-capture output
+    // ramp; the model-generated pause behind it covers the rest):
+    expect(out.getRange(0, 7200).every((v) => v == 0), isTrue);
     // The fade opens soft (no click at the splice):
-    expect(out[19200], lessThan(0.01));
+    expect(out[7200], lessThan(0.01));
     // ...and the surviving content is intact after fade + lead:
-    expect(out.sublist(19200 + 720 + 1, out.length).every((v) => v == 0.5),
+    expect(out.sublist(7200 + 720 + 1, out.length).every((v) => v == 0.5),
         isTrue);
     // Runt outputs are passed through untouched rather than emptied:
     final tiny = Float32List.fromList([0.1, 0.2, 0.3]);

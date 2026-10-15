@@ -62,3 +62,26 @@ silently switching to the 500-frame default.
 Happy to re-run any experiment against a branch — I have the full A/B harness
 (official pytorch renders vs sherpa renders, whisper-tiny re-transcription,
 onset RMS profiles) for all six presets.
+
+## Addendum (2026-10-15): port opens ~0.4 s too early, not just noisy
+Further A/B (official pytorch `generate_audio` vs `generate_audio_stream`
+vs sherpa, same 6 prompts, same text): the OFFICIAL renders — offline AND
+streaming — all keep a true-silence pre-roll (first-loud at 57-917 ms,
+voice-dependent); sherpa renders start at full amplitude at 0.2-1 ms on
+every voice/draw/knob (temperature 0.3/0.7, num_steps 2/5,
+silence_scale 1/0.2, chunk_size 15/500, seeds 0-21). So the cold-start
+failure has a timing component, not only an artifact component:
+`GetVoiceEmbedding` collapses the reference to one pooled frame, so
+lm_main never sees the prompt ending in its trailing pause (the official
+continuation state does — that pause IS the pre-roll), and the model
+answers ~2-5 frames early, putting the first word's attack inside the
+corrupted frames. That also explains why short openers ("Sure!") are
+devastated while long first phrases only lose their first syllable.
+App-side workaround that fully fixed the audible symptom (measured
+whisper-tiny head-hits 10/10 across all six presets): text prefix
+'.... ' (model-generated pause per kyutai FAQ, kyutai-labs/pocket-tts#6)
++ silence_scale 1.0 (the default 0.2 squashes it) + drop the first
+250 ms + 30 ms fade + 300 ms inserted silence. A proper runtime-side fix
+would keep the full per-frame prompt state for the voice conditioning
+(prepend BOS + feed prompt codes as a sequence) instead of one pooled
+embedding step; happy to test a branch.

@@ -183,23 +183,37 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   with 2 flow steps (the decoder ships one-step distilled). Cloning your
   own voice through this engine only needs the wav — no transcript — so
   wiring the record UI to a pocket spec is a small follow-up.
-  One port caveat to know before judging a recording: the k2-fsa ONNX
-  export cold-starts differently from the PyTorch reference (sherpa's
-  NaN initial latent maps to zeros, and the voice prompt is fed without
-  the learned BOS embedding that `insert_bos_before_voice` prescribes —
-  see kyutai's `flow_lm.py::VoicePrompt`). The reference emits a clean
-  ~0.5 s silence pre-roll before the first word; the export emits a low
-  growl that swallows the attack, so speech seemed cut off at sample 0.
-  Worked around in `SpeechWorker` (pocket arm): `mergePocketChunks`
-  (runt pieces misbehave — a 2-word piece garbles the first syllable
-  and a missed EOS decodes 40 s of babble), a per-piece `max_frames`
-  cap, and `pocketLeadIn` (drop the first 250 ms of growl, 30 ms fade,
-  100 ms of air before speech). After that the body of every sentence
-  is clean at RTF ~0.1; the first syllable of the first word can still
-  be soft on some draws — re-audition if kyutai or k2-fsa fix the
-  export, then the workaround can retire (`pocketLeadIn` is a single
-  function). The official PyTorch renders under `ref6_*.wav` make the
-  A/B audition trivial.
+One port caveat to know before judging a recording: the k2-fsa ONNX
+  export cold-starts differently from the PyTorch reference (sherpa's NaN
+  initial latent maps to zeros, and the voice prompt is fed without the
+  learned BOS embedding that `insert_bos_before_voice` prescribes — see
+  kyutai's `flow_lm.py::VoicePrompt`). Worse, the single pooled voice
+  embedding loses the prompt's trailing-pause state, so the port starts
+  speaking ~0.4 s earlier than the reference — inside its own
+  growl-corrupted first frames. The reference emits a clean ~0.5 s
+  silence pre-roll before the first word; the export emits a low growl
+  that swallows the attack, and the first words read as truncated
+  (identically in PTT, conversation mode, and debug replay — proving the
+  damage is in the *content*, not the playback path). Worked around in
+  `SpeechWorker` (pocket arm, validated by whisper-tiny re-transcription
+  of all six presets): every Generate call's text gets a `'.... '` prefix
+  so the model *itself* opens with a generated pause (kyutai's own FAQ,
+  issue #6) — plus `silenceScale: 1.0`, because the Dart default 0.2
+  would squash that pause; `mergePocketChunks` (runt pieces misbehave — a
+  one-word answer decodes to '[sound]', and a missed EOS babble-decoded
+  40 s on michael); a per-piece `max_frames` cap so any runaway EOS
+  self-limits; and `pocketLeadIn` (drop the first 250 ms — the growl now
+  dies inside the pause; 30 ms fade so the splice adds no click; 300 ms
+  inserted silence so the phone's post-capture output ramp — ~150 ms,
+  plus mic-teardown mute — lands in silence too, with the
+  model-generated pause behind it carrying the protection). The assistant
+  additionally holds the output route open with inaudible silence from
+  turn end until the first chunk (insurance for the same ramp; helps
+  every engine). First phrase then lands intact in re-transcription on
+  every measured draw (10/10 heads; RTF unchanged at ~0.11). If kyutai or
+  k2-fsa fix the export, these workarounds retire one function at a time;
+  the official renders under `ref6_*.wav` make the A/B audition trivial.
+  
 
 ## Run
 
