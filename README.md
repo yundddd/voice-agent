@@ -24,7 +24,7 @@ alternatives considered:
 | Runtime | **sherpa-onnx**; whisper.cpp (+FfiWhisper/whisper_plus); ML Kit (Android STT / iOS Speech — partly server-backed); Vosk (aging, weak TTS story); Picovoice/Cobalt (commercial licensing) | sherpa-onnx covers ASR **and** TTS **and** VAD from one plugin, ONNX-wide model zoo, no licensing issues |
 | ASR (English) | **Whisper tiny.en** (~100 MB int8 shipped here); Moonshine tiny (≈20 MB, faster, streaming-capable); NeMo Parakeet TDT 0.6B v2/v3 int8 (~110 MB, best accuracy/latency trade-off, up to 25 EU languages for v3); zipformer transducers (true streaming, small variants); SenseVoice (zh/en/ja/ko/yue) | Started with Whisper tiny.en: robust and simple. For a real assistant, next step is **Moonshine** or a **streaming zipformer transducer** for lower latency partial transcripts; Parakeet v2 if accuracy matters more than size |
 | ASR (multilingual) | SenseVoice, Qwen3-ASR 0.6B int8, FireRed ASR 2 CTC, zipformer bilingual | Swap-in via `ModelPaths` + worker config, no other code changes |
-| TTS | **Piper VITS** (`en_US-lessac-medium`, this prototype; `amy-low` also downloaded — swap by replacing the asset zip); Matcha-icefall (smaller/faster, phoneme lexicon, no espeak dir); Kokoro-82M (top quality at ≈330 MB int8 on mobile, too heavy for now); MeloTTS (multilingual); Pocket TTS (new, very small); silero/supertonic (commercial license traps) | Piper medium is the quality/size sweet spot (61 MB model + 19 MB espeak-ng-data) and runs ~20–70× faster than real time on desktop CPU; expect real-time or better even on mid-range phones. Kokoro is the upgrade path |
+| TTS | **Piper VITS** (`en_US-lessac-medium`, this prototype; `amy-low` also downloaded — swap by replacing the asset zip); Matcha-icefall (smaller/faster, phoneme lexicon, no espeak dir); Kokoro-82M (top quality at ≈330 MB int8 on mobile, too heavy for now); MeloTTS (multilingual); **Pocket TTS** (Kyutai 100M zero-shot clone — shipped as a downloadable voice, sherpa-onnx support since v1.12.24); silero/supertonic (commercial license traps) | Piper medium is the quality/size sweet spot (61 MB model + 19 MB espeak-ng-data) and runs ~20–70× faster than real time on desktop CPU; expect real-time or better even on mid-range phones. Pocket TTS adds reference-voice cloning inside sherpa itself; Kokoro is the remaining upgrade path |
 | VAD | **Silero VAD** (0.6 MB, bundled in the APK) | Wired in for conversation-mode endpointing (1 s pause = stop) and barge-in detection. Tuned to `threshold 0.35 / minSpeechDuration 0.15`: Silero only raises after speech sustains past the threshold, and sherpa rewinds segment starts by `minSpeechDuration + 2 windows` (`voice-activity-detector.cc`), so a lower threshold raises earlier and the rewind fully covers the attack — no clipped beginnings (`tool/onset_probe.dart` checks exactly this). `minSilenceDuration` remains the endpointing knob |
 
 Measured on this dev machine (Intel, 4 threads, debug FFI — phones will be slower but still far under real-time):
@@ -161,6 +161,23 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   itself only ever downloads anonymously. The reply audio is 24 kHz;
   expect ~45 tok/s (RTF ≈1) on a mid-range phone (measured RTF 0.9-1.3
   on desktop x86; the Q8_0 backbone measured no better, so Q4 ships).
+- **Pocket TTS** (Kyutai). A 100M-parameter zero-shot cloning model that
+  runs *inside the existing sherpa-onnx engine* (PocketTTS support since
+  v1.12.24) — no second native stack this time: the voice pack is plain
+  model data, so the whole APK weight of the feature is one catalogue row.
+  `tool/build_pocket_pack.sh` mirrors the public k2-fsa ONNX export of
+  `kyutai/pocket-tts` (the HF repo itself is gated behind a terms click —
+  one-time, login + acknowledge on the model page; the export is not) and
+  six reference wavs from the ungated `kyutai/tts-voices` repo (Jane,
+  Anna, Jean, Michael, Alba, Bill Boerst — CC-BY-4.0), zipped to ~105 MB
+  with a `pack-v1.ok` sentinel and uploaded to our GitHub release; the app
+  again only ever downloads anonymously. Like the NeuTTS presets, the six
+  voices ride the speaker slider (`useTts` returns the reference count);
+  the native layer resamples each reference to 24 kHz and caps it at 10 s,
+  so presets of any upstream rate are fine. Output is 24 kHz, generated
+  with 2 flow steps (the decoder ships one-step distilled). Cloning your
+  own voice through this engine only needs the wav — no transcript — so
+  wiring the record UI to a pocket spec is a small follow-up.
 
 ## Run
 
@@ -196,7 +213,15 @@ LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x
 
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
   dart run tool/clone_probe.dart      # ZipVoice clone + Whisper intelligibility check
+
+LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
+  dart run tool/pocket_probe.dart     # Pocket TTS presets + Whisper intelligibility check
 ```
+
+(`tool/build_pocket_pack.sh` stages the Pocket voice pack from the public
+k2-fsa ONNX export + ungated kyutai/tts-voices wavs and, with the `upload`
+argument, publishes it to the same GitHub release; re-run it before
+`pocket_probe.dart` if `/tmp/opencode/pocket-pack` is gone.)
 
 (The clone leg of `roundtrip_test.dart` runs when the extracted ZipVoice
 pack + `vocos_24khz.onnx` sit under `/tmp/opencode` — see the k2-fsa

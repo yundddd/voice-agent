@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/audio_io.dart';
 import 'package:voice_agent/model_paths.dart';
 import 'package:voice_agent/speech_worker.dart';
+import 'package:voice_agent/tts_voices.dart' show TtsVoice;
 
 void main() {
   final asrDir = Directory('models/sherpa-onnx-whisper-tiny.en').absolute.path;
@@ -309,6 +310,92 @@ void main() {
         expect(hits, greaterThan(3));
         preset++;
       }
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 8)));
+
+  // Pocket TTS leg: hot-swaps to the sherpa-onnx PocketTTS engine (Kyutai
+  // ONNX export) and verifies the preset references clone through Whisper.
+  // Skipped until the pack is staged: run tool/build_pocket_pack.sh (assets
+  // land under POCKET_DIR, default /tmp/opencode/pocket-pack/pocket-tts).
+  test('TTS voice swap: Piper -> Pocket TTS speaks preset voices', () async {
+    final dir =
+        Platform.environment['POCKET_DIR'] ??
+        '/tmp/opencode/pocket-pack/pocket-tts';
+    final refs = TtsVoice.pocketRefs;
+    TtsSpec spec(int sid) => TtsSpec.pocket(
+      pocketLmFlow: '$dir/lm_flow.int8.onnx',
+      pocketLmMain: '$dir/lm_main.int8.onnx',
+      pocketEncoder: '$dir/encoder.onnx',
+      pocketDecoder: '$dir/decoder.int8.onnx',
+      pocketTextConditioner: '$dir/text_conditioner.onnx',
+      pocketVocabJson: '$dir/vocab.json',
+      pocketTokenScoresJson: '$dir/token_scores.json',
+      referenceWav: '$dir/voices/${refs[sid]}.wav',
+      pocketRefs: refs,
+      sid: sid,
+    );
+    if (!haveModels ||
+        !File('$dir/lm_main.int8.onnx').existsSync() ||
+        !File('$dir/voices/${refs.first}.wav').existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: Pocket TTS assets not staged under $dir');
+      return;
+    }
+
+    final worker = await SpeechWorker.start(paths);
+    try {
+      final speakers = await worker.useTts(spec(0));
+      expect(speakers, refs.length); // references drive the style slider
+
+      const line =
+          'Hello Tim. Pocket TTS speaking, generated entirely on this device.';
+      final sw = Stopwatch()..start();
+      final (audio, sampleRate) = await worker.synthesize(line);
+      sw.stop();
+      final seconds = audio.length / sampleRate;
+      // ignore: avoid_print
+      print(
+        'pocket TTS: ${seconds.toStringAsFixed(1)}s generated in '
+        '${sw.elapsedMilliseconds} ms '
+        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+      );
+      expect(audio.length, greaterThan(sampleRate));
+      expect(sampleRate, 24000); // Pocket's output rate
+
+      File('build/roundtrip_pocket.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio, sampleRate));
+
+      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
+      final hits = line
+          .split(' ')
+          .where((w) => w.length > 3)
+          .where((w) => heard.contains(w.toLowerCase()))
+          .length;
+      // ignore: avoid_print
+      print('pocket ASR: "$heard" ($hits long words matched)');
+      expect(hits, greaterThan(3));
+
+      // Second preset sounds different but is equally intelligible.
+      await worker.useTts(spec(2));
+      final (audio2, _) = await worker.synthesize(line);
+      File('build/roundtrip_pocket_jean.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
+      final heard2 = (await worker.transcribe(
+        audio2,
+        sampleRate,
+      )).toLowerCase();
+      final hits2 = line
+          .split(' ')
+          .where((w) => w.length > 3)
+          .where((w) => heard2.contains(w.toLowerCase()))
+          .length;
+      // ignore: avoid_print
+      print('pocket ASR (jean): "$heard2" ($hits2 long words matched)');
+      expect(hits2, greaterThan(3));
     } finally {
       worker.dispose();
     }

@@ -224,8 +224,12 @@ class _JobResult {
 ///   backbone [neuttsGguf] + NeuCodec decoder [neuttsDecoder] speak using a
 ///   preset reference from [neuttsVoices]/[neuttsRefs] (picked by [sid]).
 ///   Runs through [NeuttsEngine], not sherpa-onnx.
+/// * `kind: 'pocket'` — Kyutai Pocket TTS (ONNX export) via sherpa-onnx:
+///   the AR backbone + flow-matched decoder files speak in the voice of
+///   [referenceWav], a preset picked by [sid] out of [pocketRefs].
+///   Zero-shot cloning needs no reference transcript (unlike ZipVoice).
 class TtsSpec {
-  final String kind; // 'vits' | 'zipvoice' | 'neutts'
+  final String kind; // 'vits' | 'zipvoice' | 'neutts' | 'pocket'
   final String vitsModel, vitsTokens, espeakDataDir;
   final String zipTokens, zipEncoder, zipDecoder, zipDataDir, zipLexicon;
   final String vocoder;
@@ -239,6 +243,17 @@ class TtsSpec {
 
   /// Pins the NeuTTS sampler seed (null = upstream: re-randomised per synth).
   final int? neuttsSeed;
+
+  // kind == 'pocket': the five ONNX graphs + tokenizer data of the Kyutai
+  // Pocket TTS export (sherpa-onnx file set). No espeak: Pocket tokenises
+  // text itself; referenceWav carries the preset reference picked by sid
+  // out of pocketRefs (cloning needs no reference transcript, unlike
+  // ZipVoice). pocketNumSteps = flow-matching steps (Kyutai distilled the
+  // decoder to one step: 2 is plenty; 0 = sherpa's default of 5).
+  final String pocketLmFlow, pocketLmMain, pocketEncoder, pocketDecoder;
+  final String pocketTextConditioner, pocketVocabJson, pocketTokenScoresJson;
+  final List<String> pocketRefs;
+  final int pocketNumSteps;
 
   const TtsSpec.vits({
     required this.vitsModel,
@@ -259,7 +274,16 @@ class TtsSpec {
        neuttsVoices = '',
        neuttsLib = '',
        neuttsRefs = const [],
-       neuttsSeed = null;
+       neuttsSeed = null,
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
 
   const TtsSpec.zipvoice({
     required this.zipTokens,
@@ -280,7 +304,16 @@ class TtsSpec {
        neuttsVoices = '',
        neuttsLib = '',
        neuttsRefs = const [],
-       neuttsSeed = null;
+       neuttsSeed = null,
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
 
   const TtsSpec.neutts({
     required this.neuttsGguf,
@@ -301,7 +334,46 @@ class TtsSpec {
        zipLexicon = '',
        vocoder = '',
        referenceWav = '',
-       referenceText = '';
+       referenceText = '',
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
+
+  const TtsSpec.pocket({
+    required this.pocketLmFlow,
+    required this.pocketLmMain,
+    required this.pocketEncoder,
+    required this.pocketDecoder,
+    required this.pocketTextConditioner,
+    required this.pocketVocabJson,
+    required this.pocketTokenScoresJson,
+    required this.referenceWav,
+    required this.pocketRefs,
+    this.sid = 0,
+    this.pocketNumSteps = 2,
+  }) : kind = 'pocket',
+       vitsModel = '',
+       vitsTokens = '',
+       espeakDataDir = '',
+       zipTokens = '',
+       zipEncoder = '',
+       zipDecoder = '',
+       zipDataDir = '',
+       zipLexicon = '',
+       vocoder = '',
+       referenceText = '',
+       neuttsGguf = '',
+       neuttsDecoder = '',
+       neuttsVoices = '',
+       neuttsLib = '',
+       neuttsRefs = const [],
+       neuttsSeed = null;
 }
 
 /// One-way speech pipeline notification.
@@ -561,7 +633,18 @@ Future<void> _runWorker(
                 lexicon: s.zipLexicon,
               )
             : const sherpa_onnx.OfflineTtsZipVoiceModelConfig(),
-        numThreads: s.kind == 'zipvoice' ? 4 : 2,
+        pocket: s.kind == 'pocket'
+            ? sherpa_onnx.OfflineTtsPocketModelConfig(
+                lmFlow: s.pocketLmFlow,
+                lmMain: s.pocketLmMain,
+                encoder: s.pocketEncoder,
+                decoder: s.pocketDecoder,
+                textConditioner: s.pocketTextConditioner,
+                vocabJson: s.pocketVocabJson,
+                tokenScoresJson: s.pocketTokenScoresJson,
+              )
+            : const sherpa_onnx.OfflineTtsPocketModelConfig(),
+        numThreads: (s.kind == 'zipvoice' || s.kind == 'pocket') ? 4 : 2,
         debug: false,
         provider: 'cpu',
       ),
@@ -581,17 +664,21 @@ Future<void> _runWorker(
     seed: s.neuttsSeed,
   );
 
-  /// Speaker-style count for the UI slider: presets for NeuTTS, the model's
+  /// Speaker-style count for the UI slider: reference presets for NeuTTS
+  /// and Pocket (zero-shot engines expose no speaker table), the model's
   /// speaker count for Piper/VITS.
-  int numSpeakersOf(Object engine, TtsSpec s) => s.kind == 'neutts'
-      ? (engine as NeuttsEngine).refCount
-      : (engine as sherpa_onnx.OfflineTts).numSpeakers;
+  int numSpeakersOf(Object engine, TtsSpec s) => switch (s.kind) {
+    'neutts' => (engine as NeuttsEngine).refCount,
+    'pocket' => s.pocketRefs.length,
+    _ => (engine as sherpa_onnx.OfflineTts).numSpeakers,
+  };
 
-  // Cloned voice: reference wav decoded once per engine (samples + rate).
+  // Cloned voice + Pocket presets: reference wav decoded once per engine
+  // (samples + rate). Pocket resamples the reference internally to 24 kHz.
   (Float32List, int)? reference;
   void loadReference(TtsSpec s) {
     reference = null;
-    if (s.kind != 'zipvoice') return;
+    if (s.kind != 'zipvoice' && s.kind != 'pocket') return;
     final (samples, sampleRate) = decodeWav(
       File(s.referenceWav).readAsBytesSync(),
     );
@@ -834,14 +921,21 @@ Future<void> _runWorker(
             final isLast = i == pieces.length - 1;
             final (samples, sampleRate) = switch (spec.kind) {
               'neutts' => (tts as NeuttsEngine).synth(piece),
-              'zipvoice' => () {
+              'zipvoice' || 'pocket' => () {
                 final audio = (tts as sherpa_onnx.OfflineTts)
                     .generateWithConfig(
                       text: piece,
                       config: sherpa_onnx.OfflineTtsGenerationConfig(
                         referenceAudio: reference!.$1,
                         referenceSampleRate: reference!.$2,
-                        referenceText: spec.referenceText,
+                        // ZipVoice speaks the reference *transcript*; Pocket
+                        // takes the voice from the wav alone.
+                        referenceText: spec.kind == 'zipvoice'
+                            ? spec.referenceText
+                            : '',
+                        numSteps: spec.pocketNumSteps > 0
+                            ? spec.pocketNumSteps
+                            : 5,
                       ),
                     );
                 return (audio.samples, audio.sampleRate);

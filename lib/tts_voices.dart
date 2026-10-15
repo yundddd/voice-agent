@@ -27,6 +27,10 @@ class TtsVoice {
   /// our own FFI bridge, preset reference voices picked with [specIn]'s sid
   /// (4 MIT-licensed reference samples; seed pinned for stable output).
   final bool isNeutts;
+
+  /// True = Kyutai Pocket TTS (sherpa-onnx ONNX export): zero-shot clone from
+  /// a bundled reference wav per preset — sid picks it, no transcript needed.
+  final bool isPocket;
   const TtsVoice({
     required this.id,
     required this.label,
@@ -37,7 +41,19 @@ class TtsVoice {
     this.vitsTokens = 'tokens.txt',
     this.isClone = false,
     this.isNeutts = false,
+    this.isPocket = false,
   });
+
+  /// Pocket TTS preset references (`voices/<name>.wav` in the pack, in slider
+  /// order). Wavs from the ungated kyutai/tts-voices repo (CC-BY-4.0).
+  static const pocketRefs = [
+    'jane', // f, conversation
+    'anna', // f, conversation
+    'jean', // m, conversation
+    'michael', // m, conversation
+    'alba', // m, reading
+    'bill_boerst', // m, reading
+  ];
 
   String get dirName => packs.first.dirName;
 
@@ -81,6 +97,27 @@ class TtsVoice {
         neuttsLib: neuttsLib.isNotEmpty
             ? neuttsLib
             : _f(modelsDir, dirName, 'libneutts_bridge.so'),
+        sid: sid,
+      );
+    }
+    if (isPocket) {
+      // sherpa-onnx's PocketTTS engine: reference wav alone (no transcript),
+      // resampled to 24 kHz and capped at 10 s inside the native layer.
+      final refs = pocketRefs;
+      return TtsSpec.pocket(
+        pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.int8.onnx'),
+        pocketLmMain: _f(modelsDir, dirName, 'lm_main.int8.onnx'),
+        pocketEncoder: _f(modelsDir, dirName, 'encoder.onnx'),
+        pocketDecoder: _f(modelsDir, dirName, 'decoder.int8.onnx'),
+        pocketTextConditioner: _f(modelsDir, dirName, 'text_conditioner.onnx'),
+        pocketVocabJson: _f(modelsDir, dirName, 'vocab.json'),
+        pocketTokenScoresJson: _f(modelsDir, dirName, 'token_scores.json'),
+        pocketRefs: refs,
+        referenceWav: _f(
+          modelsDir,
+          dirName,
+          'voices/${refs[sid.clamp(0, refs.length - 1)]}.wav',
+        ),
         sid: sid,
       );
     }
@@ -190,6 +227,24 @@ const ttsVoices = <TtsVoice>[
       ),
     ],
     vitsModel: 'en_US-libritts_r-medium.onnx',
+  ),
+  TtsVoice(
+    id: 'pocket',
+    label: 'Pocket TTS',
+    note:
+        'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
+        'Michael/Alba/Bill) once loaded; any one of them also clones from a '
+        'recording later. Runs on the shared sherpa-onnx engine.',
+    sizeLabel: '~200 MB',
+    packs: [
+      ModelPack(
+        label: 'voice: Pocket TTS (engine + voices)',
+        url: '$_modelsRelease/pocket-tts-v1.zip',
+        dirName: 'pocket-tts',
+        markerFile: 'pack-v1.ok', // sentinel: bump to force pack re-download
+      ),
+    ],
+    isPocket: true,
   ),
   TtsVoice(
     id: 'clone',
