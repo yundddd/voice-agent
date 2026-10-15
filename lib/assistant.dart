@@ -1084,23 +1084,24 @@ class VoiceAssistant extends ChangeNotifier {
     _onPlaybackNaturalEnd();
   }
 
-  /// Play an inaudible tick through the output route the moment the user's
-  /// turn ends (PTT release / VAD endpoint), so the reply's FIRST chunk
-  /// does not pay for Android's output-route connect / call-mode ramp with
-  /// its attack — the tick warms the route while ASR and the first sentence
-  /// render. Measured: PTT replies truncated the first word (capture had
-  /// just run, so the media route was cold), while the Settings voice
-  /// preview — same synthesised bytes, no mic session before it — played
-  /// clean. Fire-and-forget: the tick's completion lands while [_playSub]
-  /// is deliberately null, so it is a no-op; a later real play() simply
-  /// preempts it if it is still going. If the round dies before any chunk
-  /// arrives, 100 ms of silence is simply inaudible.
+  /// Keep the output route BUSY from the moment a turn ends until the first
+  /// reply chunk replaces it: a few seconds of INAUDIBLE silence played
+  /// through the same player, so Android never gets a chance to idle the
+  /// output path (a one-shot 100 ms tick did not survive the wait — the
+  /// pipeline power-cycles within a couple hundred ms and the real chunk
+  /// paid the connect+ramp cost with its first words anyway; this also
+  /// rides through the mic-teardown transition on PTT). Measured: PTT
+  /// replies truncated the first word, while the Settings voice preview —
+  /// same synthesised bytes, no mic session before it — played clean.
+  /// Fire-and-forget: the tick's completion lands while [_playSub] is
+  /// deliberately null so it is a no-op; the first real play() simply takes
+  /// over, and a dead round ends with silence no one hears.
   void _warmUpRoute() {
     unawaited(() async {
       try {
         final dir = await getTemporaryDirectory();
         final file = File(p.join(dir.path, 'reply_warmup.wav'));
-        await file.writeAsBytes(encodeWav(Float32List(2400), 2400)); // 100 ms
+        await file.writeAsBytes(encodeWav(Float32List(48000), 24000)); // 2 s
         final prev = _playSub;
         _playSub = null; // the tick's own completion event must be a no-op
         await prev?.cancel();
