@@ -163,6 +163,53 @@ List<String> splitForTts(String text) {
   return chunks;
 }
 
+/// Pocket-specific chunk merge over [splitForTts] output: a Generate call with
+/// very few text tokens misbehaves in this model (kyutai's own guards: pad
+/// short prompts, ignore EOS for 6 frames, split_into_best_sentences). In the
+/// ONNX port a 2-word piece reliably garbles the first syllable, and a voice
+/// that never emits EOS decodes up to max_frames — 40 s of babble measured.
+/// Merging neighbours to >= 30 chars matches both sherpa's internal
+/// min_char_in_sentence and the model's training chunking, so C++'s own
+/// sentence pass never sees a runt piece either.
+List<String> mergePocketChunks(List<String> pieces) {
+  const minChars = 30;
+  final out = <String>[];
+  for (final p in pieces) {
+    if (out.isNotEmpty &&
+        (out.last.length < minChars || p.length < minChars)) {
+      out.last = '${out.last} $p';
+    } else {
+      out.add(p);
+    }
+  }
+  if (out.length > 1 && out.last.length < minChars) {
+    out[out.length - 2] = '${out[out.length - 2]} ${out.removeLast()}';
+  }
+  return out;
+}
+
+/// Lead-in repair for one Pocket Generate output. The port's first frames
+/// decode to a low growl instead of the reference's ~0.5 s silence pre-roll
+/// (the NaN initial latent maps to a zero vector in the export, not the
+/// learned BOS the PyTorch model uses), and the attack of the first word
+/// rides inside it. Drop the warm-up region, ramp the cut in over 30 ms so
+/// no new click appears, and give playback (and the phone's AGC) 100 ms of
+/// air before speech. Measured: the damage is confined to the first
+/// ~200 ms; at 250 ms the first word survives on every preset voice.
+Float32List pocketLeadIn(Float32List s) {
+  const rate = 24000; // Pocket is fixed at 24 kHz.
+  const drop = rate * 250 ~/ 1000;
+  if (s.length <= drop) return s;
+  final fade = rate * 30 ~/ 1000;
+  final out = Float32List(s.length - drop + rate ~/ 10);
+  for (var i = 0; i < s.length - drop; i++) {
+    var v = s[i + drop];
+    if (i < fade) v *= i / fade;
+    out[i + rate ~/ 10] = v;
+  }
+  return out;
+}
+
 final RegExp _ws = RegExp(r'\s+');
 bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
 
@@ -915,13 +962,23 @@ Future<void> _runWorker(
           // separate from NeuTTS's early-EOS bug, which the Rust infer
           // chunks internally as well). Non-final pieces get a ~62 ms
           // silent tail: a natural sentence gap that hides the seam.
-          final pieces = splitForTts(message.text!);
+          final pieces = spec.kind == 'pocket'
+              ? mergePocketChunks(splitForTts(message.text!))
+              : splitForTts(message.text!);
           for (var i = 0; i < pieces.length; i++) {
             final piece = pieces[i];
             final isLast = i == pieces.length - 1;
             final (samples, sampleRate) = switch (spec.kind) {
               'neutts' => (tts as NeuttsEngine).synth(piece),
               'zipvoice' || 'pocket' => () {
+                // max_frames keeps a missed EOS inside the text's natural
+                // length (0.08 s per frame, +30 frames of slack) instead of
+                // the 500-frame default = 40 s of runaway babble.
+                final extra = spec.kind == 'pocket'
+                    ? <String, Object>{
+                        'max_frames': (piece.length + 30).clamp(60, 500),
+                      }
+                    : const <String, Object>{};
                 final audio = (tts as sherpa_onnx.OfflineTts)
                     .generateWithConfig(
                       text: piece,
@@ -936,9 +993,12 @@ Future<void> _runWorker(
                         numSteps: spec.pocketNumSteps > 0
                             ? spec.pocketNumSteps
                             : 5,
+                        extra: extra,
                       ),
                     );
-                return (audio.samples, audio.sampleRate);
+                return spec.kind == 'pocket'
+                    ? (pocketLeadIn(audio.samples), audio.sampleRate)
+                    : (audio.samples, audio.sampleRate);
               }(),
               _ => () {
                 final audio = (tts as sherpa_onnx.OfflineTts).generate(

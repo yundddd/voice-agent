@@ -178,6 +178,23 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   with 2 flow steps (the decoder ships one-step distilled). Cloning your
   own voice through this engine only needs the wav — no transcript — so
   wiring the record UI to a pocket spec is a small follow-up.
+  One port caveat to know before judging a recording: the k2-fsa ONNX
+  export cold-starts differently from the PyTorch reference (sherpa's
+  NaN initial latent maps to zeros, and the voice prompt is fed without
+  the learned BOS embedding that `insert_bos_before_voice` prescribes —
+  see kyutai's `flow_lm.py::VoicePrompt`). The reference emits a clean
+  ~0.5 s silence pre-roll before the first word; the export emits a low
+  growl that swallows the attack, so speech seemed cut off at sample 0.
+  Worked around in `SpeechWorker` (pocket arm): `mergePocketChunks`
+  (runt pieces misbehave — a 2-word piece garbles the first syllable
+  and a missed EOS decodes 40 s of babble), a per-piece `max_frames`
+  cap, and `pocketLeadIn` (drop the first 250 ms of growl, 30 ms fade,
+  100 ms of air before speech). After that the body of every sentence
+  is clean at RTF ~0.1; the first syllable of the first word can still
+  be soft on some draws — re-audition if kyutai or k2-fsa fix the
+  export, then the workaround can retire (`pocketLeadIn` is a single
+  function). The official PyTorch renders under `ref6_*.wav` make the
+  A/B audition trivial.
 
 ## Run
 
