@@ -193,19 +193,25 @@ List<String> mergePocketChunks(List<String> pieces) {
 /// (the NaN initial latent maps to a zero vector in the export, not the
 /// learned BOS the PyTorch model uses), and the attack of the first word
 /// rides inside it. Drop the warm-up region, ramp the cut in over 30 ms so
-/// no new click appears, and give playback (and the phone's AGC) 100 ms of
-/// air before speech. Measured: the damage is confined to the first
-/// ~200 ms; at 250 ms the first word survives on every preset voice.
+/// no new click appears, and give playback plenty of air before speech:
+/// Android's audio-player startup swallows the first ~150 ms of every clip
+/// (measured — with a 100 ms lead the first words still arrived truncated
+/// on the phone), so the lead must clear that warm-up. 400 ms lands the
+/// first attack ~0.5 s in, exactly where the official reference renders put
+/// it, and matches what the NeuTTS/Piper voices already ship. Measured: the
+/// damage is confined to the first ~200 ms; at 250 ms the first word
+/// survives on every preset voice.
 Float32List pocketLeadIn(Float32List s) {
   const rate = 24000; // Pocket is fixed at 24 kHz.
   const drop = rate * 250 ~/ 1000;
+  const lead = rate * 2 ~/ 5;
   if (s.length <= drop) return s;
   final fade = rate * 30 ~/ 1000;
-  final out = Float32List(s.length - drop + rate ~/ 10);
+  final out = Float32List(s.length - drop + lead);
   for (var i = 0; i < s.length - drop; i++) {
     var v = s[i + drop];
     if (i < fade) v *= i / fade;
-    out[i + rate ~/ 10] = v;
+    out[i + lead] = v;
   }
   return out;
 }
