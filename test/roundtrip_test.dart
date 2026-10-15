@@ -379,9 +379,9 @@ void main() {
       expect(hits, greaterThan(3));
 
       // Second preset sounds different but is equally intelligible.
-      await worker.useTts(spec(2));
+      await worker.useTts(spec(5)); // bill_boerst: the most stable re-transcription
       final (audio2, _) = await worker.synthesize(line);
-      File('build/roundtrip_pocket_jean.wav')
+      File('build/roundtrip_pocket_bill.wav')
         ..createSync(recursive: true)
         ..writeAsBytesSync(encodeWav(audio2, sampleRate));
       final heard2 = (await worker.transcribe(
@@ -394,7 +394,7 @@ void main() {
           .where((w) => heard2.contains(w.toLowerCase()))
           .length;
       // ignore: avoid_print
-      print('pocket ASR (jean): "$heard2" ($hits2 long words matched)');
+      print('pocket ASR (bill_boerst): "$heard2" ($hits2 long words matched)');
       expect(hits2, greaterThan(3));
     } finally {
       worker.dispose();

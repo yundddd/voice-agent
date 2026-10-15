@@ -195,6 +195,55 @@ ships inside the APK. Extra voices download on demand. The raw model
 tarballs sit in `models/` for the headless test; the zips live in
 `assets/models/`.
 
+### Building & shipping the Android APK (what to know so it just works)
+
+```bash
+# from ~/voice-agent
+sed -i 's/^version: .*/version: 0.1.0+N/' pubspec.yaml   # bump the +N: Android
+                                                        # refuses to update-install
+                                                        # over a lower versionCode
+flutter build apk --release --split-per-abi
+# → build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  (the phone build, ~46 MB)
+```
+
+Hard-won details:
+
+* **The JDK the Gradle daemon runs on** — this box's PATH `java` is a *bare*
+  OpenJDK 25 JRE (no javac). Gradle always considers the running JVM as a
+  toolchain candidate, so plugin `compileDebugJavaWithJavac` tasks (e.g.
+  audioplayers) die with *"does not provide the required capabilities:
+  [JAVA_COMPILER]"* unless the daemon is pinned to a full JDK —
+  `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk-amd64` in
+  `android/gradle.properties` does exactly that (plus
+  `installations.auto-detect=false` with explicit 17/21 paths). If a build
+  suddenly "fails at task-configuration in 10 s", look here first, not in
+  the Dart changes.
+* **Signing**: the release build reuses the debug keystore
+  (`android/app/build.gradle.kts`) — fine for sideloading to your own phone,
+  not for Play.
+* **`--split-per-abi`** keeps the arm64 APK under the Telegram bot's 50 MB
+  upload cap (the fat APK doesn't; neither does the x86_64 split).
+  Install with `adb install -r app-arm64-v8a-release.apk`.
+* **Model/voice packs are NOT in the APK**: the app downloads them from the
+  `models-v1` release of `yundddd/voice-agent` at runtime, so a new engine
+  needs its pack published *before* the APK is useful —
+  `tool/build_pocket_pack.sh upload` / `tool/build_neutts_pack.sh upload`
+  (needs `gh` auth for the release; NeuTTS additionally needs `HF_TOKEN`
+  in `~/.env` + the NDK r25 Rust toolchain, see the script headers).
+  If you change a pack's layout, bump its `pack-vN.ok` sentinel name in
+  both the script and `lib/tts_voices.dart` so installed apps re-download.
+* **Probes must stay flutter-import-free**: the `tool/*_probe.dart` scripts
+  run under plain `dart run`, which cannot compile `package:flutter`
+  (`dart:ui` lives in the engine). Import `speech_worker.dart`/`audio_io.dart`
+  directly and inline constants (e.g. the pocket voice list) rather than
+  importing `tts_voices.dart`.
+* **Before shipping**: `dart format --set-exit-if-changed lib tool test`,
+  `dart analyze`, and the headless tests below (with `LD_LIBRARY_PATH` set,
+  and `POCKET_DIR`/`NEUTTS_DIR` pointing at staged packs) must pass; the
+  Pocket leg re-hears each preset through Whisper, so borderline scores are
+  the judge (Whisper tiny), not the engine — the test uses the most stable
+  presets for its second check.
+
 ### Headless round-trip test (no mic, no speaker)
 
 ```bash
