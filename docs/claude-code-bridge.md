@@ -247,11 +247,19 @@ the Bridge screen. Notes that matter when touching this code:
    before the harness relays more into the void; the old view's keep-
    pinger is retired on the swap, no leaked interval), and `/new` now
    clears the replay backlog so a later cold-start attach can't resurrect
-   a discarded conversation's tail. Net effect: hide the app mid-tool-call
-   or mid-answer and foregrounding either keeps streaming on the same
-   socket, rejoins via the death-event reattach in ~2 s, or hops through
-   the watchdog within one quiet window — the reply is replayed from the
-   backlog and heard live either way.
+   a discarded conversation's tail. Says that landed WHILE hidden are
+   logged text-only (hidden skips synth entirely), so resume also owes
+   the ear the *last* buffered block — the backlog can't replay what was
+   already delivered to the dead view. `_speakResumedPending` pays that
+   debt with NO generation bump (a bump would supersede the still-live
+   /talk loop and orphan it): the stream that survived the hide replays
+   it straight into the live turn's chunk queue, and the death-event
+   reattach carries it as `replayFirst` and speaks it ahead of its
+   backlog lines, story order intact. Net effect: hide the app
+   mid-tool-call or mid-answer and foregrounding either keeps streaming
+   on the same socket, rejoins via the death-event reattach in ~2 s, or
+   hops through the watchdog within one quiet window — and the message
+   you were owed is spoken either way.
 
 9. App-side journal + bridge polling (0.1.0+29): the app now records its
    OWN lifecycle story — every raw OS lifecycle callback (before the

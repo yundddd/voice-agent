@@ -1636,14 +1636,13 @@ class VoiceAssistant extends ChangeNotifier {
     // bracket, out as soon as the (just-woken) network will have it; a
     // failure re-arms inside the journal at the slow cadence
     if (_bridgeBusy) {
-      // Still streaming as we return: no replay (its next says are audible
-      // from here on, and the buffered ones stay visible in the log). Put
-      // the working line back — the spinner and its elapsed readout must
-      // carry through a background blink as if it never happened, not sit
-      // there quoting the "when you're back" notice while we ARE back.
-      // (Transcribing rather than the snapshot's possible speaking phase:
-      // hide cut any audible chunk, so "working" is the honest state until
-      // the next say's first chunk flips it to speaking for real.)
+      // Still streaming as we return. Put the working line back — the
+      // spinner and its elapsed readout must carry through a background
+      // blink as if it never happened, not sit there quoting the "when
+      // you're back" notice while we ARE back. (Transcribing rather than
+      // the snapshot's possible speaking phase: hide cut any audible
+      // chunk, so "working" is the honest state until audible audio
+      // flips it to speaking for real.)
       if (working != null) {
         _status = working;
         _phase = AssistantPhase.transcribing;
@@ -1655,6 +1654,18 @@ class VoiceAssistant extends ChangeNotifier {
       // only when none runs (a pump parked on the wake hook must not get
       // a twin competing for the chunk queue).
       if (!_replyPumpAlive) unawaited(_playReplyChunks(_generation));
+      // Keep the hide's promise ("I'll show every reply and speak the
+      // last one when you're back"): says that landed DURING the hide
+      // were logged text-only — the backgrounded branch of speak() skips
+      // synth entirely — and if one of those was the turn's answer, it
+      // would otherwise never get a voice (the next say, if any, is
+      // audible from here on; the answer usually IS the last say, and
+      // `done` closes the turn right behind it). [_speakResumedPending]
+      // synthesises it into the queue this pump just revived, under the
+      // live turn's generation — no supersede, no orphaned turn.
+      if (pending != null && _worker != null) {
+        unawaited(_speakResumedPending(pending, _generation));
+      }
       // Re-lease the quiet-wire watchdog for the stream we're trusting to
       // have survived the hide. If it's alive, the kernel's buffered
       // events (and the 15 s pings) burst in within moments and keep
@@ -1673,14 +1684,19 @@ class VoiceAssistant extends ChangeNotifier {
     }
     // A stream that DIED while hidden (process death, OS-dropped socket)
     // is the one state the branch below cannot restore: the turn ran on
-    // unheard, and its output sits in the bridge's backlog. Reattach
-    // first — it supersedes a pending replay (the gen bump here would
-    // kill it, and the backlog covers everything after the drop; the
-    // half-heard pre-hide block is already in the log).
+    // unheard, and what it said AFTER the drop sits in the bridge's
+    // backlog. Reattach with the buffered reply in hand: the backlog
+    // never re-delivers what the dead view already received, so without
+    // this the last heard-of-but-unspoken block would go to the grave in
+    // text-only (reattach's gen bump supersedes any replay we'd run
+    // ourselves — the text rides into the reattach instead, spoken
+    // ahead of the backlog lines so the story stays in order).
     final Map<String, Object>? probe =
         _bridge == null ? null : await _bridge!.healthInfo();
     _logDebug('resume probe: ${_healthNote(probe)}');
-    if (await reattachBackgroundTurn(health: probe)) return;
+    if (await reattachBackgroundTurn(health: probe, replayFirst: pending)) {
+      return;
+    }
     if (bridgeReattachNeeded(probe) != false) {
       // Unreachable (null): cannot tell "no turn" from "network still
       // waking up around a live turn" — the chain re-probes with backoff
@@ -1866,9 +1882,18 @@ class VoiceAssistant extends ChangeNotifier {
   /// Returns true when a reattach actually started (the caller must then
   /// NOT also run a pending-reply replay — the gen bump here would
   /// supersede it, and the backlog already covers the missed window).
+  /// [replayFirst] is the caller's buffered unheard reply (the resume
+  /// path hands over the block that reached the OLD view as text while
+  /// the app was hidden — the backlog can't replay what was already
+  /// delivered): it is spoken through [_speakResumedPending] before the
+  /// /attach view opens, so one synth runs at a time and its audio leads
+  /// the backlog's own replayed says.
   /// [health] lets the retry chain reuse the /health snapshot it already
   /// holds instead of paying a second probe.
-  Future<bool> reattachBackgroundTurn({Map<String, Object>? health}) async {
+  Future<bool> reattachBackgroundTurn({
+    Map<String, Object>? health,
+    String? replayFirst,
+  }) async {
     final bridge = _bridge;
     if (bridge == null || _worker == null) return false;
     if (_bridgeBusy ||
@@ -1949,6 +1974,18 @@ class VoiceAssistant extends ChangeNotifier {
         final w = wake;
         wake = null;
         w?.complete();
+      }
+
+      // The caller's unheard reply leads the backlog (see [replayFirst]):
+      // synthesised through THIS reattach's gen into the queue the pump
+      // above drains — awaited before the view opens, so exactly one
+      // synth ever races the worker and the resumed block's audio comes
+      // out ahead of the replayed says, story order intact. A supersede
+      // during the synth (new /talk took the ear) drops the audio and
+      // the whole attach with it.
+      if (replayFirst != null && replayFirst.trim().isNotEmpty) {
+        await _speakResumedPending(replayFirst, gen);
+        if (gen != _generation) return; // superseded mid-replay
       }
 
       _bridgeDetachWake = wakeNow;
@@ -2092,6 +2129,61 @@ class VoiceAssistant extends ChangeNotifier {
   /// so this only feeds the speaker — no new bubble, no double text. When
   /// [thenListen] is set the reply was interrupted a live conversation, so
   /// the mic goes back on the air the moment it ends.
+  /// Speak the reply a hide left unheard — the app came back and the
+  /// stream is (or is about to be) still owned by a live event loop, so
+  /// unlike [_replayPendingReply] this bumps NO generation: a bump would
+  /// supersede that loop and hand a perfectly healthy turn to the bridge
+  /// as a background turn, which is the opposite of coming back. The
+  /// chunks ride the live turn's own queue (the pump at
+  /// [resumeConversation]'s respawn covers it), and the text does NOT
+  /// re-enter the log: the block already sits there from the hidden
+  /// branch of speak() — this is the audio the room was promised.
+  /// [gen] is the caller's turn generation: a superseded replay drops
+  /// its chunks exactly like a superseded speak would.
+  Future<void> _speakResumedPending(String text, int gen) async {
+    final worker = _worker;
+    if (worker == null) return;
+    var onAir = false; // first audible chunk flips the status, like speak()
+    final swTts = Stopwatch()..start();
+    try {
+      final (audio, rate) = await worker.synthesizeStream(
+        text,
+        onChunk: (chunk, sampleRate) {
+          if (gen != _generation) return;
+          if (!onAir) {
+            onAir = true;
+            _phase = AssistantPhase.speaking;
+            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            _lastReplyText = text; // the re-hide seed sees this replay as
+            // the last reply (re-playing a block hides audio again =
+            // pauseConversation's own restart-the-block rule)
+            _touchChat();
+          }
+          _replyQueue.add((chunk, sampleRate));
+          _replyWake?.complete();
+          _replyWake = null;
+        },
+      );
+      if (gen != _generation) return; // superseded mid-replay: chunks dropped
+      swTts.stop();
+      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      _playSeconds += audio.length / rate;
+      _lastSpoken = text; // echo guard: this voice coming back is ours
+      _noteTts(audio, rate);
+    } catch (e) {
+      _logDebug('resume replay failed: $e');
+      return;
+    }
+    if (_backgrounded) return; // hidden again mid-replay: pause owns the UI
+    // A `done` that landed mid-replay closed the stream and may have
+    // drained the pump dry at its seam: respawn (only when none runs — a
+    // parked pump must not get a twin) so the replayed chunks actually
+    // reach the speaker and the natural-end hook eventually idles the UI.
+    if (gen == _generation && _replyQueue.isNotEmpty && !_replyPumpAlive) {
+      unawaited(_playReplyChunks(gen));
+    }
+  }
+
   Future<void> _replayPendingReply(
     String text, {
     required bool thenListen,
