@@ -392,6 +392,15 @@ String cleanForSpeech(String t) {
     (m) => m.group(1) ?? m.group(0)!,
   );
   s = s.replaceAll(RegExp(r'[*_`~#>|]'), '');
+  // espeak (the pack's phonemizer) says the WORD 'period' wherever a dot
+  // can't be sentence punctuation: inside filenames ('pubspec.yaml') and
+  // at the joins below when the next clause starts lowercase. Neither dot
+  // can mean anything spoken, so fold them: the file dot becomes a space,
+  // an ellipsis becomes a real full stop, and a clause after a full stop
+  // gets capitalized so it lands as sentence intonation, not a spoken
+  // 'period'. Decimals keep their dot (the rules only bite on letters).
+  s = s.replaceAll('…', '.');
+  s = s.replaceAllMapped(RegExp(r'(?<=[a-z])\.(?=[a-z])'), (m) => ' ');
   s = s
       .split('\n')
       .map(
@@ -405,6 +414,10 @@ String cleanForSpeech(String t) {
       .join('. ')
       .replaceAll(RegExp(r'\.\s*\.'), '.')
       .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAllMapped(
+        RegExp(r'\. ([a-z])'),
+        (m) => '. ${m[1]!.toUpperCase()}',
+      )
       .trim();
   // Piper reads a comma-final clause oddly; give the text a stopper.
   if (s.isNotEmpty && !RegExp(r'[.!?]$').hasMatch(s)) s += '.';

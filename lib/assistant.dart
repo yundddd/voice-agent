@@ -757,7 +757,11 @@ class VoiceAssistant extends ChangeNotifier {
     Future<void> narrateProgress(String line) async {
       lastNarrated = line;
       lastNarratedAt = DateTime.now();
-      await speak(line);
+      // Same markdown/filename-dot cleaning the reply path gets: the
+      // espeak fallback says the literal word 'period' for the dot in
+      // 'pubspec.yaml', and progress lines are full of file names.
+      // lastNarrated stays the raw line — it dedups against latestWork.
+      await speak(cleanForSpeech(line));
     }
 
     // Manual subscription, not await-for: a barge-in must be able to

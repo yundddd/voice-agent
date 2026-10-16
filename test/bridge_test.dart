@@ -212,6 +212,21 @@ void main() {
       final s = cleanForSpeech('Two files changed, tests pass.');
       expect(s, 'Two files changed, tests pass.');
     });
+
+    test('dots espeak would say as the word "period" are folded', () {
+      // file-extension dots: the lowercase-dot-lowercase case espeak
+      // cannot read as sentence punctuation
+      final s = cleanForSpeech('Edited pubspec.yaml and main.dart…');
+      expect(s, contains('pubspec yaml'));
+      expect(s, contains('main dart'));
+      expect(s, isNot(contains('…')));
+      // the '. ' join before a lowercase clause: capitalizing the next
+      // word makes espeak take the dot as a sentence stop, not 'period'
+      expect(cleanForSpeech('first line\nsecond line'), contains('. Second'));
+      // decimals and versions are digits around the dot: left alone
+      expect(cleanForSpeech('took 3.5 s, ships v1.2 today'), contains('3.5'));
+      expect(cleanForSpeech('took 3.5 s, ships v1.2 today'), contains('v1.2'));
+    });
   });
 
   group('prefs', () {
