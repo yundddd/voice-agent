@@ -90,15 +90,26 @@ function handleEvent(line) {
   const res = curRes;
   if (!res) return; // no listener on this turn (client hung up): keep process alive
   switch (m.type) {
-    case 'assistant': // a complete assistant message: speak its text blocks
-      for (const c of m.message.content) {
+    case 'assistant': {
+      // A message snapshot is PREFIX-GROWING and can be re-emitted under the
+      // same id as later blocks complete. Without a watermark we speak the
+      // already-audited text blocks again — long answers came back with
+      // repeated passages and the re-synth churn read as discontinuous
+      // audio. Speak only blocks past the watermark, then advance it.
+      const id = m.message?.id ?? '';
+      const content = m.message?.content ?? [];
+      const seen = id ? (spokenMsgs.get(id) ?? 0) : 0;
+      for (let i = seen; i < content.length; i++) {
+        const c = content[i];
         if (c.type === 'text' && c.text.trim()) {
           console.error(`  -> say "${c.text.trim().slice(0, 40)}"`);
           sse(res, 'say', { text: c.text.trim() });
         }
         if (c.type === 'tool_use') sse(res, 'tool', { name: c.name, detail: summarize(c) });
       }
+      if (id) spokenMsgs.set(id, content.length);
       break;
+    }
     case 'result':
       sse(res, 'done', { costUsd: m.total_cost_usd, isError: m.is_error });
       endTurn();
@@ -108,6 +119,7 @@ function handleEvent(line) {
 function endTurn() {
   if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
   if (curRes) { curRes.end(); curRes = null; }
+  spokenMsgs.clear(); // every message lives inside one turn
   if (sessionId) { try { writeFileSync(sidFile, sessionId); } catch {} }
 }
 function summarize(tool) {
@@ -127,6 +139,10 @@ function talk(text, res) {
   child.stdin.write(msg + '\n');
 }
 let keepAlive = null;
+// message id -> number of content blocks already relayed (see handleEvent).
+// Cleared at endTurn: ids are unique per process, but a turn is the
+// natural lifecycle here and it keeps the map from growing forever.
+const spokenMsgs = new Map();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
