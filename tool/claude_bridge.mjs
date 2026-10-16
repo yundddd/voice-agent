@@ -426,9 +426,12 @@ const relayEst = (dir) => {
     ctxPreviewFrame();
   }
 };
+// +82: two decimals at every magnitude — one made a climbing counter
+// look frozen between rounding steps (mirrors fmtTokenCount in
+// lib/bridge.dart; phone and wire read numbers identically).
 const fmtTok = (n) => n < 1000 ? `${n}`
-  : n < 1e6 ? `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
-  : `${(n / 1e6).toFixed(1)}M`;
+  : n < 1e6 ? `${(n / 1000).toFixed(2)}k`
+  : `${(n / 1e6).toFixed(2)}M`;
 // Every frame leaves stamped with the bridge's wall clock (`_ts`), so the
 // phone can log how long a frame sat on the wire by the time it rendered:
 // the render side subtracts the clock skew it calibrated from /health's

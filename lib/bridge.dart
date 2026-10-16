@@ -502,15 +502,17 @@ String cleanForSpeech(String t) {
   return s;
 }
 
-/// 12400 -> '12.4k', 467232 -> '467k', 1_250_000 -> '1.3M'. Shared by
-/// the context bar (main.dart) and the live token ticker
+/// 12400 -> '12.40k', 467232 -> '467.23k', 1_250_000 -> '1.25M'. Two
+/// decimals everywhere (+82 — one made the big counters look like they
+/// had stopped moving: 50-token steps vanished in the rounding).
+/// Shared by the context bar (main.dart) and the live token ticker
 /// (VoiceAssistant.tokenTickerLabel), mirroring the bridge's own
 /// fmtTok so phone and wire never disagree about how a number reads.
 String fmtTokenCount(int n) => n < 1000
     ? '$n'
     : n < 1000000
-    ? '${(n / 1000).toStringAsFixed(n < 10000 ? 1 : 0)}k'
-    : '${(n / 1000000).toStringAsFixed(1)}M';
+    ? '${(n / 1000).toStringAsFixed(2)}k'
+    : '${(n / 1000000).toStringAsFixed(2)}M';
 
 /// Persisted bridge settings (mirrors the tts_prefs.json pattern).
 /// The field defaults ship pointing at the dev machine's always-on demo
