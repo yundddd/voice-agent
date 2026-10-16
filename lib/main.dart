@@ -937,12 +937,19 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
       // whirl through every spoken chunk — busywork theater while the
       // harness was merely talking (or quiet between streamed
       // paragraphs), so the user couldn't tell 'still computing' from
-      // 'reading me a book'. While the assistant's phase is 'speaking'
-      // the frame freezes; the phase transitions themselves notify (the
-      // first audio chunk flips it, playback end flips it back), so the
-      // wheel resumes the moment the harness is really working again —
-      // no setState while frozen either, a still line stays still.
-      if (widget.assistant.phase == AssistantPhase.speaking) return;
+      // 'reading me a book'. But with the live sentence relay the agent
+      // keeps working WHILE speaking (later sentences synthesise, more
+      // tools run after the first chunk is already playing), and a
+      // phase-based freeze silenced the wheel mid-task — which read as
+      // 'it stopped working' when it hadn't. So: freeze only when the
+      // harness is PURELY talking — speaking phase with no open bridge
+      // turn (harnessElapsed goes to zero the instant `done` closes
+      // it). A live turn keeps the wheel turning through its own voice.
+      final a = widget.assistant;
+      if (a.phase == AssistantPhase.speaking &&
+          a.harnessElapsed == Duration.zero) {
+        return;
+      }
       setState(() => _frame = (_frame + 1) % _wheel.length);
     });
   }
@@ -983,7 +990,11 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // The frozen frame is also dimmed: motion OR color, never neither,
     // is the honest way to say "the agent is not churning right now" —
     // the status label beside it already reads 'Speaking…' while paused.
-    final talking = a.phase == AssistantPhase.speaking;
+    // Same rule as the tick guard: dim only when the harness is purely
+    // talking. If its bridge turn is still open, it is working while it
+    // speaks, and the wheel keeps its motion and its primary color.
+    final talking =
+        a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
     final working = Row(
       children: [
         Text(
