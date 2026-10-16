@@ -248,7 +248,13 @@ const openTools = new Set();
 // closes) — the phone paints them on the spinner and grows the number
 // locally between relays.
 let tokIn = 0;        // last message_start input (incl. cache reads)
-let tokOutExact = 0;  // exact output tokens (message_deltas, summed)
+let tokOutExact = 0;  // exact output tokens THIS TURN (per-message cumulative, pinned)
+let tokMsgBase = 0;   // tokOutExact at the current message's start — message_delta's
+                      // usage.output_tokens is a CUMULATIVE running total for its own
+                      // message, so += double-counts the earlier part every time a
+                      // call emits more than one delta (long thinking turns inflated
+                      // the out-count until it 'matched the context'; field report
+                      // 0.1.0+77). The number for a message is base + cumulative.
 let tokLastMsgOut = 0; // output tokens of the most recent message (for
 // the post-turn context figure: the next prompt carries the FULL history,
 // so last call's input + last message's output IS tomorrow's context)
@@ -651,6 +657,7 @@ function handleEvent(line) {
     if (e.type === 'message_start') {
       census.msgStarts++;
       curMsg = {blocks: {}, seq: 0}; // the sentence buffer starts fresh per call
+      tokMsgBase = tokOutExact;     // this message's deltas count from here
       const u = e.message?.usage ?? {};
       tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
             + (u.cache_creation_input_tokens ?? 0);
@@ -700,7 +707,7 @@ function handleEvent(line) {
         // instead of letting it drift on estimates for another second:
         // one extra frame per closed message is nothing on the wire, and
         // it is the number the app's local growth will be judged against.
-        tokOutExact += o; tokLastMsgOut = o; tokChars = 0;
+        tokOutExact = tokMsgBase + o; tokLastMsgOut = o; tokChars = 0;
         // +75: no curRes gate anymore. 'CurRes' is the PUSH view, and a
         // pull-mode phone never sets one — every later tally frame died
         // behind this if and the ring kept only the turn-start zero
@@ -1025,7 +1032,7 @@ function beginTurn(text, res, keep) {
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
   census = newCensus(); // one wire-shape census per turn
-  tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
+  tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = tokMsgBase = 0; // fresh tally
   thinkBuf = ''; // no thought survives into the next turn
   curMsg = null; lastTextBlk = null; lastTextOpen = false; // ditto live answer
   // Provisional until the first content_block_start relabels it to truth
