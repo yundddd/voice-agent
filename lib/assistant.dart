@@ -829,9 +829,11 @@ class VoiceAssistant extends ChangeNotifier {
               _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
             }
             // No echo of the words being spoken here: the conversation
-            // bubble already shows them — this strip only has to say
-            // what state we're in and that a tap interrupts.
-            _status = 'Speaking — tap to cut me off.';
+            // bubble already shows them. And no 'Speaking — tap to cut
+            // me off' either (0.1.0+71): while the turn is open the
+            // strip keeps naming the WORK in progress — which is what
+            // is actually happening while the first sentence plays —
+            // and in pure playback the whole line hides anyway.
             spoken.write('$text ');
             turn.blocks.add(text);
             _lastReplyText = text;
@@ -2271,9 +2273,11 @@ class VoiceAssistant extends ChangeNotifier {
               _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
             }
             // No echo of the words being spoken here: the conversation
-            // bubble already shows them — this strip only has to say
-            // what state we're in and that a tap interrupts.
-            _status = 'Speaking — tap to cut me off.';
+            // bubble already shows them. And no 'Speaking — tap to cut
+            // me off' either (0.1.0+71): while the turn is open the
+            // strip keeps naming the WORK in progress — which is what
+            // is actually happening while the first sentence plays —
+            // and in pure playback the whole line hides anyway.
             spoken.write('$text ');
             turn.blocks.add(text);
             _lastReplyText = text;
@@ -2533,9 +2537,11 @@ class VoiceAssistant extends ChangeNotifier {
               _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
             }
             // No echo of the words being spoken here: the conversation
-            // bubble already shows them — this strip only has to say
-            // what state we're in and that a tap interrupts.
-            _status = 'Speaking — tap to cut me off.';
+            // bubble already shows them. And no 'Speaking — tap to cut
+            // me off' either (0.1.0+71): while the turn is open the
+            // strip keeps naming the WORK in progress — which is what
+            // is actually happening while the first sentence plays —
+            // and in pure playback the whole line hides anyway.
             _lastReplyText = text; // the re-hide seed sees this replay as
             // the last reply (re-playing a block hides audio again =
             // pauseConversation's own restart-the-block rule)
@@ -2608,9 +2614,11 @@ class VoiceAssistant extends ChangeNotifier {
               _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
             }
             // No echo of the words being spoken here: the conversation
-            // bubble already shows them — this strip only has to say
-            // what state we're in and that a tap interrupts.
-            _status = 'Speaking — tap to cut me off.';
+            // bubble already shows them. And no 'Speaking — tap to cut
+            // me off' either (0.1.0+71): while the turn is open the
+            // strip keeps naming the WORK in progress — which is what
+            // is actually happening while the first sentence plays —
+            // and in pure playback the whole line hides anyway.
             notifyListeners();
           }
           _replyQueue.add((chunk, sampleRate));
@@ -3371,7 +3379,6 @@ class VoiceAssistant extends ChangeNotifier {
                     _ttsFirstTimed = true;
                     _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
                   }
-                  _status = 'Speaking — jump in any time.';
                   notifyListeners();
                 }
                 _replyQueue.add((chunk, sampleRate));
