@@ -439,18 +439,18 @@ class BridgePrefs {
     this.url = defaultUrl,
     this.token = defaultToken,
     this.voice = true,
-    this.narrate = true,
+    this.narrate = false,
   });
   String url, token;
   bool voice;
 
-  /// 'Narrate progress' (the factory setting): the harness's work becomes
-  /// audible AS IT HAPPENS — every `tool` event the bridge emits at a
-  /// step's start gets a spoken line, and a long silent step (a
-  /// three-minute build) repeats its line as a still-at-it heartbeat, so
-  /// a turn never sounds like dead air followed by one block of speech
-  /// at the end. Off restores the quiet regime: status text only, the
-  /// answer arrives when it's ready. Read live by
+  /// 'Narrate progress' (off from the factory: tool-call chatter is
+  /// messy — the silent status text and the answer alone carry a turn).
+  /// On, the harness's work becomes audible AS IT HAPPENS — every `tool`
+  /// event the bridge emits at a step's start gets a spoken line, and a
+  /// long silent step (a three-minute build) repeats its line as a
+  /// still-at-it heartbeat, so a turn never sounds like dead air followed
+  /// by one block of speech at the end.
   /// VoiceAssistant.runQuickCommand's event loop (no wire involvement).
   bool narrate;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
@@ -465,7 +465,7 @@ class BridgePrefs {
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
     token: j['token'] as String? ?? BridgePrefs.defaultToken,
     voice: j['voice'] as bool? ?? true,
-    narrate: j['narrate'] as bool? ?? true,
+    narrate: j['narrate'] as bool? ?? false,
   );
 }
 

@@ -182,9 +182,13 @@ the Bridge screen. Notes that matter when touching this code:
    badge stays lit while a detached turn works unheard
    (`harnessBackgrounded`).
 4. `tool` events show as live status text ("The harness is working —
-   Bash flutter test"). The bridge's voice system prompt asks the
-   harness for a one-line narration *before* each tool pass, which
-   arrives as its own speakable `say` — so long commands never dead-air.
+   Bash flutter test"). Tool steps are quiet by default: the bridge's
+   voice system prompt only asks the harness for a one-line narration
+   *before* each tool pass when started with `--narrate-steps` (that
+   line arrives as its own `say`, which the phone always speaks — the
+   app's Narrate switch can't hush it), and the app's own `tool`-event
+   narration sits behind its Narrate switch, off from the factory.
+   With either on, long commands never dead-air.
 5. Everything spoken passes `cleanForSpeech`: code blocks → "(code
    omitted)", links → their text, markdown/heading/bullet syntax
    stripped, bullet lines joined with "and", sentence stopper appended
@@ -305,8 +309,10 @@ the Bridge screen. Notes that matter when touching this code:
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message
-closes; tool-heavy tasks speak the narration line early and the summary
-when done). TTS adds ~0.1 × seconds-of-speech. The whole loop lands
+closes; tool-heavy tasks with narration enabled — the app's Narrate
+switch or the bridge's --narrate-steps — speak a progress line early and
+the summary when done; by default they speak only the summary). TTS adds
+~0.1 × seconds-of-speech. The whole loop lands
 well inside conversational feel.
 
 ## Run it at boot (installed on this machine: 2026-10-15)

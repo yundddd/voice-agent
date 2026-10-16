@@ -74,11 +74,12 @@
 //                flavour): then the turn in flight is left to finish
 //                naturally and the queue flushes on its `result`. /stop hard-cuts an
 //                open turn either way, and flushes the queue on its
-//                result. None of that queuing is dead air on the phone:
-//                the app speaks `tool` events as they arrive (each step
-//                start), acknowledges `tool queued` out loud, and pulses
-//                a still-working heartbeat through silent steps — the
-//                Narrate switch on the app's Bridge screen (see
+//                result. Queuing goes quiet on the phone by default
+//                (status text only): the app speaks `tool` events as
+//                they arrive (each step start), acknowledges `tool
+//                queued` out loud, and pulses a still-working heartbeat
+//                through silent steps only with the Narrate switch on
+//                the app's Bridge screen — off from the factory (see
 //                BridgePrefs.narrate).
 //   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
@@ -143,12 +144,20 @@ const token = arg('token', process.env.BRIDGE_TOKEN);
 const claudeBin = arg('claude', join(homedir(), '.local/bin/claude'));
 const port = Number(arg('port', 8732));
 // Voice-companion behaviour: spoken answers only. Keeps the TTS honest.
+// The tool-step narration sentence is only appended with --narrate-steps:
+// by default the harness answers the turn and goes silent — the model's
+// own "now I'll run the tests" lines arrive as `say` events, which the
+// phone ALWAYS speaks (the app's Narrate switch only gates the cleaner
+// templated `tool`-event lines), so making them by default would put
+// messy tool-call chatter back on the air no setting could turn off.
 const sysPrompt =
   arg('system', 'You are a hands-free voice assistant driving a dev machine. ' +
       'Answer in one to three short spoken sentences. Never use markdown, ' +
       'code blocks, bullet lists, or emoji: say file paths and numbers in ' +
-      'plain words. Do exactly what is asked, then stop.')
-  + ' While working, narrate each tool step in one very short sentence.';
+      'plain words. Do exactly what is asked, then stop.') +
+  (argv.includes('--narrate-steps')
+    ? ' While working, narrate each tool step in one very short sentence.'
+    : '');
 // Voice can't answer a permission prompt, and raw stream-json input has no
 // host to answer it either - so under anything stricter, prompt-worthy
 // tools (WebFetch et al.) get silently DENIED and the answer comes back

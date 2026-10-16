@@ -669,8 +669,8 @@ class VoiceAssistant extends ChangeNotifier {
     // ── Progress narration ── 'working towards the goal' means AUDIO
     // while working, not only at the end: the bridge pushes a `tool`
     // event at every step's start (name + command/path summary), and
-    // with the Narrate switch on (BridgePrefs.narrate, the factory
-    // setting, read live so a mid-turn flip bites at the next event)
+    // with the Narrate switch on (BridgePrefs.narrate, off from the
+    // factory, read live so a mid-turn flip bites at the next event)
     // those events are spoken. The reply's own audio always outranks
     // chatter: narration waits for 8 s of real quiet (nothing
     // synthesising or playing, no narration line in the last 8 s — the

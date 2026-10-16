@@ -248,14 +248,15 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 onChanged: (v) => a.setBridgeNarrate(v),
                 title: const Text('Narrate progress while working'),
                 subtitle: Text(
-                  'On (factory): you hear the harness work AS it happens — '
-                  'every tool step earns a short spoken line the moment it '
-                  'starts, a long silent step repeats that line about every '
-                  '45 s, and a message queuing behind running work is '
-                  'acknowledged out loud, so a turn is a stream of progress '
-                  'instead of dead air then one block of speech. Off: only '
-                  'the answer speaks. Reply audio always outranks the '
-                  'chatter. (Also narrates the /new and /compact chips, '
+                  'Off (factory): only the answer speaks — tool steps show '
+                  'as silent text lines, the usual turn. On: you hear the '
+                  'harness work AS it happens — every tool step earns a '
+                  'short spoken line the moment it starts, a long silent '
+                  'step repeats that line about every 45 s, and a message '
+                  'queuing behind running work is acknowledged out loud, '
+                  'so a turn is a stream of progress instead of dead air '
+                  'then one block of speech. Reply audio always outranks '
+                  'the chatter. (Also narrates the /new and /compact chips, '
                   'which are harness turns even in parrot mode.)',
                 ),
               ),
