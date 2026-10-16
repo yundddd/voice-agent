@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'package:piper_phonemize/piper_phonemize.dart' as piper;
+
 import 'model_packs.dart';
 import 'speech_worker.dart' show TtsSpec;
 
@@ -30,10 +32,22 @@ class TtsVoice {
   static String _f(String modelsDir, String dirName, String file) =>
       p.join(modelsDir, dirName, file);
 
-  /// Absolute-path job spec for the speech worker. Kokoro is the app's
-  /// only engine — the Piper/VITS, Pocket, ZipVoice and NeuTTS engines
-  /// were removed (Kokoro won the A/B on sound by a wide margin).
-  TtsSpec specIn(String modelsDir, {int sid = 0}) {
+  /// Absolute-path job spec for the speech worker. Two engines live
+  /// here: Kokoro (the teacher; the Piper/VITS, Pocket, ZipVoice and
+  /// NeuTTS engines were retired when Kokoro won the A/B on sound) and
+  /// the teacher-in-the-loop student — an 8M single-voice distillation
+  /// run on the same onnxruntime sherpa ships. [sid] is Kokoro-only.
+  Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
+    if (id == 'titl-heart') {
+      // espeak-ng data rides the piper_phonemize plugin (extracted once
+      // into app support); the graph + Kokoro vocab come from the pack.
+      final dataDir = await piper.extractEspeakNgData();
+      return TtsSpec.titl(
+        titlModel: _f(modelsDir, dirName, 'model.onnx'),
+        titlVocab: _f(modelsDir, dirName, 'vocab.json'),
+        espeakDataDir: dataDir,
+      );
+    }
     // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
     // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
     // + espeak fallback cover everything we speak).
@@ -77,6 +91,26 @@ const _k2fsaTts =
 /// Voices on offer, in display order. Kokoro is the default and downloads on
 /// first run.
 const ttsVoices = <TtsVoice>[
+  TtsVoice(
+    id: 'titl-heart',
+    label: 'Heart (8M student)',
+    note:
+        'Teacher-in-the-loop: af_heart distilled out of Kokoro-82M into '
+        'an 8M-parameter student — 9 MB, twenty-some times real-time on '
+        'one CPU thread, UTMOS within 0.05 of the teacher (a faint '
+        'metallic ring is the known tell). espeak-ng phonemes instead of '
+        'Misaki; intelligible-first, A/B against the teacher.',
+    sizeLabel: '9 MB',
+    packs: [
+      ModelPack(
+        label: 'voice: TITL af_heart',
+        url:
+            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-af_heart.zip',
+        dirName: 'tts-titl-af_heart',
+        markerFile: 'model.onnx',
+      ),
+    ],
+  ),
   TtsVoice(
     id: 'kokoro',
     label: 'Kokoro v1.0',

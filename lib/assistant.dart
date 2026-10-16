@@ -1273,7 +1273,8 @@ class VoiceAssistant extends ChangeNotifier {
     );
   }
 
-  TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(_modelsDir, sid: sid);
+  Future<TtsSpec> _spec(TtsVoice v, {int sid = 0}) =>
+      v.specIn(_modelsDir, sid: sid);
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -1329,7 +1330,7 @@ class VoiceAssistant extends ChangeNotifier {
       await voice.ensureIn(modelsDir, onProgress: _modelProgress);
       _worker = await SpeechWorker.start(
         ModelPaths.fromModelsDir(modelsDir),
-        tts: _spec(voice, sid: _prefs.sid),
+        tts: await _spec(voice, sid: _prefs.sid),
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
       );
@@ -1378,7 +1379,7 @@ class VoiceAssistant extends ChangeNotifier {
     notifyListeners();
     try {
       await v.ensureIn(_modelsDir, onProgress: _voiceProgress);
-      _ttsNumSpeakers = await _worker!.useTts(_spec(v, sid: newSid));
+      _ttsNumSpeakers = await _worker!.useTts(await _spec(v, sid: newSid));
       _activeVoiceId = v.id;
       _prefs.voiceId = v.id;
       _prefs.sid = newSid;

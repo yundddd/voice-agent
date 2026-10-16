@@ -5,6 +5,10 @@ import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
+import 'package:piper_phonemize/piper_phonemize.dart' as piper;
+
+import 'titl_engine.dart';
+
 import 'audio_dsp.dart';
 import 'model_paths.dart';
 
@@ -226,8 +230,13 @@ class _JobResult {
 /// the Dart binding does not plumb (dictDir is dropped), so we wire English
 /// only. espeak-ng under [kokoroDataDir] backs out-of-lexicon words.
 class TtsSpec {
+  final String engine; // 'kokoro' | 'titl'
   final String kokoroModel, kokoroVoices, kokoroTokens, kokoroDataDir;
   final String kokoroLexicon;
+  // Teacher-in-the-loop: the 8M student graph + Kokoro phoneme vocab;
+  // espeak data arrives unpacked by the piper_phonemize plugin (its own
+  // copy, extracted to app support — independent of the Kokoro pack's).
+  final String titlModel, titlVocab, espeakDataDir, espeakVoice;
   final int sid;
 
   const TtsSpec.kokoro({
@@ -237,7 +246,24 @@ class TtsSpec {
     required this.kokoroDataDir,
     required this.kokoroLexicon,
     this.sid = 0,
-  });
+  }) : engine = 'kokoro',
+       titlModel = '',
+       titlVocab = '',
+       espeakDataDir = '',
+       espeakVoice = '';
+
+  const TtsSpec.titl({
+    required this.titlModel,
+    required this.titlVocab,
+    required this.espeakDataDir,
+    this.espeakVoice = 'en-us',
+    this.sid = 0,
+  }) : engine = 'titl',
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '';
 }
 
 /// One-way speech pipeline notification.
@@ -447,6 +473,65 @@ class SpeechWorker {
 
 // ── Worker isolate entry point ───────────────────────────────────────────
 
+/// The swappable engine handle: the sherpa-wrapped teacher (Kokoro)
+/// and the direct-FFI student (teacher-in-the-loop) return identical
+/// float PCM, so the sentence-splitting synth arm below keeps exactly
+/// one call path. generate() is synchronous by contract: it runs on
+/// the worker isolate between chunk sends.
+abstract class TtsBackend {
+  int get numSpeakers;
+  (Float32List, int) generate({required String text, int sid, double speed});
+  void free();
+}
+
+class SherpaTts implements TtsBackend {
+  final sherpa_onnx.OfflineTts _tts;
+  SherpaTts(this._tts);
+  @override
+  int get numSpeakers => _tts.numSpeakers;
+  @override
+  (Float32List, int) generate({
+    required String text,
+    int sid = 0,
+    double speed = 1.0,
+  }) {
+    final a = _tts.generate(text: text, sid: sid, speed: speed);
+    return (a.samples, a.sampleRate);
+  }
+
+  @override
+  void free() => _tts.free();
+}
+
+/// The 8M student: espeak-ng (bundled natives) → Kokoro vocab ids →
+/// the small ONNX graph on sherpa's own libonnxruntime. One voice, so
+/// numSpeakers is a humble 1; the voice style that IS the model.
+class TitlTts implements TtsBackend {
+  final TitlEngine engine;
+  final String espeakVoice; // 'en-us' today, the Italian pair tomorrow
+  TitlTts(this.engine, this.espeakVoice);
+  @override
+  int get numSpeakers => 1;
+  @override
+  (Float32List, int) generate({
+    required String text,
+    int sid = 0,
+    double speed = 1.0,
+  }) {
+    final words = piper.PiperPhonemize.phonemize(text, voice: espeakVoice);
+    return (
+      engine.synth(
+        TitlEngine.phonemesFromWords(words, engine.vocab.keys.toSet()),
+        speed: speed,
+      ),
+      TitlEngine.sampleRate,
+    );
+  }
+
+  @override
+  void free() => engine.dispose();
+}
+
 Future<void> _runWorker(
   SendPort toParent,
   ModelPaths p,
@@ -473,17 +558,18 @@ Future<void> _runWorker(
     ),
   );
 
-  // The TTS engine is swappable at runtime ('useTts' job below) — but only
-  // one engine exists: Kokoro. It may also be absent entirely until the
-  // first useTts (the pack is a lazy download; see [SpeechWorker.start]).
-  sherpa_onnx.OfflineTts buildTts(TtsSpec s) => sherpa_onnx.OfflineTts(
+  // The TTS engine is swappable at runtime ('useTts' job below): the
+  // Kokoro teacher (via sherpa) or the teacher-in-the-loop student
+  // (direct FFI). It may also be absent entirely until the first
+  // useTts (the pack is a lazy download; see [SpeechWorker.start]).
+  sherpa_onnx.OfflineTts buildKokoro(TtsSpec s) => sherpa_onnx.OfflineTts(
     sherpa_onnx.OfflineTtsConfig(
       model: sherpa_onnx.OfflineTtsModelConfig(
-        // The generic (tts as OfflineTts).generate() synth arm below already
-        // fits — per-piece forward pass, sid selection, clean heads (no
-        // prefix/trim/lead-in ritual, no max_frames guard: nothing here can
-        // babble). Measured RTF 0.10 at 4 threads on this desktop's CPU;
-        // expect a phone to land real-time-comfortable too.
+        // The generic generate() synth arm below already fits — per-
+        // piece forward pass, sid selection, clean heads (no prefix/
+        // trim/lead-in ritual, no max_frames guard: nothing here can
+        // babble). Measured RTF 0.10 at 4 threads on this desktop's
+        // CPU; expect a phone to land real-time-comfortable too.
         kokoro: sherpa_onnx.OfflineTtsKokoroModelConfig(
           model: s.kokoroModel,
           voices: s.kokoroVoices,
@@ -499,7 +585,19 @@ Future<void> _runWorker(
     ),
   );
 
-  sherpa_onnx.OfflineTts? tts = spec == null ? null : buildTts(spec);
+  Future<TtsBackend> buildTts(TtsSpec s) async {
+    if (s.engine == 'titl') {
+      await piper.initBindingsAsync();
+      piper.PiperPhonemize.initialize(s.espeakDataDir);
+      return TitlTts(
+        TitlEngine.load(modelPath: s.titlModel, vocabPath: s.titlVocab),
+        s.espeakVoice,
+      );
+    }
+    return SherpaTts(buildKokoro(s));
+  }
+
+  TtsBackend? tts = spec == null ? null : await buildTts(spec);
 
   sherpa_onnx.VoiceActivityDetector? vad;
   if (p.vadModel.isNotEmpty) {
@@ -706,7 +804,7 @@ Future<void> _runWorker(
           // path leaves the current voice usable.
           final next = message.spec!;
           final old = tts;
-          tts = buildTts(next);
+          tts = await buildTts(next);
           spec = next;
           old?.free();
           // Drop any half-heard utterance across the switch.
@@ -731,8 +829,11 @@ Future<void> _runWorker(
           for (var i = 0; i < pieces.length; i++) {
             final piece = pieces[i];
             final isLast = i == pieces.length - 1;
-            final audio = tts.generate(text: piece, sid: spec.sid, speed: 1.0);
-            final (samples, sampleRate) = (audio.samples, audio.sampleRate);
+            final (samples, sampleRate) = tts.generate(
+              text: piece,
+              sid: spec.sid,
+              speed: 1.0,
+            );
             var data = samples;
             if (!isLast) {
               data = Float32List(samples.length + sampleRate ~/ 16)

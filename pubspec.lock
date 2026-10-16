@@ -138,7 +138,7 @@ packages:
     source: hosted
     version: "1.3.3"
   ffi:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: ffi
       sha256: "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45"
@@ -368,6 +368,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.0"
+  piper_phonemize:
+    dependency: "direct main"
+    description:
+      name: piper_phonemize
+      sha256: "6bbc50d300a7db743185572be456b3e42750850f6fa5cd8c9c1e3d63d70c0ece"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.5.7"
   platform:
     dependency: transitive
     description:
