@@ -282,11 +282,14 @@ const MAX_SENT_CHARS = 300;  // bound first-audio latency even unpunctuated
 let curMsg = null;      // {blocks: {}, seq} for the LIVE message
 let lastTextBlk = null; // newest live text block (the draft frame's view)
 let lastTextOpen = false; // and whether it can still receive deltas
-function relaySentences(blk) {
+function relaySentences(blk, {force = false} = {}) {
   for (;;) {
     const from = blk.spoken;
     const win = blk.buf.slice(from, from + MAX_SENT_CHARS * 3);
-    if (win.length < MIN_SENT_CHARS) return;
+    // The micro-segment floor protects mid-stream carving only; on
+    // block close there is no 'next sentence' to merge into, and the
+    // leftovers — however short — are the end of the answer.
+    if (win.length < MIN_SENT_CHARS && !force) return;
     // A sentence end = a punctuation run (with trailing quotes/brackets)
     // preceded by a word char and followed by whitespace; the word-char
     // anchor keeps 'main.dart:801' and '3.5' from faking periods.
@@ -324,6 +327,12 @@ function relaySentences(blk) {
         if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
       }
     }
+    // On block close, force whatever is left out whole: the FINAL
+    // sentence's period sits at end-of-text with no whitespace after
+    // it, so the boundary regex can never see it, and without this the
+    // last sentence of every reply ending on bare punctuation was
+    // spoken as nothing ('the last message dropped again', +78).
+    if (cut < 0 && force && blk.buf.length > from) cut = blk.buf.length - from;
     if (cut < 0) return;
     const t = blk.buf.slice(from, from + cut).trim();
     blk.spoken = from + cut;
@@ -717,7 +726,13 @@ function handleEvent(line) {
         relay('tool', tokFrame(tokOutExact));
       }
     }
-    if (e.type === 'content_block_stop') lastTextOpen = false;
+    if (e.type === 'content_block_stop') {
+      // The text is final: the sentence buffer must empty completely,
+      // including an un-terminated tail the streaming pass would wait
+      // on whitespace for forever.
+      if (lastTextOpen && lastTextBlk) relaySentences(lastTextBlk, {force: true});
+      lastTextOpen = false;
+    }
     // One tally line per ~0.8 s of ACTIVE generation, only while someone
     // is listening: no deltas flowing (waiting, running a tool) means
     // no relay, so the last real `tool` line — "Bash npm test" — keeps
