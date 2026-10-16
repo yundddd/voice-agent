@@ -108,6 +108,20 @@ class VoiceAssistant extends ChangeNotifier {
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
   double _playSeconds = 0;
+  // Pipeline-hop flags for the latency strip's flow diagram: each turns
+  // green as its stage COMPLETES — asr: a transcript landed; sent: the
+  // words reached the harness (TALK/ATTACH open); reply: the first
+  // bridge event of any kind arrived; tts: the first audio chunk of a
+  // spoken block. Like the seconds beside them they are last-turn
+  // history, re-taught by the next round trip, never resettable trivia.
+  bool _hopAsr = false;
+  bool _hopSent = false;
+  bool _hopReply = false;
+  bool _hopTts = false;
+  bool get hopAsr => _hopAsr;
+  bool get hopSent => _hopSent;
+  bool get hopReply => _hopReply;
+  bool get hopTts => _hopTts;
 
   // ── Voice selection & cloning ────────────────────────────────────────────
   String _modelsDir = '';
@@ -728,6 +742,8 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
+            _hopTts = true; // reply→audio hop crossed: the first chunk
+            // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -820,6 +836,7 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeSub = sub; // held locally as well: cleanup must not touch a
     // successor turn's subscription or wake hook (identical() guards below)
     _armWireWatch(); // this connection is watched for quiet from here on
+    _hopSent = true; // asr→harness hop crossed: the words are on the wire
     _logDebug(
       events == null
           ? 'TALK open: gen=$gen interrupt=${interrupt ? 1 : 0} '
@@ -852,6 +869,7 @@ class VoiceAssistant extends ChangeNotifier {
           continue;
         }
         final ev = q.removeAt(0);
+        _hopReply = true; // harness→reply hop crossed: bytes arrived
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           _tokLive = false; // the answer closed and is being spoken;
           // nothing is generating to grow a counter over
@@ -2100,6 +2118,8 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
+            _hopTts = true; // reply→audio hop crossed: the first chunk
+            // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -2165,6 +2185,7 @@ class VoiceAssistant extends ChangeNotifier {
       );
       _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
       _armWireWatch(); // the quiet-wire watchdog rides this connection
+      _hopSent = true; // rejoining counts as reached-the-harness too
       _logDebug('ATTACH stream open: gen=$gen backlog replay, then live');
       try {
         while (true) {
@@ -2175,6 +2196,7 @@ class VoiceAssistant extends ChangeNotifier {
             continue;
           }
           final ev = q.removeAt(0);
+          _hopReply = true; // harness→reply hop crossed (reattach view)
           if (ev.isSay && ev.text.trim().isNotEmpty) {
             _tokLive = false;
             await speak(cleanForSpeech(ev.text.trim()));
@@ -2313,6 +2335,8 @@ class VoiceAssistant extends ChangeNotifier {
           if (!onAir) {
             onAir = true;
             _phase = AssistantPhase.speaking;
+            _hopTts = true; // reply→audio hop crossed: the first chunk
+            // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -2372,6 +2396,8 @@ class VoiceAssistant extends ChangeNotifier {
           if (!sawFirstChunk) {
             sawFirstChunk = true;
             _phase = AssistantPhase.speaking;
+            _hopTts = true; // reply→audio hop crossed: the first chunk
+            // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -2551,9 +2577,13 @@ class VoiceAssistant extends ChangeNotifier {
 
   void pttDown([Offset? at]) {
     pttEdgeCount++;
-    debugPrint(
-      'PTT-DOWN mode=${_mode.name} phase=${_phase.name} '
-      'worker=${_worker != null} ptr=$_pttPointers busy=$_bridgeBusy',
+    // Journal every edge (not just logcat): the field bug — "sometimes
+    // the message is not sent and the chat shows nothing" — needs the
+    // press/release/decision story with phone timestamps, relayed.
+    _logDebug(
+      'ptt DOWN #$pttEdgeCount: mode=${_mode.name} phase=${_phase.name} '
+      'worker=${_worker != null} ptr=$_pttPointers busy=$_bridgeBusy '
+      'bgd=$_harnessBackgrounded',
     );
     if (_mode != InteractionMode.pushToTalk || _worker == null) return;
     _pttDownPos = at;
@@ -2615,8 +2645,15 @@ class VoiceAssistant extends ChangeNotifier {
   void pttUp([Offset? at]) {
     pttEdgeCount++;
     final (slideUp, slideRight) = _pttSlidesAt(at);
-    debugPrint('PTT-UP ptr=$_pttPointers slideup=$slideUp dismiss=$slideRight');
+    _logDebug(
+      'ptt UP #$pttEdgeCount: ptr=$_pttPointers slideup=$slideUp '
+      'dismiss=$slideRight held=${DateTime.now().difference(_pttDownAt).inMilliseconds}ms',
+    );
     if (_pttPointers == 0) {
+      // A release with no recorded press (dropped event, double release):
+      // silent no-op today — loud in the journal, because this is one
+      // way a message vanishes without a trace.
+      _logDebug('ptt UP ignored: no pointer down — the press never landed?');
       _pttDownPos = null; // keep the stale-drag reading harmless
       _pttReleaseVisual();
       return;
@@ -2638,6 +2675,7 @@ class VoiceAssistant extends ChangeNotifier {
     // Back gesture / system interruption: behave exactly like a release
     // with no slide (never discard the recording, never a hard stop by
     // accident), so the mic can never be left open.
+    _logDebug('ptt CANCEL (system interruption) — treated as plain release');
     _pttPointers = 0;
     _pttMaxTimer?.cancel();
     _pttMaxTimer = null;
@@ -3024,8 +3062,20 @@ class VoiceAssistant extends ChangeNotifier {
       _asrAudioRate = 16000;
       final text = (await _worker!.transcribe(samples, 16000)).trim();
       swAsr.stop();
-      if (gen != _generation) return; // superseded
+      if (gen != _generation) {
+        _logDebug(
+          'message SWALLOWED: superseded during ASR (gen $gen → $_generation)'
+          ' — transcript "${text.substring(0, text.length < 40 ? text.length : 40)}" '
+          'went nowhere',
+        );
+        return;
+      }
       _asrSeconds = swAsr.elapsedMilliseconds / 1000.0;
+      _hopAsr = true; // heard→asr hop crossed: a transcript exists
+      _logDebug(
+        'asr ✓ "${text.length > 60 ? '${text.substring(0, 60)}…' : text}" '
+        '(${text.length} chars in ${swAsr.elapsedMilliseconds}ms)',
+      );
 
       if (text.isEmpty) {
         _status = 'Didn\'t catch that — try again?';
@@ -3037,6 +3087,7 @@ class VoiceAssistant extends ChangeNotifier {
       }
       if (_segEchoRisk && _looksLikeEcho(text, _lastSpoken)) {
         _segEchoRisk = false;
+        _logDebug('asr result rejected as TTS echo — nothing sent');
         _status = 'That was my own voice — I\'m listening.';
         _phase = AssistantPhase.listening;
         notifyListeners();
@@ -3065,6 +3116,9 @@ class VoiceAssistant extends ChangeNotifier {
         // (the turn in flight finishes first); anything else cuts a mere
         // thinking turn so the new prompt starts in a heartbeat.
         _abandonBridgeTurn();
+        _logDebug(
+          '→ harness: bubble added, POSTing /talk (interrupt=$interrupt)',
+        );
         unawaited(runQuickCommand(text, interrupt: interrupt));
         return;
       }
@@ -3087,6 +3141,7 @@ class VoiceAssistant extends ChangeNotifier {
                 if (!sawFirstChunk) {
                   sawFirstChunk = true;
                   _phase = AssistantPhase.speaking;
+                  _hopTts = true; // first audio of the reply (see strip)
                   _status = 'Speaking — jump in any time.';
                   notifyListeners();
                 }
@@ -3351,7 +3406,16 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   Future<void> _stopAndRespond({bool interrupt = false, bool discard = false}) async {
-    if (_phase != AssistantPhase.listening) return;
+    if (_phase != AssistantPhase.listening) {
+      // Another silent sinkhole for a vanishing message: the mic was not
+      // actually open by the time the release arrived (press raced a
+      // mode switch, the watchdog closed the stream, a duplicate call).
+      _logDebug(
+        'release dropped: phase=${_phase.name} not listening '
+        '(discard=$discard interrupt=$interrupt)',
+      );
+      return;
+    }
     // Snapshot the hold's context before any await: was this recording
     // made OVER an in-flight harness turn (pttDown detached it into a
     // background turn already), and how long was the button held (a
@@ -3382,11 +3446,16 @@ class VoiceAssistant extends ChangeNotifier {
       _status = bridgeHold
           ? 'Dismissed — the harness keeps working in the background.'
           : 'Dismissed — nothing sent.';
+      _logDebug('release: slide-right DISCARD — ${total}B dropped unsent');
       notifyListeners();
       return;
     }
     if (total < 16000 ~/ 4) {
       _phase = AssistantPhase.idle;
+      _logDebug(
+        'release: too short — ${total}B over ${heldMs}ms (bridgeHold=$bridgeHold'
+        ' interrupt=$interrupt)',
+      );
       if (bridgeHold) {
         // The hold opened over a harness turn but nothing speakable came
         // out. A quick tap is the hard stop the button always was mid-
@@ -3414,6 +3483,7 @@ class VoiceAssistant extends ChangeNotifier {
       offset += c.length;
     }
     _chunks.clear();
+    _logDebug('release → denoise+ASR: ${total}B held ${heldMs}ms');
     // Offline cleanup (high-pass + frame noise gate) using the live noise
     // floor — safe here: the user already finished speaking, so gating can
     // never clip utterance onsets, only quiet fill between words.
@@ -3430,6 +3500,10 @@ class VoiceAssistant extends ChangeNotifier {
     if (gen != _generation) {
       // The button was pressed again mid-cleanup: that hold owns the mic
       // (and the reply is abandoned); don't resurrect this turn.
+      _logDebug(
+        'message SWALLOWED: superseded during cleanup (gen $gen → '
+        '$_generation, pointers=$_pttPointers) — the recording died untranscribed',
+      );
       if (_pttPointers == 0) _idleReady();
       return;
     }

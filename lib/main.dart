@@ -787,21 +787,39 @@ class _LatencyStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget cell(String label, String value) => Expanded(
-      child: Column(
-        children: [
-          Text(value, style: Theme.of(context).textTheme.titleSmall),
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-        ],
+    Widget cell(String label, String value) => Column(
+      children: [
+        Text(value, style: Theme.of(context).textTheme.titleSmall),
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ],
+    );
+    // A hop that completed shows lit; the road ahead waits in grey.
+    Widget arrow(bool done) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Icon(
+        Icons.arrow_forward,
+        size: 14,
+        color: done ? Colors.green : Theme.of(context).disabledColor,
       ),
     );
+    final lit = assistant.hopReply; // the PC wakes when the first byte back lands
 
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         cell('heard', '${assistant.recordSeconds.toStringAsFixed(1)}s'),
+        arrow(assistant.hopAsr),
         cell('asr', '${assistant.asrSeconds.toStringAsFixed(2)}s'),
-        cell('tts', '${assistant.ttsSeconds.toStringAsFixed(2)}s'),
+        arrow(assistant.hopSent),
+        Icon(
+          Icons.computer,
+          size: 18,
+          color: lit ? Colors.green : Theme.of(context).disabledColor,
+        ),
+        arrow(assistant.hopReply),
         cell('reply', '${assistant.playSeconds.toStringAsFixed(1)}s'),
+        arrow(assistant.hopTts),
+        cell('tts', '${assistant.ttsSeconds.toStringAsFixed(2)}s'),
       ],
     );
   }
