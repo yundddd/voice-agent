@@ -703,7 +703,7 @@ function handleEvent(line) {
         tokOutExact += o; tokLastMsgOut = o; tokChars = 0;
         if (curRes) {
           tokSentAt = Date.now();
-          sse(curRes.res, 'tool', tokFrame(tokOutExact));
+          relay('tool', tokFrame(tokOutExact));
         }
       }
     }
@@ -718,7 +718,7 @@ function handleEvent(line) {
     // it, so the displayed number grows smoothly, not in 2-second jumps.
     if (curRes && tokChars && Date.now() - tokSentAt >= 800) {
       tokSentAt = Date.now();
-      sse(curRes.res, 'tool', tokFrame(tokOutExact + Math.floor(tokChars / 4)));
+      relay('tool', tokFrame(tokOutExact + Math.floor(tokChars / 4)));
     }
     return;
   }
@@ -885,7 +885,7 @@ function handleEvent(line) {
             thinkBuf = tailNow;
             tokSentAt = Date.now();
             if (curRes) {
-              sse(curRes.res, 'tool',
+              relay('tool',
                 tokFrame(tokOutExact + Math.floor(tokChars / 4)));
             }
           }
@@ -930,7 +930,7 @@ function startKeep(res) {
       if (HEARTBEAT_MS > 0 && curRes && curRes.res === res && turnOpen &&
           !openTools.size && Date.now() - tokSentAt >= HEARTBEAT_MS) {
         tokSentAt = Date.now();
-        sse(res, 'tool', tokFrame(
+        relay('tool', tokFrame(
           tokOutExact + Math.floor(tokChars / 4),
           {quiet: tokChars === 0 && tokOutExact === 0}));
       }
