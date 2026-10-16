@@ -371,10 +371,9 @@ packages:
   piper_phonemize:
     dependency: "direct main"
     description:
-      name: piper_phonemize
-      sha256: "6bbc50d300a7db743185572be456b3e42750850f6fa5cd8c9c1e3d63d70c0ece"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/piper_phonemize"
+      relative: true
+    source: path
     version: "1.5.7"
   platform:
     dependency: transitive

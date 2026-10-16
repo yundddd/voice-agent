@@ -12,6 +12,9 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - build/**
+    # Vendored upstream code: keep byte-identical to its package so a
+    # future re-sync diffs cleanly (the prune only touches assets).
+    - third_party/**
     - android/**
     - ios/**
     - web/**

@@ -1,0 +1,120 @@
+name: piper_phonemize
+description: >
+  Dart and Flutter bindings for piper-phonemize, a fast phonemization library
+  backed by espeak-ng. Converts text to phoneme code points for use with
+  text-to-speech systems.
+version: 1.5.7
+homepage: https://github.com/csukuangfj/piper-phonemize
+repository: https://github.com/csukuangfj/piper-phonemize
+license: GPL-3.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=2.8.1"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  path: ^1.9.0
+  path_provider: ^2.1.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true
+
+  assets:
+    - path: espeak-ng-data/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/aav/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/art/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/azc/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/bat/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/bnt/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/ccs/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/cel/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/cus/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/dra/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/esx/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/gmq/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/gmw/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/grk/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/inc/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/ine/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/ira/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/iro/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/itc/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/jpx/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/map/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/miz/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/myn/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/poz/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/roa/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/sai/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/sem/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/sit/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/tai/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/trk/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/urj/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/zle/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/zls/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/lang/zlw/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/voices/
+      platforms: [android, ios, linux, macos, windows]
+    - path: espeak-ng-data/voices/!v/
+      platforms: [android, ios, linux, macos, windows]
+    # Web/WASM bundle. The .data package embeds espeak-ng-data for web, so
+    # web builds do not need the espeak-ng-data/ assets above.
+    - path: assets/web/piper-phonemize-wasm-main.js
+      platforms: [web]
+    - path: assets/web/piper-phonemize-wasm-main.wasm
+      platforms: [web]
+    - path: assets/web/piper-phonemize-wasm-main.data
+      platforms: [web]
+    - path: assets/web/piper-phonemize.js
+      platforms: [web]
