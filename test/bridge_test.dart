@@ -47,22 +47,24 @@ void main() {
       expect(evs.single.text, 'joined');
     });
 
-    test('non-JSON say data passes through as text; other events are errors',
-        () async {
-      final evs = await parse([
-        'event: say',
-        'data: plain text line',
-        '',
-        'event: whatever',
-        'data: {"error":"boom"}',
-        '',
-      ]);
-      expect(evs[0].kind, 'say');
-      expect(evs[0].text, 'plain text line');
-      expect(evs[1].kind, 'error');
-      expect(evs[1].text, 'boom');
-      expect(evs[1].isError, isTrue);
-    });
+    test(
+      'non-JSON say data passes through as text; other events are errors',
+      () async {
+        final evs = await parse([
+          'event: say',
+          'data: plain text line',
+          '',
+          'event: whatever',
+          'data: {"error":"boom"}',
+          '',
+        ]);
+        expect(evs[0].kind, 'say');
+        expect(evs[0].text, 'plain text line');
+        expect(evs[1].kind, 'error');
+        expect(evs[1].text, 'boom');
+        expect(evs[1].isError, isTrue);
+      },
+    );
 
     test('done with isError surfaces the failure flag', () async {
       final evs = await parse([
@@ -92,8 +94,7 @@ void main() {
       expect(s.endsWith('.'), isTrue);
     });
 
-    test('code blocks collapse and no trailing punctuation gets a stopper',
-        () {
+    test('code blocks collapse and no trailing punctuation gets a stopper', () {
       final s = cleanForSpeech('done ```\ncargo build\n``` all green');
       expect(s.contains('cargo'), isFalse);
       expect(s.endsWith('.'), isTrue);
@@ -106,18 +107,26 @@ void main() {
   });
 
   group('prefs', () {
-    test('ship preconfigured: defaults are the dev-machine demo bridge', () {
+    test('ship preconfigured with voice routing on: zero-setup chips', () {
       expect(BridgePrefs().configured, isTrue); // fresh install = chips visible
       expect(BridgePrefs().url, BridgePrefs.defaultUrl);
       expect(BridgePrefs().token, 'testtok');
+      expect(BridgePrefs().voice, isTrue); // speech goes to the harness
     });
 
-    test('round-trips, and cleared fields stay cleared', () {
-      final p = BridgePrefs.fromJson(
-        BridgePrefs(url: 'http://100.1.2.3:8732/', token: 't').toJson(),
+    test('round-trips, cleared fields stay cleared, voice toggle persists', () {
+      final p = BridgePrefs(
+        url: 'http://100.1.2.3:8732/',
+        token: 't',
+        voice: false,
       );
-      expect(p.configured, isTrue);
-      expect(p.url, 'http://100.1.2.3:8732/');
+      final q = BridgePrefs.fromJson(p.toJson());
+      expect(q.configured, isTrue);
+      expect(
+        q.voice,
+        isFalse,
+      ); // an explicit off must not resurrect the default
+      expect(q.url, 'http://100.1.2.3:8732/');
       // A saved empty token (user cleared it) must NOT resurrect the default:
       expect(
         BridgePrefs.fromJson({'url': 'http://x', 'token': ''}).configured,
@@ -125,6 +134,7 @@ void main() {
       );
       // A prefs file missing whole keys falls back to the defaults:
       expect(BridgePrefs.fromJson({'url': 'http://x'}).configured, isTrue);
+      expect(BridgePrefs.fromJson({'url': 'http://x'}).voice, isTrue);
     });
   });
 }

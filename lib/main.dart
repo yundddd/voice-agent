@@ -96,14 +96,18 @@ class _AssistantScreenState extends State<AssistantScreen>
     final (fabEnabled, hint) = switch (a.mode) {
       InteractionMode.pushToTalk => switch (a.phase) {
         AssistantPhase.listening => (true, 'Release to send'),
-        AssistantPhase.transcribing ||
-        AssistantPhase.speaking => (false, 'One moment…'),
+        AssistantPhase.transcribing || AssistantPhase.speaking => (
+          a.bridgeBusy, // a harness turn: the greyed button would be dead air
+          a.bridgeBusy ? 'Stop the harness' : 'One moment…',
+        ),
         _ => (true, 'Hold to talk'),
       },
       InteractionMode.conversation => switch (a.phase) {
         AssistantPhase.listening => (true, 'End conversation'),
-        AssistantPhase.transcribing ||
-        AssistantPhase.speaking => (true, 'Stop my reply'),
+        AssistantPhase.transcribing || AssistantPhase.speaking => (
+          true,
+          a.bridgeBusy ? 'Stop the harness' : 'Stop my reply',
+        ),
         _ => (true, 'Start conversation'),
       },
     };
@@ -302,7 +306,11 @@ class _AssistantScreenState extends State<AssistantScreen>
                         onPressed: !fabEnabled
                             ? null
                             : _assistant.mode == InteractionMode.pushToTalk
-                            ? () {} // hold edges above; a plain tap does nothing
+                            ? () {
+                                // Only reachable as 'Stop the harness'
+                                // (bridgeBusy): a plain hold does nothing.
+                                if (a.bridgeBusy) a.bridgeStop();
+                              }
                             : _assistant.toggle,
                         backgroundColor: color,
                         foregroundColor: scheme.onPrimary,

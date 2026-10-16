@@ -92,6 +92,13 @@ the Bridge screen. Notes that matter when touching this code:
    stripped, bullet lines joined with "and", sentence stopper appended
    (Piper reads a comma-final clause oddly). Unit-tested in
    `test/bridge_test.dart`.
+6. Voice routing (0.1.0+10): `_startTurn` checks `_bridgePrefs.voice`
+   (factory on) and hands the transcript to `runQuickCommand` instead of
+   the parrot synth — one code path for typed chips and spoken commands.
+   Guards that already existed upstream keep working: the empty/"say a
+   little more" filters, and the self-echo check, run before forwarding.
+   While a harness turn is in flight the FAB reads "Stop the harness"
+   (PTT mode included, where the button used to be greyed out dead air).
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message

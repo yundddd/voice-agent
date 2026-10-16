@@ -80,8 +80,9 @@ Stream<BridgeEvent> bridgeEventsFromLines(Stream<String> rawLines) async* {
   String? event;
   final data = StringBuffer();
   var haveData = false;
-  await for (final line
-      in rawLines.map((l) => l.endsWith('\r') ? l.substring(0, l.length - 1) : l)) {
+  await for (final line in rawLines.map(
+    (l) => l.endsWith('\r') ? l.substring(0, l.length - 1) : l,
+  )) {
     if (line.isEmpty) {
       if (haveData && event != null) {
         yield BridgeEvent.parse(event, data.toString());
@@ -113,7 +114,9 @@ class BridgeClient {
   final String token;
 
   Uri _u(String path) => Uri.parse(
-    baseUrl.endsWith('/') ? '${baseUrl.substring(0, baseUrl.length - 1)}$path' : '$baseUrl$path',
+    baseUrl.endsWith('/')
+        ? '${baseUrl.substring(0, baseUrl.length - 1)}$path'
+        : '$baseUrl$path',
   ).replace(queryParameters: {'token': token});
 
   /// Sends an utterance; the stream yields say/tool events as the harness
@@ -121,8 +124,7 @@ class BridgeClient {
   /// request *is* the turn: cancelling the subscription closes the
   /// connection and the bridge's response-close hook cleans up.
   Stream<BridgeEvent> talk(String text) async* {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 6);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
       final req = await client.postUrl(_u('/talk'));
       req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
@@ -130,8 +132,10 @@ class BridgeClient {
       final res = await req.close();
       if (res.statusCode != 200) {
         final body = (await res.transform(utf8.decoder).join()).trim();
-        throw BridgeException('bridge said HTTP ${res.statusCode}'
-            '${body.isEmpty ? '' : ': $body'}');
+        throw BridgeException(
+          'bridge said HTTP ${res.statusCode}'
+          '${body.isEmpty ? '' : ': $body'}',
+        );
       }
       yield* bridgeEventsFromLines(
         res.transform(utf8.decoder).transform(const LineSplitter()),
@@ -171,11 +175,11 @@ class BridgeClient {
 
   Future<void> _post(String path) async {
     try {
-      final req = await HttpClient()
-          .postUrl(_u(path))
-          .then((r) => r.close());
+      final req = await HttpClient().postUrl(_u(path)).then((r) => r.close());
       await req.drain<void>();
-    } on Object {/* best effort */}
+    } on Object {
+      /* best effort */
+    }
   }
 }
 
@@ -194,15 +198,19 @@ String cleanForSpeech(String t) {
   var s = t.replaceAll(RegExp(r'``[\s\S]*?``'), ' (code omitted) ');
   // Links -> their text (replaceAll doesn't expand $1; mapped does).
   s = s.replaceAllMapped(
-      RegExp(r'\[([^\]]+)\]\([^)]*\)'), (m) => m.group(1) ?? m.group(0)!);
+    RegExp(r'\[([^\]]+)\]\([^)]*\)'),
+    (m) => m.group(1) ?? m.group(0)!,
+  );
   s = s.replaceAll(RegExp(r'[*_`~#>|]'), '');
   s = s
       .split('\n')
-      .map((l) => l
-          .replaceFirst(RegExp(r'^\s*[-•*+]\s*'), 'and ')
-          .replaceFirst(': ', ', ')
-          .replaceFirst(RegExp(r'[\s:;]+$'), '') // colon before a join dot
-          .trim())
+      .map(
+        (l) => l
+            .replaceFirst(RegExp(r'^\s*[-•*+]\s*'), 'and ')
+            .replaceFirst(': ', ', ')
+            .replaceFirst(RegExp(r'[\s:;]+$'), '') // colon before a join dot
+            .trim(),
+      )
       .where((l) => l.isNotEmpty)
       .join('. ')
       .replaceAll(RegExp(r'\.\s*\.'), '.')
@@ -223,18 +231,29 @@ class BridgePrefs {
   static const defaultUrl = 'http://100.99.240.112:8732';
   static const defaultToken = 'testtok';
 
-  BridgePrefs({this.url = defaultUrl, this.token = defaultToken});
+  /// When true (the factory setting) and the bridge is configured, spoken
+  /// utterances go to the harness and its answer is spoken back; when
+  /// false the app keeps parrot-repeating your speech like the original
+  /// offline demo. Toggle: the switch on the Bridge screen.
+  BridgePrefs({
+    this.url = defaultUrl,
+    this.token = defaultToken,
+    this.voice = true,
+  });
   String url, token;
+  bool voice;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
 
-  Map<String, Object> toJson() => {'url': url, 'token': token};
+  Map<String, Object> toJson() => {'url': url, 'token': token, 'voice': voice};
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
     token: j['token'] as String? ?? BridgePrefs.defaultToken,
+    voice: j['voice'] as bool? ?? true,
   );
 }
 
-File _prefsFile(String modelsDir) => File(p.join(modelsDir, 'bridge_prefs.json'));
+File _prefsFile(String modelsDir) =>
+    File(p.join(modelsDir, 'bridge_prefs.json'));
 
 Future<BridgePrefs> loadBridgePrefs(String modelsDir) async {
   try {

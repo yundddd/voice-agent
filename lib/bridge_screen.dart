@@ -55,131 +55,164 @@ class _BridgeScreenState extends State<BridgeScreen> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'Point the app at the bridge process started on your desktop:\n'
-            'node tool/claude_bridge.mjs --dir <project> --token <token>',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _url,
-            decoration: const InputDecoration(
-              labelText: 'Bridge URL',
-              hintText: 'http://135.180.96.71:8732  (or tailscale http://100.99.240.112:8732)',
-              border: OutlineInputBorder(),
-              helperText: 'Plain http works on your LAN/tailnet — the bridge '
-                  'is LAN-only by convention and carries a shared token.',
+      // Rebuild on every assistant change (busy state, toggle persistence):
+      body: AnimatedBuilder(
+        animation: a,
+        builder: (context, _) => ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              'Point the app at the bridge process started on your desktop:\n'
+              'node tool/claude_bridge.mjs --dir <project> --token <token>',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _token,
-            decoration: const InputDecoration(
-              labelText: 'Token',
-              border: OutlineInputBorder(),
-              helperText: 'must match the bridge\'s --token',
-            ),
-            obscureText: true,
-            autocorrect: false,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              FilledButton.icon(
-                onPressed: _checking ? null : _saveAndCheck,
-                icon: _checking
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.link),
-                label: const Text('Save & check'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _url,
+              decoration: const InputDecoration(
+                labelText: 'Bridge URL',
+                hintText:
+                    'http://135.180.96.71:8732  (or tailscale http://100.99.240.112:8732)',
+                border: OutlineInputBorder(),
+                helperText:
+                    'Plain http works on your LAN/tailnet — the bridge '
+                    'is LAN-only by convention and carries a shared token.',
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _check == null
-                      ? (a.bridgeConfigured ? 'configured (not yet checked)' : 'not configured')
-                      : _check!.isEmpty
-                          ? 'bridge reachable, claude up'
-                          : 'problem: $_check',
-                  style: TextStyle(
-                    color: _check == null || _check!.isEmpty
-                        ? scheme.onSurfaceVariant
-                        : scheme.error,
+              keyboardType: TextInputType.url,
+              autocorrect: false,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _token,
+              decoration: const InputDecoration(
+                labelText: 'Token',
+                border: OutlineInputBorder(),
+                helperText: 'must match the bridge\'s --token',
+              ),
+              obscureText: true,
+              autocorrect: false,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                FilledButton.icon(
+                  onPressed: _checking ? null : _saveAndCheck,
+                  icon: _checking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link),
+                  label: const Text('Save & check'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _check == null
+                        ? (a.bridgeConfigured
+                              ? 'configured (not yet checked)'
+                              : 'not configured')
+                        : _check!.isEmpty
+                        ? 'bridge reachable, claude up'
+                        : 'problem: $_check',
+                    style: TextStyle(
+                      color: _check == null || _check!.isEmpty
+                          ? scheme.onSurfaceVariant
+                          : scheme.error,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const Divider(height: 32),
-          Text('Command chips on the main screen',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          for (final (label, utterance) in VoiceAssistant.quickCommands)
-            ListTile(
-              dense: true,
+              ],
+            ),
+            const Divider(height: 32),
+            // The headline switch: your speech -> the harness -> spoken answer.
+            SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: Text(label),
+              value: a.bridgeVoice,
+              onChanged: (v) => a.setBridgeVoice(v),
+              title: const Text('Speak to Claude Code'),
               subtitle: Text(
-                utterance,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
+                a.bridgeConfigured
+                    ? 'On (factory): whatever you say in push-to-talk or '
+                          'conversation mode goes to the harness, and its '
+                          'answer comes back spoken. Off: the app repeats '
+                          'your words back like the offline demo.'
+                    : 'Set a bridge url and token above first — with no '
+                          'bridge reachable, voice stays offline.',
               ),
-              trailing: IconButton(
-                icon: const Icon(Icons.play_arrow),
-                tooltip: 'Run this chip now',
-                onPressed: a.bridgeBusy || !a.bridgeConfigured
+            ),
+            Text(
+              'Command chips on the main screen',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            for (final (label, utterance) in VoiceAssistant.quickCommands)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(label),
+                subtitle: Text(
+                  utterance,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.play_arrow),
+                  tooltip: 'Run this chip now',
+                  onPressed: a.bridgeBusy || !a.bridgeConfigured
+                      ? null
+                      : () {
+                          Navigator.of(
+                            context,
+                          ).pop(); // talk over on the main screen
+                          a.runQuickCommand(utterance);
+                        },
+                ),
+              ),
+            const Divider(height: 32),
+            Text(
+              'Say anything',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _free,
+              decoration: const InputDecoration(
+                labelText: 'Custom command for the harness',
+                border: OutlineInputBorder(),
+                helperText:
+                    'sent verbatim as one utterance; the answer is '
+                    'spoken with your assistant voice',
+              ),
+              onSubmitted: (v) {
+                if (v.trim().isEmpty) return;
+                Navigator.of(context).pop();
+                a.runQuickCommand(v.trim());
+              },
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed:
+                    a.bridgeBusy ||
+                        !a.bridgeConfigured ||
+                        _free.text.trim().isEmpty
                     ? null
                     : () {
-                        Navigator.of(context).pop(); // talk over on the main screen
-                        a.runQuickCommand(utterance);
+                        final v = _free.text.trim();
+                        _free.clear();
+                        Navigator.of(context).pop();
+                        a.runQuickCommand(v);
                       },
+                icon: const Icon(Icons.send),
+                label: const Text('Send'),
               ),
             ),
-          const Divider(height: 32),
-          Text('Say anything', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _free,
-            decoration: const InputDecoration(
-              labelText: 'Custom command for the harness',
-              border: OutlineInputBorder(),
-              helperText: 'sent verbatim as one utterance; the answer is '
-                  'spoken with your assistant voice',
-            ),
-            onSubmitted: (v) {
-              if (v.trim().isEmpty) return;
-              Navigator.of(context).pop();
-              a.runQuickCommand(v.trim());
-            },
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: a.bridgeBusy ||
-                      !a.bridgeConfigured ||
-                      _free.text.trim().isEmpty
-                  ? null
-                  : () {
-                      final v = _free.text.trim();
-                      _free.clear();
-                      Navigator.of(context).pop();
-                      a.runQuickCommand(v);
-                    },
-              icon: const Icon(Icons.send),
-              label: const Text('Send'),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

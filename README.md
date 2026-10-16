@@ -237,7 +237,14 @@ a phrased utterance (visible on the Bridge screen, editable list in
 (barge-in sends SIGINT to the harness turn; the conversation survives —
 verified). The Bridge screen also has a free-text box so *anything* you
 type goes to the harness and comes back spoken, and a restart button for a
-fresh conversation. Tool activity shows as live status text, `say` events
+fresh conversation. **The voice toggle:** the "Speak to Claude Code"
+switch (on from the factory, persisted in `bridge_prefs.json`) routes
+whatever you say in push-to-talk or conversation mode to the harness
+instead of repeating it back — say "what still has uncommitted changes?"
+and Claude Code runs the git commands and answers in your assistant
+voice; while a harness turn runs, the mic button doubles as "Stop the
+harness" (it ends the audio *and* the working, context intact for the
+next turn). Tool activity shows as live status text, `say` events
 are synthesised sentence-stream through the same chunked player replies
 use, and everything the harness answers runs past `cleanForSpeech` first
 (a bullet list would otherwise be *spoken*; markdown/emoji are stripped).

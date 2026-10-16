@@ -173,8 +173,17 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Claude Code bridge API (settings UI in bridge_screen.dart) ─────────
   bool get bridgeConfigured => _bridge != null;
   bool get bridgeBusy => _bridgeBusy;
+  bool get bridgeVoice => _bridgePrefs.voice;
   String get bridgeUrlText => _bridgePrefs.url;
   String get bridgeTokenText => _bridgePrefs.token;
+
+  /// 'Speak to Claude Code' switch: when on, PTT/conversation utterances
+  /// go to the harness instead of being repeated back.
+  Future<void> setBridgeVoice(bool on) async {
+    _bridgePrefs.voice = on;
+    await saveBridgePrefs(_modelsDir, _bridgePrefs);
+    notifyListeners();
+  }
 
   /// One-tap harness commands shown as chips on the main screen. The
   /// phrasing matters: the bridge's voice system prompt asks the harness
@@ -272,7 +281,8 @@ class VoiceAssistant extends ChangeNotifier {
           if (gen != _generation) break;
           _noteTts(audio, rate); // last message's raw audio: debug replay
         } else if (ev.kind == 'tool') {
-          _status = 'The harness is working — ${ev.toolName}'
+          _status =
+              'The harness is working — ${ev.toolName}'
               '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
           _logDebug('bridge tool ${ev.toolName} ${ev.detail}');
           notifyListeners();
@@ -325,7 +335,6 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_bridge?.reset());
     _logDebug('bridge: new session');
   }
-
 
   TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(
     _modelsDir,
@@ -1165,6 +1174,15 @@ class VoiceAssistant extends ChangeNotifier {
       _segEchoRisk = false;
       _transcript = text;
       _lastSpoken = text;
+
+      if (_bridge != null && _bridgePrefs.voice) {
+        // Voice -> Claude Code: the utterance becomes a harness turn, and
+        // the harness's answer is spoken (progress narrated, barge-in
+        // stops the work too) through the same streamed pipeline the
+        // chips use. With the toggle off, the app below just repeats.
+        unawaited(runQuickCommand(text));
+        return;
+      }
 
       // Streamed reply: the worker renders sentence chunks and we play
       // each one the moment it lands, so the reply STARTS speaking while
