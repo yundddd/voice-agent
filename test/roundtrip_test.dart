@@ -325,10 +325,10 @@ void main() {
         '/tmp/opencode/pocket-pack/pocket-tts';
     final refs = TtsVoice.pocketRefs;
     TtsSpec spec(int sid) => TtsSpec.pocket(
-      pocketLmFlow: '$dir/lm_flow.int8.onnx',
-      pocketLmMain: '$dir/lm_main.int8.onnx',
+      pocketLmFlow: '$dir/lm_flow.onnx',
+      pocketLmMain: '$dir/lm_main.onnx',
       pocketEncoder: '$dir/encoder.onnx',
-      pocketDecoder: '$dir/decoder.int8.onnx',
+      pocketDecoder: '$dir/decoder.onnx',
       pocketTextConditioner: '$dir/text_conditioner.onnx',
       pocketVocabJson: '$dir/vocab.json',
       pocketTokenScoresJson: '$dir/token_scores.json',
@@ -337,7 +337,7 @@ void main() {
       sid: sid,
     );
     if (!haveModels ||
-        !File('$dir/lm_main.int8.onnx').existsSync() ||
+        !File('$dir/lm_main.onnx').existsSync() ||
         !File('$dir/voices/${refs.first}.wav').existsSync()) {
       // ignore: avoid_print
       print('SKIPPED: Pocket TTS assets not staged under $dir');

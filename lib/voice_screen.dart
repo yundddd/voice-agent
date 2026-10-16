@@ -54,6 +54,177 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
+  // ── Round-trip bench ────────────────────────────────────────────────────
+  // Push-to-talk -> Whisper -> echo in the just-picked voice, timed from the
+  // button release. The point is comparing voices back to back without the
+  // LLM's thinking time muddying the numbers: switch voice, run the bench,
+  // read the release->first-audio column.
+
+  Widget _benchCard() {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.speed_outlined, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Echoing as: ${a.benchVoiceLabel}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Hold the button and speak; on release the app transcribes '
+              'your words and speaks them straight back with the voice '
+              'above — no Claude turn, so every millisecond measured is '
+              'the models you picked. Switch voices and re-run to compare.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Center(child: _benchButton()),
+            if (a.benchNote.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              SelectableText(
+                a.benchNote,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (a.benchRuns.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _benchRow(
+                'voice',
+                'release→text',
+                'release→audio',
+                'synth (rtf)',
+                header: true,
+              ),
+              for (final r in a.benchRuns)
+                _benchRow(
+                  r.voice,
+                  '${r.asrMs} ms',
+                  '${r.firstAudioMs} ms',
+                  '${r.synthTotalMs} ms (${r.rtf.toStringAsFixed(2)})',
+                  heard: r.heard,
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _benchButton() {
+    final scheme = Theme.of(context).colorScheme;
+    final capturing = a.benchCapturing;
+    final busy = a.benchBusy;
+    return Listener(
+      // Same raw pointer edges as the main push-to-talk button: press and
+      // release are bound to this path even if the finger drifts off it.
+      onPointerDown: (_) => unawaited(a.benchDown()),
+      onPointerUp: (_) => unawaited(a.finishBenchCapture()),
+      onPointerCancel: (_) => a.cancelBenchCapture(),
+      child: Container(
+        width: 132,
+        height: 132,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: capturing ? scheme.primary : scheme.surfaceContainerHighest,
+          border: Border.all(color: scheme.outlineVariant, width: 2),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (busy)
+              const CircularProgressIndicator(strokeWidth: 2.5)
+            else
+              Icon(
+                capturing ? Icons.mic : Icons.mic_none,
+                size: 34,
+                color: capturing ? scheme.onPrimary : scheme.onSurfaceVariant,
+              ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                busy
+                    ? 'measuring…'
+                    : capturing
+                    ? '${a.benchSeconds.toStringAsFixed(1)}s — release'
+                    : 'hold to talk',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: capturing ? scheme.onPrimary : null,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _benchRow(
+    String v,
+    String asr,
+    String first,
+    String synth, {
+    bool header = false,
+    String heard = '',
+  }) {
+    final style =
+        (header
+                ? Theme.of(context).textTheme.labelSmall
+                : Theme.of(context).textTheme.bodySmall)
+            ?.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: header ? null : Theme.of(context).colorScheme.onSurface,
+            );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 88,
+                child: Text(
+                  v,
+                  overflow: TextOverflow.ellipsis,
+                  style: style?.copyWith(
+                    fontWeight: header ? null : FontWeight.w600,
+                  ),
+                ),
+              ),
+              Expanded(child: Text(asr, style: style)),
+              Expanded(child: Text(first, style: style)),
+              Expanded(child: Text(synth, style: style)),
+            ],
+          ),
+          if (!header && heard.isNotEmpty)
+            Text(
+              '“$heard”',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontStyle: FontStyle.italic,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -107,6 +278,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
               ),
               const SizedBox(height: 4),
               _cloneCard(clone),
+              const SizedBox(height: 20),
+              Text(
+                'ROUND-TRIP BENCH',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              const SizedBox(height: 4),
+              _benchCard(),
               const SizedBox(height: 16),
               Text(
                 'Voices download only when you pick them and can be deleted '

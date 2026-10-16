@@ -17,7 +17,12 @@ set -euo pipefail
 REPO=${REPO:-yundddd/voice-agent}
 STAGE=${STAGE:-/tmp/opencode/pocket-pack/pocket-tts}
 K2FSA_TTS=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models
-PACK=sherpa-onnx-pocket-tts-int8-2026-01-26
+# FP32 export (v2 pack). The int8 pack (v1) measured the SAME ~10 kHz Mimi
+# codec ceiling in our band forensics, so quantization bought no bandwidth —
+# but subjective A/B (and the user's ears at ~1 kHz less AR-path hiss) came
+# down for the full-precision graphs, at +70 MB download / 1.6x desktop RTF
+# (0.16 vs 0.10; the voice-screen round-trip bench is how to feel it out).
+PACK=sherpa-onnx-pocket-tts-2026-01-26
 TTS_VOICES=https://huggingface.co/kyutai/tts-voices/resolve/main   # ungated
 
 # Preset voices -> upstream paths (kyutai.org/pocket-tts voice list). Names
@@ -38,7 +43,7 @@ cd "$(dirname "$0")/.."
 mkdir -p "$(dirname "$STAGE")"
 
 # 1. Model files: the exported ONNX set + the CC-BY-4.0 licence text.
-if [ ! -f "$STAGE/lm_main.int8.onnx" ]; then
+if [ ! -f "$STAGE/lm_main.onnx" ]; then
   rm -rf "$STAGE"  # fresh: mv must land the extracted dir AT $STAGE, not in it
   (cd "$(dirname "$STAGE")" && curl -sfL -O "$K2FSA_TTS/$PACK.tar.bz2" &&
     tar xjf "$PACK.tar.bz2" && rm "$PACK.tar.bz2" &&
@@ -47,7 +52,7 @@ fi
 mkdir -p "$STAGE/voices"
 rm -rf "$STAGE/test_wavs"   # k2-fsa's samples: our curated voices/ replace them
 rm -f "$STAGE/README.md"    # k2-fsa's two-paragraph note; NOTICE replaces it
-for f in lm_flow.int8.onnx lm_main.int8.onnx encoder.onnx decoder.int8.onnx \
+for f in lm_flow.onnx lm_main.onnx encoder.onnx decoder.onnx \
   text_conditioner.onnx vocab.json token_scores.json LICENSE; do
   [ -s "$STAGE/$f" ] || { echo "missing $STAGE/$f" >&2; exit 1; }
 done
@@ -62,9 +67,9 @@ done
 # 3. Attribution note for the mirrored files (license: CC-BY-4.0, shipped
 #    verbatim as LICENSE; this records provenance for the onnx export step).
 cat > "$STAGE/NOTICE" <<EOF
-pocket-tts pack
+pocket-tts pack (v2, fp32 graphs)
   model:  kyutai/pocket-tts (CC-BY-4.0, https://huggingface.co/kyutai/pocket-tts)
-          exported to ONNX (int8) by KevinAHM/pocket-tts-onnx-export and
+          exported to ONNX (fp32) by KevinAHM/pocket-tts-onnx-export and
           repackaged on the k2-fsa/sherpa-onnx 'tts-models' releases as
           $PACK
   voices: reference wavs from https://huggingface.co/kyutai/tts-voices
@@ -74,18 +79,20 @@ pocket-tts pack
 EOF
 
 # 4. Sentinel: bump the name when the pack layout changes — the app's
-#    presence check keys on this file (see lib/tts_voices.dart).
-touch "$STAGE/pack-v1.ok"
+#    presence check keys on this file (see lib/tts_voices.dart). v1 was the
+#    int8 graph set; v2 switches lm/flow/decoder to the fp32 export (the
+#    unpacker clears the old directory on marker-bump re-downloads).
+touch "$STAGE/pack-v2.ok"
 
 # 5. Zip with one top-level dir (stripped on unpack, see model_unpack.dart):
 #    the app's streaming zip path keeps phone RAM flat during unpack.
-(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v1.zip && zip -qry9 \
-  pocket-tts-v1.zip "$(basename "$STAGE")")
-echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v1.zip" | cut -f1)"
+(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v2.zip && zip -qry9 \
+  pocket-tts-v2.zip "$(basename "$STAGE")")
+echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v2.zip" | cut -f1)"
 
 # 6. Publish alongside the ASR/TTS packs.
 if [ "${1:-}" = upload ]; then
-  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v1.zip" \
+  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v2.zip" \
     --clobber -R "$REPO"
   echo "uploaded to $REPO releases (tag models-v1)"
 fi

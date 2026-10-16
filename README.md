@@ -184,9 +184,18 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   `kyutai/pocket-tts` (the HF repo itself is gated behind a terms click —
   one-time, login + acknowledge on the model page; the export is not) and
   six reference wavs from the ungated `kyutai/tts-voices` repo (Jane,
-  Anna, Jean, Michael, Alba, Bill Boerst — CC-BY-4.0), zipped to ~105 MB
-  with a `pack-v1.ok` sentinel and uploaded to our GitHub release; the app
-  again only ever downloads anonymously. Like the NeuTTS presets, the six
+  Anna, Jean, Michael, Alba, Bill Boerst — CC-BY-4.0), zipped with a
+  `pack-v2.ok` sentinel and uploaded to our GitHub release; the app
+  again only ever downloads anonymously. v1 shipped the int8-quantized
+  export at ~105 MB; v2 switched the LM/flow/decoder to the fp32 graphs:
+  band forensics showed both variants hit the same ~10 kHz Mimi-codec
+  ceiling (quantization bought no bandwidth), but the fp32 renders won
+  the listening test and the head-drop rate improved — the cost is the
+  download (~205 MB zip vs ~105 MB) and ~1.6x desktop CPU; the round-trip bench
+  below measures the honest per-device numbers. Sentinel bumps are how
+  the app re-downloads in place; the unpacker wipes the old directory
+  first so orphaned graphs can't squat (`model_unpack.dart`).
+  Like the NeuTTS presets, the six
   voices ride the speaker slider (`useTts` returns the reference count);
   the native layer resamples each reference to 24 kHz and caps it at 10 s,
   so presets of any upstream rate are fine. Output is 24 kHz, generated
@@ -228,6 +237,26 @@ One port caveat to know before judging a recording: the k2-fsa ONNX
   every measured draw (10/10 heads; RTF unchanged at ~0.11). If kyutai or
   k2-fsa fix the export, these workarounds retire one function at a time;
   the official renders under `ref6_*.wav` make the A/B audition trivial.
+
+### Round-trip latency bench (voice screen)
+
+The bottom card on the voice screen is a measurement rig for the model
+pair you actually run: hold the circle, talk, release — the utterance is
+transcribed by Whisper and spoken straight back by the *selected* TTS
+voice through the same streamed playback path a real reply takes
+(warm-up silence, temp-wav hand-off, per-chunk `play()` included), but
+with the bridge skipped, so no LLM thinking time pollutes the numbers.
+Every figure is clocked from the button release: `release→text` (ASR
+cost on your device), `release→first audio` (the round-trip figure worth
+optimising — the moment the player got the echo's first chunk),
+`synth total (RTF)` for the whole sentence. Runs stay in a session-only
+history so you can switch voices (Piper, Kokoro, Pocket int8/fp32…) and
+compare rows side by side; the 20 s hold cap and the mic hand-off
+identical to the clone recorder keep the bench from colliding with a
+live conversation. The latencies that matter — route warm-up,
+post-capture output ramp, streamed-chunk playback — are the same ones
+the real turn pays, deliberately: the panel should match what your ears
+hear in production, not a lab best case.
   
 
 ## Claude Code bridge

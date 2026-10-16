@@ -125,6 +125,11 @@ name = "integration_preprocess"
 path = "tests/integration_preprocess.rs"
 
 [[test]]
+name = "probe_314"
+path = "tests/probe_314.rs"
+required-features = ["espeak"]
+
+[[test]]
 name = "integration_tokens"
 path = "tests/integration_tokens.rs"
 

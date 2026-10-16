@@ -88,6 +88,16 @@ Future<void> _fetchAndUnpack(
     }
 
     onProgress?.call('Unpacking ${pack.label}', 0, 0);
+    // Marker bumped under the same dirName (e.g. the pocket pack's
+    // int8 -> fp32 relayout) or a half-finished earlier attempt: the
+    // previous contents are exactly what we are replacing, so start from
+    // an empty directory. Otherwise obsolete files squat next to the new
+    // ones and the user pays both layouts on disk — and after a marker
+    // bump the entry's trash icon points at the NEW dir contents anyway,
+    // so the leftovers are unreachable from the UI.
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {}
     if (pack.fileName == null && !pack.url.endsWith('.tar.bz2')) {
       // Zip: stream members straight off the downloaded file. Loading the
       // whole archive into RAM (old behaviour) peaked at 1.5x the pack size

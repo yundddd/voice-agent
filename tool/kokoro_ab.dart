@@ -24,8 +24,8 @@ import 'package:voice_agent/speech_worker.dart';
 // everything a narrowband path or a mis-phonemized lexicon trips over.
 const text =
     "The quick brown fox jumped over the lazy dog's back, fifteen times in a "
-        'row, while the kids laughed at 4:30. She whispered: "Really? All of '
-        'that?" Then the rain fell softly on the tin roof again.';
+    'row, while the kids laughed at 4:30. She whispered: "Really? All of '
+    'that?" Then the rain fell softly on the tin roof again.';
 
 const ab = '/tmp/opencode/kokoro-ab';
 
@@ -35,8 +35,10 @@ Future<void> main() async {
   final m = '/home/tim/voice-agent/models';
   final worker = await SpeechWorker.start(
     ModelPaths(
-      whisperEncoder: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-encoder.int8.onnx',
-      whisperDecoder: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-decoder.int8.onnx',
+      whisperEncoder:
+          '$m/sherpa-onnx-whisper-tiny.en/tiny.en-encoder.int8.onnx',
+      whisperDecoder:
+          '$m/sherpa-onnx-whisper-tiny.en/tiny.en-decoder.int8.onnx',
       whisperTokens: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-tokens.txt',
       vitsModel: '$m/vits-piper-en_US-lessac-medium/en_US-lessac-medium.onnx',
       vitsTokens: '$m/vits-piper-en_US-lessac-medium/tokens.txt',
@@ -46,7 +48,8 @@ Future<void> main() async {
   );
 
   const packs = <String, String>{
-    'v1_1-int8': '/home/tim/voice-agent/models/kokoro-dl/kokoro-int8-multi-lang-v1_1',
+    'v1_1-int8':
+        '/home/tim/voice-agent/models/kokoro-dl/kokoro-int8-multi-lang-v1_1',
     'v1_1-fp32': '$ab/kokoro-multi-lang-v1_1',
     'v1_0-int8': '$ab/kokoro-int8-multi-lang-v1_0',
     'v1_0-fp32': '$ab/kokoro-multi-lang-v1_0',

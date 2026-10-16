@@ -52,6 +52,27 @@ void main() {
     expect(chunks.join(' '), text); // nothing lost or reordered
   });
 
+  test('clause marks split long replies; numbers never do', () {
+    // One comma-spliced 60-word sentence with decimals and a thousands
+    // group inside: commas are now cut points, but "1,000" and "3.14"
+    // must survive whole, and the packer must still keep chunks ≤ 40.
+    final nums = 'Costs hit 1,000 coins, with a ratio near 3.14 today, ';
+    final clause =
+        'and every clause after that comma keeps the sentence running '
+        'with plainly ordinary spoken filler words for a while longer, ';
+    final text =
+        '$nums$clause$clause'
+        'and then it ends.';
+    final chunks = splitForTts(text);
+    expect(chunks.length, greaterThan(1), reason: text);
+    for (final c in chunks) {
+      expect(c.split(RegExp(r'\s+')).length, lessThanOrEqualTo(40));
+      expect(c, isNot(matches(RegExp(r'\d,\s'))), reason: 'split 1,000: $c');
+      expect(c, isNot(matches(RegExp(r'\d\.\s'))), reason: 'split 3.14: $c');
+    }
+    expect(chunks.join(' '), text);
+  });
+
   test('one giant sentence is hard-split at word boundaries', () {
     final blob = List.filled(120, 'word').join(' ');
     final chunks = splitForTts(blob);

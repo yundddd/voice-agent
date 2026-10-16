@@ -127,10 +127,10 @@ class TtsVoice {
       // resampled to 24 kHz and capped at 10 s inside the native layer.
       final refs = pocketRefs;
       return TtsSpec.pocket(
-        pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.int8.onnx'),
-        pocketLmMain: _f(modelsDir, dirName, 'lm_main.int8.onnx'),
+        pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.onnx'),
+        pocketLmMain: _f(modelsDir, dirName, 'lm_main.onnx'),
         pocketEncoder: _f(modelsDir, dirName, 'encoder.onnx'),
-        pocketDecoder: _f(modelsDir, dirName, 'decoder.int8.onnx'),
+        pocketDecoder: _f(modelsDir, dirName, 'decoder.onnx'),
         pocketTextConditioner: _f(modelsDir, dirName, 'text_conditioner.onnx'),
         pocketVocabJson: _f(modelsDir, dirName, 'vocab.json'),
         pocketTokenScoresJson: _f(modelsDir, dirName, 'token_scores.json'),
@@ -274,14 +274,17 @@ const ttsVoices = <TtsVoice>[
     note:
         'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
         'Michael/Alba/Bill) once loaded; any one of them also clones from a '
-        'recording later. Runs on the shared sherpa-onnx engine.',
-    sizeLabel: '~200 MB',
+        'recording later. Full-precision graphs: subjective A/B on our '
+        'renders preferred them over the int8 quantized ones (the ~10 kHz '
+        'Mimi-codec ceiling is shared, but the int8 AR path measured a '
+        'drier, less reliable head). Runs on the shared sherpa-onnx engine.',
+    sizeLabel: '~205 MB',
     packs: [
       ModelPack(
         label: 'voice: Pocket TTS (engine + voices)',
-        url: '$_modelsRelease/pocket-tts-v1.zip',
+        url: '$_modelsRelease/pocket-tts-v2.zip',
         dirName: 'pocket-tts',
-        markerFile: 'pack-v1.ok', // sentinel: bump to force pack re-download
+        markerFile: 'pack-v2.ok', // sentinel: bump to force pack re-download
       ),
     ],
     isPocket: true,

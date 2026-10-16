@@ -29,6 +29,34 @@ enum InteractionMode {
 
 enum AssistantPhase { idle, listening, transcribing, speaking, error }
 
+/// One measured round trip of the latency bench (voice screen panel):
+/// push-to-talk in, transcript out, transcript echoed by the *current* TTS
+/// engine — bridge and LLM deliberately skipped so every number belongs to
+/// the models the user picked. All latencies key off the button *release*:
+/// [asrMs] is release→text ready, [firstAudioMs] is release→the moment the
+/// player got its first chunk (the round-trip figure worth optimising),
+/// [synthTotalMs] covers the whole utterance and yields [rtf].
+class BenchRun {
+  final String voice;
+  final double recordedSeconds;
+  final String heard;
+  final int asrMs;
+  final int firstAudioMs;
+  final int synthTotalMs;
+  final double audioSeconds;
+  final double rtf;
+  const BenchRun({
+    required this.voice,
+    required this.recordedSeconds,
+    required this.heard,
+    required this.asrMs,
+    required this.firstAudioMs,
+    required this.synthTotalMs,
+    required this.audioSeconds,
+    required this.rtf,
+  });
+}
+
 /// Orchestrates the voice round trip:
 ///   mic -> VAD endpointing -> Whisper (ASR) -> text -> Piper VITS (TTS) -> speaker
 /// in two interaction modes (see [InteractionMode]).
@@ -79,6 +107,24 @@ class VoiceAssistant extends ChangeNotifier {
   String _voiceStatus = ''; // one-line feedback for the voice screen
   bool _voiceBusy = false; // download / engine swap / sample processing
   bool _cloneCapturing = false; // recording a clone sample right now
+
+  // ── Latency bench (voice screen panel) ─────────────────────────────────
+  // Push-to-talk -> whisper -> echo in the CURRENT voice: the same mic
+  // hand-off the clone recorder uses, but the reply path is a pure local
+  // echo (no bridge, no chat log), so every millisecond the panel shows
+  // belongs to the models the user picked. All latencies clock from the
+  // button release. History is session-only — it is for feeling out
+  // voices back to back, not a record.
+  bool _benchCapturing = false, _benchBusy = false;
+  final List<Float32List> _benchChunks = [];
+  Timer? _benchTimer;
+  double _benchSeconds = 0;
+  Stopwatch? _benchT0; // release→now, read by the player for [firstAudioMs]
+  int _benchFirstAudioMs = 0; // stamped the instant the echo's play() is issued
+  String _benchNote =
+      'Hold the button, speak, release: the app transcribes you and '
+      'repeats the sentence in the selected voice, timed end to end.';
+  final List<BenchRun> _benchRuns = [];
   bool _cloneResumeOnDone = false; // conversation to restore after capture
   double _cloneSeconds = 0;
   Timer? _cloneTimer;
@@ -578,7 +624,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// — the clip is saved and Whisper transcribes it (ZipVoice needs the text
   /// of the reference audio).
   Future<void> startCloneCapture() async {
-    if (_worker == null || _cloneCapturing || _voiceBusy) return;
+    if (_worker == null ||
+        _cloneCapturing ||
+        _benchCapturing ||
+        _benchBusy ||
+        _voiceBusy) {
+      return;
+    }
     _cloneResumeOnDone = _micStreamWanted; // conversation/PTT we displaced
     _generation++; // abandon any in-flight turn
     _shutdownAudio();
@@ -680,6 +732,188 @@ class VoiceAssistant extends ChangeNotifier {
     _shutdownAudio();
     _phase = AssistantPhase.idle;
     _status = 'Sample recording cancelled.';
+    notifyListeners();
+    _afterCapture();
+  }
+
+  // ── Latency bench (voice screen panel) ─────────────────────────────────
+
+  bool get benchCapturing => _benchCapturing;
+  bool get benchBusy => _benchBusy;
+  double get benchSeconds => _benchSeconds;
+  String get benchNote => _benchNote;
+  List<BenchRun> get benchRuns => List.unmodifiable(_benchRuns);
+
+  /// Label of the voice the bench echoes with (the one currently in use).
+  String get benchVoiceLabel {
+    for (final v in voices) {
+      if (v.id == _activeVoiceId) return v.label;
+    }
+    return 'current voice';
+  }
+
+  /// Start a bench recording: takes the mic exactly like [startCloneCapture]
+  /// (whatever capture it displaces resumes when the run ends) — but the
+  /// buffer feeds the timed echo turn, not a clone sample. Release with
+  /// [finishBenchCapture]; a lost release auto-closes at 20 s.
+  Future<void> benchDown() async {
+    if (_worker == null || _benchCapturing || _cloneCapturing || _voiceBusy) {
+      return;
+    }
+    _cloneResumeOnDone = _micStreamWanted; // reuse the clone's resume latch
+    _generation++; // abandon any in-flight reply turn
+    _shutdownAudio();
+    _benchChunks.clear();
+    _benchSeconds = 0;
+    _benchFirstAudioMs = 0;
+    _benchT0 = null;
+    _benchCapturing = true; // _onMicData routes bytes into the bench buffer
+    _phase = AssistantPhase.listening;
+    _error = '';
+    _status = 'Bench listening… release when done.';
+    _benchTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!_benchCapturing) return;
+      _status = 'Bench listening… ${_benchSeconds.toStringAsFixed(1)}s';
+      notifyListeners();
+    });
+    notifyListeners();
+    try {
+      await _openMicStream(); // watchdog-protected capture path, same as clone
+    } catch (e) {
+      _benchCapturing = false;
+      _benchTimer?.cancel();
+      _benchTimer = null;
+      _fail('Could not open the mic: $e');
+    }
+  }
+
+  /// Close the bench mic and run the timed turn: transcribe → echo-synthesise
+  /// in the current voice → streamed playback, all clocked from this instant
+  /// (the release). The result lands in [benchRuns]; the displaced mic
+  /// capture resumes on the way out.
+  Future<void> finishBenchCapture() async {
+    if (!_benchCapturing) return;
+    _benchCapturing = false; // first: ignores trailing stream data
+    _benchTimer?.cancel();
+    _benchTimer = null;
+    _micWatchdog?.cancel();
+    _micWatchdog = null;
+    await _recSub?.cancel();
+    _recSub = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    _phase = AssistantPhase.idle;
+    final total = _benchChunks.fold<int>(0, (n, c) => n + c.length);
+    _benchSeconds = total / 16000.0;
+    if (total < 16000) {
+      // under a second: too short to measure anything honestly
+      _benchChunks.clear();
+      _benchNote = 'That was too short — hold at least a second.';
+      notifyListeners();
+      _afterCapture();
+      return;
+    }
+    _benchBusy = true;
+    final pcm = Float32List(total);
+    var off = 0;
+    for (final c in _benchChunks) {
+      pcm.setRange(off, off + c.length, c);
+      off += c.length;
+    }
+    _benchChunks.clear();
+    _benchT0 = Stopwatch()
+      ..start(); // release moment: latencies clock from here
+    _warmUpRoute(); // the route rides the wait exactly like a real PTT turn
+    _benchNote = 'Transcribing…';
+    notifyListeners();
+    final gen = _generation; // stays ours unless a newer turn supersedes it
+    try {
+      final text = (await _worker!.transcribe(pcm, 16000)).trim();
+      final asrMs = _benchT0!.elapsedMilliseconds;
+      if (text.isEmpty) throw StateError('Didn\'t catch that — try again?');
+      _benchNote = 'Synthesising the echo…';
+      _status = '';
+      notifyListeners();
+      final swTts = Stopwatch()..start();
+      _replyQueue.clear();
+      _replyStreamDone = false;
+      var sawFirstChunk = false;
+      final playTask = _playReplyChunks(gen);
+      final (audio, rate) = await _worker!.synthesizeStream(
+        text,
+        onChunk: (chunk, sampleRate) {
+          if (gen != _generation) return;
+          if (!sawFirstChunk) {
+            sawFirstChunk = true;
+            _phase = AssistantPhase.speaking;
+            _status = 'Echoing: “$text”';
+            notifyListeners();
+          }
+          // [_benchFirstAudioMs] itself is stamped in _playWav: the honest
+          // figure is when the PLAYER got the bytes, not when we queued them
+          // (the temp-wav write in between is real latency the user hears as
+          // dead air).
+          _replyQueue.add((chunk, sampleRate));
+          _replyWake?.complete();
+          _replyWake = null;
+        },
+      );
+      swTts.stop();
+      _noteTts(audio, rate); // bench audio counts: debug replay can play it
+      _ttsSeconds =
+          swTts.elapsedMilliseconds / 1000.0; // keeps the strip honest
+      final secs = audio.length / rate;
+      _playSeconds = secs;
+      _replyStreamDone = true;
+      _replyWake?.complete();
+      _replyWake = null;
+      await playTask; // let the echo finish playing before the next press
+      final run = BenchRun(
+        voice: benchVoiceLabel,
+        recordedSeconds: _benchSeconds,
+        heard: text,
+        asrMs: asrMs,
+        firstAudioMs: _benchFirstAudioMs == 0
+            ? swTts.elapsedMilliseconds
+            : _benchFirstAudioMs,
+        synthTotalMs: swTts.elapsedMilliseconds,
+        audioSeconds: secs,
+        rtf: secs > 0
+            ? swTts.elapsedMilliseconds / 1000 / secs
+            : double.negativeInfinity,
+      );
+      _benchRuns.insert(0, run);
+      if (_benchRuns.length > 10) _benchRuns.removeLast();
+      _benchNote =
+          'release→text ${run.asrMs} ms · release→first audio '
+          '${run.firstAudioMs} ms · sentence synthesised in '
+          '${run.synthTotalMs} ms (RTF ${run.rtf.toStringAsFixed(2)})';
+    } catch (e) {
+      _replyStreamDone = true;
+      _replyWake?.complete();
+      _replyWake = null;
+      _benchNote = 'Bench run failed: $e';
+    } finally {
+      _benchBusy = false;
+      _benchChunks.clear();
+      _benchT0 = null;
+      if (gen == _generation) _phase = AssistantPhase.idle;
+      notifyListeners();
+    }
+    _afterCapture();
+  }
+
+  /// Abandon a bench recording in progress (panel's cancel path).
+  void cancelBenchCapture() {
+    if (!_benchCapturing) return;
+    _benchCapturing = false;
+    _benchTimer?.cancel();
+    _benchTimer = null;
+    _benchChunks.clear();
+    _shutdownAudio();
+    _phase = AssistantPhase.idle;
+    _benchNote = 'Bench recording cancelled.';
     notifyListeners();
     _afterCapture();
   }
@@ -934,6 +1168,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// Clone-sample capture counts too (same stream, different sink).
   bool get _micStreamWanted =>
       _cloneCapturing ||
+      _benchCapturing ||
       _phase == AssistantPhase.listening ||
       (_mode == InteractionMode.conversation &&
           (_phase == AssistantPhase.transcribing ||
@@ -1052,6 +1287,15 @@ class VoiceAssistant extends ChangeNotifier {
       _cloneChunks.add(c);
       _cloneSeconds += c.length / 16000.0;
       if (_cloneSeconds >= 20) unawaited(stopCloneCapture()); // hard cap
+      return;
+    }
+    if (_benchCapturing) {
+      // Latency bench: same hand-off as the clone recorder, feeding the
+      // timed echo turn in finishBenchCapture instead of a sample file.
+      final c = pcm16ToFloat32(bytes);
+      _benchChunks.add(c);
+      _benchSeconds += c.length / 16000.0;
+      if (_benchSeconds >= 20) unawaited(finishBenchCapture()); // hard cap
       return;
     }
     if (_mode == InteractionMode.pushToTalk) {
@@ -1466,6 +1710,13 @@ class VoiceAssistant extends ChangeNotifier {
       }
     });
     try {
+      if (_benchBusy && _benchFirstAudioMs == 0) {
+        // The bench's release→first-audio figure: bytes enter the player
+        // NOW (the route warm-up from the release is included — a real PTT
+        // round trip pays that latency too, and pretending otherwise would
+        // flatter the panel's headline number).
+        _benchFirstAudioMs = _benchT0?.elapsedMilliseconds ?? 0;
+      }
       await _player.play(DeviceFileSource(file.path));
     } catch (e) {
       _playSub?.cancel();
@@ -1493,7 +1744,9 @@ class VoiceAssistant extends ChangeNotifier {
       // PTT: the mic lives only while the button is held, so a finished
       // reply must drop back to idle — not the always-on listening state
       // (that latch made the button look still-pressed after the 2nd turn).
-      if (_mode == InteractionMode.pushToTalk) {
+      // A bench echo behaves the same: its mic was closed at release, and
+      // the panel (not auto-listening) is what invites the next hold.
+      if (_mode == InteractionMode.pushToTalk || _benchBusy) {
         _idleReady();
       } else {
         _phase = AssistantPhase.listening;
@@ -1528,7 +1781,9 @@ class VoiceAssistant extends ChangeNotifier {
   /// trigger for Android tearing it down), reopen right now instead of
   /// waiting for the next watchdog tick.
   void _fastMicCheck() {
-    if (_micRecovering || !_micStreamWanted) return;
+    // During a bench run the mic is deliberately closed (the echo plays to
+    // an unplugged mic; _afterCapture reopens conversation afterwards).
+    if (_micRecovering || !_micStreamWanted || _benchBusy) return;
     if (DateTime.now().difference(_lastMicAt) >
         const Duration(milliseconds: 750)) {
       unawaited(_recoverMic('post-reply'));
@@ -1624,6 +1879,16 @@ class VoiceAssistant extends ChangeNotifier {
       _cloneCapturing = false;
       _cloneChunks.clear();
       _voiceStatus = 'Sample recording cancelled — the mic was closed.';
+    }
+    if (_benchCapturing || _benchBusy) {
+      // Same for a bench run in flight: its timing is no longer trustworthy.
+      _benchCapturing = false;
+      _benchBusy = false;
+      _benchTimer?.cancel();
+      _benchTimer = null;
+      _benchChunks.clear();
+      _benchT0 = null;
+      _benchNote = 'Bench run cancelled — the mic was taken away.';
     }
   }
 
