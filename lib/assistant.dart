@@ -108,20 +108,42 @@ class VoiceAssistant extends ChangeNotifier {
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
   double _playSeconds = 0;
-  // Pipeline-hop flags for the latency strip's flow diagram: each turns
-  // green as its stage COMPLETES — asr: a transcript landed; sent: the
-  // words reached the harness (TALK/ATTACH open); reply: the first
-  // bridge event of any kind arrived; tts: the first audio chunk of a
-  // spoken block. Like the seconds beside them they are last-turn
-  // history, re-taught by the next round trip, never resettable trivia.
-  bool _hopAsr = false;
-  bool _hopSent = false;
-  bool _hopReply = false;
-  bool _hopTts = false;
-  bool get hopAsr => _hopAsr;
-  bool get hopSent => _hopSent;
-  bool get hopReply => _hopReply;
-  bool get hopTts => _hopTts;
+  // Pipeline-hop moments for the latency strip's flow diagram: each
+  // records WHEN its stage last fired — asr: a transcript landed; sent:
+  // the words reached the harness (TALK/ATTACH open); reply: a bridge
+  // event arrived; tts: a spoken block's first audio chunk. The strip
+  // lights the arrow green while the moment is younger than _hopLitMs and
+  // lets it fade back once data stops flowing, so the arrows trace the
+  // round trip rather than staying lit once it has happened.
+  // Each hop lights its arrow for this long after data last crossed it,
+  // then fades back on its own — a pulse that follows the flow, not a
+  // latch. One shared timer drives the fade-back: any hop firing
+  // restamps the clock and (re)arms it, and when the last pulse's window
+  // closes with nothing newer behind it, the timer repaints once and dies.
+  static const Duration _hopLitMs = Duration(milliseconds: 500);
+  DateTime? _hopAsrAt, _hopSentAt, _hopReplyAt, _hopTtsAt;
+  Timer? _hopFadeTimer;
+  // Stamp a hop, repaint to light it, and (re)arm the one-shot fade so the
+  // arrow drops the moment its window closes with nothing behind it.
+  void _hop(void Function(DateTime) store) {
+    store(DateTime.now());
+    notifyListeners();
+    _hopFadeTimer?.cancel();
+    _hopFadeTimer = Timer(_hopLitMs, () {
+      _hopFadeTimer = null;
+      notifyListeners(); // re-evaluate the arrows once the pulse expires
+    });
+  }
+  void _hopAsr() => _hop((t) => _hopAsrAt = t);
+  void _hopSent() => _hop((t) => _hopSentAt = t);
+  void _hopReply() => _hop((t) => _hopReplyAt = t);
+  void _hopTts() => _hop((t) => _hopTtsAt = t);
+  bool _hopLive(DateTime? at) =>
+      at != null && DateTime.now().difference(at) < _hopLitMs;
+  bool get hopAsr => _hopLive(_hopAsrAt);
+  bool get hopSent => _hopLive(_hopSentAt);
+  bool get hopReply => _hopLive(_hopReplyAt);
+  bool get hopTts => _hopLive(_hopTtsAt);
 
   // ── Voice selection & cloning ────────────────────────────────────────────
   String _modelsDir = '';
@@ -742,7 +764,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
-            _hopTts = true; // reply→audio hop crossed: the first chunk
+            _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
@@ -836,7 +858,7 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeSub = sub; // held locally as well: cleanup must not touch a
     // successor turn's subscription or wake hook (identical() guards below)
     _armWireWatch(); // this connection is watched for quiet from here on
-    _hopSent = true; // asr→harness hop crossed: the words are on the wire
+    _hopSent(); // asr→harness hop crossed: the words are on the wire
     _logDebug(
       events == null
           ? 'TALK open: gen=$gen interrupt=${interrupt ? 1 : 0} '
@@ -869,7 +891,7 @@ class VoiceAssistant extends ChangeNotifier {
           continue;
         }
         final ev = q.removeAt(0);
-        _hopReply = true; // harness→reply hop crossed: bytes arrived
+        _hopReply(); // harness→reply hop crossed: bytes arrived
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           _tokLive = false; // the answer closed and is being spoken;
           // nothing is generating to grow a counter over
@@ -2130,7 +2152,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
-            _hopTts = true; // reply→audio hop crossed: the first chunk
+            _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
@@ -2197,7 +2219,7 @@ class VoiceAssistant extends ChangeNotifier {
       );
       _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
       _armWireWatch(); // the quiet-wire watchdog rides this connection
-      _hopSent = true; // rejoining counts as reached-the-harness too
+      _hopSent(); // rejoining counts as reached-the-harness too
       _logDebug('ATTACH stream open: gen=$gen backlog replay, then live');
       try {
         while (true) {
@@ -2208,7 +2230,7 @@ class VoiceAssistant extends ChangeNotifier {
             continue;
           }
           final ev = q.removeAt(0);
-          _hopReply = true; // harness→reply hop crossed (reattach view)
+          _hopReply(); // harness→reply hop crossed (reattach view)
           if (ev.isSay &&
               ev.text.trim().isNotEmpty &&
               _wireAgeMs(ev) > 120000 &&
@@ -2372,7 +2394,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (!onAir) {
             onAir = true;
             _phase = AssistantPhase.speaking;
-            _hopTts = true; // reply→audio hop crossed: the first chunk
+            _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
@@ -2433,7 +2455,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (!sawFirstChunk) {
             sawFirstChunk = true;
             _phase = AssistantPhase.speaking;
-            _hopTts = true; // reply→audio hop crossed: the first chunk
+            _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear.
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
@@ -3108,7 +3130,7 @@ class VoiceAssistant extends ChangeNotifier {
         return;
       }
       _asrSeconds = swAsr.elapsedMilliseconds / 1000.0;
-      _hopAsr = true; // heard→asr hop crossed: a transcript exists
+      _hopAsr(); // heard→asr hop crossed: a transcript exists
       _logDebug(
         'asr ✓ "${text.length > 60 ? '${text.substring(0, 60)}…' : text}" '
         '(${text.length} chars in ${swAsr.elapsedMilliseconds}ms)',
@@ -3178,7 +3200,7 @@ class VoiceAssistant extends ChangeNotifier {
                 if (!sawFirstChunk) {
                   sawFirstChunk = true;
                   _phase = AssistantPhase.speaking;
-                  _hopTts = true; // first audio of the reply (see strip)
+                  _hopTts(); // first audio of the reply (see strip)
                   _status = 'Speaking — jump in any time.';
                   notifyListeners();
                 }
@@ -3623,6 +3645,7 @@ class VoiceAssistant extends ChangeNotifier {
     _disposed = true;
     _wireCheck?.cancel();
     _reattachTimer?.cancel();
+    _hopFadeTimer?.cancel();
     unawaited(() async {
       await _events?.log('app dispose (UI went away)');
       await _events?.stop();
