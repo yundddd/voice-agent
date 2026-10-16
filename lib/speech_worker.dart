@@ -75,18 +75,23 @@ class _Event {
   _Event.note(String s) : kind = 'note', samples = null, note = s;
 }
 
-/// Split [text] into speakable chunks of at most 40 words, breaking only at
-/// sentence ends; a single sentence beyond twice that is hard-split at word
-/// boundaries, and text without sentence punctuation stays one chunk (each
-/// engine's own guards cover it: VITS caps a pass near 44 s of audio, and
-/// the Rust NeuTTS infer re-chunks defensively inside any call). Port of
-/// split_for_tts in the vendored neutts crate, same constants.
+/// Split [text] into speakable chunks of at most 40 words, breaking at
+/// sentence ends (. ! ?) and at clause boundaries (, ; :) — a mark only
+/// cuts when followed by whitespace, end-of-text, or a closing
+/// quote/bracket, so "3.14", "1,000" and "U.S.A." stay intact. A unit
+/// still beyond twice the cap is hard-split at word boundaries, and text
+/// without any punctuation stays one chunk (each engine's own guards
+/// cover it: VITS caps a pass near 44 s of audio, and the Rust NeuTTS
+/// infer re-chunks defensively inside any call). Descended from
+/// split_for_tts in the vendored neutts crate (same constants), since
+/// broadened for streamed prose that is mostly one long comma-spliced
+/// sentence.
 
 List<String> splitForTts(String text) {
   const maxWords = 40;
-  // 1. Sentences, terminators kept attached; break after [.!?] + whitespace,
-  //    end-of-text, or a closing quote/bracket. Runs like "..." or "!\""
-  //    stay with their sentence.
+  // 1. Clauses, terminators kept attached; break after [.!?,;:] followed
+  //    by whitespace (incl. \r), end-of-text, or a closing quote/bracket.
+  //    Runs like "..." or "!\"" stay with their sentence.
   final sentences = <String>[];
   final b = List<int>.from(
     text.codeUnits,
@@ -95,12 +100,11 @@ List<String> splitForTts(String text) {
   while (i < b.length) {
     final c = b[i];
     final term = c == 0x2E || c == 0x21 || c == 0x3F; // . ! ?
+    final clause = c == 0x2C || c == 0x3B || c == 0x3A; // , ; :
     final boundary =
-        term &&
+        (term || clause) &&
         (i + 1 == b.length ||
-            b[i + 1] == 0x20 ||
-            b[i + 1] == 0x0A ||
-            b[i + 1] == 0x09 ||
+            _isWs(b[i + 1]) ||
             (i + 2 < b.length &&
                 (b[i + 1] == 0x22 || b[i + 1] == 0x27 || b[i + 1] == 0x29)));
     if (boundary) {
@@ -109,6 +113,8 @@ List<String> splitForTts(String text) {
           (b[end] == 0x2E ||
               b[end] == 0x21 ||
               b[end] == 0x3F ||
+              b[end] == 0x2C ||
+              b[end] == 0x3B ||
               b[end] == 0x29 ||
               b[end] == 0x22 ||
               b[end] == 0x27)) {
@@ -305,7 +311,7 @@ class _JobResult {
 ///   [referenceWav], a preset picked by [sid] out of [pocketRefs].
 ///   Zero-shot cloning needs no reference transcript (unlike ZipVoice).
 class TtsSpec {
-  final String kind; // 'vits' | 'zipvoice' | 'neutts' | 'pocket'
+  final String kind; // 'vits' | 'zipvoice' | 'neutts' | 'pocket' | 'kokoro'
   final String vitsModel, vitsTokens, espeakDataDir;
   final String zipTokens, zipEncoder, zipDecoder, zipDataDir, zipLexicon;
   final String vocoder;
@@ -330,6 +336,20 @@ class TtsSpec {
   final String pocketTextConditioner, pocketVocabJson, pocketTokenScoresJson;
   final List<String> pocketRefs;
   final int pocketNumSteps;
+
+  // kind == 'kokoro': Kokoro-82M (the k2-fsa kokoro-multi-lang-v1_0 pack,
+  // fp32 — our A/B measured the int8 build audible-muted AND ~4x slower on
+  // CPU (RTF 0.37 vs 0.10): ORT's int8 kernels lose to plain fp32 at this
+  // model size). No cold-start ritual, no codec bottleneck: one forward
+  // pass, clean heads, so it rides the generic OfflineTts synth arm.
+  // sid indexes the 54-voice roster (reported by the model itself, so the
+  // voice screen's style slider picks it up). kokoroLexicon is a
+  // comma-joined list of absolute lexicon paths; zh would additionally
+  // need the jieba dict, which the Dart binding does not plumb (dictDir
+  // is dropped), so we wire English only. espeak-ng under kokoroDataDir
+  // backs out-of-lexicon words.
+  final String kokoroModel, kokoroVoices, kokoroTokens, kokoroDataDir;
+  final String kokoroLexicon;
 
   const TtsSpec.vits({
     required this.vitsModel,
@@ -359,7 +379,12 @@ class TtsSpec {
        pocketVocabJson = '',
        pocketTokenScoresJson = '',
        pocketRefs = const [],
-       pocketNumSteps = 0;
+       pocketNumSteps = 0,
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '';
 
   const TtsSpec.zipvoice({
     required this.zipTokens,
@@ -389,7 +414,12 @@ class TtsSpec {
        pocketVocabJson = '',
        pocketTokenScoresJson = '',
        pocketRefs = const [],
-       pocketNumSteps = 0;
+       pocketNumSteps = 0,
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '';
 
   const TtsSpec.neutts({
     required this.neuttsGguf,
@@ -419,7 +449,12 @@ class TtsSpec {
        pocketVocabJson = '',
        pocketTokenScoresJson = '',
        pocketRefs = const [],
-       pocketNumSteps = 0;
+       pocketNumSteps = 0,
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '';
 
   const TtsSpec.pocket({
     required this.pocketLmFlow,
@@ -449,7 +484,47 @@ class TtsSpec {
        neuttsVoices = '',
        neuttsLib = '',
        neuttsRefs = const [],
-       neuttsSeed = null;
+       neuttsSeed = null,
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '';
+
+  const TtsSpec.kokoro({
+    required this.kokoroModel,
+    required this.kokoroVoices,
+    required this.kokoroTokens,
+    required this.kokoroDataDir,
+    required this.kokoroLexicon,
+    this.sid = 0,
+  }) : kind = 'kokoro',
+       vitsModel = '',
+       vitsTokens = '',
+       espeakDataDir = '',
+       zipTokens = '',
+       zipEncoder = '',
+       zipDecoder = '',
+       zipDataDir = '',
+       zipLexicon = '',
+       vocoder = '',
+       referenceWav = '',
+       referenceText = '',
+       neuttsGguf = '',
+       neuttsDecoder = '',
+       neuttsVoices = '',
+       neuttsLib = '',
+       neuttsRefs = const [],
+       neuttsSeed = null,
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
 }
 
 /// One-way speech pipeline notification.
@@ -720,7 +795,24 @@ Future<void> _runWorker(
                 tokenScoresJson: s.pocketTokenScoresJson,
               )
             : const sherpa_onnx.OfflineTtsPocketModelConfig(),
-        numThreads: (s.kind == 'zipvoice' || s.kind == 'pocket') ? 4 : 2,
+        // Kokoro: the generic (tts as OfflineTts).generate() synth arm below
+        // already fits — per-piece forward pass, sid selection, clean heads
+        // (no prefix/trim/lead-in ritual, no max_frames guard: nothing here
+        // can babble). Measured RTF 0.10 at 4 threads on this desktop's
+        // CPU; expect a phone to land real-time-comfortable too.
+        kokoro: s.kind == 'kokoro'
+            ? sherpa_onnx.OfflineTtsKokoroModelConfig(
+                model: s.kokoroModel,
+                voices: s.kokoroVoices,
+                tokens: s.kokoroTokens,
+                dataDir: s.kokoroDataDir,
+                lexicon: s.kokoroLexicon,
+              )
+            : const sherpa_onnx.OfflineTtsKokoroModelConfig(),
+        numThreads:
+            (s.kind == 'zipvoice' || s.kind == 'pocket' || s.kind == 'kokoro')
+            ? 4
+            : 2,
         debug: false,
         provider: 'cpu',
       ),

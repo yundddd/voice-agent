@@ -25,7 +25,7 @@ alternatives considered:
 | Runtime | **sherpa-onnx**; whisper.cpp (+FfiWhisper/whisper_plus); ML Kit (Android STT / iOS Speech — partly server-backed); Vosk (aging, weak TTS story); Picovoice/Cobalt (commercial licensing) | sherpa-onnx covers ASR **and** TTS **and** VAD from one plugin, ONNX-wide model zoo, no licensing issues |
 | ASR (English) | **Whisper tiny.en** (~100 MB int8 shipped here); Moonshine tiny (≈20 MB, faster, streaming-capable); NeMo Parakeet TDT 0.6B v2/v3 int8 (~110 MB, best accuracy/latency trade-off, up to 25 EU languages for v3); zipformer transducers (true streaming, small variants); SenseVoice (zh/en/ja/ko/yue) | Started with Whisper tiny.en: robust and simple. For a real assistant, next step is **Moonshine** or a **streaming zipformer transducer** for lower latency partial transcripts; Parakeet v2 if accuracy matters more than size |
 | ASR (multilingual) | SenseVoice, Qwen3-ASR 0.6B int8, FireRed ASR 2 CTC, zipformer bilingual | Swap-in via `ModelPaths` + worker config, no other code changes |
-| TTS | **Piper VITS** (`en_US-lessac-medium`, this prototype; `amy-low` also downloaded — swap by replacing the asset zip); Matcha-icefall (smaller/faster, phoneme lexicon, no espeak dir); Kokoro-82M (top quality at ≈330 MB int8 on mobile, too heavy for now); MeloTTS (multilingual); **Pocket TTS** (Kyutai 100M zero-shot clone — shipped as a downloadable voice, sherpa-onnx support since v1.12.24); silero/supertonic (commercial license traps) | Piper medium is the quality/size sweet spot (61 MB model + 19 MB espeak-ng-data) and runs ~20–70× faster than real time on desktop CPU; expect real-time or better even on mid-range phones. Pocket TTS adds reference-voice cloning inside sherpa itself; Kokoro is the remaining upgrade path |
+| TTS | **Piper VITS** (`en_US-lessac-medium`, this prototype; `amy-low` also downloaded — swap by replacing the asset zip); Matcha-icefall (smaller/faster, phoneme lexicon, no espeak dir); Kokoro-82M (top quality at ≈334 MB fp32 — shipped as the 'Kokoro v1.0' voice; int8 quantization measured worse in both fidelity and CPU speed); MeloTTS (multilingual); **Pocket TTS** (Kyutai 100M zero-shot clone — shipped as a downloadable voice, sherpa-onnx support since v1.12.24); silero/supertonic (commercial license traps) | Piper medium is the quality/size sweet spot (61 MB model + 19 MB espeak-ng-data) and runs ~20–70× faster than real time on desktop CPU; expect real-time or better even on mid-range phones. Pocket TTS adds reference-voice cloning inside sherpa itself; Kokoro is the remaining upgrade path |
 | VAD | **Silero VAD** (0.6 MB, bundled in the APK) | Wired in for conversation-mode endpointing (1 s pause = stop) and barge-in detection. Tuned to `threshold 0.35 / minSpeechDuration 0.15`: Silero only raises after speech sustains past the threshold, and sherpa rewinds segment starts by `minSpeechDuration + 2 windows` (`voice-activity-detector.cc`), so a lower threshold raises earlier and the rewind fully covers the attack — no clipped beginnings (`tool/onset_probe.dart` checks exactly this). `minSilenceDuration` remains the endpointing knob |
 
 Measured on this dev machine (Intel, 4 threads, debug FFI — phones will be slower but still far under real-time):
@@ -136,6 +136,15 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   hot-swaps its TTS engine to match (`TtsSpec` + `useTts` job in
   `speech_worker.dart`); the chosen voice and speaker id persist in
   `models/tts_prefs.json`. A headphones button previews any loaded voice.
+- **Kokoro v1.0** (82M, fp32). The best-sounding reader in the app: a
+  StyleTTS2-lineage one-pass renderer (no neural codec in the path, no
+  autoregressive cold start — the first syllable is as clean as the last,
+  which the pocket port cannot claim). 54 built-in speaker styles once
+  loaded (style slider), American + British English; RTF ~0.10 on desktop
+  CPU at 4 threads. Fetched straight from the k2-fsa tts-models release
+  (334 MB download, fp32 deliberately: our A/B measured the int8 pack
+  audible-muted *and* 4× slower — `tool/kokoro_ab.dart`). Chinese-capable
+  in-model but not wired: the Dart binding drops `dictDir`.
 - **Clone my voice** (ZipVoice). Record one clear sentence (2–20 s, live
   timer; the mic is handed to the recorder and any running conversation
   resumes when done). On-device Whisper writes the transcript — ZipVoice

@@ -406,4 +406,73 @@ void main() {
       worker.dispose();
     }
   }, timeout: const Timeout(Duration(minutes: 8)));
+
+  // Skipped until the pack is staged: any k2-fsa kokoro-multi-lang-v1_0
+  // extraction (the app downloads it on selection; KOKORO_DIR overrides).
+  test('Kokoro v1_0 fp32 speaks preset styles', () async {
+    final dir =
+        Platform.environment['KOKORO_DIR'] ??
+        '/tmp/opencode/kokoro-ab/kokoro-multi-lang-v1_0';
+    TtsSpec spec(int sid) => TtsSpec.kokoro(
+      kokoroModel: '$dir/model.onnx',
+      kokoroVoices: '$dir/voices.bin',
+      kokoroTokens: '$dir/tokens.txt',
+      kokoroDataDir: '$dir/espeak-ng-data',
+      kokoroLexicon: '$dir/lexicon-us-en.txt,$dir/lexicon-gb-en.txt',
+      sid: sid,
+    );
+    if (!haveModels ||
+        !File('$dir/model.onnx').existsSync() ||
+        !File('$dir/voices.bin').existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: Kokoro assets not staged under $dir');
+      return;
+    }
+
+    final worker = await SpeechWorker.start(paths);
+    try {
+      final speakers = await worker.useTts(spec(0));
+      expect(speakers, greaterThan(10)); // 54-style roster drives the slider
+
+      const line =
+          'The quick brown fox jumped over the lazy dog, and the kids '
+          'laughed out loud at the old joke.';
+      for (final sid in [1, 8]) {
+        await worker.useTts(spec(sid));
+        final sw = Stopwatch()..start();
+        final (audio, sampleRate) = await worker.synthesize(line);
+        sw.stop();
+        final seconds = audio.length / sampleRate;
+        // ignore: avoid_print
+        print(
+          'kokoro TTS sid $sid: ${seconds.toStringAsFixed(1)}s generated in '
+          '${sw.elapsedMilliseconds} ms (RTF '
+          '${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+        );
+        expect(audio.length, greaterThan(sampleRate));
+        expect(sampleRate, 24000);
+        File('build/roundtrip_kokoro_sid$sid.wav')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(encodeWav(audio, sampleRate));
+        final heard = (await worker.transcribe(
+          audio,
+          sampleRate,
+        )).toLowerCase();
+        final hits = line
+            .split(' ')
+            .where((w) => w.length > 3)
+            .where((w) => heard.contains(w.toLowerCase()))
+            .length;
+        // ignore: avoid_print
+        print('kokoro ASR (sid $sid): "$heard" ($hits long words matched)');
+        // Kokoro has no cold-start damage (one forward pass, no codec):
+        // unlike the pocket assertion, the FIRST long word ('quick') must
+        // be present too — that is the whole point of this engine.
+        expect(hits, greaterThan(2));
+        expect(heard, contains('quick'));
+      }
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 8)));
 }

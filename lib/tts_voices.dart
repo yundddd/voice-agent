@@ -31,6 +31,11 @@ class TtsVoice {
   /// True = Kyutai Pocket TTS (sherpa-onnx ONNX export): zero-shot clone from
   /// a bundled reference wav per preset — sid picks it, no transcript needed.
   final bool isPocket;
+
+  /// True = Kokoro-82M v1.0 (fp32 ONNX): studio-grade one-pass renderer,
+  /// 54 built-in speaker styles picked with sid after load. No cloning, no
+  /// reference: text in, whole sentence out, cold-start-free.
+  final bool isKokoro;
   const TtsVoice({
     required this.id,
     required this.label,
@@ -42,6 +47,7 @@ class TtsVoice {
     this.isClone = false,
     this.isNeutts = false,
     this.isPocket = false,
+    this.isKokoro = false,
   });
 
   /// Pocket TTS preset references (`voices/<name>.wav` in the pack, in slider
@@ -97,6 +103,22 @@ class TtsVoice {
         neuttsLib: neuttsLib.isNotEmpty
             ? neuttsLib
             : _f(modelsDir, dirName, 'libneutts_bridge.so'),
+        sid: sid,
+      );
+    }
+    if (isKokoro) {
+      // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
+      // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
+      // + espeak fallback cover everything we speak).
+      return TtsSpec.kokoro(
+        kokoroModel: _f(modelsDir, dirName, 'model.onnx'),
+        kokoroVoices: _f(modelsDir, dirName, 'voices.bin'),
+        kokoroTokens: _f(modelsDir, dirName, 'tokens.txt'),
+        kokoroDataDir: _f(modelsDir, dirName, 'espeak-ng-data'),
+        kokoroLexicon: [
+          _f(modelsDir, dirName, 'lexicon-us-en.txt'),
+          _f(modelsDir, dirName, 'lexicon-gb-en.txt'),
+        ].join(','),
         sid: sid,
       );
     }
@@ -227,6 +249,24 @@ const ttsVoices = <TtsVoice>[
       ),
     ],
     vitsModel: 'en_US-libritts_r-medium.onnx',
+  ),
+  TtsVoice(
+    id: 'kokoro',
+    label: 'Kokoro v1.0',
+    note:
+        '85M studio-grade reader — 54 voice styles once loaded. The best-'
+        'sounding voice in the app (fp32; the int8 pack measured muddier '
+        'and slower). Fetches from the k2-fsa release directly.',
+    sizeLabel: '334 MB',
+    packs: [
+      ModelPack(
+        label: 'voice: Kokoro v1.0',
+        url: '$_k2fsaTts/kokoro-multi-lang-v1_0.tar.bz2',
+        dirName: 'kokoro-multi-lang-v1_0',
+        markerFile: 'model.onnx',
+      ),
+    ],
+    isKokoro: true,
   ),
   TtsVoice(
     id: 'pocket',
