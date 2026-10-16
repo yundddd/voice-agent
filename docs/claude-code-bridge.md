@@ -47,8 +47,15 @@ Verified end-to-end on this machine:
 - claude's auto-memory wrote the secret word to its memory file and
   recalled it across turns *and* across a bridge restart;
 - bridge restart → `--resume` → same session, no context loss;
-- `--permission-mode acceptEdits` + our voice system prompt (spoken
-  sentences, no markdown/emoji — the TTS reads lists terribly).
+- `--permission-mode bypassPermissions` approves every tool without a
+  prompt — the only sane default for voice (verified A/B on 2.1.296:
+  under `acceptEdits` WebFetch comes back silently *denied*, under
+  bypass it fetches and answers). Explicit `deny` rules still win under
+  bypass, so `WebSearch` stays forbidden by your settings either way.
+  Tighten with `--permission-mode acceptEdits|dontAsk` if the voice
+  ever stops being the only trigger.
+- our voice system prompt (spoken sentences, no markdown/emoji — the
+  TTS reads lists terribly).
 
 Cost note: the `total_cost_usd` fields are the client's estimates
 against Anthropic pricing — on the local `flash-next` proxy they're

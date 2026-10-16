@@ -39,6 +39,15 @@ const sysPrompt =
       'code blocks, bullet lists, or emoji: say file paths and numbers in ' +
       'plain words. Do exactly what is asked, then stop.')
   + ' While working, narrate each tool step in one very short sentence.';
+// Voice can't answer a permission prompt, and raw stream-json input has no
+// host to answer it either - so under anything stricter, prompt-worthy
+// tools (WebFetch et al.) get silently DENIED and the answer comes back
+// "I can't". bypassPermissions approves everything; explicit deny rules
+// (like this user's WebSearch) still win under bypass, verified on
+// 2.1.296. Tighten later with --permission-mode acceptEdits (edits+bash
+// free, network tools denied) or dontAsk (locked-down) if the voice ever
+// stops being the only trigger.
+const permMode = arg('permission-mode', 'bypassPermissions');
 
 // -- claude child process: one per /new, kept alive across /talk ----------
 let child = null;       // claude process
@@ -52,7 +61,7 @@ const sse = (res, ev, data) =>
 function spawnClaude(resume) {
   const args = ['-p', '--input-format', 'stream-json',
     '--output-format', 'stream-json', '--verbose',
-    '--permission-mode', 'acceptEdits',
+    '--permission-mode', permMode,
     '--append-system-prompt', sysPrompt];
   if (resume) args.push('--resume', resume);
   child = spawn(claudeBin, args, { cwd: dir, env: process.env });
