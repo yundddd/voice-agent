@@ -45,6 +45,8 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
+  final ScrollController _scroll = ScrollController();
+  int _seenReplyLen = 0; // drives auto-follow while the reply streams
 
   @override
   void initState() {
@@ -58,6 +60,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scroll.dispose();
     _assistant.dispose();
     super.dispose();
   }
@@ -80,6 +83,19 @@ class _AssistantScreenState extends State<AssistantScreen>
   Widget build(BuildContext context) {
     final a = _assistant;
     final scheme = Theme.of(context).colorScheme;
+
+    // Auto-follow the streaming reply: when its text grows, pin the scroll
+    // position to the bottom (post-frame: the new height exists only after
+    // layout). No-op once the user has flicked away to read the beginning.
+    if (a.lastReply.length != _seenReplyLen) {
+      _seenReplyLen = a.lastReply.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scroll.hasClients) return;
+        if (!_scroll.position.outOfRange) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        }
+      });
+    }
 
     final (icon, color) = switch ((a.phase, a.userSpeaking)) {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
@@ -171,10 +187,20 @@ class _AssistantScreenState extends State<AssistantScreen>
           child: Column(
             children: [
               Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    controller: _scroll,
+                    // Long harness answers grew the reply card without
+                    // bounds until it smeared over the chips and metrics:
+                    // the text block now scrolls inside this region and
+                    // auto-follows the reply while it streams.
+                    child: ConstrainedBox(
+                      constraints:
+                          BoxConstraints(minHeight: constraints.maxHeight),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                       Text(
                         a.status,
                         textAlign: TextAlign.center,
@@ -217,7 +243,10 @@ class _AssistantScreenState extends State<AssistantScreen>
                           ),
                         ),
                       ],
-                    ],
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

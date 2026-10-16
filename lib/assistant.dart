@@ -278,10 +278,6 @@ class VoiceAssistant extends ChangeNotifier {
         if (gen != _generation) break; // interrupted: drop the rest
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           final text = cleanForSpeech(ev.text.trim());
-          spoken.write('$text ');
-          // Show the answer on screen as it arrives, not just speak it.
-          _lastReply = spoken.toString().trim();
-          notifyListeners();
           final (audio, rate) = await _worker!.synthesizeStream(
             text,
             onChunk: (chunk, sampleRate) {
@@ -299,6 +295,15 @@ class VoiceAssistant extends ChangeNotifier {
           );
           if (gen != _generation) break;
           _noteTts(audio, rate); // last message's raw audio: debug replay
+          // The reply card follows the audio, not the event stream: text is
+          // added only once its speech made it into the play queue. An
+          // interrupted turn's tail chunks are dropped on the gen guard, and
+          // without this order the card kept growing while the loop had
+          // already stopped feeding the player — seen as "text with no
+          // audio" on long answers.
+          spoken.write('$text ');
+          _lastReply = spoken.toString().trim();
+          notifyListeners();
         } else if (ev.kind == 'tool') {
           _status =
               'The harness is working — ${ev.toolName}'

@@ -87,6 +87,16 @@ function handleEvent(line) {
   const m = JSON.parse(line);
   console.error(`EVT ${m.type}/${m.subtype ?? '-'} len=${line.length}`);
   if (m.session_id) sessionId = m.session_id;
+  // Transcript replay: after --resume (or a child respawn) claude re-emits
+  // earlier turns' messages with their ORIGINAL timestamps. Without this
+  // filter every resume re-speaks the whole conversation history — heard as
+  // "the same response, over and over". Fresh events carry now-stamps, so
+  // anything older than this turn's start is history, not an answer.
+  if (m.type === 'assistant' && m.timestamp && curRes && curRes.turnStart &&
+      Date.parse(m.timestamp) < curRes.turnStart) {
+    console.error('  (replay, skipped)');
+    return;
+  }
   const res = curRes;
   if (!res) return; // no listener on this turn (client hung up): keep process alive
   switch (m.type) {
@@ -102,8 +112,15 @@ function handleEvent(line) {
       for (let i = seen; i < content.length; i++) {
         const c = content[i];
         if (c.type === 'text' && c.text.trim()) {
-          console.error(`  -> say "${c.text.trim().slice(0, 40)}"`);
-          sse(res, 'say', { text: c.text.trim() });
+          const t = c.text.trim();
+          // Second safety net: replays can arrive under a fresh message id
+          // (new-UUID copies of an old turn's text); within one turn, relay
+          // each exact text once. Identical consecutive progress lines lose
+          // their second copy — right trade for audio.
+          if (spokenTexts.has(t)) continue;
+          spokenTexts.add(t);
+          console.error(`  -> say "${t.slice(0, 40)}"`);
+          sse(res, 'say', { text: t });
         }
         if (c.type === 'tool_use') sse(res, 'tool', { name: c.name, detail: summarize(c) });
       }
@@ -120,6 +137,7 @@ function endTurn() {
   if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
   if (curRes) { curRes.end(); curRes = null; }
   spokenMsgs.clear(); // every message lives inside one turn
+  spokenTexts.clear();
   if (sessionId) { try { writeFileSync(sidFile, sessionId); } catch {} }
 }
 function summarize(tool) {
@@ -130,6 +148,7 @@ function talk(text, res) {
   if (curRes) { sse(res, 'error', { error: 'busy: one turn at a time' }); res.end(); return; }
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
   curRes = res;
+  curRes.turnStart = Date.now() - 5000; // slack for clock skew / early stamps
   // SSE comment every 15 s: a 3-minute gradle build emits nothing, and
   // idle-detection on the link (NAT, tailscale, Dart clients) should not
   // get creative with a stream that is merely thinking.
@@ -143,6 +162,9 @@ let keepAlive = null;
 // Cleared at endTurn: ids are unique per process, but a turn is the
 // natural lifecycle here and it keeps the map from growing forever.
 const spokenMsgs = new Map();
+// Exact say texts already relayed this turn (catches replays that arrive
+// under fresh message ids, e.g. a resumed transcript). Same lifecycle.
+const spokenTexts = new Set();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
