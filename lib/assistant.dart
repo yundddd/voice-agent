@@ -505,8 +505,12 @@ class VoiceAssistant extends ChangeNotifier {
         _tokRate = _tokRate <= 0 ? inst : _tokRate * 0.6 + inst * 0.4;
         _tokRate = _tokRate.clamp(5.0, 800.0);
       }
-      _tokOut = out;
     }
+    // The bridge's number is AUTHORITATIVE — including the 0 of the
+    // first `thinking` frame of a new turn: that zero is what buries the
+    // PREVIOUS turn's tally so a fresh turn's line can never show stale
+    // digits (the bridge resets its own counter at beginTurn too).
+    _tokOut = out;
     if (ev.inputTokens > 0) _tokIn = ev.inputTokens;
     _tokKind = ev.toolKind;
     _tokAt = now;

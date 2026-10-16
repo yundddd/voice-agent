@@ -8,8 +8,15 @@
 //
 // Endpoints (all except /health require ?token=):
 //   POST /talk   body: plain text utterance -> SSE stream of voice events
-//                (event: say / tool / progress / done / error). While the
-//                model generates, a `tool {name:"tokens"}` line arrives
+//                (event: say / tool / progress / done / error). Progress
+//                is designed never to read as "ignored": the turn's very
+//                first frame is a `tool {name:"tokens", kind:"thinking"}`
+//                tally (out 0, in = best known: exact message_start once
+//                proven, else the running preview — the `in` field falls
+//                back to the estimate so the spinner line always carries
+//                the number that matters), so the phone's line flips
+//                from "Asking the bridge…" to "thinking" within one RTT.
+//                While the model generates, the tally line arrives
 //                every ~0.8 s of active generation (and immediately
 //                whenever a message closes and the figure goes exact):
 //                "thinking · 1.2k out · 21k in" — live output-token
@@ -18,7 +25,23 @@
 //                corrected to the CLI's exact usage as each message
 //                closes), carrying numeric {out,in,kind} fields beside
 //                the display string so the phone can grow the counter
-//                between relays at the rate the relays taught it. A
+//                between relays at the rate the relays taught it. If the
+//                HEARD view of a model-side (no tool open) turn relays
+//                nothing for --tok-heartbeat ms (default 5000; 0 = off),
+//                the keep-pinger pushes the tally anyway marked
+//                {quiet:true} — "thinking · 0 out · 21k in · no deltas
+//                from upstream" — so a proxy that streams no partials
+//                (or buffers SSE entirely, OpenAI-style) still shows an
+//                ALIVE turn instead of a frozen line: quiet frames are
+//                strictly the no-progress signal, since a streaming
+//                turn trips the 0.8 s relays before the silence gate.
+//                Every turn also logs a stderr `[census]` of what the
+//                CLI actually delivered under --include-partial-messages
+//                (first partial event, per-kind tallies, delta chars,
+//                usage tokens, and a verdict: LIVE DELTAS / USAGE ONLY /
+//                NO LIVE EVENTS) — so "why does the app show no
+//                progress" is answered from the wire, not by guessing
+//                what the proxy does with streaming. A
 //                `context` event {in,window} also arrives at
 //                every API call start and after each turn: live context
 //                consumption plus the model's window (same numbers
@@ -175,6 +198,24 @@ let tokLastMsgOut = 0; // output tokens of the most recent message (for
 let tokChars = 0;     // delta chars since the last exact figure
 let tokKind = '';     // 'thinking' | 'answering' | 'calling X'
 let tokSentAt = 0;    // relay throttle clock
+// Quiet-token heartbeat period: after this many ms with nothing relayed
+// to the heard view (no deltas, no settles), the keep-pinger re-sends
+// the tally marked `quiet:true` so the phone can tell "thinking, but
+// this upstream gives no numbers" from "hung with nobody home". 0
+// disables the quiet frames (pings only). --tok-heartbeat.
+const HEARTBEAT_MS = Number(arg('tok-heartbeat', 5000));
+// What the CLI ACTUALLY delivered under --include-partial-messages, one
+// census per turn: the phone's live counter exists only if these event
+// shapes do, and which shapes arrive is entirely the upstream proxy's
+// decision. The census logs the first partial the moment it lands,
+// tallies every kind, and pronounces the verdict at the `result` —
+// "the app shows no progress" is answered from the bridge's own journal
+// instead of by guessing what the proxy does with SSE.
+let census = newCensus();
+function newCensus() {
+  return {types: {}, deltaChars: 0, msgStarts: 0, msgDeltas: 0,
+          usageOut: 0, sawFirst: false};
+}
 // Context consumption (the bar above the talk button): the CLI reports
 // the model's contextWindow in every `result` (modelUsage) and this
 // call's input tokens in every `message_start`; the `result` usage is
@@ -248,13 +289,26 @@ const relay = (ev, data) => {
 // paint the exact number AND keep it growing between relays. out is
 // tokens-so-far this turn (estimate, or exact after a message closed),
 // in is this API call's context consumption, kind is what the model is
-// doing right now ('thinking' | 'answering' | 'calling X' | '').
-const tokFrame = (out) => ({
-  name: 'tokens',
-  detail: (tokKind ? tokKind + ' · ' : '')
-    + `${fmtTok(Math.round(out))} out · ${fmtTok(tokIn)} in`,
-  out: Math.round(out), in: tokIn, kind: tokKind,
-});
+// doing right now ('thinking' | 'answering' | 'calling X' | ''). The
+// in-count is the BEST-KNOWN figure (exact message_start once proven,
+// else the running preview) — the spinner should carry the honest
+// estimate over showing nothing. `quiet: true` marks a frame the
+// heartbeat sent because the turn has been silent: with no movement at
+// all the detail says so in plain words, so "thinking" on the phone
+// never silently degrades into "stuck".
+const tokFrame = (out, {quiet = false} = {}) => {
+  const o = Math.max(0, Math.round(out));
+  const inTok = Math.max(tokIn, estSentIn);
+  const parts = [tokKind || 'working', `${fmtTok(o)} out`];
+  if (inTok > 0) parts.push(`${fmtTok(inTok)} in`);
+  if (quiet) parts.push('no deltas from upstream');
+  return {
+    name: 'tokens',
+    detail: parts.join(' · '),
+    out: o, in: inTok, kind: tokKind,
+    ...(quiet ? {quiet: true} : {}),
+  };
+};
 
 function spawnClaude(resume) {
   const args = ['-p', '--input-format', 'stream-json',
@@ -299,7 +353,13 @@ function handleEvent(line) {
   if (m.session_id) sessionId = m.session_id;
   if (m.type === 'stream_event') {
     const e = m.event ?? {};
+    census.types[e.type] = (census.types[e.type] || 0) + 1;
+    if (!census.sawFirst) {
+      census.sawFirst = true;
+      console.error(`  [census] first partial arrives: ${e.type}`);
+    }
     if (e.type === 'message_start') {
+      census.msgStarts++;
       const u = e.message?.usage ?? {};
       tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
             + (u.cache_creation_input_tokens ?? 0);
@@ -316,10 +376,13 @@ function handleEvent(line) {
         : b.type === 'text' ? 'answering' : tokKind;
     } else if (e.type === 'content_block_delta') {
       const d = e.delta ?? {};
-      tokChars += (d.text ?? d.thinking ?? d.partial_json ?? '').length;
+      const n = (d.text ?? d.thinking ?? d.partial_json ?? '').length;
+      tokChars += n; census.deltaChars += n;
     } else if (e.type === 'message_delta') {
+      census.msgDeltas++;
       const o = e.usage?.output_tokens;
       if (o) {
+        census.usageOut += o;
         // The estimate just went exact — settle the phone's counter NOW
         // instead of letting it drift on estimates for another second:
         // one extra frame per closed message is nothing on the wire, and
@@ -394,6 +457,21 @@ function handleEvent(line) {
     if (lastCtx.in) {
       relay('context', { in: lastCtx.in, window: ctxWindow });
     }
+    // Per-turn verdict on what the upstream actually delivered (see
+    // census): the answer to "the app showed no progress" that is
+    // written by the wire, not by hope.
+    console.error('  [census] ' + (census.sawFirst
+        ? `stream_event kinds: ${Object.entries(census.types)
+            .map(([k, v]) => `${k}=${v}`).join(' ')} ` +
+          `deltaChars=${census.deltaChars} usageOut=${census.usageOut}`
+        : 'NO stream_event frames at all') + ' → ' + (
+        census.deltaChars > 0
+          ? 'LIVE DELTAS: phone ticker streams, heartbeats stay silent'
+          : census.usageOut > 0
+          ? 'USAGE-ONLY STREAM: numbers settle once per message; quiet '
+            + 'heartbeats carry the spinner between them'
+          : 'NO LIVE EVENTS: upstream buffers SSE (OpenAI-style or '
+            + 'worse); phone gets thinking/heartbeat + elapsed only'));
     relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
     if (curRes) endTurn();
     flushPending();
@@ -464,6 +542,32 @@ function handleEvent(line) {
 function endKeep(t) {
   if (t && t.keep) clearInterval(t.keep);
 }
+// The turn's keep-alive pinger (and quiet-token heartbeat), one interval
+// per heard-view object: an SSE comment guards the link (NAT, tailscale,
+// Dart clients) against idle-detection on a merely-thinking stream, and
+// — since the phone's watchdog treats 24 s of wire-silence as a dead
+// socket — at most every 5 s. On each tick, if the HEARD view of an OPEN
+// turn has relayed nothing for HEARTBEAT_MS and no tool is open (during
+// a tool run the real "Bash npm test" line owns the spinner, not a
+// frozen counter), push the current tally marked `quiet`: the phone then
+// says "thinking · N in · no deltas from upstream" out loud instead of
+// wondering. A turn whose upstream streams deltas never hits the
+// silence threshold while generating, so this frame is strictly the
+// no-progress signal — never a stutter over the live ticker.
+function startKeep(res) {
+  return setInterval(() => {
+    try {
+      if (HEARTBEAT_MS > 0 && curRes && curRes.res === res && turnOpen &&
+          !openTools.size && Date.now() - tokSentAt >= HEARTBEAT_MS) {
+        tokSentAt = Date.now();
+        sse(res, 'tool', tokFrame(
+          tokOutExact + Math.floor(tokChars / 4),
+          {quiet: tokChars === 0 && tokOutExact === 0}));
+      }
+      res.write(': ping\n\n');
+    } catch {}
+  }, Math.min(HEARTBEAT_MS || 15000, 5000));
+}
 // End the ATTACHED *view* of a turn. This deliberately does NOT clear
 // turnOpen: when the phone hangs up mid-turn the turn itself keeps
 // running as a BACKGROUND turn (the harness finishes its work, the
@@ -511,7 +615,7 @@ function interruptTurn() {
   } catch {}
 }
 // Attach `res` as the heard view of a brand-new turn and release the
-// prompt to claude. The 15 s keep-alive pinger belongs to the turn object
+// prompt to claude. The keep-pinger/heartbeat belongs to the turn object
 // now: a backgrounded turn and whatever replaces it each carry their own.
 function beginTurn(text, res, keep) {
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
@@ -521,8 +625,14 @@ function beginTurn(text, res, keep) {
   turnOpen = true;
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
+  census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
-  tokKind = '';
+  // Provisional until the first content_block_start relabels it to truth
+  // ('answering', 'calling Bash'): between the prompt landing and the
+  // first visible token, 'thinking' IS the honest state — and on an
+  // upstream that never shows partials at all, it stays the honest
+  // description of the black-box interval, heartbeat frames included.
+  tokKind = 'thinking';
   // Preview the coming call's size BEFORE the first message_start (which
   // only lands after the server finishes reading): last turn's exact
   // context + this utterance's own tokens, relayed as the turn's very
@@ -531,6 +641,12 @@ function beginTurn(text, res, keep) {
   estIn = lastCtx.in > 0 ? lastCtx.in + estTokens(text) : 0;
   estSentIn = estIn;
   if (estIn > 0) ctxPreviewFrame();
+  // The turn's first tally frame, ONE RTT after the prompt: the phone's
+  // line flips from "Asking the bridge…" to "thinking · …" immediately,
+  // before the upstream has proved anything. Whether the number then
+  // MOVES is what the census reports at the result; either way the
+  // spinner never reads as ignored.
+  sse(res, 'tool', tokFrame(0));
   writeUserMsg(text);
 }
 // A queued prompt got its slot: hand over the floor the moment the
@@ -556,12 +672,12 @@ function flushPending() {
 // finish: letting it complete is the entire point of backgrounding, and
 // /stop still hard-stops it.
 function talk(text, res, interrupt = true) {
-  // SSE comment every 15 s: a 3-minute gradle build emits nothing, and
-  // idle-detection on the link (NAT, tailscale, Dart clients) should not
-  // get creative with a stream that is merely thinking.
-  const keep = setInterval(() => {
-    try { res.write(': ping\n\n'); } catch {}
-  }, 15000);
+  // SSE comment pinger + quiet-token heartbeat (see startKeep): a
+  // 3-minute gradle build emits nothing, and idle-detection on the link
+  // (NAT, tailscale, Dart clients — including the app's 24 s quiet-wire
+  // watchdog) should not get creative with a stream that is merely
+  // thinking.
+  const keep = startKeep(res);
   // NOTE: must listen on the RESPONSE, not the request: a POST's req
   // 'close' fires the instant its body is read, which would end the
   // stream before claude ever answers. res 'close' = client hung up or
@@ -739,9 +855,12 @@ const server = http.createServer((req, res) => {
     // GET is harmless: worst case the turn detaches and keeps working.
     res.writeHead(200, { 'content-type': 'text/event-stream',
       'cache-control': 'no-cache', connection: 'keep-alive' });
-    const keep = setInterval(() => {
-      try { res.write(': ping\n\n'); } catch {}
-    }, 15000);
+    // The pinger doubles as the quiet-heartbeat: an attaching phone
+    // (post-zombie-hop!) that gets no deltas either still sees
+    // "thinking" move. The curRes identity gate makes the heartbeat lie
+    // dormant until this view actually owns the turn (or it never does,
+    // if the turn ended and the replayed tail just closes us out).
+    const keep = startKeep(res);
     for (const { ev, data } of backlog) sse(res, ev, data);
     backlog.length = 0;
     if (!turnOpen) { clearInterval(keep); res.end(); return; }

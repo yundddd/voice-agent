@@ -357,6 +357,14 @@ of the same misbehaving turn; a frozen or killed phone shows up as
 `curl 'http://<bridge>:8732/applogs?token=…&since=0'` pulls the whole
 phone journal live; the Bridge screen shows the poller's peer and
 reachability via `/health`.
+**"Is it thinking?" now has an always-honest answer** (0.1.0+30): every
+turn opens with a `thinking` tally frame, so the spinner line leaves
+"Asking the bridge…" within one round trip — and if the upstream streams
+no partials, quiet heartbeat frames keep saying so in words while a
+per-turn `[census]` line in the bridge's journal reports what the wire
+actually delivered (live deltas / usage-only settles / no live events).
+Which one you get is your proxy's choice; now you can read it instead
+of wondering.
 Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run

@@ -63,6 +63,28 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   remain the user's manual levers (app chips), and the context bar +
   preview frames exist precisely so the number that drives latency is
   visible while it grows.
+- Progress that cannot read as "ignored" (0.1.0+30): a turn's FIRST SSE
+  frame is now a `tool {name:"tokens", kind:"thinking"}` tally (out 0,
+  in = best known), so the phone's working line flips from "Asking the
+  bridge…" to "thinking · … in · Ns" within one RTT of the prompt —
+  before the upstream has proved anything. Whether the NUMBER then
+  moves is the upstream's decision, and the bridge now measures it
+  instead of assuming: a per-turn `[census]` stderr line logs which raw
+  CLI event shapes actually arrived under `--include-partial-messages`
+  (first partial, per-kind counts, delta chars, usage tokens) and
+  pronounces the verdict — LIVE DELTAS (ticker streams normally) /
+  USAGE-ONLY (numbers settle once per message; heartbeats carry the
+  spinner between settles) / NO LIVE EVENTS (proxy buffers SSE
+  wholesale — an OpenAI-style upstream behind the Anthropic facade, or
+  a CLI too old for partials — so only elapsed + quiet frames prove the
+  turn breathes). And while a heard, model-side (no open tool) turn
+  relays nothing for `--tok-heartbeat` ms (default 5000; 0 = off), the
+  keep-pinger pushes the tally marked `{quiet:true}` — its detail
+  literally ends "no deltas from upstream", so "thinking" never decays
+  into "stuck" silently. Quiet frames only fire when nothing else
+  moved, so they never stutter over a live ticker; the phone treats the
+  frame's number as authoritative including the 0 that opens a turn
+  (one turn's tally can never bleed into the next).
 - `POST /stop` — in-band interrupt (`control_request` on the CLI's
   stdin control protocol) while any turn is OPEN. The turn ends, context
   and the process both survive (SIGINT was the old mechanism — in
