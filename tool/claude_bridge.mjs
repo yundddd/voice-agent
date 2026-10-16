@@ -1328,7 +1328,12 @@ const server = http.createServer((req, res) => {
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
-      poll: {ring: ringSeq, min: ring.length ? ring[0].seq : ringSeq},
+      // A/B: BRIDGE_DISABLE_POLL=1 hides the advertisement and every
+      // client falls back to the classic SSE push (the ring keeps
+      // turning either way, so re-enabling is just a restart).
+      ...(process.env.BRIDGE_DISABLE_POLL ? {} : {
+        poll: {ring: ringSeq, min: ring.length ? ring[0].seq : ringSeq},
+      }),
     }));
     return;
   }
