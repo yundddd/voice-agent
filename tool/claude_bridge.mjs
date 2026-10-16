@@ -300,8 +300,23 @@ function relaySentences(blk) {
       }
     }
     if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
-      const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
-      if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
+      // Long ramble, no sentence end yet: prefer the LAST clause mark
+      // (comma, semicolon, colon, dash) inside the cap — a place the
+      // prose itself would breathe. Cutting at an arbitrary space two
+      // hundred chars past the nearest comma is what made seams land
+      // mid-phrase while commas sat right there. A word gap remains
+      // only for truly unpunctuated runs, and the micro-segment floor
+      // applies here too.
+      const clause = /[^\s][,;:—–]["')\]]*[ \n]/g;
+      let cw = -1;
+      for (let m; (m = clause.exec(win.slice(0, MAX_SENT_CHARS))) !== null;) {
+        if (m.index + m[0].length >= MIN_SENT_CHARS) cw = m.index + m[0].length;
+      }
+      if (cw > 0) cut = cw;
+      else {
+        const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
+        if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
+      }
     }
     if (cut < 0) return;
     const t = blk.buf.slice(from, from + cut).trim();
