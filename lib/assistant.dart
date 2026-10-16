@@ -2280,24 +2280,31 @@ class VoiceAssistant extends ChangeNotifier {
           }
           final ev = q.removeAt(0);
           _hopReply(); // harness→reply hop crossed (reattach view)
-          if (ev.isSay &&
-              ev.text.trim().isNotEmpty &&
+          // One cleaning up front, then every branch — dedup test, log
+          // add, and speak — sees the SAME string the live path stored.
+          // The bug this kills: the chat log keeps the cleaner's OUTPUT
+          // (markdown folded, ': '→', ', clauses capitalized), while
+          // dedup compared the cleaner's INPUT — any paragraph the
+          // cleaner touched missed, and a heard paragraph rode the
+          // replay back out of the speaker. Match like you store.
+          final sayText = ev.isSay && ev.text.trim().isNotEmpty
+              ? cleanForSpeech(ev.text.trim())
+              : '';
+          if (sayText.isNotEmpty &&
               _wireAgeMs(ev) > 120000 &&
               // (unless it's also in the chat log — then the dedup
               // branch below silently drops it instead of duplicating)
-              !_alreadyInChat(ev.text.trim())) {
+              !_alreadyInChat(sayText)) {
             // Archaeology, not news: the backlog replayed a line from
             // before the app went away (an APK update, a kill — the
             // frames are minutes or hours old). It belongs in the
             // conversation as text, never in the speaker again — the
             // user already lived through this exchange.
-            turn.blocks.add(ev.text.trim());
+            turn.blocks.add(sayText);
             _touchChat();
             final ageSec = ev.wireMs == 0 ? 'unstamped' : '${_wireAgeMs(ev) ~/ 1000}s old';
             _logDebug('replay $ageSec: logged silently, not spoken');
-          } else if (ev.isSay &&
-              ev.text.trim().isNotEmpty &&
-              _alreadyInChat(ev.text.trim())) {
+          } else if (sayText.isNotEmpty && _alreadyInChat(sayText)) {
             // Already heard — the persisted chat log remembers the block
             // (it joins the conversation the moment its audio starts,
             // before the kill), so the replay bows out quietly. One
@@ -2305,9 +2312,9 @@ class VoiceAssistant extends ChangeNotifier {
             // spoken and its tail is not repeated — never re-listening
             // beats never not-listening, said every chat client ever.
             _logDebug('replay dedup: paragraph already in chat — skipped');
-          } else if (ev.isSay && ev.text.trim().isNotEmpty) {
+          } else if (sayText.isNotEmpty) {
             _tokLive = false;
-            await speak(cleanForSpeech(ev.text.trim()));
+            await speak(sayText);
           } else if (ev.kind == 'context') {
             if (ev.inputTokens > 0 && ev.inputTokens != _tokIn) {
               _tokIn = ev.inputTokens;
