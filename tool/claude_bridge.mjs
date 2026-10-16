@@ -273,8 +273,9 @@ const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 // behavior.
 const MIN_SENT_CHARS = 40;   // never carve micro-segments ("OK.")
 const MAX_SENT_CHARS = 300;  // bound first-audio latency even unpunctuated
-let curMsg = null;      // {blocks: {idx: {buf, spoken}}} for the LIVE message
+let curMsg = null;      // {blocks: {}, seq} for the LIVE message
 let lastTextBlk = null; // newest live text block (the draft frame's view)
+let lastTextOpen = false; // and whether it can still receive deltas
 function relaySentences(blk) {
   for (;;) {
     const from = blk.spoken;
@@ -583,7 +584,7 @@ function handleEvent(line) {
     }
     if (e.type === 'message_start') {
       census.msgStarts++;
-      curMsg = {blocks: {}}; // the sentence buffer starts fresh per call
+      curMsg = {blocks: {}, seq: 0}; // the sentence buffer starts fresh per call
       const u = e.message?.usage ?? {};
       tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
             + (u.cache_creation_input_tokens ?? 0);
@@ -599,7 +600,13 @@ function handleEvent(line) {
       // phone only ever shows the CURRENT thought, never an old one.
       if (b.type === 'thinking') thinkBuf = '';
       if (b.type === 'text' && curMsg) {
-        lastTextBlk = curMsg.blocks[e.index ?? 0] = {buf: '', spoken: 0};
+        // Keyed by OUR insertion order, not the wrapper's index (see the
+        // snapshot matcher): a second text block must not overwrite the
+        // first's watermark.
+        lastTextBlk = curMsg.blocks['b' + ++curMsg.seq] = {buf: '', spoken: 0};
+        lastTextOpen = true;
+      } else if (b.type === 'thinking' || b.type === 'tool_use') {
+        lastTextOpen = false;
       }
       tokKind = b.type === 'thinking' ? 'thinking'
         : b.type === 'tool_use' ? `calling ${b.name ?? 'tool'}`
@@ -611,11 +618,12 @@ function handleEvent(line) {
       }
       const n = (d.text ?? d.thinking ?? d.partial_json ?? '').length;
       tokChars += n; census.deltaChars += n;
-      if (typeof d.text === 'string' && d.text) {
+      if (typeof d.text === 'string' && d.text && lastTextOpen) {
         // The live answer grows — and complete sentences leave the
         // buffer as say frames right here, before the message closes.
-        const blk = curMsg?.blocks[e.index ?? 0];
-        if (blk) { blk.buf += d.text; relaySentences(blk); }
+        // Deltas are appended to the LAST-OPEN text block: the stream is
+        // serial, and the wrapper's block index proved unreliable.
+        if (lastTextBlk) { lastTextBlk.buf += d.text; relaySentences(lastTextBlk); }
       }
     } else if (e.type === 'message_delta') {
       census.msgDeltas++;
@@ -633,6 +641,7 @@ function handleEvent(line) {
         }
       }
     }
+    if (e.type === 'content_block_stop') lastTextOpen = false;
     // One tally line per ~0.8 s of ACTIVE generation, only while someone
     // is listening: no deltas flowing (waiting, running a tool) means
     // no relay, so the last real `tool` line — "Bash npm test" — keeps
@@ -773,14 +782,23 @@ function handleEvent(line) {
           spokenTexts.add(t);
           // Sentence relays from the live deltas may have spoken most of
           // this block already; the snapshot only owes the watermark's
-          // remainder. Advancing `spoken` keeps a grew-again snapshot
-          // from re-speaking what the first one just said. A block with
-          // no deltas (census says some upstreams send none) has
-          // spoken=0 and falls through to the old whole-text relay.
-          const blk = curMsg?.blocks[i];
-          const owed = blk && blk.spoken > 0
-            ? c.text.slice(Math.min(blk.spoken, c.text.length)).trim() : t;
-          if (blk) blk.spoken = c.text.length;
+          // remainder. The live block is found by TEXT MATCH, not by
+          // array index: the stream wrapper's block indices are not
+          // trustworthy (a thinking block shifts the text block's array
+          // position but its deltas may all arrive keyless — that's what
+          // the field trace showed), while the spoken prefix is exact.
+          // Advancing `spoken` keeps a grew-again snapshot from
+          // re-speaking what the first one just said. A block with no
+          // deltas (census says some upstreams send none) matches
+          // nothing and falls through to the old whole-text relay.
+          let matched;
+          for (const blk of Object.values(curMsg?.blocks ?? {})) {
+            const said = blk.buf.slice(0, blk.spoken).trimStart();
+            if (said && t.startsWith(said)) { matched = { blk, said }; break; }
+          }
+          const owed = matched
+            ? t.slice(Math.min(matched.said.length, t.length)).trim() : t;
+          if (matched) matched.blk.spoken = matched.blk.buf.length;
           if (!owed) continue;
           console.error(`  -> say "${owed.slice(0, 40)}"`);
           relay('say', { text: owed });
@@ -930,7 +948,7 @@ function beginTurn(text, res, keep) {
   census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
   thinkBuf = ''; // no thought survives into the next turn
-  curMsg = null; lastTextBlk = null; // ditto the live answer buffer
+  curMsg = null; lastTextBlk = null; lastTextOpen = false; // ditto live answer
   // Provisional until the first content_block_start relabels it to truth
   // ('answering', 'calling Bash'): between the prompt landing and the
   // first visible token, 'thinking' IS the honest state — and on an
