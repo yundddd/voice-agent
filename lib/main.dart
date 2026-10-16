@@ -1126,7 +1126,10 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                widget.label,
+                // The tally-translated activity ('Thinking…'), not the
+                // raw status: 'Asking the bridge' must not squat on the
+                // line for a minute of actual thinking (+85).
+                a.activityLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(

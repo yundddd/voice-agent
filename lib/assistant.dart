@@ -565,6 +565,30 @@ class VoiceAssistant extends ChangeNotifier {
   /// rendering audio (0.1.0+83/84).
   bool get turnSettled => _tokKind == 'settled';
 
+  /// The spinner's first line: WHAT the harness is doing, translated
+  /// from the tally's kind — words only, never numbers (those belong
+  /// to the meter line alone, per +76/+85: the same digits on two
+  /// lines at two update cadences is how 'thinking' got buried).
+  /// Falls back to the plain status until the first tally of the turn
+  /// teaches us anything — so 'Asking the bridge…' covers the wire
+  /// flight and the pre-first-token prefill, honestly.
+  String get activityLabel {
+    switch (_tokKind) {
+      case 'thinking':
+        return 'Thinking…';
+      case 'answering':
+        return 'Answering…';
+      case 'settled':
+        return 'Rendering audio…';
+      default:
+        if (_tokKind.startsWith('calling ')) {
+          final t = _tokKind.substring(8);
+          return t == 'Bash' ? 'Running a command…' : 'Calling $t…';
+        }
+        return _status;
+    }
+  }
+
   /// The growing label. Only meaningful while [tokenTickerOn]; the
   /// spinner asks the assistant for it on every one of its 120 ms
   /// ticks, which is what makes the number move between relays.
