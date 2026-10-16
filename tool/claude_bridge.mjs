@@ -117,12 +117,26 @@
 //                appLog block reports peer, watermark, mode (push /
 //                pull / silent) and last push time.
 //
-// Latency note: the upstream proxy re-reads the entire conversation on
-// every request (prompt caching is not in play there — cache_read is
-// verifiably always 0), so context size IS per-utterance latency. The
-// bridge deliberately does NOT auto-compact: /new and /compact stay
-// the user's call (the app shows both as chips; the context bar in the
-// app makes the size visible while you decide).
+// Latency note: context size IS per-utterance latency for THIS harness,
+// but not for the reason first written here. The serving stack (sglang
+// behind an Anthropic-compat translation proxy) HAS a working prefix
+// (radix) cache — the server logs prove it: intra-turn tool-loop calls
+// hit `#cached-token: 349k+` with 64–448-token incremental prefills. It
+// simply never reaches this client: (a) the translation layer reports
+// cache_read=0 structurally, so the census's time-to-first-partial is
+// the only cache report we get; (b) probe-verified: the Claude Code CLI
+// re-emits system/init and re-renders the whole request on EVERY user
+// message (same process, no respawn) — the re-serialized prefix is not
+// byte-identical to the previous turn's, so every cross-turn voice
+// utterance misses the cache and pays full prefill — one 'hello' at
+// 150k context ≈ 9 s to first token, every time, background/foreground
+// irrelevant; (c) the hybrid linear-attention model caches only a few
+// prefix branches (mamba state slots), so a second concurrent session
+// on the GPU flushes the radix tree (observed: full usage 0.37 → 0.02)
+// and even a stable prefix re-prefills once after a flush. Practical
+// rule: keep context small (the bar above the talk button shows the
+// number that IS your latency); /compact pays the same full prefill
+// once, then turns are cheap until the session grows again.
 //
 // Voice events are derived from the raw stream-json: assistant text
 // arrives as it closes (no token deltas — the TTS wants whole sentences),
@@ -167,15 +181,19 @@ const sysPrompt =
 // free, network tools denied) or dontAsk (locked-down) if the voice ever
 // stops being the only trigger.
 const permMode = arg('permission-mode', 'bypassPermissions');
-// NOTE on the model behind this bridge: the upstream proxy re-reads the
-// WHOLE conversation as input on every request (observed
-// cache_read_input_tokens = 0 always — Anthropic-style prompt caching
-// is not in play). Context size therefore translates one-to-one into
-// per-utterance latency: a 128k-token chat pays ~10 s even for "hello",
-// a 30k chat ~2.5 s. The bridge does not force this on the session:
-// /new and /compact stay the user's manual levers (the app shows the
-// chip; the context bar right above the talk button shows the number
-// that matters).
+// NOTE on the model behind this bridge: the serving stack HAS prefix
+// (radix) caching — the server logs show intra-turn hits of 300k+
+// cached tokens — but it never helps ACROSS voice utterances: the CLI
+// re-renders its request every user message (per-turn system/init,
+// probe-verified) so the prompt prefix is never byte-stable, and the
+// Anthropic-compat layer reports cache_read=0 regardless. Context size
+// therefore still translates one-to-one into per-utterance latency:
+// a 128k-token chat pays ~10 s even for "hello", a 30k chat ~2.5 s.
+// The bridge does not force this on the session: /new and /compact
+// stay the user's manual levers (the app shows the chip; the context
+// bar right above the talk button shows the number that matters). The
+// [census] line's time-to-first-partial verdict makes each turn's
+// hit-or-miss measurable from the journal instead of this folklore.
 
 // -- claude child process: one per /new, kept alive across /talk ----------
 let child = null;       // claude process
@@ -235,8 +253,13 @@ const HEARTBEAT_MS = Number(arg('tok-heartbeat', 5000));
 // instead of by guessing what the proxy does with SSE.
 let census = newCensus();
 function newCensus() {
-  return {types: {}, deltaChars: 0, msgStarts: 0, msgDeltas: 0,
-          usageOut: 0, sawFirst: false};
+  // t0 = beginTurn clock: the gap to the first partial is the prefix
+  // cache REPORT (sglang never tells this proxy its cached-token count —
+  // usage.cache_read is structurally 0 here — so latency IS the
+  // measurement: seconds-to-first-token ≈ context/prefill-throughput on
+  // a miss, sub-second on a hit).
+  return {t0: Date.now(), firstMs: 0, types: {}, deltaChars: 0,
+          msgStarts: 0, msgDeltas: 0, usageOut: 0, sawFirst: false};
 }
 // Context consumption (the bar above the talk button): the CLI reports
 // the model's contextWindow in every `result` (modelUsage) and this
@@ -341,6 +364,8 @@ function spawnClaude(resume) {
     '--permission-mode', permMode,
     '--append-system-prompt', sysPrompt];
   if (resume) args.push('--resume', resume);
+  console.error('  [claude] spawn (resume=' +
+    (resume ? resume.slice(0, 8) : 'none — fresh session') + ')');
   child = spawn(claudeBin, args, { cwd: dir, env: process.env });
   childDead = false;
   let lineBuf = '';
@@ -354,14 +379,23 @@ function spawnClaude(resume) {
     }
   });
   child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
-  child.on('exit', () => {
+  child.on('exit', (code, sig) => {
     childDead = true;
-    // No result event is ever coming for the open turn: free the state
-    // machine and let any queued prompt through (beginTurn respawns and
-    // --resumes on its own).
+    // An exit while a turn is OPEN is news (crash, kill, proxy death):
+    // relay it so the phone hears the turn died instead of timing out on
+    // silence. An exit while NO turn is open is the normal lifecycle
+    // (/new just SIGTERM'd us, or the CLI finished and left between
+    // turns) — relaying it poisoned the fresh replay backlog with a
+    // spurious `claude exited` the next /attach dutifully spoke. Field
+    // note (probe-verified): this CLI re-emits system/init on EVERY user
+    // message and re-renders the request each turn, so cross-turn prefix
+    // cache misses are its behaviour, not an exit symptom.
+    if (turnOpen) relay('error', { error: 'claude exited' });
+    console.error(`  [claude] exit code=${code} sig=${sig} ` +
+      (turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
+                : 'while idle (expected: /new kill or between-turns exit)'));
     turnOpen = false;
     openTools.clear();
-    relay('error', { error: 'claude exited' });
     if (curRes) endTurn();
     flushPending();
   });
@@ -378,7 +412,10 @@ function handleEvent(line) {
     census.types[e.type] = (census.types[e.type] || 0) + 1;
     if (!census.sawFirst) {
       census.sawFirst = true;
-      console.error(`  [census] first partial arrives: ${e.type}`);
+      census.firstMs = Date.now() - census.t0;
+      console.error(`  [census] first partial after ${census.firstMs} ms: ` +
+        e.type + (e.type === 'message_start'
+          ? ` (in=${e.message?.usage?.input_tokens ?? '?'})` : ''));
     }
     if (e.type === 'message_start') {
       census.msgStarts++;
@@ -482,6 +519,13 @@ function handleEvent(line) {
     // Per-turn verdict on what the upstream actually delivered (see
     // census): the answer to "the app showed no progress" that is
     // written by the wire, not by hope.
+    const cacheVerdict = !census.sawFirst ? 'no first partial observed'
+      : census.firstMs < 1500 ? 'PREFIX CACHE HIT (first partial in '
+          + `${census.firstMs} ms — prompt prefix reused)`
+      : 'PREFIX CACHE MISS (first partial in ' + census.firstMs
+          + ` ms — full re-prefill; ~context/prefill-rate. Cross-turn `
+          + 'misses are this CLI\'s per-turn re-init: it re-renders the '
+          + 'request on every user message — probe-verified)';
     console.error('  [census] ' + (census.sawFirst
         ? `stream_event kinds: ${Object.entries(census.types)
             .map(([k, v]) => `${k}=${v}`).join(' ')} ` +
@@ -493,7 +537,18 @@ function handleEvent(line) {
           ? 'USAGE-ONLY STREAM: numbers settle once per message; quiet '
             + 'heartbeats carry the spinner between them'
           : 'NO LIVE EVENTS: upstream buffers SSE (OpenAI-style or '
-            + 'worse); phone gets thinking/heartbeat + elapsed only'));
+            + 'worse); phone gets thinking/heartbeat + elapsed only') +
+      ' | ' + cacheVerdict);
+    if (m.is_error) {
+      // The reason, not just the flag: result carries errors[] / result
+      // text on error_during_execution — previously discarded, leaving
+      // every interrupted turn looking like an anonymous crash. (A
+      // control-request interrupt lands here TOO: an interrupted turn's
+      // 'error' is the user's barge-in, not a fault.)
+      const why = m.errors ?? m.result ?? m.api_error_status ?? '(no detail)';
+      console.error('  [result-error] ' +
+        JSON.stringify(why).slice(0, 300).replace(/\\n/g, ' '));
+    }
     relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
     if (curRes) endTurn();
     flushPending();
@@ -622,11 +677,16 @@ function summarize(tool) {
 }
 // In-band turn interrupt via the CLI's control protocol (verified live on
 // 2.1.296): a control_request on stdin cancels the OPEN turn — its
-// `result` still arrives (is_error: true) and the process keeps running.
-// This replaces SIGINT, which in headless -p mode kills the WHOLE process:
-// the next utterance then respawns with --resume, the CLI rebuilds the
-// conversation from the transcript under a different request prefix, the
-// proxy's prompt cache misses, and every turn pays a full cold prefill.
+// `result` still arrives (is_error: true — that's the interrupt speaking,
+// not a fault; see [result-error]) and the process keeps running.
+// This replaces SIGINT, which in headless -p mode kills the WHOLE
+// process: the next utterance then respawns with --resume and re-hydrates
+// the transcript from disk (slower to first token, and the rebuilt
+// request is yet one more prefix the cache has never seen). Honest
+// caveat from the 2026-10-16 probe: cross-turn cache hits were never on
+// offer from this CLI either way — it re-renders the request on every
+// user message — so the in-band interrupt buys process survival and
+// fast queue flush, not a warm prefix (see the header latency note).
 function interruptTurn() {
   if (!child || childDead) return;
   try {

@@ -55,14 +55,31 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   reading. The same numbers snapshot into `GET /health` as `context`,
   so even a phone that never attached gets the reading (the app paints
   it as a context bar above the talk button, Claude Code style).
-- Latency and context size, stated plainly: the upstream proxy has no
-  working prompt cache (observed `cache_read_input_tokens: 0` on every
-  call, even back-to-back ones), so every request re-prefills the whole
-  conversation — a 128k-token chat pays ~10 s even for "hello". The
-  bridge does not auto-compact to hide this; `/new` and `/compact`
-  remain the user's manual levers (app chips), and the context bar +
-  preview frames exist precisely so the number that drives latency is
-  visible while it grows.
+- Latency and context size, stated plainly (corrected by field probe,
+  2026-10-16, docker logs in hand): the serving stack HAS a working
+  prefix (radix) cache — intra-turn tool-loop calls log
+  `#cached-token: 349k+` with 64–448-token incremental prefills — but
+  it cannot serve CROSS-TURN voice utterances: the Claude Code CLI
+  re-initializes and re-renders its whole request on every user message
+  (a fresh `system/init` per turn, same process — probe: msg2 of a
+  two-message session re-prefilled `#new-token: 15936, #cached-token:
+  0` with the repo untouched), so the prompt prefix is never
+  byte-stable between turns; the Anthropic-compat layer reports
+  `cache_read: 0` structurally regardless (which is what made the old
+  draft say "no working prompt cache" — right behaviour, wrong
+  mechanism), and the hybrid linear-attention server keeps only a few
+  cached prefix branches (mamba slots), so a second concurrent session
+  flushes the tree (observed: full usage 0.37 → 0.02) and even a
+  stable prefix pays one re-prefill after a flush. Net: every voice
+  utterance pays ~context/prefill-rate — a 128k chat ~10 s even for
+  "hello", ~9 s measured at 156k — and background/foreground churn
+  does not change that (the reattach path only changes who is LISTEN-
+  ING, never what is SENT). The bridge still does not auto-compact to
+  hide this; `/new` and `/compact` remain the user's manual levers
+  (app chips), the context bar shows the number that IS latency, and
+  the per-turn `[census]` line now prints time-to-first-partial as an
+  explicit PREFIX CACHE HIT/MISS verdict — so this paragraph is
+  checkable from the journal, not folklore.
 - Progress that cannot read as "ignored" (0.1.0+30): a turn's FIRST SSE
   frame is now a `tool {name:"tokens", kind:"thinking"}` tally (out 0,
   in = best known), so the phone's working line flips from "Asking the
@@ -86,11 +103,16 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   frame's number as authoritative including the 0 that opens a turn
   (one turn's tally can never bleed into the next).
 - `POST /stop` — in-band interrupt (`control_request` on the CLI's
-  stdin control protocol) while any turn is OPEN. The turn ends, context
-  and the process both survive (SIGINT was the old mechanism — in
-  headless `-p` mode it kills the whole process, and the next `/talk`
-  then respawns with `--resume`, whose rebuilt request prefix misses the
-  prompt cache and pays a full cold prefill; verified both ways).
+  stdin control protocol) while any turn is OPEN. The turn ends (its
+  `result` arrives with `is_error: true` — an interrupted turn's
+  "error" IS the interrupt, and the bridge now logs `[result-error]`
+  with the reason text instead of the old anonymous 1588-byte shrug),
+  context and the process both survive. SIGINT was the old mechanism —
+  in headless `-p` mode it kills the whole process, and the next
+  `/talk` then respawns with `--resume`, re-hydrating the transcript
+  from disk (slower to first token than an in-band cut, and the
+  rebuilt request misses the prefix cache like every other cross-turn
+  request from this CLI — see the latency bullet).
 - `POST /new` — forget the conversation (also clears a background turn,
   a queued prompt, AND the replay backlog — a later attach must not
   resurrect a discarded conversation's tail); `GET /health` — liveness +
@@ -118,6 +140,15 @@ Verified end-to-end on this machine:
 - claude's auto-memory wrote the secret word to its memory file and
   recalled it across turns *and* across a bridge restart;
 - bridge restart → `--resume` → same session, no context loss;
+- (2026-10-16 re-verification) ONE process survives multiple user
+  messages (probe: two messages, exit only on stdin close) — but it
+  emits `system/init` per user message and re-renders the request
+  every turn: msg2 paid a full `#new-token` prefill with the repo
+  untouched between messages. Cross-turn prefix-cache misses are the
+  CLI's own behaviour, independent of the bridge, the reattach path,
+  or background/foreground; the earlier 'one process kept warm by
+  avoiding --resume' framing overstates what stays warm (see latency
+  bullet above);
 - `--permission-mode bypassPermissions` approves every tool without a
   prompt — the only sane default for voice (verified A/B on 2.1.296:
   under `acceptEdits` WebFetch comes back silently *denied*, under
@@ -164,7 +195,11 @@ the Bridge screen. Notes that matter when touching this code:
    that follows becomes a fresh `/talk` seconds later and is queued:
    behind an open tool, or ahead of a cut-short thinking turn (the
    bridge cuts those at queue time with an in-band interrupt — the
-   process never dies, so the warm prompt-cache prefix keeps working).
+   process never dies, so no respawn and no transcript re-hydration;
+   note this does NOT keep a warm prompt cache across turns either —
+   this CLI re-renders its request per user message, see the latency
+   bullet above, which is why barge-in costs an interrupt's result,
+   not a prefill surprise).
    A TAPPED stop — Stop chip, FAB,
    mode switch, clone/bench takeover — is the hard flavour: same detach
    plus a `/stop` (in-band interrupt) so the harness quits working too
