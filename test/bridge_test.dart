@@ -133,6 +133,57 @@ void main() {
     });
   });
 
+  group('reattach decision', () {
+    test('an open turn always deserves a reattach (view-steal included)', () {
+      // Server still working: attach rejoins live — and when the bridge
+      // still believes our dead zombie socket is attached (turnOpen with
+      // backgrounded=false, missed=0) the steal is exactly the repair.
+      expect(
+        bridgeReattachNeeded({
+          'turnOpen': true,
+          'backgrounded': false,
+          'missed': 0,
+        }),
+        isTrue,
+      );
+      expect(
+        bridgeReattachNeeded({
+          'turnOpen': true,
+          'backgrounded': true,
+          'missed': 12,
+        }),
+        isTrue,
+      );
+    });
+
+    test('a turn that ended unheard replays its backlog', () {
+      // Result already delivered server-side (turnOpen false) but the
+      // phone never heard N events: /attach replays the tail, done included.
+      expect(
+        bridgeReattachNeeded({'turnOpen': false, 'missed': 3}),
+        isTrue,
+      );
+    });
+
+    test('nothing open and nothing missed means go idle', () {
+      expect(
+        bridgeReattachNeeded({'turnOpen': false, 'missed': 0}),
+        isFalse,
+      );
+      // Junk/absent missed fields degrade to the same clean verdict:
+      expect(bridgeReattachNeeded({'turnOpen': false}), isFalse);
+      expect(bridgeReattachNeeded({'turnOpen': false, 'missed': 'x'}), isFalse);
+      // An old bridge that never reports missed but has no open turn:
+      expect(bridgeReattachNeeded({}), isFalse);
+    });
+
+    test('an unreachable bridge is "cannot tell", never "nothing"', () {
+      // Waking phones wake their network late (Tailscale especially):
+      // null must route into the retry chain, not into dropping the turn.
+      expect(bridgeReattachNeeded(null), isNull);
+    });
+  });
+
   group('cleanForSpeech', () {
     test('drops fences, emphasis, headings, and bullets become prose', () {
       final s = cleanForSpeech(

@@ -169,9 +169,18 @@ class BridgeClient {
   /// false (the PTT slide-right polite queue) lets the turn finish its
   /// work first. An open tool is never interrupted — it runs to
   /// completion and this prompt goes next either way.
+  ///
+  /// [onActivity] fires for every raw chunk the socket delivers — every
+  /// event frame AND every keep-alive comment the parser drops. The
+  /// bridge pings `: ping` every 15 s while a turn is open, so this is
+  /// the app's liveness signal on the connection itself: no bytes for
+  /// over a ping interval means the socket has gone quiet on us (a
+  /// black-holed route after a background stint), not that the harness
+  /// is quiet.
   Stream<BridgeEvent> talk(
     String text, {
     bool interrupt = true,
+    void Function()? onActivity,
   }) async* {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
@@ -189,7 +198,9 @@ class BridgeClient {
         );
       }
       yield* bridgeEventsFromLines(
-        res.transform(utf8.decoder).transform(const LineSplitter()),
+        _tapped(res.transform(utf8.decoder), onActivity).transform(
+          const LineSplitter(),
+        ),
       );
     } on BridgeException {
       rethrow;
@@ -200,15 +211,31 @@ class BridgeClient {
     }
   }
 
+  /// Byte-level activity tap shared by /talk and /attach (see talk's
+  /// [onActivity] docs): forward every chunk, touching the callback as
+  /// each crosses. Errors and cancellation ride straight through.
+  static Stream<String> _tapped(
+    Stream<String> raw,
+    void Function()? onTouch,
+  ) async* {
+    await for (final s in raw) {
+      if (onTouch != null) onTouch();
+      yield s;
+    }
+  }
+
   /// Re-attaches to a turn the bridge is running with NO listener — the
   /// phone's stream died while the app was hidden (Android killed the
   /// process, or the OS dropped the socket): the bridge replays the
   /// events that happened unheard, then streams live until the turn's
-  /// done. Cancelling the subscription backgrounds the turn again,
-  /// exactly like a hung-up /talk. A turn that already ended replays its
-  /// buffered tail (done included) and closes — the same events either
-  /// way, so the caller needs no special-casing.
-  Stream<BridgeEvent> attach() async* {
+  /// done. When the turn is still open the GET becomes its heard view
+  /// even if the bridge still believes a (zombie) socket is attached —
+  /// the attach STEALS the view, which is how the app repairs a silently
+  /// black-holed connection. Cancelling the subscription backgrounds the
+  /// turn again, exactly like a hung-up /talk. A turn that already ended
+  /// replays its buffered tail (done included) and closes — the same
+  /// events either way, so the caller needs no special-casing.
+  Stream<BridgeEvent> attach({void Function()? onActivity}) async* {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
       final req = await client.getUrl(_u('/attach'));
@@ -221,7 +248,9 @@ class BridgeClient {
         );
       }
       yield* bridgeEventsFromLines(
-        res.transform(utf8.decoder).transform(const LineSplitter()),
+        _tapped(res.transform(utf8.decoder), onActivity).transform(
+          const LineSplitter(),
+        ),
       );
     } on BridgeException {
       rethrow;
@@ -284,6 +313,30 @@ class BridgeException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+/// What the app should do about the bridge after ITS view died — the /talk
+/// (or /attach) socket dropped while the app was hidden, the process was
+/// killed, or the connection went quiet and black-holed. Fed the GET
+/// /health snapshot (or null when the bridge cannot be reached right now):
+///
+/// * `true` — reattach with GET /attach: a turn is open (`turnOpen`) so
+///   attach becomes its heard view again — it STEALS the view even when
+///   the bridge still believes the old dead socket is attached (an
+///   interrupt-then-repair for the blackhole case, where the server never
+///   learns the ear is gone and would keep relaying into the void); or a
+///   turn ended unheard and left `missed` events in the replay backlog.
+/// * `false` — nothing open, nothing unheard: the turn finished while we
+///   were gone and delivered its tail (or never existed) — go idle.
+/// * `null` — bridge unreachable: cannot tell whether the turn is alive.
+///   Waking phones wake their network late (Tailscale especially), so a
+///   failed probe must never silently drop a running turn — retry the
+///   probe with backoff instead.
+bool? bridgeReattachNeeded(Map<String, Object>? health) {
+  if (health == null) return null;
+  if (health['turnOpen'] == true) return true;
+  final missed = health['missed'];
+  return missed is num && missed.toInt() > 0;
 }
 
 /// Belt-and-braces markdown stripper before TTS: the bridge's voice

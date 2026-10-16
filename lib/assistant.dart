@@ -160,6 +160,28 @@ class VoiceAssistant extends ChangeNotifier {
   StreamSubscription<BridgeEvent>?
   _bridgeSub; // live /talk listener — cancelled to DETACH
   void Function()? _bridgeDetachWake; // wakes the turn loop when detached
+  // ── Stream reattach: surviving a background→foreground blink ──────────
+  // The bridge pings an SSE comment (`: ping`) every 15 s while a turn is
+  // open, so a listening socket that goes quiet for one interval plus
+  // slack is LYING: Android froze the process, the Wi-Fi handoff or a
+  // sleeping tailnet black-holed the route, and events relayed down it
+  // are simply gone. /health then tells the truth (bridgeReattachNeeded)
+  // and /attach hands us a fresh view — replaying whatever landed in the
+  // backlog meanwhile. The retry chain exists because waking phones wake
+  // their NETWORK late: one failed probe must never drop a live turn.
+  static const _wireQuiet = Duration(seconds: 24); // ping 15 s + retransmit slack
+  static const _reattachDelays = [
+    Duration(seconds: 2),
+    Duration(seconds: 6),
+    Duration(seconds: 15),
+    Duration(seconds: 40),
+  ]; // backoff ladder: ~63 s of network-wake grace per orphaned turn
+  DateTime _wireAliveAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _wireCheck; // quiet-wire watchdog
+  Timer? _reattachTimer; // next probe of the retry chain
+  int _reattachStep = 0; // ladder rungs spent on the current orphan
+  bool _reattachRetire = false; // chain end = retire the spinner (zombie hop failed)
+  int _reattachGen = -1, _reattachSeq = -1; // the orphaned turn a chain belongs to
 
   StreamSubscription<Uint8List>? _recSub;
   final List<Float32List> _chunks = []; // push-to-talk buffer
@@ -553,6 +575,11 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeBusy = true;
     _harnessBackgrounded = false; // this turn is heard, not invisible
     _harnessSince = DateTime.now(); // the chat spinner counts from here
+    // This utterance supersedes whatever a reattach chain was about to
+    // re-hear: its own stream is the ear now, and a chain attach landing
+    // later would steal the view from the QUEUED turn the bridge is
+    // about to hand this very /talk.
+    _cancelReattachChain();
     _error = '';
     _transcript = utterance;
     _phase = AssistantPhase.transcribing;
@@ -672,6 +699,8 @@ class VoiceAssistant extends ChangeNotifier {
     // cuts a mere thinking turn short).
     final q = <BridgeEvent>[];
     var closed = false;
+    var sawDone = false; // the turn's own `done` frame closed the loop: clean end
+    var sawErrorFrame = false; // the bridge's `error` frame: the turn is over
     Object? streamError;
     Completer<void>? wake;
     void wakeNow() {
@@ -681,8 +710,12 @@ class VoiceAssistant extends ChangeNotifier {
     }
 
     _bridgeDetachWake = wakeNow;
-    final sub =
-        (events ?? () => bridge.talk(utterance, interrupt: interrupt))().listen(
+    final sub = (events ??
+            () => bridge.talk(
+              utterance,
+              interrupt: interrupt,
+              onActivity: _markWireAlive,
+            ))().listen(
       q.add,
       onError: (Object e, StackTrace _) {
         streamError = e is BridgeException ? e : BridgeException('$e');
@@ -696,6 +729,7 @@ class VoiceAssistant extends ChangeNotifier {
     );
     _bridgeSub = sub; // held locally as well: cleanup must not touch a
     // successor turn's subscription or wake hook (identical() guards below)
+    _armWireWatch(); // this connection is watched for quiet from here on
     // The long-silent-step heartbeat: while this turn still owns the
     // busy slot, every 15 s take the pulse — narrationQuiet() hushes it
     // around any real audio, and a same-line repeat under 45 s old keeps
@@ -781,11 +815,13 @@ class VoiceAssistant extends ChangeNotifier {
             }
           }
         } else if (ev.isDone) {
+          sawDone = true; // the harness closed the turn itself: no reattach
           if (ev.isError && gen == _generation) {
             _error = 'the harness reported an error';
           }
           break;
         } else if (ev.kind == 'error') {
+          sawErrorFrame = true; // a relayed bridge error IS the turn's end
           _fail('Bridge: ${ev.text}');
           break;
         }
@@ -816,8 +852,24 @@ class VoiceAssistant extends ChangeNotifier {
       // the voice barge-in it just triggered) has already installed its
       // own subscription and wake hook.
       unawaited(sub.cancel());
-      if (identical(_bridgeSub, sub)) _bridgeSub = null;
+      final stillOurs = identical(_bridgeSub, sub);
+      if (stillOurs) _bridgeSub = null;
       if (identical(_bridgeDetachWake, wakeNow)) _bridgeDetachWake = null;
+      // Did this turn die UNOWNED — the socket errored or hit EOF with no
+      // `done` and no bridge `error`? Compute while still holding the busy
+      // flag: a barge-in / stop / new-prompt detach went through
+      // _abandonBridgeTurn first (busy already cleared: the user CHOSE
+      // that exit), and the /new chip's custom stream never had a /talk
+      // connection to rejoin. An unowned death means the turn is likely
+      // still alive on the bridge: the reattach chain below goes get it.
+      final wireOrphan =
+          events == null &&
+          !sawDone &&
+          !sawErrorFrame &&
+          _bridgeBusy &&
+          _bridgeTurnSeq == mySeq &&
+          gen == _generation;
+      if (stillOurs) _wireCheck?.cancel(); // the watchdog dies with its stream
       if (_bridgeTurnSeq == mySeq) {
         // We still own the busy flag (no newer turn claimed it). If
         // _abandonBridgeTurn cleared it and a newer utterance took the
@@ -850,6 +902,16 @@ class VoiceAssistant extends ChangeNotifier {
         _phase = AssistantPhase.idle;
       }
       notifyListeners();
+      if (wireOrphan) {
+        // Our view died mid-turn (the classic background→foreground
+        // casualty: the hide killed the socket, the death event merely
+        // arrived AFTER the resume callback had trusted _bridgeBusy).
+        // The turn is the bridge's problem to finish and our problem to
+        // rejoin: probe /health and reattach, retries and all.
+        _reattachGen = gen;
+        _reattachSeq = mySeq;
+        _startReattachChain();
+      }
     }
   }
 
@@ -870,6 +932,12 @@ class VoiceAssistant extends ChangeNotifier {
   /// session survives them (see [setMode]).
   void _abandonBridgeTurn({bool hardStop = false}) {
     if (!_bridgeBusy) return;
+    // An INTENTIONAL steer detaches this turn's view on purpose, so any
+    // reattach chain waiting to re-hear this (superseded) story goes
+    // quiet here — otherwise its delayed attach could steal the bridge's
+    // view right off the queued /talk stream the next prompt rides. (The
+    // zombie-hop watchdog re-kicks its own chain after calling us.)
+    _cancelReattachChain();
     if (hardStop) unawaited(_bridge?.stop());
     _bridgeBusy = false;
     _harnessSince = null;
@@ -996,8 +1064,13 @@ class VoiceAssistant extends ChangeNotifier {
       _idleReady();
       // Cold start while a turn runs (or just finished) on the bridge —
       // Android killed the process mid-turn: adopt it. Nothing to do when
-      // the bridge has nothing open; the health gate inside decides.
-      unawaited(reattachBackgroundTurn());
+      // the bridge has nothing open; the health gate inside decides. If
+      // the bridge cannot be reached AT ALL the chain keeps re-probing
+      // with backoff — a phone that woke its network late (Tailscale
+      // re-handshakes after sleep) must not silently lose a live turn.
+      unawaited(() async {
+        if (!await reattachBackgroundTurn()) _startReattachChain();
+      }());
     } catch (e) {
       _fail('Model init failed: $e');
     }
@@ -1422,6 +1495,16 @@ class VoiceAssistant extends ChangeNotifier {
       // only when none runs (a pump parked on the wake hook must not get
       // a twin competing for the chunk queue).
       if (!_replyPumpAlive) unawaited(_playReplyChunks(_generation));
+      // Re-lease the quiet-wire watchdog for the stream we're trusting to
+      // have survived the hide. If it's alive, the kernel's buffered
+      // events (and the 15 s pings) burst in within moments and keep
+      // renewing the lease. If it died, its error/close event lands a beat
+      // later and the teardown hook chains a reattach; if it died SILENTLY
+      // (black-holed route — no event ever lands), this watchdog fires at
+      // 24 s of silence, hops us to a fresh /attach view, and the replay
+      // backlog covers whatever the zombie lost. A background/foreground
+      // blink therefore never strands a running turn on a dead socket.
+      _markWireAlive();
       notifyListeners();
       if (restart) unawaited(_beginConversation());
       return;
@@ -1432,7 +1515,18 @@ class VoiceAssistant extends ChangeNotifier {
     // first — it supersedes a pending replay (the gen bump here would
     // kill it, and the backlog covers everything after the drop; the
     // half-heard pre-hide block is already in the log).
-    if (await reattachBackgroundTurn()) return;
+    final Map<String, Object>? probe =
+        _bridge == null ? null : await _bridge!.healthInfo();
+    if (await reattachBackgroundTurn(health: probe)) return;
+    if (bridgeReattachNeeded(probe) != false) {
+      // Unreachable (null): cannot tell "no turn" from "network still
+      // waking up around a live turn" — the chain re-probes with backoff
+      // instead of dropping it. A true verdict that the reattach itself
+      // declined (bench or a fast re-hide raced it) rides the same ladder.
+      _reattachGen = _generation;
+      _reattachSeq = _bridgeTurnSeq;
+      _startReattachChain();
+    }
     if (pending != null && _worker != null) {
       unawaited(_replayPendingReply(pending, thenListen: restart));
       return;
@@ -1441,17 +1535,156 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_beginConversation());
   }
 
+  /// Record that the bridge socket delivered bytes (event frame or keep-
+  /// alive ping): the connection lives, and its watchdog gets a fresh
+  /// quiet lease from this moment.
+  void _markWireAlive() {
+    _wireAliveAt = DateTime.now();
+    if (_bridgeBusy && !_backgrounded) _armWireCheck(_wireQuiet);
+  }
+
+  /// A fresh bridge stream (or a resumed app) starts its lease now — its
+  /// first bytes may still be crossing the wire, and the kernel's receive
+  /// buffer only drains on resume, so grant the full window up front.
+  void _armWireWatch() {
+    _wireAliveAt = DateTime.now();
+    _armWireCheck(_wireQuiet);
+  }
+
+  void _armWireCheck(Duration after) {
+    _wireCheck?.cancel();
+    _wireCheck = Timer(after, _wireCheckFired);
+  }
+
+  /// The quiet-wire watchdog. A listening socket that has delivered not
+  /// one byte — no events, no 15 s pings — for a full quiet window while
+  /// we believe we're attached is a ZOMBIE: the route died quietly (Wi-Fi
+  /// handoff, deep sleep, tailnet re-key) and no FIN or RST will ever
+  /// arrive to tell us. Stop reading it, and let the reattach chain take
+  /// a fresh view before the harness relays more of the turn into the void.
+  void _wireCheckFired() {
+    _wireCheck = null;
+    if (_backgrounded) return; // resumeConversation re-leases via _markWireAlive
+    if (!_bridgeBusy) return; // this stream's turn already moved on
+    final quiet = DateTime.now().difference(_wireAliveAt);
+    if (quiet < _wireQuiet) {
+      _armWireCheck(_wireQuiet - quiet); // dribbling bytes: check again next slice
+      return;
+    }
+    if (_playerPlaying || _replyQueue.isNotEmpty) {
+      // Queued audio from before the silence is still draining: let the
+      // user hear it out before the hop cuts the seam (the reattach
+      // replays everything the bridge queued unheard anyway).
+      _armWireCheck(_wireQuiet);
+      return;
+    }
+    _logDebug('bridge wire quiet ${quiet.inSeconds}s: presumed dead socket');
+    _reattachGen = _generation;
+    _reattachSeq = _bridgeTurnSeq;
+    _abandonBridgeTurn(); // give up on the zombie view (parked loop retires
+    // exactly as any abandoned turn's does — see its docs)
+    _startReattachChain(retire: true);
+  }
+
+  /// Silence the retry chain: the user's new prompt is claiming the bridge
+  /// slot on a fresh stream RIGHT NOW, so whatever the chain was waiting
+  /// to hear is superseded (and a stray attach would steal the view from
+  /// the queued-prompt stream the bridge is about to hand that new /talk).
+  void _cancelReattachChain() {
+    _reattachTimer?.cancel();
+    _reattachTimer = null;
+    _reattachStep = 0;
+    _reattachRetire = false;
+  }
+
+  /// A bridge turn still wants hearing but our view of it died: probe
+  /// /health NOW, and where the answer cannot be told (bridge
+  /// unreachable — the waking network is usually still re-building its
+  /// tunnel), re-probe up the [_reattachDelays] ladder, ~63 s in all.
+  /// [retire] marks a chain born from a ZOMBIE stream: a definite
+  /// "nothing open, nothing unheard" verdict (or a spent ladder) must
+  /// also retire the spinner the dead view was still pretending to watch.
+  /// [firstProbe] delays the first probe — used when the chain is born
+  /// from a REATTACHED stream dying again, so a flaky link pays backoff
+  /// between attach attempts instead of request-looping at RTT pace.
+  void _startReattachChain({
+    bool retire = false,
+    bool resetStep = true,
+    Duration? firstProbe,
+  }) {
+    if (_bridge == null || _worker == null) return;
+    if (resetStep) _reattachStep = 0;
+    _reattachRetire = retire || _reattachRetire;
+    _reattachTimer?.cancel();
+    _reattachTimer = null;
+    if (firstProbe != null) {
+      _reattachTimer = Timer(firstProbe, _reattachPump);
+      return;
+    }
+    unawaited(_reattachPump());
+  }
+
+  Future<void> _reattachPump() async {
+    final bridge = _bridge;
+    if (bridge == null || _worker == null || _bridgeBusy) return;
+    final probe = await bridge.healthInfo();
+    if (_bridgeBusy) return; // a resume or a chip attached while we probed
+    final need = bridgeReattachNeeded(probe);
+    if (need == false) {
+      _retireOrphanTurn(); // definite verdict: nothing left to hear
+      return;
+    }
+    if (need == true) {
+      if (await reattachBackgroundTurn(health: probe)) {
+        _reattachRetire = false;
+        _reattachStep = 0;
+        return; // heard again — its own watchdog and teardown take over
+      }
+      // Hidden, bench in the way, or the attach raced a teardown: the
+      // next rung on the ladder will try again (and the resume path
+      // probes for itself, so a backgrounded chain may simply end here
+      // — foregrounding restarts the whole recovery).
+    }
+    if (_reattachStep >= _reattachDelays.length) {
+      _retireOrphanTurn(); // ladder spent; the network never came up
+      return;
+    }
+    _reattachTimer = Timer(_reattachDelays[_reattachStep++], _reattachPump);
+  }
+
+  /// End a reattach chain that heard nothing, and — for a chain born from
+  /// a zombie stream — retire the spinner that was quoting a dead view:
+  /// the turn is over (or the network never proved it alive), so stop
+  /// claiming it is still streaming and hand the UI back to the user.
+  void _retireOrphanTurn() {
+    _reattachTimer = null;
+    final retire = _reattachRetire;
+    _reattachRetire = false;
+    if (!retire || _bridgeBusy) return;
+    if (_reattachGen != _generation || _reattachSeq != _bridgeTurnSeq) return;
+    _harnessBackgrounded = false; // the bridge just said nothing is open (or
+    // we stopped listening on its only channel) — the badge must not lie
+    _idleReady();
+    _status = 'Lost the bridge mid-turn — its answer ended unheard.';
+    notifyListeners();
+  }
+
   /// The bridge is running a turn — or finished one — with NO listener:
   /// the phone's stream died while the app was hidden (Android killed the
-  /// process, or the OS dropped the socket). Reattach: the bridge replays
-  /// everything that happened unheard (says are spoken, tool lines land
-  /// in the chat with their glyphs, context frames refill the bar), the
-  /// working line comes back, and the turn's remainder is heard live.
+  /// process, or the OS dropped the socket, or the route black-holed into
+  /// a zombie connection the watchdog hopped off). Reattach: the bridge
+  /// replays everything that happened unheard (says are spoken, tool lines
+  /// land in the chat with their glyphs, context frames refill the bar),
+  /// the working line comes back, and the turn's remainder is heard live.
+  /// /attach STEALS the heard view, so it also heals the case the server
+  /// can't see: a turn it still believes our dead socket is listening to.
   /// This is the fix for "background → foreground and nothing happens".
   /// Returns true when a reattach actually started (the caller must then
   /// NOT also run a pending-reply replay — the gen bump here would
   /// supersede it, and the backlog already covers the missed window).
-  Future<bool> reattachBackgroundTurn() async {
+  /// [health] lets the retry chain reuse the /health snapshot it already
+  /// holds instead of paying a second probe.
+  Future<bool> reattachBackgroundTurn({Map<String, Object>? health}) async {
     final bridge = _bridge;
     if (bridge == null || _worker == null) return false;
     if (_bridgeBusy ||
@@ -1460,10 +1693,13 @@ class VoiceAssistant extends ChangeNotifier {
         _benchBusy) {
       return false;
     }
-    final h = await bridge.healthInfo();
-    final missedCount = h?['missed'];
-    final missed = missedCount is num && missedCount > 0;
-    if (h?['backgrounded'] != true && !missed) return false;
+    // Ask the bridge, not our dead socket, whether anything is to hear:
+    // an OPEN turn (even one the server still believes our zombie stream
+    // was hearing — /attach steals the view) or a non-empty unheard
+    // backlog both qualify; an unreachable bridge is "cannot tell", and
+    // the chain keeps probing (a waking phone wakes its network late).
+    final probe = health ?? await bridge.healthInfo();
+    if (bridgeReattachNeeded(probe) != true) return false;
     final gen = ++_generation;
     final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
     _bridgeBusy = true;
@@ -1520,6 +1756,8 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(() async {
       final q = <BridgeEvent>[];
       var closed = false;
+      var sawDone = false; // the turn's own `done` frame (vs a dying socket)
+      var sawErrorFrame = false; // the bridge said 'error' — the turn is over
       Object? streamError;
       Completer<void>? wake;
       void wakeNow() {
@@ -1529,7 +1767,7 @@ class VoiceAssistant extends ChangeNotifier {
       }
 
       _bridgeDetachWake = wakeNow;
-      final sub = bridge.attach().listen(
+      final sub = bridge.attach(onActivity: _markWireAlive).listen(
         q.add,
         onError: (Object e, StackTrace _) {
           streamError = e is BridgeException ? e : BridgeException('$e');
@@ -1542,6 +1780,7 @@ class VoiceAssistant extends ChangeNotifier {
         },
       );
       _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
+      _armWireWatch(); // the quiet-wire watchdog rides this connection
       try {
         while (true) {
           if (gen != _generation) break; // interrupted: drop the rest
@@ -1577,11 +1816,13 @@ class VoiceAssistant extends ChangeNotifier {
               notifyListeners();
             }
           } else if (ev.isDone) {
+            sawDone = true; // the turn ended on purpose: nothing to rejoin
             if (ev.isError && gen == _generation) {
               _error = 'the harness reported an error';
             }
             break;
           } else if (ev.kind == 'error') {
+            sawErrorFrame = true; // the bridge's own farewell: the turn is over
             _fail('Bridge: ${ev.text}');
             break;
           }
@@ -1595,8 +1836,21 @@ class VoiceAssistant extends ChangeNotifier {
         // successor turn's subscription, wake hook, or busy flag.
         unawaited(_refreshSession());
         unawaited(sub.cancel());
-        if (identical(_bridgeSub, sub)) _bridgeSub = null;
+        final stillOurs = identical(_bridgeSub, sub);
+        if (stillOurs) _bridgeSub = null;
         if (identical(_bridgeDetachWake, wakeNow)) _bridgeDetachWake = null;
+        // An UNOWNED death of the reattached stream (socket, no done, no
+        // error frame) — the turn is still the bridge's to finish: the
+        // chain rejoins it without resetting the retry ladder, so a
+        // flaky network can cycle attach-dies-reattach only a bounded
+        // number of times per orphaned turn.
+        final wireOrphan =
+            !sawDone &&
+            !sawErrorFrame &&
+            _bridgeBusy &&
+            _bridgeTurnSeq == mySeq &&
+            gen == _generation;
+        if (stillOurs) _wireCheck?.cancel();
         if (_bridgeTurnSeq == mySeq) {
           _bridgeBusy = false;
           _harnessSince = null;
@@ -1613,6 +1867,17 @@ class VoiceAssistant extends ChangeNotifier {
           _idleReady();
         }
         notifyListeners();
+        if (wireOrphan) {
+          _reattachGen = gen;
+          _reattachSeq = mySeq;
+          // This chain itself came from an attach that died: pace the
+          // next attempt so a flaky link can't request-loop through the
+          // ladder at connection-attempt speed.
+          _startReattachChain(
+            resetStep: false,
+            firstProbe: _reattachDelays.first,
+          );
+        }
       }
     }());
     return true;
@@ -2687,6 +2952,8 @@ class VoiceAssistant extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _wireCheck?.cancel();
+    _reattachTimer?.cancel();
     _shutdownAudio();
     _player.dispose();
     _recorder.dispose();

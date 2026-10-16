@@ -192,6 +192,36 @@ the Bridge screen. Notes that matter when touching this code:
    way (`/context`, `/usage`, ...) — and the CLI's own error replies
    arrive speakable, so nothing dead-airs.
 
+8. Surviving background → foreground (`0.1.0+28`): a hidden phone kills
+   bridge streams three different ways, and each got its own repair. The
+   app records *wire liveness* — `talk`/`attach` take an `onActivity`
+   callback fired by **every raw chunk**, including the bridge's 15 s
+   `: ping` comments, so "no bytes for 24 s" is proof the connection is a
+   zombie (a black-holed route sends no FIN, so a plain listener never
+   learns); the quiet-wire watchdog then drops the dead view and reattaches.
+   A socket that *does* error/EOF mid-turn is caught in the event loop's
+   teardown: an **unowned** death (no `done`, no `error` frame, still
+   holding the busy flag — a deliberate barge-in/PTT/stop detach always
+   clears that first, and `_abandonBridgeTurn` also silences any running
+   reattach chain so it can't steal the view off the queued successor)
+   triggers the reattach chain instead of just going idle. That chain —
+   also run on cold start and on resume — consults `bridgeReattachNeeded`
+   (a pure decision fn over the `/health` snapshot, unit-tested): open
+   turn or non-empty backlog → GET /attach; nothing open and nothing
+   unheard → go idle; bridge unreachable (**null**, because a waking
+   phone wakes its *network* late and one failed probe must never drop a
+   live turn) → re-probe up a 2/6/15/40 s ladder. `/attach` itself was
+   hardened to **steal** the heard view from a socket the bridge still
+   believes attached (that's how a zombie repair takes delivery back
+   before the harness relays more into the void; the old view's keep-
+   pinger is retired on the swap, no leaked interval), and `/new` now
+   clears the replay backlog so a later cold-start attach can't resurrect
+   a discarded conversation's tail. Net effect: hide the app mid-tool-call
+   or mid-answer and foregrounding either keeps streaming on the same
+   socket, rejoins via the death-event reattach in ~2 s, or hops through
+   the watchdog within one quiet window — the reply is replayed from the
+   backlog and heard live either way.
+
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message
 closes; tool-heavy tasks speak the narration line early and the summary

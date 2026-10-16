@@ -624,6 +624,18 @@ const server = http.createServer((req, res) => {
     for (const { ev, data } of backlog) sse(res, ev, data);
     backlog.length = 0;
     if (!turnOpen) { clearInterval(keep); res.end(); return; }
+    // Become the turn's heard view — STEALING it from a (believed) attached
+    // previous socket. That previous view's keep-pinger must die with it,
+    // or a zombie-socket repair leaks an interval writing into the void
+    // forever (the old socket's 'close' hook no longer matches curRes and
+    // deliberately does nothing — identity moved on, by design).
+    if (curRes) {
+      console.error('  (/attach steals the view from the old socket)');
+      const old = curRes;
+      curRes = null; // endTurn's identity dance, then the new view takes it
+      endKeep(old);
+      try { old.res.end(); } catch {}
+    }
     curRes = { res, keep, turnStart: turnStartAt };
     res.on('close', () => {
       if (curRes && curRes.res === res) endTurn(); // detach → background it
@@ -653,6 +665,10 @@ const server = http.createServer((req, res) => {
       sessionId = null;
       turnOpen = false;
       openTools.clear();
+      // A reset conversation has nothing unheard: drop the replay backlog
+      // or the next /attach (a later cold start, a respawned app) dutifully
+      // re-speaks the dead conversation's tail as if it still mattered.
+      backlog.length = 0;
       // The dead conversation's size is not the fresh one's: drop the
       // context snapshot (and any preview run) so the bar goes blank
       // instead of wearing old numbers. /health reports in:0 from now
