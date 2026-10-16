@@ -2462,6 +2462,21 @@ class VoiceAssistant extends ChangeNotifier {
       _stopDebugPlayback();
       _stopPlayback();
       _abandonBridgeTurn();
+      if (_pttBridgeHold) {
+        // The detach used to mean UNSEEN, not just unheard: every tool
+        // line and context frame of the backgrounded turn piled into the
+        // bridge's backlog and burst onto the screen in one replay when
+        // the turn closed (field journal: two Bash relays six seconds
+        // apart on the wire, landed 5 ms apart). Re-arm the reattach
+        // chain NOW — it probes /health, /attach steals the view back,
+        // and the remainder of the turn streams live while the mic
+        // stays free. A new utterance supersedes the chain the same way
+        // it always has; `retire` clears the badge if the turn closed
+        // in the probe's window.
+        _reattachGen = _generation;
+        _reattachSeq = _bridgeTurnSeq;
+        _startReattachChain(retire: true, firstProbe: Duration.zero);
+      }
     } else {
       _pttBridgeHold = false;
     }
