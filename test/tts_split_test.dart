@@ -73,18 +73,38 @@ void main() {
       'Hello Tim. Pocket TTS speaking, generated entirely on this device.',
     ]);
     // Short middling pieces get folded into their neighbours, in order,
-    // with nothing lost:
+    // with nothing lost — and now so do normal-sized sentences, up to the
+    // merge cap, because every extra Generate call re-pays the cold-start
+    // ritual (see mergePocketChunks): a whole short answer should be ONE
+    // call and speak with the model's own pauses.
     final pieces = mergePocketChunks([
       'Yes.',
       'The tower is 330 metres tall, and it was completed in 1889.',
       'Quite famous.',
       'Victor Hugo admired it greatly.',
     ]);
-    expect(pieces, hasLength(2));
+    expect(pieces, hasLength(1)); // all one spoken paragraph now
     for (final p in pieces) {
       expect(p.length, greaterThanOrEqualTo(30));
     }
     expect(pieces.join(' '), contains('Quite famous.'));
+    // Long answers chunk up instead of running past the frame guard:
+    // every merged piece stays inside the cap, and NOTHING is lost —
+    // the merged text is the original text, piece for piece.
+    final text = List.filled(
+      3,
+      'The quick brown fox jumps over the lazy dog, and then it '
+      'rests a while. Nearby birds sing softly under the wide '
+      'and patient sky. Only later, in a dream, the fox '
+      'remembers the day.',
+    ).join(' ');
+    final para = mergePocketChunks(splitForTts(text));
+    expect(para.length, greaterThan(1)); // must actually chunk the big one
+    for (final p in para) {
+      expect(p.length, lessThanOrEqualTo(400 + 60)); // cap + one tail merge
+      expect(p.length, greaterThanOrEqualTo(30)); // no runt escapes
+    }
+    expect(para.join(' '), text); // zero loss, zero reorder, no glue skew
     // An unmergeable lone runt stays as-is (nothing to merge into).
     expect(mergePocketChunks(['Yes.']), ['Yes.']);
   });

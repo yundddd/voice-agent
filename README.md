@@ -202,8 +202,13 @@ One port caveat to know before judging a recording: the k2-fsa ONNX
   issue #6) — plus `silenceScale: 1.0`, because the Dart default 0.2
   would squash that pause; `mergePocketChunks` (runt pieces misbehave — a
   one-word answer decodes to '[sound]', and a missed EOS babble-decoded
-  40 s on michael); a per-piece `max_frames` cap so any runaway EOS
-  self-limits; and `pocketLeadIn` (drop the first 250 ms — the growl now
+  40 s on michael — and every extra Generate call re-pays this whole
+  ritual, so pieces now merge up to ~340 chars: a typical long answer is
+  ONE call whose internal sentence pauses come from the model's own
+  punctuation instead of our splice points. The per-piece
+  `max_frames` cap scales with the merged size (a runaway EOS
+  self-limits there, and no call truncates mid-word);
+  `pocketLeadIn` (drop the first 250 ms — the growl now
   dies inside the pause; 30 ms fade so the splice adds no click; 300 ms
   inserted silence so the phone's post-capture output ramp — ~150 ms,
   plus mic-teardown mute — lands in silence too, with the
