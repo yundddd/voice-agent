@@ -682,7 +682,7 @@ class VoiceAssistant extends ChangeNotifier {
     // text-follows-audio, history being exactly what the room heard.
     // While hidden, narration holds off (no synth at all): the answer
     // still buffers for replay and the log has every step as text.
-    String latestWork = ''; // newest 'the harness is working…' line
+    String latestWork = ''; // newest tool-step progress line, e.g. 'Edit foo.dart…'
     String lastNarrated = '';
     var lastNarratedAt = DateTime.fromMillisecondsSinceEpoch(0);
     var lastSpokenAt = lastNarratedAt; // reply-audio activity clock
@@ -879,8 +879,8 @@ class VoiceAssistant extends ChangeNotifier {
             // the old silent 200 seconds of spinner.
             latestWork = ev.toolName == 'queued'
                 ? 'One moment — ${ev.detail}.'
-                : 'The harness is working — ${ev.toolName}'
-                      '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
+                : '${ev.toolName}'
+                      '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = latestWork;
             // The step itself lands in the conversation as a silent line:
             // one block of the live bubble (each gets its own line, divider
@@ -1919,7 +1919,7 @@ class VoiceAssistant extends ChangeNotifier {
     _tokLive = false;
     _tokKind = '';
     _phase = AssistantPhase.transcribing;
-    _status = 'Reattached — the harness is working…';
+    _status = 'Reattached — working…';
     notifyListeners();
     _warmUpRoute();
     // A fresh bubble continues the story: the pre-drop blocks live in the
@@ -2033,8 +2033,8 @@ class VoiceAssistant extends ChangeNotifier {
               _onTokensFrame(ev);
             } else {
               _tokLive = false;
-              _status = 'The harness is working — ${ev.toolName}'
-                  '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
+              _status = '${ev.toolName}'
+                  '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
               final label = ev.detail.isEmpty
                   ? ev.toolName
                   : '${ev.toolName} ${ev.detail}';

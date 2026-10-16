@@ -810,7 +810,7 @@ class _LatencyStrip extends StatelessWidget {
 /// Claude Code-style working line for the chat window: the braille glyph
 /// wheel the CLI spins while it thinks (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) beside the live
 /// harness status and a wall-clock readout, e.g.
-/// "⠹ The harness is working — Edit foo.dart  ·  12s  ·  tap Stop to
+/// "⠹ Edit foo.dart…  ·  12s  ·  tap Stop to
 /// interrupt". Painted inside the in-flight assistant bubble (main chat
 /// loop) for as long as a bridge turn runs — the one place "the agent is
 /// still working" belongs to the conversation instead of the status strip.

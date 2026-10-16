@@ -259,8 +259,8 @@ the Bridge screen. Notes that matter when touching this code:
    a quick tap stays the hard stop (detach + `/stop`). The terminal-icon
    badge stays lit while a detached turn works unheard
    (`harnessBackgrounded`).
-4. `tool` events show as live status text ("The harness is working —
-   Bash flutter test"). Tool steps are quiet by default: the bridge's
+4. `tool` events show as live status text ("Bash flutter test…"). Tool
+   steps are quiet by default: the bridge's
    voice system prompt only asks the harness for a one-line narration
    *before* each tool pass when started with `--narrate-steps` (that
    line arrives as its own `say`, which the phone always speaks — the
