@@ -46,7 +46,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
-  int _seenReplyLen = 0; // drives auto-follow while the reply streams
+  int _seenChatVersion = 0; // drives auto-follow while chat grows
 
   @override
   void initState() {
@@ -84,11 +84,12 @@ class _AssistantScreenState extends State<AssistantScreen>
     final a = _assistant;
     final scheme = Theme.of(context).colorScheme;
 
-    // Auto-follow the streaming reply: when its text grows, pin the scroll
-    // position to the bottom (post-frame: the new height exists only after
-    // layout). No-op once the user has flicked away to read the beginning.
-    if (a.lastReply.length != _seenReplyLen) {
-      _seenReplyLen = a.lastReply.length;
+    // Auto-follow the conversation: when the log grows (new bubble or a
+    // new spoken section), pin the scroll to the bottom (post-frame: the
+    // new height exists only after layout). A deliberate scroll-up to
+    // re-read history stops the follow until the next stream event.
+    if (a.chatVersion != _seenChatVersion) {
+      _seenChatVersion = a.chatVersion;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
         if (!_scroll.position.outOfRange) {
@@ -195,66 +196,103 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // the text block now scrolls inside this region and
                     // auto-follows the reply while it streams.
                     child: ConstrainedBox(
-                      constraints:
-                          BoxConstraints(minHeight: constraints.maxHeight),
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
                       child: Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                      Text(
-                        a.status,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      if (a.error.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          a.error,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: scheme.error),
-                        ),
-                      ],
-                      if (a.transcript.isNotEmpty) ...[
-                        const SizedBox(height: 24),
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: SelectableText(
-                              a.transcript,
-                              style: Theme.of(context).textTheme.bodyLarge,
+                            Text(
+                              a.status,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
-                          ),
-                        ),
-                      ],
-                      // The assistant's answer itself, shown on screen as it
-                      // streams (the bridge used to only speak it, so a
-                      // harness reply was invisible once the status moved on).
-                      if (a.lastReply.isNotEmpty &&
-                          a.lastReply != a.transcript) ...[
-                        const SizedBox(height: 12),
-                        Card(
-                          color: scheme.secondaryContainer,
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            // The answer in REPLY SECTIONS: one block per
-                            // harness message, rules between them, instead
-                            // of one run-on blob the length of a README.
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (final (i, s) in a.replySections.indexed) ...[
-                                  if (i > 0) const Divider(height: 28),
-                                  SelectableText(
-                                    s,
-                                    style:
-                                        Theme.of(context).textTheme.bodyLarge,
+                            if (a.error.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                a.error,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: scheme.error),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            // The conversation itself: user bubbles right,
+                            // assistant bubbles left with one block per spoken
+                            // section. Persistent — turns no longer replace
+                            // each other, and the log reloads with the app.
+                            for (final e in a.chat)
+                              if (e.fromUser || e.blocks.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
                                   ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Align(
+                                          alignment: e.fromUser
+                                              ? Alignment.centerRight
+                                              : Alignment.centerLeft,
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints(
+                                              maxWidth:
+                                                  constraints.maxWidth * 0.86,
+                                            ),
+                                            child: Card(
+                                              color: e.fromUser
+                                                  ? scheme.primaryContainer
+                                                  : scheme.secondaryContainer,
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 14,
+                                                      vertical: 10,
+                                                    ),
+                                                child: e.fromUser
+                                                    ? SelectableText(
+                                                        e.blocks.join(' '),
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodyLarge
+                                                            ?.copyWith(
+                                                              color: scheme
+                                                                  .onPrimaryContainer,
+                                                            ),
+                                                      )
+                                                    : Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          for (final (i, s)
+                                                              in e
+                                                                  .blocks
+                                                                  .indexed) ...[
+                                                            if (i > 0)
+                                                              const Divider(
+                                                                height: 24,
+                                                              ),
+                                                            SelectableText(
+                                                              s,
+                                                              style:
+                                                                  Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .textTheme
+                                                                      .bodyLarge,
+                                                            ),
+                                                          ],
+                                                        ],
+                                                      ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                           ],
                         ),
                       ),
@@ -283,7 +321,8 @@ class _AssistantScreenState extends State<AssistantScreen>
                             label: Text(cmd.$1),
                             onPressed: a.bridgeBusy
                                 ? null
-                                : () => a.runQuickCommand(cmd.$2),
+                                : () =>
+                                      a.runQuickCommand(cmd.$2, bubble: cmd.$1),
                           ),
                         ),
                       if (a.bridgeBusy)

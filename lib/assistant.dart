@@ -10,6 +10,7 @@ import 'package:record/record.dart';
 
 import 'audio_io.dart';
 import 'bridge.dart';
+import 'chat_log.dart';
 import 'model_packs.dart';
 import 'model_paths.dart';
 import 'speech_worker.dart';
@@ -58,11 +59,13 @@ class VoiceAssistant extends ChangeNotifier {
   String _transcript = '';
   String _error = '';
   String _lastSpoken = '';
-  // The bridge answer as it streams in, kept for the UI: _lastSpoken only
-  // lands at the very end of a turn (echo-guard bookkeeping), so quoting
-  // the reply never appeared on screen. One entry per say event, so the
-  // card can render the answer in sections instead of one run-on blob.
-  final List<String> _replySections = <String>[];
+  // The conversation, persisted (chat_log.json in the models dir): each
+  // heard/spoken-for turn is a user bubble, each harness turn an
+  // assistant bubble holding one block per spoken `say` section. This is
+  // the on-screen history the reply card used to be — it no longer
+  // disappears when the next turn starts; it accumulates like chat.
+  final List<ChatEntry> _chat = <ChatEntry>[];
+  int _chatVersion = 0; // bumped on every mutation: drives auto-scroll
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
@@ -159,13 +162,54 @@ class VoiceAssistant extends ChangeNotifier {
   String get status => _status;
   String get transcript => _transcript;
 
-  /// The bridge answer being spoken this turn, split into sections: one
-  /// entry per harness `say` message, so the card can show structure.
-  List<String> get replySections => _replySections;
+  /// The conversation log, oldest first (user / assistant bubbles).
+  List<ChatEntry> get chat => _chat;
 
-  /// All sections joined: used for the card's visibility gate and for the
-  /// auto-scroll hook (its length grows whenever a section lands).
-  String get lastReply => _replySections.join('\n\n');
+  /// Changes on every chat mutation — the UI keys its auto-scroll on it.
+  int get chatVersion => _chatVersion;
+
+  static const _chatCap = 80; // entries kept on screen and on disk
+  void _addUserChat(String text) {
+    _chat.add(ChatEntry.user(text));
+    _touchChat();
+  }
+
+  void _touchChat() {
+    while (_chat.length > _chatCap) {
+      _chat.removeAt(0);
+    }
+    _chatVersion++;
+    unawaited(_saveChat());
+    notifyListeners();
+  }
+
+  /// A bridge turn whose assistant bubble stayed empty (error, or "ran
+  /// with nothing to say"): take the blank bubble back out of the log.
+  void _removeEmptyTurn(ChatEntry turn) {
+    if (_chat.remove(turn)) {
+      _chatVersion++;
+      unawaited(_saveChat());
+    }
+  }
+
+  String get _chatPath => p.join(_modelsDir, 'chat_log.json');
+
+  Future<void> _saveChat() async {
+    if (_modelsDir.isEmpty) return;
+    try {
+      await File(_chatPath).writeAsString(encodeChatLog(_chat));
+    } catch (_) {} // chat history must never break a conversation
+  }
+
+  void _loadChat() {
+    try {
+      _chat
+        ..clear()
+        ..addAll(decodeChatLog(File(_chatPath).readAsStringSync()));
+      _chatVersion++;
+    } catch (_) {} // first run (or unreadable): fresh log
+  }
+
   String get error => _error;
   bool get userSpeaking => _userSpeaking;
   bool get sessionActive =>
@@ -253,7 +297,10 @@ class VoiceAssistant extends ChangeNotifier {
   /// utterance -> /talk -> speak each `say` event the moment it lands,
   /// streamed through the same chunked player voice replies use. Tool
   /// activity shows up as live status text instead of dead air.
-  Future<void> runQuickCommand(String utterance) async {
+  /// [bubble] is the short text to show as the user message (chip label /
+  /// typed text); the voice path passes none because _startTurn already
+  /// logged the heard utterance.
+  Future<void> runQuickCommand(String utterance, {String? bubble}) async {
     final bridge = _bridge;
     if (bridge == null) {
       _fail('No bridge — open the terminal icon and set url + token.');
@@ -264,12 +311,19 @@ class VoiceAssistant extends ChangeNotifier {
       _fail('Models are still loading — try again in a moment.');
       return;
     }
+    if (bubble != null && bubble.trim().isNotEmpty) _addUserChat(bubble.trim());
+    // One assistant bubble for the whole turn, sections appended as each
+    // say's audio queues (text follows the voice, never leads it). An
+    // interrupted turn keeps the sections actually spoken — that IS what
+    // the conversation was. A turn that never spoke is removed at the end.
+    final turn = ChatEntry.assistant();
+    _chat.add(turn);
+    _touchChat();
     final gen = ++_generation; // supersedes any in-flight voice reply
     _stopPlayback(); // cut the current audio, like the voice preview does
     _bridgeBusy = true;
     _error = '';
     _transcript = utterance;
-    _replySections.clear();
     _phase = AssistantPhase.transcribing;
     _status = 'Asking the bridge…';
     notifyListeners();
@@ -308,8 +362,8 @@ class VoiceAssistant extends ChangeNotifier {
           // already stopped feeding the player — seen as "text with no
           // audio" on long answers.
           spoken.write('$text ');
-          _replySections.add(text);
-          notifyListeners();
+          turn.blocks.add(text);
+          _touchChat();
         } else if (ev.kind == 'tool') {
           _status =
               'The harness is working — ${ev.toolName}'
@@ -330,6 +384,7 @@ class VoiceAssistant extends ChangeNotifier {
       if (gen == _generation) _fail(e.message);
     } finally {
       _bridgeBusy = false;
+      if (turn.isEmpty) _removeEmptyTurn(turn);
       _replyStreamDone = true;
       _replyWake?.complete();
       _replyWake = null;
@@ -381,6 +436,7 @@ class VoiceAssistant extends ChangeNotifier {
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
+      _loadChat(); // restore the on-screen conversation (file read is tiny)
       if (_bridgePrefs.configured) {
         _bridge = BridgeClient(_bridgePrefs.url, _bridgePrefs.token);
       }
@@ -1204,6 +1260,10 @@ class VoiceAssistant extends ChangeNotifier {
       _segEchoRisk = false;
       _transcript = text;
       _lastSpoken = text;
+      // The conversation log keeps everything: what we heard lands as a
+      // user bubble now (in either mode), the answer as assistant
+      // bubbles section by section as it is spoken.
+      _addUserChat(text);
 
       if (_bridge != null && _bridgePrefs.voice) {
         // Voice -> Claude Code: the utterance becomes a harness turn, and

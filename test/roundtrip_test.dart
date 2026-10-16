@@ -383,7 +383,9 @@ void main() {
       expect(hits, greaterThan(2));
 
       // Second preset sounds different but is equally intelligible.
-      await worker.useTts(spec(5)); // bill_boerst: the most stable re-transcription
+      await worker.useTts(
+        spec(5),
+      ); // bill_boerst: the most stable re-transcription
       final (audio2, _) = await worker.synthesize(line);
       File('build/roundtrip_pocket_bill.wav')
         ..createSync(recursive: true)

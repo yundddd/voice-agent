@@ -175,8 +175,7 @@ List<String> mergePocketChunks(List<String> pieces) {
   const minChars = 30;
   final out = <String>[];
   for (final p in pieces) {
-    if (out.isNotEmpty &&
-        (out.last.length < minChars || p.length < minChars)) {
+    if (out.isNotEmpty && (out.last.length < minChars || p.length < minChars)) {
       out.last = '${out.last} $p';
     } else {
       out.add(p);
@@ -1004,8 +1003,7 @@ Future<void> _runWorker(
                         referenceText: spec.kind == 'zipvoice'
                             ? spec.referenceText
                             : '',
-                        numSteps:
-                            isPocket && spec.pocketNumSteps > 0
+                        numSteps: isPocket && spec.pocketNumSteps > 0
                             ? spec.pocketNumSteps
                             : 5,
                         silenceScale: isPocket ? 1.0 : 0.2,

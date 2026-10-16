@@ -64,9 +64,11 @@ void main() {
   test('pocket merge keeps every chunk past the runt-piece floor', () {
     // A 2-word opener like the probe line must never reach Pocket alone:
     // it garbles the first syllable and risks the max_frames runaway.
-    final merged = mergePocketChunks(splitForTts(
-      'Hello Tim. Pocket TTS speaking, generated entirely on this device.',
-    ));
+    final merged = mergePocketChunks(
+      splitForTts(
+        'Hello Tim. Pocket TTS speaking, generated entirely on this device.',
+      ),
+    );
     expect(merged, [
       'Hello Tim. Pocket TTS speaking, generated entirely on this device.',
     ]);
@@ -104,8 +106,10 @@ void main() {
     // The fade opens soft (no click at the splice):
     expect(out[7200], lessThan(0.01));
     // ...and the surviving content is intact after fade + lead:
-    expect(out.sublist(7200 + 720 + 1, out.length).every((v) => v == 0.5),
-        isTrue);
+    expect(
+      out.sublist(7200 + 720 + 1, out.length).every((v) => v == 0.5),
+      isTrue,
+    );
     // Runt outputs are passed through untouched rather than emptied:
     final tiny = Float32List.fromList([0.1, 0.2, 0.3]);
     expect(pocketLeadIn(tiny), tiny);

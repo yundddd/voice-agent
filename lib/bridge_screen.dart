@@ -167,7 +167,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                           Navigator.of(
                             context,
                           ).pop(); // talk over on the main screen
-                          a.runQuickCommand(utterance);
+                          a.runQuickCommand(utterance, bubble: label);
                         },
                 ),
               ),
@@ -189,7 +189,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
               onSubmitted: (v) {
                 if (v.trim().isEmpty) return;
                 Navigator.of(context).pop();
-                a.runQuickCommand(v.trim());
+                a.runQuickCommand(v.trim(), bubble: v.trim());
               },
             ),
             const SizedBox(height: 8),
@@ -205,7 +205,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                         final v = _free.text.trim();
                         _free.clear();
                         Navigator.of(context).pop();
-                        a.runQuickCommand(v);
+                        a.runQuickCommand(v, bubble: v);
                       },
                 icon: const Icon(Icons.send),
                 label: const Text('Send'),
