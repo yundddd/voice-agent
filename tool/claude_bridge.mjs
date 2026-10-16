@@ -8,7 +8,12 @@
 //
 // Endpoints (all except /health require ?token=):
 //   POST /talk   body: plain text utterance -> SSE stream of voice events
-//                (event: say / tool / progress / done / error)
+//                (event: say / tool / progress / done / error). A body
+//                starting with / is written to stdin as PLAIN-STRING
+//                content, so the CLI executes it as a real slash command
+//                (block-array content would just feed it to the model —
+//                verified on 2.1.296); /compact emits a system
+//                compact_boundary, relayed here as `tool compact`.
 //   POST /stop   interrupt the current turn (barge-in), context survives
 //   POST /new    start a fresh session (kills + respawns claude)
 //   GET  /health liveness + claude up?
@@ -132,6 +137,19 @@ function handleEvent(line) {
       }
       break;
     }
+    case 'system':
+      // The compaction proof the /compact chip listens for: emitted when
+      // the CLI finishes condensing the transcript (silent otherwise —
+      // no assistant message, empty result text), so relay it as live
+      // tool-style progress instead of dead air.
+      if (m.subtype === 'compact_boundary') {
+        console.error('  -> tool compact');
+        sse(res, 'tool', {
+          name: 'compact',
+          detail: 'condensed conversation summary',
+        });
+      }
+      break;
     case 'result':
       sse(res, 'done', { costUsd: m.total_cost_usd, isError: m.is_error });
       endTurn();
@@ -158,9 +176,16 @@ function talk(text, res) {
   // idle-detection on the link (NAT, tailscale, Dart clients) should not
   // get creative with a stream that is merely thinking.
   keepAlive = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
-  const msg = JSON.stringify({ type: 'user',
-    message: { role: 'user', content: [{ type: 'text', text }] } });
-  child.stdin.write(msg + '\n');
+  // Slash commands must arrive as PLAIN STRING content: the CLI only runs
+  // them as commands then — a block array like [{text:"/compact"}} goes to
+  // the model as literal text (it just rambles about the word), verified on
+  // 2.1.296. Everything else keeps the structured shape.
+  const msg = text.startsWith('/')
+      ? { type: 'user', message: { role: 'user', content: text } }
+      : { type: 'user',
+          message: { role: 'user',
+            content: [{ type: 'text', text }] } };
+  child.stdin.write(JSON.stringify(msg) + '\n');
 }
 let keepAlive = null;
 // tool_use ids already relayed this turn (tool_use ids are unique per

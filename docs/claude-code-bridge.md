@@ -65,10 +65,10 @@ harmless probe noise here (turns still succeed).
 ## App side (shipped in 0.1.0+8 — lib/bridge.dart, lib/bridge_screen.dart)
 
 All the pieces already existed; this swapped the *text source* of a reply.
-Shipped as chips on the main screen (visible once a url+token is saved in
-the terminal-icon Bridge screen): **Repo status / Run tests / Build APK /
-Catch me up** (`VoiceAssistant.quickCommands`, phrased to force terse
-spoken answers) plus **Stop** while a turn flies, and a free-text box on
+Originally shipped as four canned-prompt chips (Repo status / Run tests /
+Build APK / Catch me up — `VoiceAssistant.quickCommands`); superseded in
+0.1.0+17 by session controls (`/new`, `/compact`, see item 7) plus
+**Stop** while a turn flies, and a free-text box on
 the Bridge screen. Notes that matter when touching this code:
 
 1. `BridgeClient` (`lib/bridge.dart`): `dart:io` `HttpClient` + streamed
@@ -106,6 +106,23 @@ the Bridge screen. Notes that matter when touching this code:
    little more" filters, and the self-echo check, run before forwarding.
    While a harness turn is in flight the FAB reads "Stop the harness"
    (PTT mode included, where the button used to be greyed out dead air).
+7. Session controls (0.1.0+17): the main-screen chips became `/new` and
+   `/compact` (`VoiceAssistant.bridgeControl`), and the bridge learned
+   to pass slash lines through to the CLI as commands. Wire facts
+   verified on 2.1.296: a user message with block-array content goes to
+   the *model* even when the text is `/compact` (it rambles about the
+   word); only PLAIN-STRING content executes. `/compact` runs in-process
+   on the resumed session — proof is a `system/compact_boundary` event
+   (relayed as a `tool compact` SSE line so the phone shows live
+   progress) and zero narration, so the app speaks a locally composed
+   ack; if the CLI does answer (e.g. "No messages to compact" arrives
+   as an assistant text block on an empty session) that answer relays
+   and the ack suppresses. `/new` is NOT sent over stdin: stream-json
+   has no /new, and the bridge's own endpoint must also forget the
+   persisted session id or the next respawn re-hydrates the old
+   context. Free text with a leading `/` runs any CLI command the same
+   way (`/context`, `/usage`, ...) — and the CLI's own error replies
+   arrive speakable, so nothing dead-airs.
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message

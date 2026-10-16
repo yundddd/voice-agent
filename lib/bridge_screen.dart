@@ -50,7 +50,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
         actions: [
           IconButton(
             tooltip: 'Start a fresh conversation (drop history)',
-            onPressed: () => a.bridgeNew(),
+            onPressed: () => a.bridgeControl('/new'),
             icon: const Icon(Icons.restart_alt),
           ),
         ],
@@ -143,31 +143,43 @@ class _BridgeScreenState extends State<BridgeScreen> {
               ),
             ),
             Text(
-              'Command chips on the main screen',
+              'Session controls on the main screen',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            for (final (label, utterance) in VoiceAssistant.quickCommands)
+            for (final (label, blurb) in const [
+              (
+                '/new',
+                'Forget the conversation on both sides and start over — '
+                    'the past no longer fills the context window.',
+              ),
+              (
+                '/compact',
+                'Have Claude Code condense the chat into a summary: keep '
+                    'the thread, free the window. Same as /compact at a '
+                    'desk terminal.',
+              ),
+            ])
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 title: Text(label),
                 subtitle: Text(
-                  utterance,
+                  blurb,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 trailing: IconButton(
                   icon: const Icon(Icons.play_arrow),
-                  tooltip: 'Run this chip now',
+                  tooltip: 'Run this control now',
                   onPressed: a.bridgeBusy || !a.bridgeConfigured
                       ? null
                       : () {
                           Navigator.of(
                             context,
                           ).pop(); // talk over on the main screen
-                          a.runQuickCommand(utterance, bubble: label);
+                          a.bridgeControl(label);
                         },
                 ),
               ),
@@ -184,7 +196,9 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 border: OutlineInputBorder(),
                 helperText:
                     'sent verbatim as one utterance; the answer is '
-                    'spoken with your assistant voice',
+                    'spoken with your assistant voice. A line starting '
+                    'with / runs as a real Claude Code command (e.g. '
+                    '/context to hear how full the window is)',
               ),
               onSubmitted: (v) {
                 if (v.trim().isEmpty) return;

@@ -250,32 +250,11 @@ class VoiceAssistant extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// One-tap harness commands shown as chips on the main screen. The
-  /// phrasing matters: the bridge's voice system prompt asks the harness
-  /// for short SPOKEN answers, and every chip leans on that hard.
-  static const quickCommands = <(String, String)>[
-    (
-      'Repo status',
-      'Check git status and the uncommitted diff. Tell me which files '
-          'have changes in one short spoken sentence, and nothing else.',
-    ),
-    (
-      'Run tests',
-      'Run the project test suite now. When it finishes tell me pass or '
-          'fail in one short spoken sentence; if it failed add the '
-          'single most important error line.',
-    ),
-    (
-      'Build APK',
-      'Build the arm64 release APK with the documented command. Tell me '
-          'success or failure in one short spoken sentence, nothing else.',
-    ),
-    (
-      'Catch me up',
-      'In two short spoken sentences: what changed most recently in this '
-          'repo, and what is the obvious next thing to do.',
-    ),
-  ];
+  /// Session-housekeeping chips on the main screen. They replace the old
+  /// canned-command set (which asked the harness to do things it does
+  /// better when simply told): these two buttons manage the CONVERSATION
+  /// itself. See [bridgeControl] for what each one does on the wire.
+  static const controlChips = <String>['/new', '/compact'];
 
   /// Saves bridge settings (empty url disables the feature entirely).
   Future<void> setBridge({required String url, required String token}) async {
@@ -293,14 +272,24 @@ class VoiceAssistant extends ChangeNotifier {
   Future<String?> bridgeCheck() async =>
       _bridge?.health() ?? 'bridge not configured — set url and token';
 
-  /// Runs one quick command (or free text from the bridge screen):
-  /// utterance -> /talk -> speak each `say` event the moment it lands,
+  /// Runs one harness turn: utterance -> /talk (or a caller-supplied
+  /// event source) -> speak each `say` event the moment it lands,
   /// streamed through the same chunked player voice replies use. Tool
   /// activity shows up as live status text instead of dead air.
   /// [bubble] is the short text to show as the user message (chip label /
   /// typed text); the voice path passes none because _startTurn already
-  /// logged the heard utterance.
-  Future<void> runQuickCommand(String utterance, {String? bubble}) async {
+  /// logged the heard utterance. [ack] is spoken when the turn produced
+  /// no speech at all (silent-success controls like /compact, whose
+  /// compaction signal is a system event the harness never narrates).
+  /// [events] replaces the /talk call — the /new chip uses it to hit
+  /// the bridge's reset endpoint and finish with zero events instead.
+  Future<void> runQuickCommand(
+    String utterance, {
+    String? bubble,
+    String? ack,
+    String? status,
+    Stream<BridgeEvent> Function()? events,
+  }) async {
     final bridge = _bridge;
     if (bridge == null) {
       _fail('No bridge — open the terminal icon and set url + token.');
@@ -325,7 +314,7 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _transcript = utterance;
     _phase = AssistantPhase.transcribing;
-    _status = 'Asking the bridge…';
+    _status = status ?? 'Asking the bridge…';
     notifyListeners();
     _warmUpRoute(); // hold the output route while the harness thinks
     _replyQueue.clear();
@@ -333,37 +322,40 @@ class VoiceAssistant extends ChangeNotifier {
     var sawFirstChunk = false;
     unawaited(_playReplyChunks(gen));
     final spoken = StringBuffer();
+    // Speak one answer block end-to-end: synth (streamed into the play
+    // queue, status flips on the first audio chunk), then the log — the
+    // reply card follows the audio, never leads it (an interrupted turn's
+    // tail chunks drop on the gen guard, and without this order the card
+    // kept growing while the loop had already stopped feeding the player
+    // — the old "text with no audio" on long answers).
+    Future<void> speak(String text) async {
+      final (audio, rate) = await _worker!.synthesizeStream(
+        text,
+        onChunk: (chunk, sampleRate) {
+          if (gen != _generation) return;
+          if (!sawFirstChunk) {
+            sawFirstChunk = true;
+            _phase = AssistantPhase.speaking;
+            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            notifyListeners();
+          }
+          _replyQueue.add((chunk, sampleRate));
+          _replyWake?.complete();
+          _replyWake = null;
+        },
+      );
+      if (gen != _generation) return;
+      _noteTts(audio, rate); // last message's raw audio: debug replay
+      spoken.write('$text ');
+      turn.blocks.add(text);
+      _touchChat();
+    }
+
     try {
-      await for (final ev in bridge.talk(utterance)) {
+      await for (final ev in (events ?? () => bridge.talk(utterance))()) {
         if (gen != _generation) break; // interrupted: drop the rest
         if (ev.isSay && ev.text.trim().isNotEmpty) {
-          final text = cleanForSpeech(ev.text.trim());
-          final (audio, rate) = await _worker!.synthesizeStream(
-            text,
-            onChunk: (chunk, sampleRate) {
-              if (gen != _generation) return;
-              if (!sawFirstChunk) {
-                sawFirstChunk = true;
-                _phase = AssistantPhase.speaking;
-                _status = 'Speaking the bridge: “$text” — tap to cut me off.';
-                notifyListeners();
-              }
-              _replyQueue.add((chunk, sampleRate));
-              _replyWake?.complete();
-              _replyWake = null;
-            },
-          );
-          if (gen != _generation) break;
-          _noteTts(audio, rate); // last message's raw audio: debug replay
-          // The reply card follows the audio, not the event stream: text is
-          // added only once its speech made it into the play queue. An
-          // interrupted turn's tail chunks are dropped on the gen guard, and
-          // without this order the card kept growing while the loop had
-          // already stopped feeding the player — seen as "text with no
-          // audio" on long answers.
-          spoken.write('$text ');
-          turn.blocks.add(text);
-          _touchChat();
+          await speak(cleanForSpeech(ev.text.trim()));
         } else if (ev.kind == 'tool') {
           _status =
               'The harness is working — ${ev.toolName}'
@@ -379,6 +371,16 @@ class VoiceAssistant extends ChangeNotifier {
           _fail('Bridge: ${ev.text}');
           break;
         }
+      }
+      // A control turn that completed silently (/compact succeeded —
+      // its progress signal is a system event, not narration) still
+      // owes the ear a confirmation. An errored turn (_error set) does
+      // not: the failure status speaks for itself.
+      if (ack != null &&
+          spoken.isEmpty &&
+          _error.isEmpty &&
+          gen == _generation) {
+        await speak(ack);
       }
     } on BridgeException catch (e) {
       if (gen == _generation) _fail(e.message);
@@ -415,10 +417,40 @@ class VoiceAssistant extends ChangeNotifier {
     _idleReady();
   }
 
-  /// New chat chip: forget the conversation on both sides.
-  void bridgeNew() {
-    unawaited(_bridge?.reset());
-    _logDebug('bridge: new session');
+  /// The '/new' and '/compact' chips: conversation housekeeping with an
+  /// audible outcome, run through [runQuickCommand]'s turn machinery
+  /// (same bubble pairing, text-follows-audio ordering and busy rules).
+  /// '/new' goes to the bridge's reset endpoint rather than a stdin
+  /// slash: the stream-json CLI has no /new command (interactive /clear
+  /// only), and only the endpoint forgets the persisted session id that
+  /// would otherwise re-hydrate the old context on the next respawn.
+  /// '/compact' passes as a real slash command (see claude_bridge.mjs:
+  /// plain-string content is what makes the CLI execute it, verified on
+  /// 2.1.296) and compresses the transcript in-process — a
+  /// system/compact_boundary event with zero say narration, hence the
+  /// locally-spoken ack.
+  Future<void> bridgeControl(String chip) {
+    if (chip == '/new') {
+      return runQuickCommand(
+        chip,
+        bubble: chip,
+        status: 'Starting a fresh conversation…',
+        ack: 'Started a fresh conversation. Our chat history is gone.',
+        events: () {
+          _logDebug('bridge: new session');
+          unawaited(_bridge?.reset());
+          return Stream<BridgeEvent>.empty();
+        },
+      );
+    }
+    return runQuickCommand(
+      chip,
+      bubble: chip,
+      status: 'Asking Claude Code to condense the conversation…',
+      ack:
+          'Done — the conversation is compacted. I still remember what we '
+          'were working on, in summary form now.',
+    );
   }
 
   TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(

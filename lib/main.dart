@@ -36,12 +36,10 @@ class AssistantScreen extends StatefulWidget {
 
 class _AssistantScreenState extends State<AssistantScreen>
     with WidgetsBindingObserver {
-  static const _chipIcons = [
-    Icons.account_tree, // Repo status
-    Icons.playlist_add_check, // Run tests
-    Icons.android, // Build APK
-    Icons.auto_stories, // Catch me up
-  ];
+  static const _chipIcons = {
+    '/new': Icons.restart_alt, // same glyph as the settings-page reset
+    '/compact': Icons.compress,
+  };
 
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
@@ -301,28 +299,27 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ),
               ),
               if (a.bridgeConfigured) ...[
-                // One-tap harness commands. Taps deliberately interrupt any
-                // voice reply mid-flight (runQuickCommand supersedes), which
-                // is the right feel: a chip press means "do THIS now".
+                // Session housekeeping: /new and /compact (see
+                // VoiceAssistant.bridgeControl for what each does on the
+                // wire). Taps deliberately interrupt any voice reply
+                // mid-flight (runQuickCommand supersedes), which is the
+                // right feel: a chip press means "do THIS now". The old
+                // canned-prompt chips are gone — a harness you can talk to
+                // outloud doesn't need buttons holding its hoof.
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
                       const SizedBox(width: 4),
-                      for (final (i, cmd)
-                          in VoiceAssistant.quickCommands.indexed)
+                      for (final chip in VoiceAssistant.controlChips)
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ActionChip(
-                            avatar: Icon(
-                              _chipIcons[i % _chipIcons.length],
-                              size: 18,
-                            ),
-                            label: Text(cmd.$1),
+                            avatar: Icon(_chipIcons[chip], size: 18),
+                            label: Text(chip),
                             onPressed: a.bridgeBusy
                                 ? null
-                                : () =>
-                                      a.runQuickCommand(cmd.$2, bubble: cmd.$1),
+                                : () => a.bridgeControl(chip),
                           ),
                         ),
                       if (a.bridgeBusy)

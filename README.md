@@ -235,14 +235,20 @@ node tool/claude_bridge.mjs --dir ~/voice-agent --token SOMETHING_SECRET
 ```
 
 In the app: terminal icon → set `http://<machine>:8732` (tailscale IPs
-work too) + the token → Save & check. Command chips then appear above the
-mic button: *Repo status, Run tests, Build APK, Catch me up* — each one is
-a phrased utterance (visible on the Bridge screen, editable list in
-`VoiceAssistant.quickCommands`), plus "Stop" while a turn is in flight
+work too) + the token → Save & check. Two session-control chips then
+appear above the mic button — `/new` (bridge reset endpoint: forgets the
+persisted session so the harness starts blank) and `/compact` (sent as
+plain-string content, which the CLI executes natively — it condenses the
+transcript into a summary; the bridge relays the resulting
+`compact_boundary` as live progress and the app speaks a confirmation
+when the turn stays silent) — plus "Stop" while a turn is in flight
 (barge-in sends SIGINT to the harness turn; the conversation survives —
-verified). The Bridge screen also has a free-text box so *anything* you
-type goes to the harness and comes back spoken, and a restart button for a
-fresh conversation. **The voice toggle:** the "Speak to Claude Code"
+verified). The old canned-command chips (*Repo status, Run tests, Build
+APK, Catch me up*) are gone: a harness you can converse with takes dictation
+better than scripts. The Bridge screen also has a free-text box so
+*anything* you type goes to the harness and comes back spoken — a line
+starting with `/` executes as a real Claude Code command (`/context`,
+`/usage`, ...) — and a restart button for a fresh conversation. **The voice toggle:** the "Speak to Claude Code"
 switch (on from the factory, persisted in `bridge_prefs.json`) routes
 whatever you say in push-to-talk or conversation mode to the harness
 instead of repeating it back — say "what still has uncommitted changes?"
