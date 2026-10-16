@@ -668,7 +668,8 @@ class VoiceAssistant extends ChangeNotifier {
     final spoken = StringBuffer();
     // ── Progress narration ── 'working towards the goal' means AUDIO
     // while working, not only at the end: the bridge pushes a `tool`
-    // event at every step's start (name + command/path summary), and
+    // event at every step's start (name + command/path summary — a
+    // Bash step's command is shown but never spoken, see below), and
     // with the Narrate switch on (BridgePrefs.narrate, off from the
     // factory, read live so a mid-turn flip bites at the next event)
     // those events are spoken. The reply's own audio always outranks
@@ -881,11 +882,24 @@ class VoiceAssistant extends ChangeNotifier {
             // the instant an utterance parks behind a running tool, the
             // phone says 'one moment' and what happens next, instead of
             // the old silent 200 seconds of spinner.
-            latestWork = ev.toolName == 'queued'
+            final stepLine = ev.toolName == 'queued'
                 ? 'One moment — ${ev.detail}.'
                 : '${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
-            _status = latestWork;
+            _status = stepLine;
+            // What the VOICE gets is not always the label on screen:
+            // a raw shell line is the one thing nobody wants spoken
+            // ('Bash git diff dash stat pipe head minus twenty'), so a
+            // Bash step says its kind, not its command. Eyes keep the
+            // full line — for a minute-long build the spinner IS the
+            // honest label of which command is chewing. File steps
+            // ('Edit assistant.dart…') speak fine as-is: a basename is
+            // prose. One side effect in our favor: consecutive Bash
+            // steps share the spoken line, and the narrate gate already
+            // hushes repeats, so a command burst won't machine-gun.
+            latestWork = ev.toolName == 'Bash'
+                ? 'Running a command…'
+                : stepLine;
             // The step itself lands in the conversation as a silent line:
             // one block of the live bubble (each gets its own line, divider
             // between), never spoken — the narrate switch owns the audio
