@@ -34,7 +34,15 @@ enum AssistantPhase { idle, listening, transcribing, speaking, error }
 class VoiceAssistant extends ChangeNotifier {
   VoiceAssistant() {
     _recorder = AudioRecorder();
-    _player.onPlayerComplete.listen((_) => _onPlaybackNaturalEnd());
+    // One-shot plays (preview, debug replay) end through this hook. A
+    // streamed reply must NOT: at every sentence seam it would clear
+    // _playerPlaying and cancel the chunk listener, so _playReplyChunks
+    // bailed at the first seam and the rest of the answer appeared as
+    // text with no audio (the per-chunk listener owns streamed ends, and
+    // the loop calls _onPlaybackNaturalEnd itself once drained).
+    _player.onPlayerComplete.listen((_) {
+      if (_replyChunkDone == null) _onPlaybackNaturalEnd();
+    });
   }
 
   // Silence duration that ends an utterance in conversation mode.
@@ -1274,6 +1282,11 @@ class VoiceAssistant extends ChangeNotifier {
       );
       if (gen != _generation) return; // user resumed: drop the rest
       await _replyChunkDone!.future; // ends on natural end... or a stop
+      // Seam complete: the loop owns playback again. Clearing the flag
+      // re-arms the global end hook for any later one-shot play, and the
+      // event that just woke us was already fully dispatched (the global
+      // listener ran and skipped before this listener completed us).
+      _replyChunkDone = null;
       if (!_playerPlaying) return; // barge-in won: _stopPlayback cleaned up
     }
     if (firstChunk) return; // engine produced nothing (error path covers)
@@ -1319,7 +1332,13 @@ class VoiceAssistant extends ChangeNotifier {
       p.join(dir.path, 'reply_${DateTime.now().millisecondsSinceEpoch}.wav'),
     );
     await file.writeAsBytes(encodeWav(samples, sampleRate));
+    // Streamed replies overwrite this once per sentence: delete the
+    // previous chunk's wav (its audio is already audible or dropped).
+    final prevFile = _playFile;
     _playFile = file.path;
+    if (prevFile != null) {
+      unawaited(File(prevFile).delete().catchError((_) => File(prevFile)));
+    }
     _playerPlaying = true;
     // _replyStartedAt marks only the FIRST chunk: the 450 ms AEC guard must
     // not re-arm per chunk (a chunk boundary would otherwise re-open the
