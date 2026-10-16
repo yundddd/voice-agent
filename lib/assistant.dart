@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' show Offset; // PTT release-gesture geometry (Listener positions)
+import 'dart:ui'
+    show Offset; // PTT release-gesture geometry (Listener positions)
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -135,6 +136,7 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners(); // re-evaluate the arrows once the pulse expires
     });
   }
+
   void _hopAsr() => _hop((t) => _hopAsrAt = t);
   void _hopSent() => _hop((t) => _hopSentAt = t);
   void _hopReply() => _hop((t) => _hopReplyAt = t);
@@ -194,7 +196,9 @@ class VoiceAssistant extends ChangeNotifier {
   // and /attach hands us a fresh view — replaying whatever landed in the
   // backlog meanwhile. The retry chain exists because waking phones wake
   // their NETWORK late: one failed probe must never drop a live turn.
-  static const _wireQuiet = Duration(seconds: 24); // ping 15 s + retransmit slack
+  static const _wireQuiet = Duration(
+    seconds: 24,
+  ); // ping 15 s + retransmit slack
   static const _reattachDelays = [
     Duration(seconds: 2),
     Duration(seconds: 6),
@@ -205,8 +209,10 @@ class VoiceAssistant extends ChangeNotifier {
   Timer? _wireCheck; // quiet-wire watchdog
   Timer? _reattachTimer; // next probe of the retry chain
   int _reattachStep = 0; // ladder rungs spent on the current orphan
-  bool _reattachRetire = false; // chain end = retire the spinner (zombie hop failed)
-  int _reattachGen = -1, _reattachSeq = -1; // the orphaned turn a chain belongs to
+  bool _reattachRetire =
+      false; // chain end = retire the spinner (zombie hop failed)
+  int _reattachGen = -1,
+      _reattachSeq = -1; // the orphaned turn a chain belongs to
 
   StreamSubscription<Uint8List>? _recSub;
   final List<Float32List> _chunks = []; // push-to-talk buffer
@@ -486,9 +492,8 @@ class VoiceAssistant extends ChangeNotifier {
   int get contextWindow => _contextWindow;
 
   /// 0..1 fill for the context bar; 0 when the window is still unknown.
-  double get contextFrac => _contextWindow > 0
-      ? (_contextIn / _contextWindow).clamp(0.0, 1.0)
-      : 0;
+  double get contextFrac =>
+      _contextWindow > 0 ? (_contextIn / _contextWindow).clamp(0.0, 1.0) : 0;
 
   void _mergeContext(int tokens, int window) {
     var changed = false;
@@ -530,7 +535,11 @@ class VoiceAssistant extends ChangeNotifier {
   // readout down when an estimate was over the exact count, exactly as
   // the CLI's own counter does when usage deltas land).
   int _tokOut = 0; // last bridge-sent output figure (est or exact)
-  int _tokIn = 0; // context tokens from the same frame
+  int _tokIn = 0; // context tokens from the same frame (RAW — the full
+  // conversation each call carries; the meter shows the turn's delta)
+  int _tokInAnchor = 0; // +93: the turn's first input figure — the delta
+  // baseline (see turnInAnchor). The fresh turn's opening zero clears
+  // it exactly like the opening zero clears _tokOut's history.
   String _tokKind = ''; // 'thinking' | 'answering' | 'calling X' | ''
   String _tokThought = ''; // rolling tail of the LIVE thinking text — the
   // `thought` field the tally frames carry while kind is 'thinking';
@@ -585,14 +594,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// spinner asks the assistant for it on every one of its 120 ms
   /// ticks, which is what makes the number move between relays.
   String get tokenTickerLabel {
-    final age =
-        DateTime.now().difference(_tokAt!).inMilliseconds / 1000.0;
+    final age = DateTime.now().difference(_tokAt!).inMilliseconds / 1000.0;
     // A stalled stream (frames stopped coming but nothing said 'tool
     // running' either) must not inflate the estimate forever: growth
     // freezes past a few relay periods of silence.
     final est = _tokOut + (_tokRate * (age > 5 ? 5 : age)).round();
     final kind = _tokKind.isEmpty ? '' : '$_tokKind · ';
-    return '$kind${fmtTokenCount(est)} out · ${fmtTokenCount(_tokIn)} in';
+    return '$kind${fmtTokenCount(est)} out · ${fmtTokenCount(tokensIn)} in';
   }
 
   /// The output count for the spinner's meter line: the bridge's last
@@ -604,7 +612,19 @@ class VoiceAssistant extends ChangeNotifier {
     return _tokOut + (_tokRate * (age > 5 ? 5 : age)).round();
   }
 
-  int get tokensIn => _tokIn;
+  /// The spinner meter's `in` figure: THIS turn's input growth (raw
+  /// context minus the turn's anchor, +93). The full-conversation
+  /// number the calls carry stays where it belongs — the context bar.
+  int get tokensIn => _tokIn > _tokInAnchor ? _tokIn - _tokInAnchor : 0;
+
+  /// Records a raw input figure (tally or context frame) and keeps the
+  /// turn anchor honest: the first real number anchors, a smaller one
+  /// re-anchors, and a zero — which every fresh turn's opening frames
+  /// carry — clears the anchor so no stale delta rides across turns.
+  void _noteTokIn(int observed) {
+    _tokInAnchor = turnInAnchor(observed, _tokInAnchor);
+    _tokIn = observed > 0 ? observed : 0;
+  }
 
   void _onTokensFrame(BridgeEvent ev) {
     final now = DateTime.now();
@@ -630,7 +650,7 @@ class VoiceAssistant extends ChangeNotifier {
     // PREVIOUS turn's tally so a fresh turn's line can never show stale
     // digits (the bridge resets its own counter at beginTurn too).
     _tokOut = out;
-    if (ev.inputTokens > 0) _tokIn = ev.inputTokens;
+    _noteTokIn(ev.inputTokens);
     _tokKind = ev.toolKind;
     _tokThought = ev.toolKind == 'thinking' ? ev.thought : '';
     // +83: 'settled' means the TEXT is final (bridge message_stop) but
@@ -819,7 +839,8 @@ class VoiceAssistant extends ChangeNotifier {
     // text-follows-audio, history being exactly what the room heard.
     // While hidden, narration holds off (no synth at all): the answer
     // still buffers for replay and the log has every step as text.
-    String latestWork = ''; // newest tool-step progress line, e.g. 'Edit foo.dart…'
+    String latestWork =
+        ''; // newest tool-step progress line, e.g. 'Edit foo.dart…'
     String lastNarrated = '';
     var lastNarratedAt = DateTime.fromMillisecondsSinceEpoch(0);
     var lastSpokenAt = lastNarratedAt; // reply-audio activity clock
@@ -930,7 +951,8 @@ class VoiceAssistant extends ChangeNotifier {
     // cuts a mere thinking turn short).
     final q = <BridgeEvent>[];
     var closed = false;
-    var sawDone = false; // the turn's own `done` frame closed the loop: clean end
+    var sawDone =
+        false; // the turn's own `done` frame closed the loop: clean end
     var sawErrorFrame = false; // the bridge's `error` frame: the turn is over
     Object? streamError;
     Completer<void>? wake;
@@ -941,28 +963,28 @@ class VoiceAssistant extends ChangeNotifier {
     }
 
     _bridgeDetachWake = wakeNow;
-    final sub = (events ??
-            () => _bridgeEvents(bridge, utterance, interrupt))().listen(
-      // Wake the consumer on EVERY event: `q.add` alone leaves a frame
-      // parked until the loop's next accidental resume — which streaming
-      // disguised (each processed say drains into the next) but a quiet
-      // tool run exposed: the poll delivered frames within milliseconds,
-      // and the loop sat on them until the 15 s heartbeat's speak churn
-      // stumbled past. The wire was fixed one event handler from home.
-      (BridgeEvent ev) {
-        q.add(ev);
-        wakeNow();
-      },
-      onError: (Object e, StackTrace _) {
-        streamError = e is BridgeException ? e : BridgeException('$e');
-        closed = true;
-        wakeNow();
-      },
-      onDone: () {
-        closed = true;
-        wakeNow();
-      },
-    );
+    final sub = (events ?? () => _bridgeEvents(bridge, utterance, interrupt))()
+        .listen(
+          // Wake the consumer on EVERY event: `q.add` alone leaves a frame
+          // parked until the loop's next accidental resume — which streaming
+          // disguised (each processed say drains into the next) but a quiet
+          // tool run exposed: the poll delivered frames within milliseconds,
+          // and the loop sat on them until the 15 s heartbeat's speak churn
+          // stumbled past. The wire was fixed one event handler from home.
+          (BridgeEvent ev) {
+            q.add(ev);
+            wakeNow();
+          },
+          onError: (Object e, StackTrace _) {
+            streamError = e is BridgeException ? e : BridgeException('$e');
+            closed = true;
+            wakeNow();
+          },
+          onDone: () {
+            closed = true;
+            wakeNow();
+          },
+        );
     _bridgeSub = sub; // held locally as well: cleanup must not touch a
     // successor turn's subscription or wake hook (identical() guards below)
     _armWireWatch(); // this connection is watched for quiet from here on
@@ -1012,8 +1034,8 @@ class VoiceAssistant extends ChangeNotifier {
         } else if (ev.kind == 'context') {
           // message_start also moves the ticker's `in` number (the
           // context frame and the tally frame ride the same field).
-          if (ev.inputTokens > 0 && ev.inputTokens != _tokIn) {
-            _tokIn = ev.inputTokens;
+          if (ev.inputTokens != _tokIn) {
+            _noteTokIn(ev.inputTokens);
             notifyListeners();
           }
           // Live context consumption (message_start / post-result) for
@@ -1197,19 +1219,19 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
       _logDebug(
         'TALK end gen=$gen: ${streamError != null
-              ? 'SOCKET DIED ($streamError)'
-              : sawErrorFrame
-              ? 'bridge error frame'
-              : sawDone
-              ? 'done clean'
-              : 'CLOSED WITHOUT DONE'}'
+            ? 'SOCKET DIED ($streamError)'
+            : sawErrorFrame
+            ? 'bridge error frame'
+            : sawDone
+            ? 'done clean'
+            : 'CLOSED WITHOUT DONE'}'
         '${wireOrphan
-              ? ' — UNOWNED, reattach chain armed'
-              : gen != _generation
-              ? ' — superseded'
-              : sawDone
-              ? ''
-              : ' — detached on purpose'}',
+            ? ' — UNOWNED, reattach chain armed'
+            : gen != _generation
+            ? ' — superseded'
+            : sawDone
+            ? ''
+            : ' — detached on purpose'}',
       );
       if (wireOrphan) {
         // Our view died mid-turn (the classic background→foreground
@@ -1333,7 +1355,7 @@ class VoiceAssistant extends ChangeNotifier {
           // here. The first message_start of the new conversation puts
           // an honest number back on the bar.
           _contextIn = 0;
-          _tokIn = _tokOut = 0;
+          _tokIn = _tokOut = _tokInAnchor = 0;
           _tokKind = '';
           _tokThought = '';
           _tokLive = false;
@@ -1383,7 +1405,7 @@ class VoiceAssistant extends ChangeNotifier {
           : '';
       await j.log(
         'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
-        'FAILED'} (${await _ifaceIps()})$carried',
+                  'FAILED'} (${await _ifaceIps()})$carried',
       );
       // PUSH transport: the journal rides an ordinary outbound POST /applog
       // (batched, acked, backoffed — all handled inside the journal; this
@@ -1501,7 +1523,6 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
     }
   }
-
 
   // ── Latency bench (voice screen panel) ─────────────────────────────────
 
@@ -1810,7 +1831,9 @@ class VoiceAssistant extends ChangeNotifier {
       'queue=${_replyQueue.length} — '
       '${bridgeLive ? 'stream STAYS attached' : 'audio/mic down'}',
     );
-    if (bridgeLive && _phase == AssistantPhase.speaking && _lastReplyText != null) {
+    if (bridgeLive &&
+        _phase == AssistantPhase.speaking &&
+        _lastReplyText != null) {
       _dropAfterHide = _lastReplyText;
       _logDebug('hide mid-paragraph: the cut block is skipped, not replayed');
     }
@@ -1899,8 +1922,10 @@ class VoiceAssistant extends ChangeNotifier {
       // backlog covers whatever the zombie lost. A background/foreground
       // blink therefore never strands a running turn on a dead socket.
       _markWireAlive();
-      _logDebug('resume: view believed ALIVE — wire watchdog re-leased (24 s '
-          'of silence will expose a zombie and hop to a fresh /attach)');
+      _logDebug(
+        'resume: view believed ALIVE — wire watchdog re-leased (24 s '
+        'of silence will expose a zombie and hop to a fresh /attach)',
+      );
       notifyListeners();
       if (restart) unawaited(_beginConversation());
       return;
@@ -1914,8 +1939,9 @@ class VoiceAssistant extends ChangeNotifier {
     // text-only (reattach's gen bump supersedes any replay we'd run
     // ourselves — the text rides into the reattach instead, spoken
     // ahead of the backlog lines so the story stays in order).
-    final Map<String, Object>? probe =
-        _bridge == null ? null : await _bridge!.healthInfo();
+    final Map<String, Object>? probe = _bridge == null
+        ? null
+        : await _bridge!.healthInfo();
     _logDebug('resume probe: ${_healthNote(probe)}');
     if (await reattachBackgroundTurn(health: probe, replayFirst: pending)) {
       return;
@@ -2000,8 +2026,10 @@ class VoiceAssistant extends ChangeNotifier {
         // /health may have renegotiated the transport for the next turn
         // (the endpoint serves whoever asks, so riding out THIS turn on
         // polls is safe even if poll is no longer advertised).
-        _logDebug('poll: ring reset (head $head < cursor $_ringCursor) '
-            '— rewinding to 0');
+        _logDebug(
+          'poll: ring reset (head $head < cursor $_ringCursor) '
+          '— rewinding to 0',
+        );
         _healthNote(await bridge.healthInfo());
         _ringCursor = 0;
         continue;
@@ -2062,11 +2090,14 @@ class VoiceAssistant extends ChangeNotifier {
   /// a fresh view before the harness relays more of the turn into the void.
   void _wireCheckFired() {
     _wireCheck = null;
-    if (_backgrounded) return; // resumeConversation re-leases via _markWireAlive
+    if (_backgrounded)
+      return; // resumeConversation re-leases via _markWireAlive
     if (!_bridgeBusy) return; // this stream's turn already moved on
     final quiet = DateTime.now().difference(_wireAliveAt);
     if (quiet < _wireQuiet) {
-      _armWireCheck(_wireQuiet - quiet); // dribbling bytes: check again next slice
+      _armWireCheck(
+        _wireQuiet - quiet,
+      ); // dribbling bytes: check again next slice
       return;
     }
     if (_playerPlaying || _replyQueue.isNotEmpty) {
@@ -2082,8 +2113,10 @@ class VoiceAssistant extends ChangeNotifier {
     _abandonBridgeTurn(); // give up on the zombie view (parked loop retires
     // exactly as any abandoned turn's does — see its docs)
     _startReattachChain(retire: true);
-    _logDebug('zombie hop: /attach will STEAL the bridge view back; spinner '
-        'retires if the probe says nothing is open any more');
+    _logDebug(
+      'zombie hop: /attach will STEAL the bridge view back; spinner '
+      'retires if the probe says nothing is open any more',
+    );
   }
 
   /// Silence the retry chain: the user's new prompt is claiming the bridge
@@ -2387,22 +2420,24 @@ class VoiceAssistant extends ChangeNotifier {
       }
 
       _bridgeDetachWake = wakeNow;
-      final sub = bridge.attach(onActivity: _markWireAlive).listen(
-        // Same wake-on-data contract as the /talk loop (see its note).
-        (BridgeEvent ev) {
-          q.add(ev);
-          wakeNow();
-        },
-        onError: (Object e, StackTrace _) {
-          streamError = e is BridgeException ? e : BridgeException('$e');
-          closed = true;
-          wakeNow();
-        },
-        onDone: () {
-          closed = true;
-          wakeNow();
-        },
-      );
+      final sub = bridge
+          .attach(onActivity: _markWireAlive)
+          .listen(
+            // Same wake-on-data contract as the /talk loop (see its note).
+            (BridgeEvent ev) {
+              q.add(ev);
+              wakeNow();
+            },
+            onError: (Object e, StackTrace _) {
+              streamError = e is BridgeException ? e : BridgeException('$e');
+              closed = true;
+              wakeNow();
+            },
+            onDone: () {
+              closed = true;
+              wakeNow();
+            },
+          );
       _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
       _armWireWatch(); // the quiet-wire watchdog rides this connection
       _hopSent(); // rejoining counts as reached-the-harness too
@@ -2442,7 +2477,9 @@ class VoiceAssistant extends ChangeNotifier {
             // user already lived through this exchange.
             turn.blocks.add(sayText);
             _touchChat();
-            final ageSec = ev.wireMs == 0 ? 'unstamped' : '${_wireAgeMs(ev) ~/ 1000}s old';
+            final ageSec = ev.wireMs == 0
+                ? 'unstamped'
+                : '${_wireAgeMs(ev) ~/ 1000}s old';
             _logDebug('replay $ageSec: logged silently, not spoken');
           } else if (sayText.isNotEmpty && _alreadyInChat(sayText)) {
             // Already heard — the persisted chat log remembers the block
@@ -2456,8 +2493,8 @@ class VoiceAssistant extends ChangeNotifier {
             _tokLive = false;
             await speak(sayText);
           } else if (ev.kind == 'context') {
-            if (ev.inputTokens > 0 && ev.inputTokens != _tokIn) {
-              _tokIn = ev.inputTokens;
+            if (ev.inputTokens != _tokIn) {
+              _noteTokIn(ev.inputTokens);
               notifyListeners();
             }
             _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
@@ -2540,17 +2577,17 @@ class VoiceAssistant extends ChangeNotifier {
         notifyListeners();
         _logDebug(
           'ATTACH end gen=$gen: ${streamError != null
-                ? 'SOCKET DIED ($streamError)'
-                : sawErrorFrame
-                ? 'bridge error frame'
-                : sawDone
-                ? 'done clean'
-                : 'CLOSED WITHOUT DONE'}'
+              ? 'SOCKET DIED ($streamError)'
+              : sawErrorFrame
+              ? 'bridge error frame'
+              : sawDone
+              ? 'done clean'
+              : 'CLOSED WITHOUT DONE'}'
           '${wireOrphan
-                ? ' — UNOWNED, chain continues (paced)'
-                : gen != _generation
-                ? ' — superseded'
-                : ''}',
+              ? ' — UNOWNED, chain continues (paced)'
+              : gen != _generation
+              ? ' — superseded'
+              : ''}',
         );
         if (wireOrphan) {
           _reattachGen = gen;
@@ -2794,6 +2831,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// Slide-up-vs-rest distances, logical px: a deliberate thumb drag off
   /// the button, small enough to never trigger from a rolling press.
   static const double _pttSlideUpPx = 48;
+
   /// Press-and-release faster than this while a turn runs is a TAP: the
   /// hard stop (detach + /stop), the old tap-Stop behaviour, not a hold.
   static const int _pttTapStopMs = 400;
@@ -2905,8 +2943,10 @@ class VoiceAssistant extends ChangeNotifier {
       if (_pttBridgeHold) _harnessBackgrounded = true;
       _generation++;
       if (_pttBridgeHold) {
-        _logDebug('ptt DOWN over a live turn: detached it — the open tool '
-            'keeps working (badge lit), release gesture routes the prompt');
+        _logDebug(
+          'ptt DOWN over a live turn: detached it — the open tool '
+          'keeps working (badge lit), release gesture routes the prompt',
+        );
       }
       _stopDebugPlayback();
       _stopPlayback();
@@ -3733,7 +3773,10 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
-  Future<void> _stopAndRespond({bool interrupt = false, bool discard = false}) async {
+  Future<void> _stopAndRespond({
+    bool interrupt = false,
+    bool discard = false,
+  }) async {
     if (_phase != AssistantPhase.listening) {
       // Another silent sinkhole for a vanishing message: the mic was not
       // actually open by the time the release arrived (press raced a

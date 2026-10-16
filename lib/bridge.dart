@@ -198,11 +198,13 @@ class BridgeClient {
       baseUrl.endsWith('/')
           ? '${baseUrl.substring(0, baseUrl.length - 1)}$path'
           : '$baseUrl$path',
-    ).replace(queryParameters: {
-      'token': token,
-      if (jp != null && jp > 0) 'logport': '$jp',
-      ...?extra,
-    });
+    ).replace(
+      queryParameters: {
+        'token': token,
+        if (jp != null && jp > 0) 'logport': '$jp',
+        ...?extra,
+      },
+    );
   }
 
   /// Sends an utterance; the stream yields say/tool events as the harness
@@ -248,9 +250,10 @@ class BridgeClient {
         );
       }
       yield* bridgeEventsFromLines(
-        _tapped(res.transform(utf8.decoder), onActivity).transform(
-          const LineSplitter(),
-        ),
+        _tapped(
+          res.transform(utf8.decoder),
+          onActivity,
+        ).transform(const LineSplitter()),
       );
     } on BridgeException {
       rethrow;
@@ -298,9 +301,10 @@ class BridgeClient {
         );
       }
       yield* bridgeEventsFromLines(
-        _tapped(res.transform(utf8.decoder), onActivity).transform(
-          const LineSplitter(),
-        ),
+        _tapped(
+          res.transform(utf8.decoder),
+          onActivity,
+        ).transform(const LineSplitter()),
       );
     } on BridgeException {
       rethrow;
@@ -501,6 +505,22 @@ String cleanForSpeech(String t) {
   if (s.isNotEmpty && !RegExp(r'[.!?]$').hasMatch(s)) s += '.';
   return s;
 }
+
+/// The spinner meter's TURN-DELTA anchor (+93): the first input figure
+/// a turn reports anchors it, and the meter shows growth since — what
+/// THIS turn consumed, not the whole conversation each call carries
+/// (the context bar already prices that, in window terms). A figure
+/// smaller than the anchor re-anchors it: /compact mid-turn shrinks
+/// the world, and the delta must restart at zero rather than go
+/// negative and hand the turn credit for a history it no longer
+/// carries. A zero (or negative) observation is the fresh turn's
+/// opening zero: anchor 0, and the next real figure anchors it. Pure
+/// so the rule is unit-guarded.
+int turnInAnchor(int observed, int anchor) => observed <= 0
+    ? 0
+    : (anchor == 0 || observed < anchor)
+    ? observed
+    : anchor;
 
 /// 12400 -> '12.40k', 467232 -> '467.23k', 1_250_000 -> '1.25M'. Two
 /// decimals everywhere (+82 — one made the big counters look like they

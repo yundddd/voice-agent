@@ -26,8 +26,10 @@ void main() {
         activityLabelFor('calling Bash', 'Bash git status --short…'),
         'Bash git status --short…',
       );
-      expect(activityLabelFor('calling Edit', 'Edit bridge.dart…'),
-          'Edit bridge.dart…');
+      expect(
+        activityLabelFor('calling Edit', 'Edit bridge.dart…'),
+        'Edit bridge.dart…',
+      );
       // The generic wording survives only where no detail exists: the
       // sliver before the tool frame lands, or a frame with no detail.
       expect(activityLabelFor('calling Bash', ''), 'Running a command…');
@@ -45,7 +47,10 @@ void main() {
         ChatEntry.user('q'),
         asst(['first   paragraph\nwith a stray newline']),
       ];
-      expect(chatContainsBlock(log, 'first paragraph with a stray newline'), isTrue);
+      expect(
+        chatContainsBlock(log, 'first paragraph with a stray newline'),
+        isTrue,
+      );
     });
     test('scans the WHOLE log, not the last few bubbles', () {
       final log = [
@@ -59,7 +64,9 @@ void main() {
       expect(chatContainsBlock(log, 'echo me'), isFalse);
     });
     test('near-misses miss', () {
-      final log = [asst(['the int8 build measured muddier'])];
+      final log = [
+        asst(['the int8 build measured muddier']),
+      ];
       expect(chatContainsBlock(log, 'the int8 build measured'), isFalse);
     });
   });
@@ -76,10 +83,7 @@ void main() {
       expect(liveTurnFor(chat, turnRunning: true), same(chat[1]));
     });
     test('no running turn, no bubble', () {
-      final chat = [
-        ChatEntry.user('q'),
-        ChatEntry.assistant(),
-      ];
+      final chat = [ChatEntry.user('q'), ChatEntry.assistant()];
       expect(liveTurnFor(chat, turnRunning: false), isNull);
     });
     test('a turn with no assistant bubble yet has none to show', () {
@@ -87,9 +91,41 @@ void main() {
     });
   });
 
+  group(
+    'turn input delta (0.1.0+93: the meter bills the turn, not the world)',
+    () {
+      test('the first figure anchors the turn; growth is the consumption', () {
+        final anchor = turnInAnchor(48000, 0);
+        expect(anchor, 48000);
+        expect(
+          turnInAnchor(49300, anchor),
+          anchor,
+          reason: 'growth keeps the anchor',
+        );
+        expect(49300 - anchor, 1300); // the meter's honest number
+      });
+      test(
+        '/compact mid-turn re-anchors: the delta restarts, never negative',
+        () {
+          final a = turnInAnchor(9000, 48000);
+          expect(a, 9000);
+          expect(9000 - a, 0);
+        },
+      );
+      test("a fresh turn's opening zero clears the anchor", () {
+        expect(turnInAnchor(0, 48000), 0);
+        // The next real figure — this turn's first message_start — anchors.
+        expect(turnInAnchor(49000, 0), 49000);
+      });
+    },
+  );
+
   group('event parsing (0.1.0+81/+84: started and settled frames)', () {
     test('started marker parses as a tool event with the prompt detail', () {
-      final ev = BridgeEvent.parse('tool', '{"name":"started","detail":"hello there"}');
+      final ev = BridgeEvent.parse(
+        'tool',
+        '{"name":"started","detail":"hello there"}',
+      );
       expect(ev.kind, 'tool');
       expect(ev.toolName, 'started');
       expect(ev.detail, 'hello there');
@@ -98,7 +134,7 @@ void main() {
       final ev = BridgeEvent.parse(
         'tool',
         '{"name":"tokens","detail":"settled · 0.80k out","out":800,'
-        '"in":1000,"kind":"settled","draft":"still unspoken tail"}',
+            '"in":1000,"kind":"settled","draft":"still unspoken tail"}',
       );
       expect(ev.toolKind, 'settled');
       expect(ev.outTokens, 800);

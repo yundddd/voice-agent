@@ -182,9 +182,10 @@ class _AssistantScreenState extends State<AssistantScreen>
           switch (a.pttSlide) {
             PttSlide.up => 'Release to interrupt',
             PttSlide.right => 'Release to discard',
-            PttSlide.none => a.pttHoldOverTurn
-                ? 'Release to queue — up to interrupt — right to dismiss'
-                : 'Release to send — right to dismiss',
+            PttSlide.none =>
+              a.pttHoldOverTurn
+                  ? 'Release to queue — up to interrupt — right to dismiss'
+                  : 'Release to send — right to dismiss',
           },
         ),
         AssistantPhase.transcribing || AssistantPhase.speaking => (
@@ -230,9 +231,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                   ? 'no session yet'
                   : 'session ${a.sessionId}',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    fontFamily: 'monospace',
-                    color: a.bridgeBusy ? scheme.primary : scheme.onSurfaceVariant,
-                  ),
+                fontFamily: 'monospace',
+                color: a.bridgeBusy ? scheme.primary : scheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -461,31 +462,27 @@ class _AssistantScreenState extends State<AssistantScreen>
                                                         MainAxisSize.min,
                                                     children: [
                                                       Icon(
-                                                        Icons
-                                                            .schedule_outlined,
+                                                        Icons.schedule_outlined,
                                                         size: 14,
-                                                        color:
-                                                            scheme.onPrimaryContainer
-                                                                .withValues(
-                                                                  alpha: 0.7,
-                                                                ),
+                                                        color: scheme
+                                                            .onPrimaryContainer
+                                                            .withValues(
+                                                              alpha: 0.7,
+                                                            ),
                                                       ),
-                                                      const SizedBox(
-                                                        width: 6,
-                                                      ),
+                                                      const SizedBox(width: 6),
                                                       Text(
                                                         'Queued — waiting '
                                                         'for the current '
                                                         'work',
-                                                        style: Theme.of(
-                                                          context,
-                                                        ).textTheme.labelSmall
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .labelSmall
                                                             ?.copyWith(
                                                               color: scheme
                                                                   .onPrimaryContainer
                                                                   .withValues(
-                                                                    alpha:
-                                                                        0.7,
+                                                                    alpha: 0.7,
                                                                   ),
                                                             ),
                                                       ),
@@ -636,8 +633,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                         onPrimary: scheme.onPrimary,
                         onPressed: !fabEnabled
                             ? null
-                            : _assistant.mode ==
-                                  InteractionMode.pushToTalk
+                            : _assistant.mode == InteractionMode.pushToTalk
                             ? () {
                                 // Press/release edges (pttDown/pttUp) now
                                 // own every hold over a harness turn:
@@ -806,12 +802,11 @@ class _PttHoldGuide extends StatelessWidget {
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color:
-                    switch (slide) {
-                      PttSlide.up => Colors.orange.shade700,
-                      PttSlide.right => scheme.error,
-                      PttSlide.none => color,
-                    }.withValues(alpha: hold ? 0.5 : 0.0),
+                color: switch (slide) {
+                  PttSlide.up => Colors.orange.shade700,
+                  PttSlide.right => scheme.error,
+                  PttSlide.none => color,
+                }.withValues(alpha: hold ? 0.5 : 0.0),
                 blurRadius: 30,
                 spreadRadius: hold ? 6 : -24,
               ),
@@ -823,9 +818,7 @@ class _PttHoldGuide extends StatelessWidget {
           duration: _anim,
           curve: Curves.easeOut,
           child: AnimatedSlide(
-            offset: hold
-                ? Offset(lean.dx / _fab, lean.dy / _fab)
-                : Offset.zero,
+            offset: hold ? Offset(lean.dx / _fab, lean.dy / _fab) : Offset.zero,
             duration: _anim,
             curve: Curves.easeOutBack,
             child: AnimatedScale(
@@ -896,9 +889,7 @@ class _LatencyStrip extends StatelessWidget {
     Widget cell(String label, double seconds, int digits) => Column(
       children: [
         Text(
-          seconds <= 0
-              ? '–'
-              : '${seconds.toStringAsFixed(digits)}s',
+          seconds <= 0 ? '–' : '${seconds.toStringAsFixed(digits)}s',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
             color: seconds <= 0 ? Theme.of(context).disabledColor : null,
           ),
@@ -915,7 +906,8 @@ class _LatencyStrip extends StatelessWidget {
         color: done ? Colors.green : Theme.of(context).disabledColor,
       ),
     );
-    final lit = assistant.hopReply; // the PC wakes when the first byte back lands
+    final lit =
+        assistant.hopReply; // the PC wakes when the first byte back lands
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1090,8 +1082,13 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // (same math the ticker label always used, now exposed) and falls
     // back to the bridge's preview/input figures while nothing ticks.
     final out = a.tokensOut;
-    final inTok = a.tokensIn > 0 ? a.tokensIn : a.contextIn;
-    final meter = '${(out > 0 || inTok > 0) ? '${_fmtTok(out)} out · ${_fmtTok(inTok)} in · ' : ''}${secs}s';
+    // +93: `in` is the TURN'S DELTA (growth since this turn anchored),
+    // not the raw context — the whole-conversation figure belongs to
+    // the context bar alone; billing it to the meter made every turn
+    // look like it consumed the entire conversation.
+    final inTok = a.tokensIn;
+    final meter =
+        '${(out > 0 || inTok > 0) ? '${_fmtTok(out)} out · ${_fmtTok(inTok)} in · ' : ''}${secs}s';
     // The frozen frame is also dimmed: motion OR color, never neither,
     // is the honest way to say "the agent is not churning right now".
     // Same rule as the tick guard and the pure-playback hide: a still-
@@ -1099,7 +1096,8 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // live through its own voice.
     final talking =
         a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
-    if (talking) return const SizedBox.shrink(); // pure playback: voice is the status
+    if (talking)
+      return const SizedBox.shrink(); // pure playback: voice is the status
     // The thinking, spelled out — and the answer painted before it is
     // spoken — ride a THIRD line when the bridge streamed them (max two
     // lines so a rambling thought never shoves the chat around).
@@ -1113,9 +1111,7 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
           children: [
             Text(
               _wheel[_frame],
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 // settled = frozen AND dimmed: motion or color, never
                 // neither (the +57 honesty rule, extended to the new
                 // resting state).
