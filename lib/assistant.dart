@@ -471,6 +471,10 @@ class VoiceAssistant extends ChangeNotifier {
   int _tokOut = 0; // last bridge-sent output figure (est or exact)
   int _tokIn = 0; // context tokens from the same frame
   String _tokKind = ''; // 'thinking' | 'answering' | 'calling X' | ''
+  String _tokThought = ''; // rolling tail of the LIVE thinking text — the
+  // `thought` field the tally frames carry while kind is 'thinking';
+  // cleared the moment kind moves off, so an answered turn never shows
+  // the deliberations that got it there.
   DateTime? _tokAt; // when the last tally frame landed
   double _tokRate = 0; // learned tok/s (0 = nothing learned yet)
   bool _tokLive = false; // ticking ONLY between a `tokens` frame and a
@@ -480,6 +484,13 @@ class VoiceAssistant extends ChangeNotifier {
 
   bool get tokenTickerOn =>
       _tokLive && _tokAt != null && (_tokOut > 0 || _tokIn > 0);
+
+  /// The live thought tail the spinner paints under its working line —
+  /// non-empty only while the tally says 'thinking' and the bridge
+  /// actually streamed thinking (the plain word remains honest when
+  /// the model thinks silently: kind 'thinking', thought '').
+  String get tokenThought =>
+      _tokLive && _tokKind == 'thinking' ? _tokThought : '';
 
   /// The growing label. Only meaningful while [tokenTickerOn]; the
   /// spinner asks the assistant for it on every one of its 120 ms
@@ -521,6 +532,7 @@ class VoiceAssistant extends ChangeNotifier {
     _tokOut = out;
     if (ev.inputTokens > 0) _tokIn = ev.inputTokens;
     _tokKind = ev.toolKind;
+    _tokThought = ev.toolKind == 'thinking' ? ev.thought : '';
     _tokAt = now;
     _tokLive = true;
     // The stepped label also feeds the plain status strip (everything
@@ -658,6 +670,7 @@ class VoiceAssistant extends ChangeNotifier {
     _status = status ?? 'Asking the bridge…';
     _tokLive = false; // counters belong to a turn; this one's tally
     _tokKind = ''; // starts at its first frame (bridge resets too)
+    _tokThought = '';
     notifyListeners();
     _warmUpRoute(); // hold the output route while the harness thinks
     _replyQueue.clear();
@@ -1141,6 +1154,7 @@ class VoiceAssistant extends ChangeNotifier {
           _contextIn = 0;
           _tokIn = _tokOut = 0;
           _tokKind = '';
+          _tokThought = '';
           _tokLive = false;
           _tokRate = 0;
           notifyListeners();
@@ -1936,6 +1950,7 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _tokLive = false;
     _tokKind = '';
+    _tokThought = '';
     _phase = AssistantPhase.transcribing;
     _status = 'Reattached — working…';
     notifyListeners();

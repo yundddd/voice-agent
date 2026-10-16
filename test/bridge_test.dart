@@ -66,6 +66,25 @@ void main() {
       },
     );
 
+    test('tokens tally frames carry the live thinking tail', () async {
+      final evs = await parse([
+        'event: tool',
+        'data: ${jsonEncode({
+                'name': 'tokens',
+                'detail': 'thinking · 40 out · 21k in',
+                'out': 40,
+                'in': 21000,
+                'kind': 'thinking',
+                'thought': 'checking the failing test first',
+              })}',
+        '',
+      ]);
+      final e = evs.single;
+      expect(e.toolName, 'tokens');
+      expect(e.toolKind, 'thinking');
+      expect(e.thought, 'checking the failing test first');
+    });
+
     test('done with isError surfaces the failure flag', () async {
       final evs = await parse([
         'event: done',

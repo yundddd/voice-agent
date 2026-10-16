@@ -942,7 +942,7 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     final shownIn = live ? 0 : a.contextIn;
     final line = '$label${shownIn > 0 ? '  ·  ${_fmtTok(shownIn)} in' : ''}'
         '  ·  ${secs}s  ·  tap Stop to interrupt';
-    return Row(
+    final working = Row(
       children: [
         Text(
           _wheel[_frame],
@@ -959,6 +959,34 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
             ).textTheme.labelMedium?.copyWith(
               color: scheme.onSurfaceVariant,
               fontFamily: live || shownIn > 0 ? 'monospace' : null,
+            ),
+          ),
+        ),
+      ],
+    );
+    // The thinking, spelled out: while the tally says 'thinking' AND the
+    // bridge streamed thinking text, the rolling tail of the thought
+    // renders as a second line under the working line — proof of life
+    // with words instead of a spinner pretending to be patient. Silent
+    // thinkers (no thinking deltas, or the model just answers) keep the
+    // line alone: kind 'thinking' with no thought is still the honest
+    // state for the pre-first-token interval (prefill) the census logs.
+    // Max two lines so a rambling thought never shoves the chat around.
+    final thought = a.tokenThought;
+    if (thought.isEmpty) return working;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        working,
+        Padding(
+          padding: const EdgeInsets.only(left: 34, top: 2),
+          child: Text(
+            thought,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontStyle: FontStyle.italic,
             ),
           ),
         ),

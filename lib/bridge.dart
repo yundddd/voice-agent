@@ -24,6 +24,7 @@ class BridgeEvent {
     this.contextWindow = 0,
     this.outTokens = 0,
     this.toolKind = '',
+    this.thought = '',
   });
 
   /// 'say' | 'tool' | 'context' | 'done' | 'error'.
@@ -53,6 +54,12 @@ class BridgeEvent {
   final int outTokens;
   final String toolKind;
 
+  /// For 'tool {name:tokens}' while [toolKind] is 'thinking': a rolling
+  /// one-line tail (~160 chars) of the model's LIVE thinking text — the
+  /// words behind the word "thinking". Empty when not thinking, or when
+  /// the model simply answers.
+  final String thought;
+
   /// A complete assistant message — feed straight into the TTS path.
   bool get isSay => kind == 'say';
   bool get isDone => kind == 'done';
@@ -80,6 +87,7 @@ class BridgeEvent {
           inputTokens: n is num ? n.toInt() : 0,
           outTokens: o is num ? o.toInt() : 0,
           toolKind: '${data['kind'] ?? ''}',
+          thought: '${data['thought'] ?? ''}',
         );
       case 'context':
         final n = data['in'], w = data['window'];

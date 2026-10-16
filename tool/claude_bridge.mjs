@@ -25,7 +25,11 @@
 //                corrected to the CLI's exact usage as each message
 //                closes), carrying numeric {out,in,kind} fields beside
 //                the display string so the phone can grow the counter
-//                between relays at the rate the relays taught it. If the
+//                between relays at the rate the relays taught it — and,
+//                while kind is 'thinking', a one-line `thought`: a
+//                rolling ~160-char tail of the model's live thinking
+//                text, so the phone shows WHAT it is thinking instead
+//                of only claiming that it is. If the
 //                HEARD view of a model-side (no tool open) turn relays
 //                nothing for --tok-heartbeat ms (default 5000; 0 = off),
 //                the keep-pinger pushes the tally anyway marked
@@ -120,23 +124,29 @@
 // Latency note: context size IS per-utterance latency for THIS harness,
 // but not for the reason first written here. The serving stack (sglang
 // behind an Anthropic-compat translation proxy) HAS a working prefix
-// (radix) cache — the server logs prove it: intra-turn tool-loop calls
-// hit `#cached-token: 349k+` with 64–448-token incremental prefills. It
-// simply never reaches this client: (a) the translation layer reports
-// cache_read=0 structurally, so the census's time-to-first-partial is
-// the only cache report we get; (b) probe-verified: the Claude Code CLI
-// re-emits system/init and re-renders the whole request on EVERY user
-// message (same process, no respawn) — the re-serialized prefix is not
-// byte-identical to the previous turn's, so every cross-turn voice
-// utterance misses the cache and pays full prefill — one 'hello' at
-// 150k context ≈ 9 s to first token, every time, background/foreground
-// irrelevant; (c) the hybrid linear-attention model caches only a few
-// prefix branches (mamba state slots), so a second concurrent session
-// on the GPU flushes the radix tree (observed: full usage 0.37 → 0.02)
-// and even a stable prefix re-prefills once after a flush. Practical
-// rule: keep context small (the bar above the talk button shows the
-// number that IS your latency); /compact pays the same full prefill
-// once, then turns are cheap until the session grows again.
+// (radix) cache, and cross-turn reuse IS attainable: controlled replays
+// proved a byte-identical request HITS (0.33 s for a 46k prompt) even
+// after 20 s gaps and with a foreign ~11k request landing every few
+// seconds — a MISS can therefore only mean the request bytes changed
+// early in the prompt. Captured turn bodies named the movers: the CLI's
+// EXPERIMENTAL BETAS (a per-turn 400+retry over `thinking.display:
+// "updates"`, and a history envelope the beta transcript-reload path
+// re-renders from array to string mid-prompt, forking the radix at
+// token ~1.5k). Both vanish under CLAUDE_CODE_DISABLE_EXPERIMENTAL_
+// BETAS=1, which spawnClaude pins (see the comment there). What remains
+// suspect per-turn is the harness's own environment-context collection
+// (a git-status snapshot: this agent edits the repo it runs IN, so the
+// snapshot legitimately churns between voice turns) — --dump-requests
+// DIR captures the live child's real bodies so any future MISS is
+// diffed, not argued. The compat layer reports cache_read=0
+// structurally either way, so the [census] line's time-to-first-partial
+// verdict is the measurement. Footnote: the hybrid linear-attention
+// server caches only a few prefix branches (max_mamba_cache_size=10 on
+// this launch), so a second concurrent LONG session can still evict
+// this one's state between turns; and /compact pays one full re-prefill
+// before cheapness returns. Practical rule: the context bar above the
+// talk button shows the number that IS your latency; /new and /compact
+// stay the user's manual levers.
 //
 // Voice events are derived from the raw stream-json: assistant text
 // arrives as it closes (no token deltas — the TTS wants whole sentences),
@@ -144,7 +154,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -181,19 +191,22 @@ const sysPrompt =
 // free, network tools denied) or dontAsk (locked-down) if the voice ever
 // stops being the only trigger.
 const permMode = arg('permission-mode', 'bypassPermissions');
-// NOTE on the model behind this bridge: the serving stack HAS prefix
-// (radix) caching — the server logs show intra-turn hits of 300k+
-// cached tokens — but it never helps ACROSS voice utterances: the CLI
-// re-renders its request every user message (per-turn system/init,
-// probe-verified) so the prompt prefix is never byte-stable, and the
-// Anthropic-compat layer reports cache_read=0 regardless. Context size
-// therefore still translates one-to-one into per-utterance latency:
-// a 128k-token chat pays ~10 s even for "hello", a 30k chat ~2.5 s.
-// The bridge does not force this on the session: /new and /compact
-// stay the user's manual levers (the app shows the chip; the context
-// bar right above the talk button shows the number that matters). The
-// [census] line's time-to-first-partial verdict makes each turn's
-// hit-or-miss measurable from the journal instead of this folklore.
+// --dump-requests DIR: a transparency tap in front of THIS bridge's CLI
+// child. When set, spawnClaude repoints the child at a local forwarding
+// proxy via inline --settings (whose env block outranks the user's
+// ~/.claude/settings.json — verified 2026-10-16, which is also why a
+// plain env override does NOT work), the proxy records every body it
+// relays to the real configured base URL, and streams the response
+// through untouched (SSE included). A MANIFEST in the dump dir marks
+// what the bridge wrote to stdin and when, so files pair with turns.
+// Purpose: when the census says MISS, the two offending turn bodies are
+// on disk and the diff names the volatile bytes — no more theorizing.
+const dumpDir = arg('dump-requests', null);
+
+// NOTE on the model behind this bridge: see the header latency note —
+// request-byte stability, not server caprice, is what decides whether a
+// turn pays its context's prefill; the [census] line's verdict plus
+// --dump-requests turn that from folklore into measurement.
 
 // -- claude child process: one per /new, kept alive across /talk ----------
 let child = null;       // claude process
@@ -237,6 +250,14 @@ let tokLastMsgOut = 0; // output tokens of the most recent message (for
 // so last call's input + last message's output IS tomorrow's context)
 let tokChars = 0;     // delta chars since the last exact figure
 let tokKind = '';     // 'thinking' | 'answering' | 'calling X'
+// The tail of the model's live thinking text (extended thinking). The
+// spinner's "thinking" word is only a CLAIM — the honest display is the
+// thought itself, so the growing text rides the tally frame as
+// `thought` (last ~160 chars, one line: the phone shows a rolling
+// window, not the whole chain of thought). A rolling cap keeps the
+// frame small no matter how long the model rambles.
+let thinkBuf = '';    // last ~400 chars of thinking deltas
+const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 let tokSentAt = 0;    // relay throttle clock
 // Quiet-token heartbeat period: after this many ms with nothing relayed
 // to the heard view (no deltas, no settles), the keep-pinger re-sends
@@ -351,9 +372,69 @@ const tokFrame = (out, {quiet = false} = {}) => {
     name: 'tokens',
     detail: parts.join(' · '),
     out: o, in: inTok, kind: tokKind,
+    ...(tokKind === 'thinking' && thinkTail(160)
+      ? {thought: thinkTail(160)} : {}),
     ...(quiet ? {quiet: true} : {}),
   };
 };
+
+// The --dump-requests tap: see the flag NOTE up top for why. Forwards to
+// the base URL the user's settings.json configures (the tap exists to
+// OBSERVE the wire, not to change where it lands), streams responses
+// straight through so SSE timing is untouched, and numbers bodies in
+// arrival order. 400s and count_tokens calls pass through un-dumped
+// (count_tokens bodies are prompt previews, not requests; the 400 pair
+// would double every capture).
+let tapStarted = false, dumpN = 0;
+function startDumpTap() {
+  if (tapStarted) return;
+  tapStarted = true;
+  mkdirSync(dumpDir, { recursive: true });
+  let base = 'https://api.anthropic.com';
+  try {
+    const s = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8'));
+    if (s.env && s.env.ANTHROPIC_BASE_URL) base = s.env.ANTHROPIC_BASE_URL;
+  } catch {}
+  const origin = new URL(base).origin;
+  http.createServer((req, res) => {
+    const parts = [];
+    req.on('data', c => parts.push(c));
+    req.on('end', async () => {
+      const body = Buffer.concat(parts);
+      if (req.method === 'POST' && req.url.includes('/v1/messages') &&
+          !req.url.includes('count_tokens')) {
+        dumpN += 1;
+        const f = join(dumpDir, 'req-' + String(dumpN).padStart(3, '0') +
+          '-' + Date.now() + '.json');
+        try { writeFileSync(f, body); } catch {}
+        console.error('  [dump] #' + dumpN + ' ' + f);
+        if (dumpN > 120) {  // bound the dir: delete the oldest captures
+          try {
+            const olds = readdirSync(dumpDir).filter(n => n.startsWith('req-'))
+              .sort().slice(0, dumpN - 120);
+            for (const n of olds) rmSync(join(dumpDir, n), { force: true });
+          } catch {}
+        }
+      }
+      try {
+        const r = await fetch(origin + req.url, {
+          method: req.method,
+          headers: Object.fromEntries(Object.entries(req.headers)
+            .filter(([k]) => !['host', 'connection', 'content-length'].includes(k))),
+          body: (req.method === 'GET' || req.method === 'HEAD') ? undefined : body,
+          duplex: 'half',
+        });
+        res.writeHead(r.status, Object.fromEntries(r.headers));
+        if (r.body) {
+          const { Readable } = await import('node:stream');
+          Readable.fromWeb(r.body).pipe(res);
+        } else res.end();
+      } catch (e) { res.writeHead(502).end(String(e)); }
+    });
+  }).listen(port + 1, '127.0.0.1', () =>
+    console.error('  [dump] tap on 127.0.0.1:' + (port + 1) + ' -> ' +
+      origin + ', bodies in ' + dumpDir));
+}
 
 function spawnClaude(resume) {
   const args = ['-p', '--input-format', 'stream-json',
@@ -363,6 +444,13 @@ function spawnClaude(resume) {
     '--include-partial-messages',
     '--permission-mode', permMode,
     '--append-system-prompt', sysPrompt];
+  if (dumpDir) {
+    startDumpTap();
+    args.push('--settings', JSON.stringify({env: {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:' + (port + 1),
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
+    }}));
+  }
   if (resume) args.push('--resume', resume);
   console.error('  [claude] spawn (resume=' +
     (resume ? resume.slice(0, 8) : 'none — fresh session') + ')');
@@ -449,11 +537,17 @@ function handleEvent(line) {
       relay('context', { in: tokIn, window: ctxWindow });
     } else if (e.type === 'content_block_start') {
       const b = e.content_block ?? {};
+      // A fresh thinking block starts the rolling window over: the
+      // phone only ever shows the CURRENT thought, never an old one.
+      if (b.type === 'thinking') thinkBuf = '';
       tokKind = b.type === 'thinking' ? 'thinking'
         : b.type === 'tool_use' ? `calling ${b.name ?? 'tool'}`
         : b.type === 'text' ? 'answering' : tokKind;
     } else if (e.type === 'content_block_delta') {
       const d = e.delta ?? {};
+      if (typeof d.thinking === 'string' && d.thinking) {
+        thinkBuf = (thinkBuf + d.thinking).slice(-400);
+      }
       const n = (d.text ?? d.thinking ?? d.partial_json ?? '').length;
       tokChars += n; census.deltaChars += n;
     } else if (e.type === 'message_delta') {
@@ -617,6 +711,23 @@ function handleEvent(line) {
           spokenTools.add(c.id);
           relay('tool', { name: c.name, detail: summarize(c) });
         }
+        if (c.type === 'thinking' && typeof c.thinking === 'string' &&
+            c.thinking && census.deltaChars === 0) {
+          // This upstream sends no partials at all (the census says so),
+          // so the snapshot's full thinking block is the only live view
+          // the thought ever gets: feed the same rolling window the
+          // deltas would have filled and push a tally frame, throttled
+          // like every other relay.
+          const tailNow = c.thinking.slice(-400);
+          if (tailNow !== thinkBuf && Date.now() - tokSentAt >= 800) {
+            thinkBuf = tailNow;
+            tokSentAt = Date.now();
+            if (curRes) {
+              sse(curRes.res, 'tool',
+                tokFrame(tokOutExact + Math.floor(tokChars / 4)));
+            }
+          }
+        }
       }
       break;
     }
@@ -689,6 +800,12 @@ function writeUserMsg(text) {
           message: { role: 'user',
             content: [{ type: 'text', text }] } };
   child.stdin.write(JSON.stringify(msg) + '\n');
+  if (dumpDir) {
+    try {
+      appendFileSync(join(dumpDir, 'MANIFEST'), new Date().toISOString() +
+        ' stdin ' + (text.length > 70 ? text.slice(0, 70) + '…' : text) + '\n');
+    } catch {}
+  }
 }
 function summarize(tool) {
   const i = tool.input ?? {};
@@ -708,6 +825,12 @@ function summarize(tool) {
 // fast queue flush, not a warm prefix (see the header latency note).
 function interruptTurn() {
   if (!child || childDead) return;
+  if (dumpDir) {
+    try {
+      appendFileSync(join(dumpDir, 'MANIFEST'),
+        new Date().toISOString() + ' interrupt\n');
+    } catch {}
+  }
   try {
     child.stdin.write(JSON.stringify({
       type: 'control_request', request_id: randomUUID(),
@@ -728,6 +851,7 @@ function beginTurn(text, res, keep) {
   spokenTexts.clear();
   census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
+  thinkBuf = ''; // no thought survives into the next turn
   // Provisional until the first content_block_start relabels it to truth
   // ('answering', 'calling Bash'): between the prompt landing and the
   // first visible token, 'thinking' IS the honest state — and on an
