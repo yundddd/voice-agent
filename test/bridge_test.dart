@@ -152,6 +152,26 @@ void main() {
     });
   });
 
+  group('ring frame parsing', () {
+    test('parseMap decodes a {seq,ev,data} ring frame like an SSE one', () {
+      final e = BridgeEvent.parseMap('tool', {
+        'name': 'Bash',
+        'detail': 'sleep 6',
+        '_ts': 1234567,
+      });
+      expect(e.kind, 'tool');
+      expect(e.toolName, 'Bash');
+      expect(e.detail, 'sleep 6');
+      expect(e.wireMs, 1234567);
+    });
+
+    test('parseMap without the bridge stamp leaves wireMs zero', () {
+      final e = BridgeEvent.parseMap('say', {'text': 'ok'});
+      expect(e.kind, 'say');
+      expect(e.wireMs, 0);
+    });
+  });
+
   group('reattach decision', () {
     test('an open turn always deserves a reattach (view-steal included)', () {
       // Server still working: attach rejoins live — and when the bridge

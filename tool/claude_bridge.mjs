@@ -412,7 +412,22 @@ const sse = (res, ev, data) => {
 // or the backlog for a future /attach. Transient frames (the ~0.8 s token
 // tally, the ctx preview) stay live-only: a reattaching phone re-derives
 // them, and a backlog of counters is noise, not memory.
+// Monotonic event ring for the PULL transport (GET /poll): the cellular
+// path holds server-initiated bytes for seconds (measured wire ages
+// 8–14 s, frames surfacing only when the next big burst dragged them
+// out) while the phone's own outbound POSTs land in milliseconds — that
+// asymmetry IS the diagnosis, so a robust client pulls: every poll is an
+// outbound request whose response the path cannot coalesce into
+// silence. Every relayed event rides the ring with a sequence number IN
+// ADDITION to the live SSE stream (both transports coexist); the poll
+// cursor is each client's own reattach state.
+const RING_CAP = 2000;
+const ring = [];
+let ringSeq = 0;
 const relay = (ev, data) => {
+  data._ts ??= Date.now();
+  ring.push({seq: ++ringSeq, ev, data});
+  if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
   if (curRes) { sse(curRes.res, ev, data); return; }
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
@@ -885,16 +900,20 @@ function startKeep(res) {
           tokOutExact + Math.floor(tokChars / 4),
           {quiet: tokChars === 0 && tokOutExact === 0}));
       }
-      res.write(': ping\n\n');
+      // Padded like every other frame: a bare ': ping' is exactly the
+      // small, isolated write the cellular path coalesces into silence —
+      // the receipts proved 2 s pings and 1.3 KB padding each alone
+      // insufficient, so the ping is now BOTH frequent AND fat.
+      res.write(': ' + 'p'.repeat(1300) + '\n\n');
     } catch {}
-  // Ping cadence, was 5 s: a lone frame on a lossy tailscale-over-cellular
-  // path can stall in a retransmit backoff until the NEXT write drags the
-  // backlog out — measured as tool lines landing in one burst at turn end
-  // (phone journal: bridge wrote them seconds apart, the app parsed them
-  // 5 ms apart while attached). A 2 s comment cadence keeps a retransmit
-  // pressure on the link for ~7 bytes a tick; the quiet-TALLY heartbeat
-  // keeps its slower HEARTBEAT_MS clock, so nothing gets spoken more.
-  }, Math.min(HEARTBEAT_MS || 15000, 2000));
+  // While a turn is OPEN the pinger runs every 150 ms (~8.7 KB/s): the
+  // cellular radio's dormancy timer and the TUN batcher both feed on
+  // quiet gaps, and a tool run is exactly a multi-second gap waiting to
+  // swallow a lone frame (wire ages measured 8–14 s at turn close even
+  // with 2 s pings and padded frames). Continuous fat writes give them
+  // nothing to coalesce; the steady dribble outlives the turn's lulls.
+  // Outside an open turn, back to the slow heartbeat cadence.
+  }, turnOpen ? 150 : Math.min(HEARTBEAT_MS || 15000, 2000));
 }
 // End the ATTACHED *view* of a turn. This deliberately does NOT clear
 // turnOpen: when the phone hangs up mid-turn the turn itself keeps
@@ -993,7 +1012,7 @@ function beginTurn(text, res, keep) {
   // before the upstream has proved anything. Whether the number then
   // MOVES is what the census reports at the result; either way the
   // spinner never reads as ignored.
-  sse(res, 'tool', tokFrame(0));
+  relay('tool', tokFrame(0)); // ring too: poll clients see every frame
   writeUserMsg(text);
 }
 // A queued prompt got its slot: hand over the floor the moment the
@@ -1003,7 +1022,17 @@ function flushPending() {
   if (!pending) return;
   const p = pending;
   pending = null;
-  if (p.res.writableEnded) { endKeep(p); return; } // phone abandoned its queued prompt
+  if (p.res.writableEnded && !p.poll) { endKeep(p); return; } // phone abandoned its queued prompt
+  if (p.poll) {
+    // Queued POLL prompt: its POST response was closed at queue time, so
+    // the turn starts against a mute socket — every frame simply rings —
+    // and one endTurn() detaches the view the same tick it appeared.
+    const mute = { write: () => true, end: () => {}, on: () => {} };
+    endKeep(p);
+    beginTurn(p.text, mute, 0);
+    endTurn();
+    return;
+  }
   beginTurn(p.text, p.res, p.keep); // pinger rides on into the new turn
 }
 // [the phone's ear] is pressed to it) or only a BACKGROUNDED turn is
@@ -1018,7 +1047,7 @@ function flushPending() {
 // natural end first. Either way a long-running OPEN tool is left to
 // finish: letting it complete is the entire point of backgrounding, and
 // /stop still hard-stops it.
-function talk(text, res, interrupt = true) {
+function talk(text, res, interrupt = true, poll = false) {
   // SSE comment pinger + quiet-token heartbeat (see startKeep): a
   // 3-minute gradle build emits nothing, and idle-detection on the link
   // (NAT, tailscale, Dart clients — including the app's 24 s quiet-wire
@@ -1040,7 +1069,7 @@ function talk(text, res, interrupt = true) {
     // the queue; whichever event frees the floor (the attached turn's
     // `result` closes its stream, or the backgrounded one's) flushes it.
     if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); }
-    pending = { res, text, keep };
+    pending = { res, text, keep, poll, interrupt };
     sse(res, 'tool', {
       name: 'queued',
       detail: openTools.size
@@ -1050,7 +1079,20 @@ function talk(text, res, interrupt = true) {
           ? 'cutting the thinking turn short; your message goes next'
           : 'finishing the current turn; your message goes next',
     });
+    // Poll client: the queue notice is its confirmation — the turn's own
+    // frames arrive through the ring when flushPending gives it the floor.
+    if (poll) { try { res.end(); } catch {} }
     if (interrupt && !openTools.size) interruptTurn();
+    return;
+  }
+  if (poll) {
+    // Pull transport: begin the turn streaming into this response for the
+    // first couple of frames, close, and background it — from there every
+    // relay lands in the ring (and the /attach backlog) for the phone to
+    // fetch with its next outbound GET.
+    beginTurn(text, res, keep);
+    try { res.end(); } catch {}
+    endTurn();
     return;
   }
   beginTurn(text, res, keep);
@@ -1283,7 +1325,24 @@ const server = http.createServer((req, res) => {
       // the first result names them): lets a phone that missed the live
       // events still fill its context bar.
       context: lastCtx,
+      // Pull transport available: GET /poll?since=N drains the ring from
+      // the caller's cursor. {ring: newest seq, min: oldest retained} —
+      // a client whose cursor rolled off jumps to min, not to zero.
+      poll: {ring: ringSeq, min: ring.length ? ring[0].seq : ringSeq},
     }));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/poll') {
+    // The PULL transport companion to the event ring: {seq,events} since
+    // the caller's cursor, oldest first. Each poll is an OUTBOUND request
+    // from the phone's perspective — the one direction the cellular path
+    // demonstrably never stalls (journal pushes ack in ms while pushed
+    // frames sat 8–14 s), so event latency becomes one round trip.
+    const since = Math.max(0, Number(url.searchParams.get('since') || 0));
+    const evs = ring.filter((e) => e.seq > since).slice(0, 300);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ok: true, now: Date.now(), seq: ringSeq,
+      min: ring.length ? ring[0].seq : ringSeq, events: evs}));
     return;
   }
   if (req.method === 'GET' && url.pathname === '/attach') {
@@ -1332,7 +1391,10 @@ const server = http.createServer((req, res) => {
         'cache-control': 'no-cache', connection: 'keep-alive' });
       // ?interrupt=0 = the polite queue (PTT slide-right): let the turn
       // in flight finish instead of interrupting a thinking-only one.
-      talk(body.trim(), res, url.searchParams.get('interrupt') !== '0');
+      // ?poll=1 = pull transport: the response carries the first frames
+      // and closes; the rest of the turn rides the ring to GET /poll.
+      talk(body.trim(), res, url.searchParams.get('interrupt') !== '0',
+        url.searchParams.get('poll') === '1');
     } else if (url.pathname === '/stop') {
       // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
       // the phone is still listening to it or backgrounded it. Context

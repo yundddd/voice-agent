@@ -80,6 +80,11 @@ class BridgeEvent {
   bool get isSay => kind == 'say';
   bool get isDone => kind == 'done';
 
+  /// Ring/poll frame shape: the event name and an already-decoded data
+  /// map — same dispatch as [parse], minus the re-encode round trip.
+  static BridgeEvent parseMap(String event, Map<Object?, Object?> data) =>
+      parse(event, jsonEncode(data));
+
   static BridgeEvent parse(String event, String dataJson) {
     final decoded = tryJson(dataJson);
     if (decoded is! Map) {
@@ -299,6 +304,49 @@ class BridgeClient {
       throw BridgeException('bridge unreachable: $e');
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// Pull transport: POST /talk?poll=1. The response body (first frames
+  /// or a queue notice) is drained and DISCARDED — the ring is the source
+  /// of truth and the caller's cursor gives exactly-once delivery.
+  Future<void> talkPoll(String text, {bool interrupt = true}) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(
+        _u('/talk', {'interrupt': interrupt ? '1' : '0', 'poll': '1'}),
+      );
+      req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
+      req.add(utf8.encode(text));
+      final res = await req.close();
+      await res.drain<void>();
+      if (res.statusCode != 200) {
+        throw BridgeException('bridge said HTTP ${res.statusCode}');
+      }
+    } on BridgeException {
+      rethrow;
+    } on Object catch (e) {
+      throw BridgeException('bridge unreachable: $e');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// GET /poll?since=N → {ok, now, seq, min, events:[{seq,ev,data}]} —
+  /// the monotonic event ring behind every relay. null = unreachable.
+  Future<Map<String, Object>?> poll(int since) async {
+    try {
+      final req = await HttpClient()
+          .getUrl(_u('/poll', {'since': '$since'}))
+          .then((r) => r.close())
+          .timeout(const Duration(seconds: 6));
+      final text = await req.transform(utf8.decoder).join();
+      if (req.statusCode != 200) return null;
+      final j = BridgeEvent.tryJson(text);
+      if (j is! Map) return null;
+      return j.cast<String, Object>();
+    } on Object {
+      return null;
     }
   }
 

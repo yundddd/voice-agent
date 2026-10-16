@@ -814,11 +814,7 @@ class VoiceAssistant extends ChangeNotifier {
 
     _bridgeDetachWake = wakeNow;
     final sub = (events ??
-            () => bridge.talk(
-              utterance,
-              interrupt: interrupt,
-              onActivity: _markWireAlive,
-            ))().listen(
+            () => _bridgeEvents(bridge, utterance, interrupt))().listen(
       q.add,
       onError: (Object e, StackTrace _) {
         streamError = e is BridgeException ? e : BridgeException('$e');
@@ -1759,6 +1755,86 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_beginConversation());
   }
 
+  // ── Pull transport (GET /poll) ─────────────────────────────────────────
+  // Measured on the live wire: frames the bridge PUSHES sit seconds in
+  // the cellular path (wire ages of 8–14 s, surfacing only in the
+  // turn-close burst — even padded, even pinged), while frames the phone
+  // PULLS arrive every time in a round trip (the journal's own outbound
+  // POSTs ack in milliseconds). So when the bridge advertises the event
+  // ring, a turn's events are polled: POST /talk?poll=1 to start, then
+  // GET /poll?since=<cursor> — outbound requests throughout, and the
+  // cursor is a reattach state that can never die.
+  bool _bridgePollCapable = false;
+  int _ringCursor = -1; // -1 = unseeded; else: last ring seq consumed
+
+  Stream<BridgeEvent> _bridgeEvents(
+    BridgeClient bridge,
+    String text,
+    bool interrupt,
+  ) {
+    if (!_bridgePollCapable) {
+      return bridge.talk(
+        text,
+        interrupt: interrupt,
+        onActivity: _markWireAlive,
+      );
+    }
+    return _pollTurn(bridge, text, interrupt);
+  }
+
+  Stream<BridgeEvent> _pollTurn(
+    BridgeClient bridge,
+    String text,
+    bool interrupt,
+  ) async* {
+    if (_ringCursor < 0) {
+      // First pull turn: learn the ring's head BEFORE the POST so the
+      // cursor starts at yesterday's last event, not at the big bang.
+      _healthNote(await bridge.healthInfo());
+      if (_ringCursor < 0) _ringCursor = 0;
+    }
+    await bridge.talkPoll(text, interrupt: interrupt);
+    final deadline = DateTime.now().add(const Duration(minutes: 5));
+    var misses = 0;
+    while (true) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final page = await bridge.poll(_ringCursor);
+      if (page == null) {
+        if (++misses >= 8) {
+          yield BridgeEvent.parse('error', '{"error":"poll unreachable"}');
+          return;
+        }
+        continue;
+      }
+      misses = 0;
+      _markWireAlive();
+      final evs = page['events'];
+      if (evs is List) {
+        for (final f in evs) {
+          if (f is! Map) continue;
+          final seq = f['seq'];
+          if (seq is! num || seq <= _ringCursor) continue;
+          _ringCursor = seq.toInt();
+          final ev = BridgeEvent.parseMap(
+            '${f['ev']}',
+            f['data'] is Map
+                ? f['data'] as Map<Object?, Object?>
+                : const <String, Object>{},
+          );
+          yield ev;
+          if (ev.isDone || ev.kind == 'error') return;
+        }
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        yield BridgeEvent.parse(
+          'error',
+          '{"error":"poll deadline — the turn never said done"}',
+        );
+        return;
+      }
+    }
+  }
+
   /// Record that the bridge socket delivered bytes (event frame or keep-
   /// alive ping): the connection lives, and its watchdog gets a fresh
   /// quiet lease from this moment.
@@ -1863,6 +1939,16 @@ class VoiceAssistant extends ChangeNotifier {
       // Absurd skew = a stalled probe answer or a wild phone clock; keep
       // the last sane value rather than poison the latency column.
       if (skew.abs() < 10 * 60 * 1000) _bridgeSkewMs = skew;
+      // Every probe also negotiates the transport: a bridge with the
+      // event ring gets the pull transport; one without keeps SSE.
+      final p = h['poll'];
+      if (p is Map) {
+        _bridgePollCapable = true;
+        final head = p['ring'];
+        if (_ringCursor < 0 && head is num) _ringCursor = head.toInt();
+      } else {
+        _bridgePollCapable = false;
+      }
     }
     return h == null
         ? 'UNREACHABLE'
