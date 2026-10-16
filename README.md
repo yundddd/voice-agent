@@ -263,6 +263,65 @@ the real turn pays, deliberately: the panel should match what your ears
 hear in production, not a lab best case.
   
 
+## Design: the harness turn lifecycle
+
+One utterance becomes one harness turn, and the phone is allowed to stop
+listening at any moment **without stopping the work**. Four states, named
+the same in the bridge's `/health` and in the app's widgets:
+
+- **HEARD** (`bridgeBusy`): the turn's `/talk` response stream is open and
+  carries every frame live. The spin box — wheel, activity line, token
+  meter (`_HarnessSpinner`) — rides the live-turn bubble.
+- **BACKGROUND** (`harnessBackgrounded`): any press cancels the phone's
+  view; the bridge keeps the turn, relays every frame to its ring, and the
+  appbar badge stays lit as the only proof the work exists. +72 made the
+  *display* survive the detach; +91 made it survive the *queued press*
+  too (the work bubble is the last ASSISTANT entry, `liveTurnFor`, not
+  the literal last entry — the pin rides the card below, out of the flow).
+- **QUEUED** (`pending`): one pin at a time, latest wins. The pin dissolves
+  only on the bridge's explicit `started` frame, emitted at the real
+  pickup (+81) — on the shared ring any older turn's frames would fake the
+  pickup. A queued POST closes its own response at enqueue time by design
+  (pull transport), and that close must NOT drop the prompt (+90) —
+  flushPending's poll branch is its pickup, with the `started` marker
+  relayed ahead of the turn's own frames.
+- **SETTLED**: the `settled` tally frame means the text is final and only
+  audio rendering remains; the wheel freezes and dims immediately (+84),
+  rather than spinning until the socket closes. "Motion OR color, never
+  neither" is the freeze honesty rule; pure playback hides the box, while
+  a still-open turn keeps it live *through its own voice* (the answer can
+  still be generating while the first sentence plays).
+
+**Two transports, one truth.** Cellular paths coalesce server-pushed bytes
+into silence (measured 8–14 s wire ages) while the phone's own outbound
+requests land in milliseconds — so every relayed frame rides BOTH the live
+SSE stream and a monotonic event ring (`GET /poll?since=cursor`, epoch-seeded
+so cursors survive bridge restarts; `GET /attach` + backlog replay for
+reattachment). The phone's cursor is its own reattach state; quiet-wire
+watchdog (24 s) + padded heartbeat frames + 150 ms pings during an open turn
+keep links and NAT tables honest.
+
+**Both machines keep journals, mirrored into one stream.** The app writes a
+seq-numbered lifecycle journal to disk and PUSHES it to the bridge (Android
+tailscale accepts no dials, carrier NAT has no route); the bridge relays
+each new entry to its stderr, so `journalctl -u claude-voice-bridge`
+interleaves the phone's and the desktop's views of the same misbehaving
+turn — every design claim above is field-verifiable from one command.
+Per-turn `[census]` lines report what the upstream actually delivered
+(live deltas / usage-only / none), and say frames are journalled by their
+first forty chars, which is how "spoken twice" and "never spoken" get
+told apart in the log.
+
+**Regression discipline.** Every behavior rule in this section carries the
+version tag of the field report that earned it. Fixes land as: reproduce
+from the journals, extract the decision into a pure function
+(`settleOwed`, `activityLabelFor`, `liveTurnFor`), unit-guard it
+(`tool/sentence_relay.test.mjs`, `test/guards_test.dart` — one test per
+field report), bump the `+N` in pubspec.yaml, and name the number in the
+commit subject. The phone gets the new `+N` via Telegram (`--split-per-abi`
+keeps the arm64 APK under the bot's 50 MB cap); the bridge updates with a
+service restart.
+
 ## Claude Code bridge
 
 The app can put the desktop's Claude Code harness between its ASR and TTS:
