@@ -284,10 +284,20 @@ function relaySentences(blk) {
     // A sentence end = a punctuation run (with trailing quotes/brackets)
     // preceded by a word char and followed by whitespace; the word-char
     // anchor keeps 'main.dart:801' and '3.5' from faking periods.
+    // Take the FIRST legal boundary, not the last: each frame becomes
+    // exactly one sentence, voiced as its own natural bite. The old
+    // last-boundary choice batched every sentence already in the buffer
+    // into one frame, so a long answer landed as a few breathless
+    // multi-sentence blocks — the seams fell wherever the batch happened
+    // to end, not where the prose did. The surrounding loop still emits
+    // one sentence per pass, so a fat delta closes several in order.
     let cut = -1;
     const re = /\S[.!?…]+["')\]]*(?=[ \n])/g;
     for (let m; (m = re.exec(win)) !== null;) {
-      if (m.index + m[0].length >= MIN_SENT_CHARS) cut = m.index + m[0].length;
+      if (m.index + m[0].length >= MIN_SENT_CHARS) {
+        cut = m.index + m[0].length;
+        break;
+      }
     }
     if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
       const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
