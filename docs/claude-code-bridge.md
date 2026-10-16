@@ -99,18 +99,36 @@ closes; tool-heavy tasks speak the narration line early and the summary
 when done). TTS adds ~0.1 × seconds-of-speech. The whole loop lands
 well inside conversational feel.
 
-## Run it at boot (systemd user unit)
+## Run it at boot (installed on this machine: 2026-10-15)
 
-    # ~/.config/systemd/user/claude-voice-bridge.service
+Installed at `~/.config/systemd/user/claude-voice-bridge.service` (linger
+is on, so it runs without an open terminal); token `testtok` to match the
+APK's baked-in default. Rotate = edit `--token` here, rebuild or retype
+the token in the app's Bridge screen.
+
     [Unit]
     Description=Voice agent -> Claude Code bridge
+    After=network-online.target
+    Wants=network-online.target
+
     [Service]
-    ExecStart=/usr/bin/node %h/voice-agent/tool/claude_bridge.mjs --dir %h/voice-agent --token CHANGE_ME
+    # /snap/bin: the harness's Bash tool needs flutter/dart for the
+    # test/build chips; ~/.local/bin: the claude launcher itself.
+    Environment=PATH=/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin:/home/tim/.local/bin
+    Environment=LD_LIBRARY_PATH=/home/tim/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64
+    ExecStart=/usr/bin/node /home/tim/voice-agent/tool/claude_bridge.mjs --dir %h/voice-agent --token testtok
     Restart=always
-    Environment=BRIDGE_TOKEN=CHANGE_ME
+    RestartSec=3
+
     [Install]
-    WantedBy=default linger
-    # systemctl --user enable --now claude-voice-bridge && loginctl enable-linger $USER
+    WantedBy=default.target
+
+    # systemctl --user daemon-reload && systemctl --user enable --now claude-voice-bridge
+    # journalctl --user -u claude-voice-bridge -f      # live claude stderr/EVT lines
+
+On restart the bridge re-`--resume`s the last session id automatically
+(saved to `<dir>/.claude_bridge_session`), so the voice conversation
+survives bridge and machine reboots too.
 
 ## Open questions for the user
 

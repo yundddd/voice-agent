@@ -68,7 +68,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
             controller: _url,
             decoration: const InputDecoration(
               labelText: 'Bridge URL',
-              hintText: 'http://192.168.1.20:8732  (or tailscale http://100.x.y.z:8732)',
+              hintText: 'http://135.180.96.71:8732  (or tailscale http://100.99.240.112:8732)',
               border: OutlineInputBorder(),
               helperText: 'Plain http works on your LAN/tailnet — the bridge '
                   'is LAN-only by convention and carries a shared token.',

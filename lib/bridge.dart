@@ -214,15 +214,23 @@ String cleanForSpeech(String t) {
 }
 
 /// Persisted bridge settings (mirrors the tts_prefs.json pattern).
+/// The field defaults ship pointing at the dev machine's always-on demo
+/// bridge (tailscale IP, port 8732, --token testtok): a fresh install
+/// gets working command chips with zero typing — the Tailscale app on
+/// the phone is the only prerequisite (or swap the url for the LAN ip).
+/// Saved-but-explicitly-empty strings still mean "the user cleared it".
 class BridgePrefs {
-  BridgePrefs({this.url = '', this.token = ''});
+  static const defaultUrl = 'http://100.99.240.112:8732';
+  static const defaultToken = 'testtok';
+
+  BridgePrefs({this.url = defaultUrl, this.token = defaultToken});
   String url, token;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
 
   Map<String, Object> toJson() => {'url': url, 'token': token};
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
-    url: (j['url'] as String? ?? '').trim(),
-    token: (j['token'] as String? ?? ''),
+    url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
+    token: j['token'] as String? ?? BridgePrefs.defaultToken,
   );
 }
 

@@ -106,16 +106,25 @@ void main() {
   });
 
   group('prefs', () {
-    test('round-trips and the configured flag needs both halves', () {
+    test('ship preconfigured: defaults are the dev-machine demo bridge', () {
+      expect(BridgePrefs().configured, isTrue); // fresh install = chips visible
+      expect(BridgePrefs().url, BridgePrefs.defaultUrl);
+      expect(BridgePrefs().token, 'testtok');
+    });
+
+    test('round-trips, and cleared fields stay cleared', () {
       final p = BridgePrefs.fromJson(
         BridgePrefs(url: 'http://100.1.2.3:8732/', token: 't').toJson(),
       );
       expect(p.configured, isTrue);
+      expect(p.url, 'http://100.1.2.3:8732/');
+      // A saved empty token (user cleared it) must NOT resurrect the default:
       expect(
         BridgePrefs.fromJson({'url': 'http://x', 'token': ''}).configured,
         isFalse,
       );
-      expect(BridgePrefs().configured, isFalse);
+      // A prefs file missing whole keys falls back to the defaults:
+      expect(BridgePrefs.fromJson({'url': 'http://x'}).configured, isTrue);
     });
   });
 }
