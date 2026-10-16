@@ -279,6 +279,9 @@ const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 // and none is dropped). The remainder logic in the assistant-snapshot
 // path keeps the no-partials fallback exactly the old block-close
 // behavior.
+let curMsg = null;      // {blocks: {}, seq} for the LIVE message
+let lastTextBlk = null; // newest live text block (the draft frame's view)
+let lastTextOpen = false; // and whether it can still receive deltas
 // The cutter itself moved to sentence_relay.mjs (unit-tested). This
 // wrapper only supplies the ring/stdio side: one say frame per
 // sentence, journalled by its first 40 chars.
