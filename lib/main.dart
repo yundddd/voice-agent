@@ -236,9 +236,21 @@ class _AssistantScreenState extends State<AssistantScreen>
                           color: scheme.secondaryContainer,
                           child: Padding(
                             padding: const EdgeInsets.all(16),
-                            child: SelectableText(
-                              a.lastReply,
-                              style: Theme.of(context).textTheme.bodyLarge,
+                            // The answer in REPLY SECTIONS: one block per
+                            // harness message, rules between them, instead
+                            // of one run-on blob the length of a README.
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final (i, s) in a.replySections.indexed) ...[
+                                  if (i > 0) const Divider(height: 28),
+                                  SelectableText(
+                                    s,
+                                    style:
+                                        Theme.of(context).textTheme.bodyLarge,
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         ),

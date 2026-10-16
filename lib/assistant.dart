@@ -60,8 +60,9 @@ class VoiceAssistant extends ChangeNotifier {
   String _lastSpoken = '';
   // The bridge answer as it streams in, kept for the UI: _lastSpoken only
   // lands at the very end of a turn (echo-guard bookkeeping), so quoting
-  // the reply never appeared on screen.
-  String _lastReply = '';
+  // the reply never appeared on screen. One entry per say event, so the
+  // card can render the answer in sections instead of one run-on blob.
+  final List<String> _replySections = <String>[];
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
@@ -158,8 +159,13 @@ class VoiceAssistant extends ChangeNotifier {
   String get status => _status;
   String get transcript => _transcript;
 
-  /// The bridge answer being spoken this turn (grows as `say` events land).
-  String get lastReply => _lastReply;
+  /// The bridge answer being spoken this turn, split into sections: one
+  /// entry per harness `say` message, so the card can show structure.
+  List<String> get replySections => _replySections;
+
+  /// All sections joined: used for the card's visibility gate and for the
+  /// auto-scroll hook (its length grows whenever a section lands).
+  String get lastReply => _replySections.join('\n\n');
   String get error => _error;
   bool get userSpeaking => _userSpeaking;
   bool get sessionActive =>
@@ -263,7 +269,7 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeBusy = true;
     _error = '';
     _transcript = utterance;
-    _lastReply = '';
+    _replySections.clear();
     _phase = AssistantPhase.transcribing;
     _status = 'Asking the bridge…';
     notifyListeners();
@@ -302,7 +308,7 @@ class VoiceAssistant extends ChangeNotifier {
           // already stopped feeding the player — seen as "text with no
           // audio" on long answers.
           spoken.write('$text ');
-          _lastReply = spoken.toString().trim();
+          _replySections.add(text);
           notifyListeners();
         } else if (ev.kind == 'tool') {
           _status =
