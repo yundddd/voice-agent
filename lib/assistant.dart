@@ -1817,6 +1817,20 @@ class VoiceAssistant extends ChangeNotifier {
       }
       misses = 0;
       _markWireAlive();
+      final head = page['seq'];
+      if (head is num && head < _ringCursor) {
+        // Ring reborn under our cursor (bridge restart with a young
+        // sequence space): rewind to the oldest possible event so this
+        // turn's already-relayed frames are not skipped, and re-probe —
+        // /health may have renegotiated the transport for the next turn
+        // (the endpoint serves whoever asks, so riding out THIS turn on
+        // polls is safe even if poll is no longer advertised).
+        _logDebug('poll: ring reset (head $head < cursor $_ringCursor) '
+            '— rewinding to 0');
+        _healthNote(await bridge.healthInfo());
+        _ringCursor = 0;
+        continue;
+      }
       final evs = page['events'];
       if (evs is List) {
         for (final f in evs) {

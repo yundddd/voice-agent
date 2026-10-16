@@ -423,7 +423,12 @@ const sse = (res, ev, data) => {
 // cursor is each client's own reattach state.
 const RING_CAP = 2000;
 const ring = [];
-let ringSeq = 0;
+// Seeded from the wall clock, NOT zero: a client's cursor survives our
+// restart (the app kept polling a restarted bridge with a cursor of
+// ~200 while the baby ring counted from 1 — forever ahead, forever
+// empty, every event silently backlog-bound). An epoch seed makes any
+// pre-restart cursor older than any post-restart event.
+let ringSeq = Date.now();
 const relay = (ev, data) => {
   data._ts ??= Date.now();
   ring.push({seq: ++ringSeq, ev, data});
