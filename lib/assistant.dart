@@ -2211,7 +2211,10 @@ class VoiceAssistant extends ChangeNotifier {
           _hopReply = true; // harness→reply hop crossed (reattach view)
           if (ev.isSay &&
               ev.text.trim().isNotEmpty &&
-              _wireAgeMs(ev) > 120000) {
+              _wireAgeMs(ev) > 120000 &&
+              // (unless it's also in the chat log — then the dedup
+              // branch below silently drops it instead of duplicating)
+              !_alreadyInChat(ev.text.trim())) {
             // Archaeology, not news: the backlog replayed a line from
             // before the app went away (an APK update, a kill — the
             // frames are minutes or hours old). It belongs in the
@@ -2221,6 +2224,16 @@ class VoiceAssistant extends ChangeNotifier {
             _touchChat();
             final ageSec = ev.wireMs == 0 ? 'unstamped' : '${_wireAgeMs(ev) ~/ 1000}s old';
             _logDebug('replay $ageSec: logged silently, not spoken');
+          } else if (ev.isSay &&
+              ev.text.trim().isNotEmpty &&
+              _alreadyInChat(ev.text.trim())) {
+            // Already heard — the persisted chat log remembers the block
+            // (it joins the conversation the moment its audio starts,
+            // before the kill), so the replay bows out quietly. One
+            // trade: a paragraph cut off MID-audio by the kill counts as
+            // spoken and its tail is not repeated — never re-listening
+            // beats never not-listening, said every chat client ever.
+            _logDebug('replay dedup: paragraph already in chat — skipped');
           } else if (ev.isSay && ev.text.trim().isNotEmpty) {
             _tokLive = false;
             await speak(cleanForSpeech(ev.text.trim()));
@@ -3572,6 +3585,22 @@ class VoiceAssistant extends ChangeNotifier {
       _benchT0 = null;
       _benchNote = 'Bench run cancelled — the mic was taken away.';
     }
+  }
+
+  /// Is this exact reply block already in the (disk-persisted) chat log?
+  /// The reattach replay consults this so paragraphs the user heard
+  /// before the app died are never read aloud a second time; scans the
+  /// last few assistant bubbles, whitespace-normalised, exact match.
+  bool _alreadyInChat(String text) {
+    String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final want = norm(text);
+    var seenAssistant = 0;
+    for (final e in _chat.reversed) {
+      if (e.fromUser) continue;
+      if (e.blocks.any((b) => norm(b) == want)) return true;
+      if (++seenAssistant >= 3) break; // the dead turn and its neighbors
+    }
+    return false;
   }
 
   /// Word-overlap test: did the mic just pick up our own TTS output?
