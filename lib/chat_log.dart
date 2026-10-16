@@ -46,6 +46,23 @@ class ChatEntry {
   );
 }
 
+/// Exact-block scan of the assistant side of a chat log, whitespace-
+/// normalized. The reattach replay consults this so paragraphs the
+/// user already heard are never re-voiced: it must scan the WHOLE log
+/// (a restart-time backlog bursts across a dozen turns), it must
+/// compare the CLEANED text the log stores (never the raw wire frame —
+/// that mismatch re-voiced heard paragraphs at 0.1.0+61), and user
+/// entries never count (the replay is answer text). Pure; unit-tested.
+bool chatContainsBlock(List<ChatEntry> entries, String text) {
+  String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final want = norm(text);
+  for (final e in entries.reversed) {
+    if (e.fromUser) continue;
+    if (e.blocks.any((b) => norm(b) == want)) return true;
+  }
+  return false;
+}
+
 String encodeChatLog(List<ChatEntry> entries) =>
     jsonEncode([for (final e in entries) e.toJson()]);
 

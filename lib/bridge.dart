@@ -514,6 +514,28 @@ String fmtTokenCount(int n) => n < 1000
     ? '${(n / 1000).toStringAsFixed(2)}k'
     : '${(n / 1000000).toStringAsFixed(2)}M';
 
+/// The spinner's first line, translated from the tally's kind — words
+/// only, never numbers (those belong to the meter line alone: the same
+/// digits on two lines at two cadences is how 'thinking' got buried,
+/// 0.1.0+85). Pure and public so the mapping is unit-guarded; the
+/// assistant's getter delegates here.
+String activityLabelFor(String kind, String fallback) {
+  switch (kind) {
+    case 'thinking':
+      return 'Thinking…';
+    case 'answering':
+      return 'Answering…';
+    case 'settled':
+      return 'Rendering audio…';
+    default:
+      if (kind.startsWith('calling ')) {
+        final t = kind.substring(8);
+        return t == 'Bash' ? 'Running a command…' : 'Calling $t…';
+      }
+      return fallback;
+  }
+}
+
 /// Persisted bridge settings (mirrors the tts_prefs.json pattern).
 /// The field defaults ship pointing at the dev machine's always-on demo
 /// bridge (tailscale IP, port 8732, --token testtok): a fresh install

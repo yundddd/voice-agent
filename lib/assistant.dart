@@ -572,22 +572,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// Falls back to the plain status until the first tally of the turn
   /// teaches us anything — so 'Asking the bridge…' covers the wire
   /// flight and the pre-first-token prefill, honestly.
-  String get activityLabel {
-    switch (_tokKind) {
-      case 'thinking':
-        return 'Thinking…';
-      case 'answering':
-        return 'Answering…';
-      case 'settled':
-        return 'Rendering audio…';
-      default:
-        if (_tokKind.startsWith('calling ')) {
-          final t = _tokKind.substring(8);
-          return t == 'Bash' ? 'Running a command…' : 'Calling $t…';
-        }
-        return _status;
-    }
-  }
+  String get activityLabel => activityLabelFor(_tokKind, _status);
 
   /// The growing label. Only meaningful while [tokenTickerOn]; the
   /// spinner asks the assistant for it on every one of its 120 ms
@@ -3898,15 +3883,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// two-minutes ones sailed past and got re-voiced: "replaying
   /// previous messages" heard exactly as described. The cap is small
   /// and this runs per replayed frame; a full scan is noise.
-  bool _alreadyInChat(String text) {
-    String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final want = norm(text);
-    for (final e in _chat.reversed) {
-      if (e.fromUser) continue;
-      if (e.blocks.any((b) => norm(b) == want)) return true;
-    }
-    return false;
-  }
+  bool _alreadyInChat(String text) => chatContainsBlock(_chat, text);
 
   /// Word-overlap test: did the mic just pick up our own TTS output?
   static bool _looksLikeEcho(String heard, String spoken) {

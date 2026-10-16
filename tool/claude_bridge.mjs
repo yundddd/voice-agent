@@ -161,6 +161,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { relaySentences as cutSentences, fmtTok } from './sentence_relay.mjs';
+
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -277,70 +279,17 @@ const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 // and none is dropped). The remainder logic in the assistant-snapshot
 // path keeps the no-partials fallback exactly the old block-close
 // behavior.
-const MIN_SENT_CHARS = 40;   // never carve micro-segments ("OK.")
-const MAX_SENT_CHARS = 300;  // bound first-audio latency even unpunctuated
-let curMsg = null;      // {blocks: {}, seq} for the LIVE message
-let lastTextBlk = null; // newest live text block (the draft frame's view)
-let lastTextOpen = false; // and whether it can still receive deltas
+// The cutter itself moved to sentence_relay.mjs (unit-tested). This
+// wrapper only supplies the ring/stdio side: one say frame per
+// sentence, journalled by its first 40 chars.
 function relaySentences(blk, {force = false} = {}) {
-  for (;;) {
-    const from = blk.spoken;
-    const win = blk.buf.slice(from, from + MAX_SENT_CHARS * 3);
-    // The micro-segment floor protects mid-stream carving only; on
-    // block close there is no 'next sentence' to merge into, and the
-    // leftovers — however short — are the end of the answer.
-    if (win.length < MIN_SENT_CHARS && !force) return;
-    // A sentence end = a punctuation run (with trailing quotes/brackets)
-    // preceded by a word char and followed by whitespace; the word-char
-    // anchor keeps 'main.dart:801' and '3.5' from faking periods.
-    // Take the FIRST legal boundary, not the last: each frame becomes
-    // exactly one sentence, voiced as its own natural bite. The old
-    // last-boundary choice batched every sentence already in the buffer
-    // into one frame, so a long answer landed as a few breathless
-    // multi-sentence blocks — the seams fell wherever the batch happened
-    // to end, not where the prose did. The surrounding loop still emits
-    // one sentence per pass, so a fat delta closes several in order.
-    let cut = -1;
-    const re = /\S[.!?…]+["')\]]*(?=[ \n])/g;
-    for (let m; (m = re.exec(win)) !== null;) {
-      if (m.index + m[0].length >= MIN_SENT_CHARS) {
-        cut = m.index + m[0].length;
-        break;
-      }
-    }
-    if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
-      // Long ramble, no sentence end yet: prefer the LAST clause mark
-      // (comma, semicolon, colon, dash) inside the cap — a place the
-      // prose itself would breathe. Cutting at an arbitrary space two
-      // hundred chars past the nearest comma is what made seams land
-      // mid-phrase while commas sat right there. A word gap remains
-      // only for truly unpunctuated runs, and the micro-segment floor
-      // applies here too.
-      const clause = /[^\s][,;:—–]["')\]]*[ \n]/g;
-      let cw = -1;
-      for (let m; (m = clause.exec(win.slice(0, MAX_SENT_CHARS))) !== null;) {
-        if (m.index + m[0].length >= MIN_SENT_CHARS) cw = m.index + m[0].length;
-      }
-      if (cw > 0) cut = cw;
-      else {
-        const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
-        if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
-      }
-    }
-    // On block close, force whatever is left out whole: the FINAL
-    // sentence's period sits at end-of-text with no whitespace after
-    // it, so the boundary regex can never see it, and without this the
-    // last sentence of every reply ending on bare punctuation was
-    // spoken as nothing ('the last message dropped again', +78).
-    if (cut < 0 && force && blk.buf.length > from) cut = blk.buf.length - from;
-    if (cut < 0) return;
-    const t = blk.buf.slice(from, from + cut).trim();
-    blk.spoken = from + cut;
-    if (t) {
+  cutSentences(blk, {
+    force,
+    emit: (t) => {
       console.error(`  -> say(live) "${t.slice(0, 40)}"`);
       relay('say', {text: t});
-    }
-  } // loop: a fat delta can close several sentences at once
+    },
+  });
 }
 // The un-said part of the live answer, as the draft field of the tally
 // frames (mirrors how `thought` rides the thinking tail): the phone
@@ -426,12 +375,7 @@ const relayEst = (dir) => {
     ctxPreviewFrame();
   }
 };
-// +82: two decimals at every magnitude — one made a climbing counter
-// look frozen between rounding steps (mirrors fmtTokenCount in
-// lib/bridge.dart; phone and wire read numbers identically).
-const fmtTok = (n) => n < 1000 ? `${n}`
-  : n < 1e6 ? `${(n / 1000).toFixed(2)}k`
-  : `${(n / 1e6).toFixed(2)}M`;
+// fmtTok lives in sentence_relay.mjs (unit-tested; imported below).
 // Every frame leaves stamped with the bridge's wall clock (`_ts`), so the
 // phone can log how long a frame sat on the wire by the time it rendered:
 // the render side subtracts the clock skew it calibrated from /health's
