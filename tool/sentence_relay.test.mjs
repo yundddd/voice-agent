@@ -2,7 +2,7 @@
 // Every test here names a field report it exists to keep fixed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relaySentences, fmtTok, MIN_SENT_CHARS } from './sentence_relay.mjs';
+import { relaySentences, settleOwed, fmtTok, MIN_SENT_CHARS } from './sentence_relay.mjs';
 
 const run = (buf, opts = {}) => {
   const blk = { buf, spoken: 0 };
@@ -61,6 +61,37 @@ test('file names and decimals do not fake sentence ends', () => {
       'and waited for a real boundary to finally arrive here. ',
   );
   assert.equal(out.length, 1, 'the whole line is ONE sentence');
+});
+
+test('settled say claims the silent live block: the double-speak fix', () => {
+  // Field report, live answer: a short fast reply arrived WHOLE in the
+  // snapshot before any live sentence had spoken. The settle relayed it;
+  // the forced flush at block close relayed it again — one reply, twice.
+  const t = 'Got it — I will keep that phrase out of speech entirely.';
+  const blk = { buf: t, spoken: 0 }; // deltas filled the buffer, silence so far
+  const owed = settleOwed([blk], t);
+  assert.equal(owed.text, t);
+  assert.equal(owed.claim, 0, 'the snapshot must claim the silent block');
+  blk.spoken = blk.buf.length; // what the bridge does with the claim
+  const out = [];
+  relaySentences(blk, { force: true, emit: (x) => out.push(x) });
+  assert.deepEqual(out, [], 'the forced flush now has nothing left to say');
+});
+
+test('mid-relay block owes only the watermark remainder (tier 1 kept)', () => {
+  const first = 'The first sentence cleared the live cutter with room to spare.';
+  const second = 'A second one arrived only in the settled snapshot.';
+  const blk = { buf: `${first} `, spoken: first.length };
+  const owed = settleOwed([blk], `${first} ${second}`);
+  assert.equal(owed.text, second);
+  assert.equal(owed.claim, 0);
+});
+
+test('settleOwed does not claim a block holding different text', () => {
+  const unrelated = { buf: 'An entirely different paragraph of live text.', spoken: 0 };
+  const owed = settleOwed([unrelated], 'Nothing about it appears in the snapshot text.');
+  assert.equal(owed.claim, -1);
+  assert.equal(owed.text, 'Nothing about it appears in the snapshot text.');
 });
 
 test('token counts read with two decimals at every magnitude', () => {

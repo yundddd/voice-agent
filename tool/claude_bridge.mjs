@@ -161,7 +161,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { relaySentences as cutSentences, fmtTok } from './sentence_relay.mjs';
+import { relaySentences as cutSentences, settleOwed, fmtTok } from './sentence_relay.mjs';
 
 
 const argv = process.argv.slice(2);
@@ -850,17 +850,18 @@ function handleEvent(line) {
           // re-speaking what the first one just said. A block with no
           // deltas (census says some upstreams send none) matches
           // nothing and falls through to the old whole-text relay.
-          let matched;
-          for (const blk of Object.values(curMsg?.blocks ?? {})) {
-            const said = blk.buf.slice(0, blk.spoken).trimStart();
-            if (said && t.startsWith(said)) { matched = { blk, said }; break; }
+          // The match itself is settleOwed (unit-guarded): it also
+          // claims SILENT live blocks, the gap that let a settle and
+          // the block-close flush speak one short reply twice.
+          const blocks = Object.values(curMsg?.blocks ?? {});
+          const owed = settleOwed(blocks, t);
+          if (owed.claim >= 0) {
+            const blk = blocks[owed.claim];
+            blk.spoken = blk.buf.length;
           }
-          const owed = matched
-            ? t.slice(Math.min(matched.said.length, t.length)).trim() : t;
-          if (matched) matched.blk.spoken = matched.blk.buf.length;
-          if (!owed) continue;
-          console.error(`  -> say "${owed.slice(0, 40)}"`);
-          relay('say', { text: owed });
+          if (!owed.text) continue;
+          console.error(`  -> say "${owed.text.slice(0, 40)}"`);
+          relay('say', { text: owed.text });
         }
         if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
           spokenTools.add(c.id);

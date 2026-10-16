@@ -62,6 +62,40 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
   } // loop: a fat delta can close several sentences at once
 }
 
+// What a settled assistant snapshot still OWES, given the live sentence
+// blocks of the same message. The bridge's snapshot path calls this so a
+// reply can never be spoken twice — the field report it guards: a short
+// fast answer arrived whole in the snapshot BEFORE any live sentence had
+// spoken, so the old matcher (silent on an unspoken prefix) claimed no
+// block, the settle said the full text, and the forced flush at block
+// close said it again one second later — heard as one reply, twice.
+// Returns { text, claim }: text is the remainder to relay, claim is the
+// index of the live block whose watermark the caller must advance (or
+// -1: no live block is involved). Prefix-comparable means the same text
+// seen at two moments of its growth — either side may lead.
+export function settleOwed(blocks, t) {
+  // Tier 1: a block already mid-relay — its spoken prefix extends into t.
+  for (let i = 0; i < blocks.length; i++) {
+    const said = blocks[i].buf.slice(0, blocks[i].spoken).trimStart();
+    if (said && t.startsWith(said)) {
+      return { text: t.slice(Math.min(said.length, t.length)).trim(), claim: i };
+    }
+  }
+  // Tier 2 (the double-speak guard): a block that has spoken NOTHING yet
+  // whose buffer and the snapshot are the same growing text. Claiming it
+  // is what stops the forced live flush from re-saying the settle — the
+  // case the field report died on. Silent-by-empty-buffer blocks are
+  // skipped so the vacuous '' prefix can't claim the wrong block.
+  for (let i = 0; i < blocks.length; i++) {
+    const rest = blocks[i].buf.trim();
+    if (!rest || blocks[i].spoken !== 0) continue;
+    if (t.startsWith(rest) || rest.startsWith(t)) {
+      return { text: t, claim: i };
+    }
+  }
+  return { text: t, claim: -1 };
+}
+
 // Display token counts with two decimals at every magnitude (mirrors
 // fmtTokenCount in lib/bridge.dart — phone and wire read identically).
 export const fmtTok = (n) => n < 1000
