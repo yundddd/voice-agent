@@ -3764,15 +3764,20 @@ class VoiceAssistant extends ChangeNotifier {
   /// Is this exact reply block already in the (disk-persisted) chat log?
   /// The reattach replay consults this so paragraphs the user heard
   /// before the app died are never read aloud a second time; scans the
-  /// last few assistant bubbles, whitespace-normalised, exact match.
+  /// WHOLE log (capped at _chatCap entries), whitespace-normalised,
+  /// exact match. The first cut stopped after three assistant bubbles —
+  /// a restart-time backlog burst spans a dozen turns (2000 ring
+  /// events), and field journal 22:31: every paragraph inside the
+  /// three-bubble window deduped cleanly while older-but-still-under-
+  /// two-minutes ones sailed past and got re-voiced: "replaying
+  /// previous messages" heard exactly as described. The cap is small
+  /// and this runs per replayed frame; a full scan is noise.
   bool _alreadyInChat(String text) {
     String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
     final want = norm(text);
-    var seenAssistant = 0;
     for (final e in _chat.reversed) {
       if (e.fromUser) continue;
       if (e.blocks.any((b) => norm(b) == want)) return true;
-      if (++seenAssistant >= 3) break; // the dead turn and its neighbors
     }
     return false;
   }
