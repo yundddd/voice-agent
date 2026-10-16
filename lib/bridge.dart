@@ -506,6 +506,31 @@ String cleanForSpeech(String t) {
   return s;
 }
 
+/// Tool steps that are pure plumbing: EYES ONLY. The spinner shows the
+/// label; the ears get nothing — no immediate narration and no
+/// heartbeat re-speak. (+94, from the queued field report: 'reading a
+/// file also goes through TTS, but in fact it's just a tool call, just
+/// like editing a file that shouldn't be spoken.' The +73 verdict that
+/// file basenames 'speak fine as prose' bought them a pass they never
+/// earned: a dozen Read steps in a row is a litany nobody asked to
+/// hear.) Unknown/custom tools stay speakable — if it isn't plumbing,
+/// the user probably does want to hear what it is.
+const kSilentStepTools = {
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Glob',
+  'Grep',
+  'WebFetch',
+  'WebSearch',
+  'Agent',
+  'TodoWrite',
+};
+bool stepIsSilentFor(String tool) => kSilentStepTools.contains(tool);
+
 /// The spinner meter's TURN-DELTA anchor (+93): the first input figure
 /// a turn reports anchors it, and the meter shows growth since — what
 /// THIS turn consumed, not the whole conversation each call carries

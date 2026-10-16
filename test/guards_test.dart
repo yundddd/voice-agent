@@ -120,6 +120,39 @@ void main() {
     },
   );
 
+  group('step narration silence (0.1.0+94: plumbing is eyes-only)', () {
+    test('file, shell and web steps never reach the ears', () {
+      for (final t in [
+        'Read',
+        'Edit',
+        'Write',
+        'MultiEdit',
+        'NotebookEdit',
+        'Glob',
+        'Grep',
+        'Bash',
+        'WebFetch',
+        'WebSearch',
+        'Agent',
+        'TodoWrite',
+      ]) {
+        expect(stepIsSilentFor(t), isTrue, reason: t);
+      }
+    });
+    test('the queue acknowledgment and custom tools still speak', () {
+      expect(
+        stepIsSilentFor('queued'),
+        isFalse,
+        reason: "'One moment — …' is news, not plumbing",
+      );
+      expect(
+        stepIsSilentFor('mcp__puppeteer__screenshot'),
+        isFalse,
+        reason: 'unknown tools are not plumbing by default',
+      );
+    });
+  });
+
   group('event parsing (0.1.0+81/+84: started and settled frames)', () {
     test('started marker parses as a tool event with the prompt detail', () {
       final ev = BridgeEvent.parse(

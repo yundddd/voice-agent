@@ -1089,35 +1089,18 @@ class VoiceAssistant extends ChangeNotifier {
                 : '${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = stepLine;
-            // Steps whose fetching is pure plumbing get label-only
-            // treatment: the eyes see 'WebFetch …', the ears get
-            // nothing — no immediate narration AND no heartbeat line
-            // (latestWork stays empty so the 15 s pulse has nothing to
-            // re-speak). Web fetches and their searches are the ones
-            // nobody asked to hear phonemes for.
-            final stepIsSilent =
-                ev.toolName == 'WebFetch' ||
-                ev.toolName == 'WebSearch' ||
-                // +73: and Bash too. The spoken line was the generic
-                // 'Running a command…' — progress theater with no
-                // information in it, injected into the conversation
-                // the command's own output already narrates better.
-                ev.toolName == 'Bash';
-            // What the VOICE gets is not always the label on screen:
-            // a raw shell line is the one thing nobody wants spoken
-            // ('Bash git diff dash stat pipe head minus twenty'), so a
-            // Bash step says its kind, not its command. Eyes keep the
-            // full line — for a minute-long build the spinner IS the
-            // honest label of which command is chewing. File steps
-            // ('Edit assistant.dart…') speak fine as-is: a basename is
-            // prose. One side effect in our favor: consecutive Bash
-            // steps share the spoken line, and the narrate gate already
-            // hushes repeats, so a command burst won't machine-gun.
-            latestWork = stepIsSilent
-                ? ''
-                : ev.toolName == 'Bash'
-                ? 'Running a command…'
-                : stepLine;
+            // Pure-plumbing steps get label-only treatment: the eyes
+            // see 'Read bridge.dart…', the ears get nothing — no
+            // immediate narration AND no heartbeat line (latestWork
+            // stays empty so the 15 s pulse has nothing to re-speak).
+            // +73 silenced Bash and the web tools; +94 adds the file
+            // tools after the field report named them: a Read or an
+            // Edit is plumbing, not news. The list is
+            // stepIsSilentFor in bridge.dart, unit-guarded; custom
+            // tools stay speakable. Eyes keep the full line either way
+            // — for a minute-long build the spinner IS the honest
+            // label of which command is chewing.
+            latestWork = stepIsSilentFor(ev.toolName) ? '' : stepLine;
             // No step line in the conversation any more: the spinner's
             // working line (and the narration switch, for those who want
             // steps spoken) carry tool progress; the journal keeps every
