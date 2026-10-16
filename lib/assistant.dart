@@ -2105,7 +2105,17 @@ class VoiceAssistant extends ChangeNotifier {
     if (_bridgeBusy ||
         _backgrounded ||
         _benchCapturing ||
-        _benchBusy) {
+        _benchBusy ||
+        // A finger is DOWN: the user is recording, and the reattach's
+        // first act is to set phase=transcribing — which lands on the
+        // open mic like the +52 orphan stomp's bigger sibling (field
+        // journal: swipe-up barge-in, reattach replaying 13 missed
+        // frames, release met by 'phase=transcribing not listening',
+        // eleven seconds of speech discarded). The ladder will retry;
+        // by the next rung the release will have made its own /talk
+        // this turn's successor, and the cut-off backlog stays silent
+        // by the +53/+51 age rules anyway.
+        _pttPointers > 0) {
       return false;
     }
     // Ask the bridge, not our dead socket, whether anything is to hear:
