@@ -200,6 +200,23 @@ class _AssistantScreenState extends State<AssistantScreen>
                           ),
                         ),
                       ],
+                      // The assistant's answer itself, shown on screen as it
+                      // streams (the bridge used to only speak it, so a
+                      // harness reply was invisible once the status moved on).
+                      if (a.lastReply.isNotEmpty &&
+                          a.lastReply != a.transcript) ...[
+                        const SizedBox(height: 12),
+                        Card(
+                          color: scheme.secondaryContainer,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: SelectableText(
+                              a.lastReply,
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

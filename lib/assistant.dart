@@ -50,6 +50,10 @@ class VoiceAssistant extends ChangeNotifier {
   String _transcript = '';
   String _error = '';
   String _lastSpoken = '';
+  // The bridge answer as it streams in, kept for the UI: _lastSpoken only
+  // lands at the very end of a turn (echo-guard bookkeeping), so quoting
+  // the reply never appeared on screen.
+  String _lastReply = '';
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
@@ -145,6 +149,9 @@ class VoiceAssistant extends ChangeNotifier {
   AssistantPhase get phase => _phase;
   String get status => _status;
   String get transcript => _transcript;
+
+  /// The bridge answer being spoken this turn (grows as `say` events land).
+  String get lastReply => _lastReply;
   String get error => _error;
   bool get userSpeaking => _userSpeaking;
   bool get sessionActive =>
@@ -248,6 +255,7 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeBusy = true;
     _error = '';
     _transcript = utterance;
+    _lastReply = '';
     _phase = AssistantPhase.transcribing;
     _status = 'Asking the bridge…';
     notifyListeners();
@@ -263,6 +271,9 @@ class VoiceAssistant extends ChangeNotifier {
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           final text = cleanForSpeech(ev.text.trim());
           spoken.write('$text ');
+          // Show the answer on screen as it arrives, not just speak it.
+          _lastReply = spoken.toString().trim();
+          notifyListeners();
           final (audio, rate) = await _worker!.synthesizeStream(
             text,
             onChunk: (chunk, sampleRate) {
@@ -1357,9 +1368,16 @@ class VoiceAssistant extends ChangeNotifier {
     // leak into the next turn (the user talking over the reply keeps theirs).
     if (!_userSpeaking) _worker?.resetVad();
     if (_phase == AssistantPhase.speaking) {
-      _phase = AssistantPhase.listening;
-      _status = 'Listening — just talk.';
-      notifyListeners();
+      // PTT: the mic lives only while the button is held, so a finished
+      // reply must drop back to idle — not the always-on listening state
+      // (that latch made the button look still-pressed after the 2nd turn).
+      if (_mode == InteractionMode.pushToTalk) {
+        _idleReady();
+      } else {
+        _phase = AssistantPhase.listening;
+        _status = 'Listening — just talk.';
+        notifyListeners();
+      }
     }
     _fastMicCheck();
   }
