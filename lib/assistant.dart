@@ -712,6 +712,7 @@ class VoiceAssistant extends ChangeNotifier {
     _ttsSeconds = 0; // the strip tallies per turn: reset, then the
     _ttsFirstTimed = false; // first spoken block stamps the tts number
     _playSeconds = 0; // once (first-word latency) and play time accrues
+    _dropAfterHide = null; // a fresh turn buries any hide-marked paragraph
     unawaited(_playReplyChunks(gen));
     final spoken = StringBuffer();
     // ── Progress narration ── 'working towards the goal' means AUDIO
@@ -768,8 +769,11 @@ class VoiceAssistant extends ChangeNotifier {
         text,
         onChunk: (chunk, sampleRate) {
           if (gen != _generation) return;
+          if (text == _dropAfterHide) return; // hide cut this paragraph
+          // mid-play: skip it whole — its chunks die here, no replay
           if (!blockOnAir) {
             blockOnAir = true;
+            _dropAfterHide = null; // this block's air outranks the mark
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear. The block's
@@ -1660,16 +1664,25 @@ class VoiceAssistant extends ChangeNotifier {
     _captureResumeOnDone = false;
     // A bridge turn in flight survives the hide: no _generation bump (that
     // would break its event stream AND tell the harness to stop), so its
-    // remaining says keep flowing into speak()'s backgrounded branch. Seed
-    // the resume buffer with the last block heard so far — if the hide cut
-    // its audio mid-playback, the replay restarts that block cleanly.
+    // remaining says keep flowing into speak()'s backgrounded branch. A
+    // paragraph that was AUDIBLE when the hide cut it is deliberately not
+    // seeded into the resume buffer — the old behavior replayed the whole
+    // half-heard paragraph on the way back, which reads as amnesia. It is
+    // marked for complete silence instead: the onChunk guards below drop
+    // its remaining synthesised chunks, the resume paths find no pending
+    // text, and a later reattach dedup already bows out on the chat-log
+    // copy. Only says that landed UNHEARD while hidden (backgrounded
+    // speak()) earn the "speak the last one when you're back" promise.
     final bridgeLive = _bridgeBusy;
     _logDebug(
       'HIDE: busy=$bridgeLive micLive=$live phase=${_phase.name} '
       'queue=${_replyQueue.length} — '
       '${bridgeLive ? 'stream STAYS attached' : 'audio/mic down'}',
     );
-    if (bridgeLive && _lastReplyText != null) _resumeReplyText = _lastReplyText;
+    if (bridgeLive && _phase == AssistantPhase.speaking && _lastReplyText != null) {
+      _dropAfterHide = _lastReplyText;
+      _logDebug('hide mid-paragraph: the cut block is skipped, not replayed');
+    }
     // Snapshot the spinner's working line before the status below overwrites
     // it with the "when you're back" notice: [resumeConversation] puts it
     // back so a background/foreground blink is invisible to the turn.
@@ -2174,8 +2187,11 @@ class VoiceAssistant extends ChangeNotifier {
         text,
         onChunk: (chunk, sampleRate) {
           if (gen != _generation) return;
+          if (text == _dropAfterHide) return; // same skip contract as
+          // speak(): a paragraph the hide cut is never re-voiced here
           if (!blockOnAir) {
             blockOnAir = true;
+            _dropAfterHide = null; // this block's air outranks the mark
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
             // of a spoken block is on its way to the ear. The block's
@@ -2543,6 +2559,9 @@ class VoiceAssistant extends ChangeNotifier {
   bool _replyPumpAlive = false; // [_playReplyChunks] queue pump is running
   String? _pausedWorking; // spinner working line snapshotted at hide time
   String? _resumeReplyText; // newest bridge reply buffered while hidden
+  String? _dropAfterHide; // paragraph audible when the hide cut it: skip
+  // it whole on return — half-heard beats replayed, and its still
+  // synthesising chunks drop on the floor (see pauseConversation)
   String? _lastReplyText; // newest block speak() has fed to the log
 
   /// Big-button action, interpreted per mode + phase.
@@ -3250,8 +3269,11 @@ class VoiceAssistant extends ChangeNotifier {
               text,
               onChunk: (chunk, sampleRate) {
                 if (gen != _generation) return; // superseded: drop on the floor
+                if (text == _dropAfterHide) return; // hide cut this
+                // reply mid-play: skip the rest whole, no replay on return
                 if (!sawFirstChunk) {
                   sawFirstChunk = true;
+                  _dropAfterHide = null; // this block's air outranks the mark
                   _phase = AssistantPhase.speaking;
                   _hopTts(); // first audio of the reply (see strip)
                   if (!_ttsFirstTimed) {
