@@ -19,8 +19,19 @@ void main() {
       expect(activityLabelFor('thinking', 'Asking the bridge…'), 'Thinking…');
       expect(activityLabelFor('answering', 'x'), 'Answering…');
       expect(activityLabelFor('settled', 'x'), 'Rendering audio…');
-      expect(activityLabelFor('calling Bash', 'x'), 'Running a command…');
-      expect(activityLabelFor('calling Edit', 'x'), 'Calling Edit…');
+    });
+    test('+88: a tool step shows the command, not the theater', () {
+      // The step line the tool frame assembled rides the spinner.
+      expect(
+        activityLabelFor('calling Bash', 'Bash git status --short…'),
+        'Bash git status --short…',
+      );
+      expect(activityLabelFor('calling Edit', 'Edit bridge.dart…'),
+          'Edit bridge.dart…');
+      // The generic wording survives only where no detail exists: the
+      // sliver before the tool frame lands, or a frame with no detail.
+      expect(activityLabelFor('calling Bash', ''), 'Running a command…');
+      expect(activityLabelFor('calling Edit', '  '), 'Calling Edit…');
     });
     test('unknown kinds fall back to the plain status', () {
       expect(activityLabelFor('', 'Asking the bridge…'), 'Asking the bridge…');

@@ -519,6 +519,15 @@ String fmtTokenCount(int n) => n < 1000
 /// digits on two lines at two cadences is how 'thinking' got buried,
 /// 0.1.0+85). Pure and public so the mapping is unit-guarded; the
 /// assistant's getter delegates here.
+///
+/// A tool step prefers the fallback — the step line the tool frame
+/// already assembled ('Bash git status --short | head -20…', the
+/// command truncated to one line by the widget). 'Running a command…'
+/// was progress theater with no information in it, the field report
+/// that killed it: while a minute-long build chewed, the honest label
+/// of WHICH command was already on the wire, and we threw it away. The
+/// generic wording survives only for the sliver before the tool frame
+/// lands, or a frame carrying no detail at all.
 String activityLabelFor(String kind, String fallback) {
   switch (kind) {
     case 'thinking':
@@ -529,6 +538,7 @@ String activityLabelFor(String kind, String fallback) {
       return 'Rendering audio…';
     default:
       if (kind.startsWith('calling ')) {
+        if (fallback.trim().isNotEmpty) return fallback.trim();
         final t = kind.substring(8);
         return t == 'Bash' ? 'Running a command…' : 'Calling $t…';
       }
