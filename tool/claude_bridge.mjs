@@ -1091,7 +1091,16 @@ function talk(text, res, interrupt = true, poll = false) {
   // response finished.
   res.on('close', () => {
     if (curRes && curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
-    else if (pending && pending.res === res) { endKeep(pending); pending = null; }
+    else if (pending && pending.res === res && !pending.poll) {
+      // Only a live SSE stream's close means the phone abandoned its
+      // queued prompt. A POLL prompt closes its response AT QUEUE TIME
+      // by design (the ring carries its turn) — this close is our own
+      // res.end() landing, and dropping pending here silently ate the
+      // utterance: the pin froze at 'queued', no 'started' ever rode
+      // the ring, and flushPending's poll branch never got to run
+      // (field report 0.1.0+90, the message that queued and vanished).
+      endKeep(pending); pending = null;
+    }
   });
   if (curRes || turnOpen) {
     // Something is in flight — still HEARD (curRes: the phone never let
