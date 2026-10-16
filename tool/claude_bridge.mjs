@@ -394,8 +394,20 @@ const fmtTok = (n) => n < 1000 ? `${n}`
 // the render side subtracts the clock skew it calibrated from /health's
 // own `now`. Replay frames are stamped at replay (the field means "when
 // this crossed the wire", not "when the turn event happened").
-const sse = (res, ev, data) =>
-  res.write(`event: ${ev}\ndata: ${JSON.stringify({...data, _ts: Date.now()})}\n\n`);
+// A comment line pads every frame past ~1.3 KB. Not aesthetics: on the
+// Android tailscale client (tun1 over rmnet) a SMALL, ISOLATED packet
+// gets coalesced into oblivion — measured: a tool frame sat 27 s
+// (phone-logged `[wire+27316ms]`), surfacing only in the burst when the
+// turn's next big write dragged it out, while dense generation streamed
+// fine at any ping rate. Padding makes every frame a big write the
+// batcher has to move now; frames cost ~1.3 KB apiece, a rounding error
+// at our event rate.
+const sse = (res, ev, data) => {
+  const body = JSON.stringify({...data, _ts: Date.now()});
+  const room = 1300 - body.length - ev.length - 6;
+  res.write(`event: ${ev}\ndata: ${body}` +
+    (room > 0 ? `\n: ${'p'.repeat(room)}\n` : '') + `\n\n`);
+};
 // Relay a turn event to whoever is listening — the attached client live,
 // or the backlog for a future /attach. Transient frames (the ~0.8 s token
 // tally, the ctx preview) stay live-only: a reattaching phone re-derives
