@@ -565,6 +565,17 @@ class VoiceAssistant extends ChangeNotifier {
     return '$kind${fmtTokenCount(est)} out · ${fmtTokenCount(_tokIn)} in';
   }
 
+  /// The output count for the spinner's meter line: the bridge's last
+  /// exact figure, extrapolated between relays when the ticker is live
+  /// (same math and freeze rule as [tokenTickerLabel]).
+  int get tokensOut {
+    if (!tokenTickerOn || _tokAt == null) return _tokOut;
+    final age = DateTime.now().difference(_tokAt!).inMilliseconds / 1000.0;
+    return _tokOut + (_tokRate * (age > 5 ? 5 : age)).round();
+  }
+
+  int get tokensIn => _tokIn;
+
   void _onTokensFrame(BridgeEvent ev) {
     final now = DateTime.now();
     final out = ev.outTokens;
@@ -994,6 +1005,13 @@ class VoiceAssistant extends ChangeNotifier {
             // the old silent 200 seconds of spinner.
             final stepLine = ev.toolName == 'queued'
                 ? 'One moment — ${ev.detail}.'
+                : ev.toolName == 'Bash'
+                // The command ITSELF on the spinner line (the bridge
+                // truncates the relay), ellipsized to fit one line by
+                // the widget — 'basename of a command line' was
+                // mangling it into nonsense anyway. The VOICE still
+                // gets its generic 'Running a command…' below.
+                ? 'Bash ${ev.detail}…'
                 : '${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = stepLine;
@@ -2386,8 +2404,10 @@ class VoiceAssistant extends ChangeNotifier {
               _onTokensFrame(ev);
             } else {
               _tokLive = false;
-              _status = '${ev.toolName}'
-                  '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
+              _status = ev.toolName == 'Bash'
+                  ? 'Bash ${ev.detail}…' // real command, see /talk loop
+                  : '${ev.toolName}'
+                        '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
               // No step line in the bubble here either — same policy as
               // the /talk loop: the strip labels the step, the journal
               // remembers it, the chat log is for words.

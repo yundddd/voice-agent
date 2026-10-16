@@ -1067,96 +1067,82 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // (and snaps to the bridge's exact number when a frame or a
     // message-close settles it). Monospace so the growing digits never
     // reflow the line; the tool-name labels stay the plain style.
-    final live = a.tokenTickerOn;
-    final label = live ? a.tokenTickerLabel : widget.label;
-    // Whatever the line says, the phone's best-known input figure
-    // rides at its end the moment it exists — including during the
-    // long silent reads (prefill after a fat tool output, a slow first
-    // token) where no deltas flow and the ticker has nothing to grow.
-    // The bridge feeds this from exact message_start numbers AND from
-    // previews (previous turn's exact size + the bytes of each fresh
-    // tool_result, relayed the instant they cross the stream), so
-    // "Asking the bridge…" is never the whole truth for twenty seconds
-    // while the model chokes on a test log. The live ticker already
-    // carries its own in-number, so only the frozen states append it.
-    final shownIn = live ? 0 : a.contextIn;
-    final line = '$label${shownIn > 0 ? '  ·  ${_fmtTok(shownIn)} in' : ''}'
-        '  ·  ${secs}s  ·  tap Stop to interrupt';
+    // Two-line working display, per request: LINE ONE is what the
+    // harness is doing — the status label, which for a Bash step now
+    // carries the real command — on a single ellipsized row; LINE TWO
+    // is the meter: tokens out, tokens in, seconds working. The old
+    // one-liner crammed label, counts and the 'tap Stop to interrupt'
+    // litany into a single wrapping string. Counts grow on the
+    // spinner's own 120 ms tick between the bridge's ~0.8 s relays:
+    // tokensOut extrapolates at the rate consecutive relays taught it
+    // (same math the ticker label always used, now exposed) and falls
+    // back to the bridge's preview/input figures while nothing ticks.
+    final out = a.tokensOut;
+    final inTok = a.tokensIn > 0 ? a.tokensIn : a.contextIn;
+    final meter = '${(out > 0 || inTok > 0) ? '${_fmtTok(out)} out · ${_fmtTok(inTok)} in · ' : ''}${secs}s';
     // The frozen frame is also dimmed: motion OR color, never neither,
-    // is the honest way to say "the agent is not churning right now" —
-    // the status label beside it already reads 'Speaking…' while paused.
-    // Same rule as the tick guard: dim only when the harness is purely
-    // talking. If its bridge turn is still open, it is working while it
-    // speaks, and the wheel keeps its motion and its primary color.
+    // is the honest way to say "the agent is not churning right now".
+    // Same rule as the tick guard and the pure-playback hide: a still-
+    // open bridge turn means it works WHILE speaking — keep the wheel
+    // live through its own voice.
     final talking =
         a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
-    // Pure playback: the line goes away entirely. It used to sit there
-    // reading 'Speaking — tap to cut me off · Ns · tap Stop to
-    // interrupt' next to a frozen wheel — a working-progress affordance
-    // for a state with no progress to watch. The voice itself is the
-    // status now; a press anywhere still barges in, and the wheel (in
-    // color, turning) returns whenever the harness is still open and
-    // generating ahead of its own voice.
-    if (talking) return const SizedBox.shrink();
-    final working = Row(
-      children: [
-        Text(
-          _wheel[_frame],
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(
-            color: talking ? scheme.outline : scheme.primary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            line,
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontFamily: live || shownIn > 0 ? 'monospace' : null,
-            ),
-          ),
-        ),
-      ],
-    );
-    // The thinking, spelled out: while the tally says 'thinking' AND the
-    // bridge streamed thinking text, the rolling tail of the thought
-    // renders as a second line under the working line — proof of life
-    // with words instead of a spinner pretending to be patient. Silent
-    // thinkers (no thinking deltas, or the model just answers) keep the
-    // line alone: kind 'thinking' with no thought is still the honest
-    // state for the pre-first-token interval (prefill) the census logs.
-    // Max two lines so a rambling thought never shoves the chat around.
-    // And the answer, painted before it is spoken: while the tally says
-    // 'answering' and the bridge streamed the reply, the un-spoken tail
-    // rides the same second line — in plain (not italic) type, because
-    // this is the answer itself arriving, not the deliberations. The
-    // say frame at block close replaces it with the confirmed text.
+    if (talking) return const SizedBox.shrink(); // pure playback: voice is the status
+    // The thinking, spelled out — and the answer painted before it is
+    // spoken — ride a THIRD line when the bridge streamed them (max two
+    // lines so a rambling thought never shoves the chat around).
     final thought = a.tokenThought;
     final draft = a.tokenDraft;
-    if (thought.isEmpty && draft.isEmpty) return working;
     final shown = thought.isNotEmpty ? thought : draft;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        working,
+        Row(
+          children: [
+            Text(
+              _wheel[_frame],
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: scheme.primary),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.only(left: 34, top: 2),
           child: Text(
-            shown,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: thought.isNotEmpty
-                  ? scheme.onSurfaceVariant
-                  : scheme.onSurface,
-              fontStyle: thought.isNotEmpty ? FontStyle.italic : null,
+            meter,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontFamily: 'monospace',
             ),
           ),
         ),
+        if (shown.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 34, top: 2),
+            child: Text(
+              shown,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: thought.isNotEmpty
+                    ? scheme.onSurfaceVariant
+                    : scheme.onSurface,
+                fontStyle: thought.isNotEmpty ? FontStyle.italic : null,
+              ),
+            ),
+          ),
       ],
     );
   }
