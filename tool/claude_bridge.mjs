@@ -1086,6 +1086,11 @@ function flushPending() {
     // and one endTurn() detaches the view the same tick it appeared.
     const mute = { write: () => true, end: () => {}, on: () => {} };
     endKeep(p);
+    // +81: the pickup marker. 'queued' is filed at ENQUEUE time; the
+    // phone must dissolve its pin when the prompt is actually TAKEN —
+    // on a shared ring, any older turn's frames would otherwise fake
+    // the pickup. Rides the ring ahead of beginTurn's own frames.
+    relay('tool', { name: 'started', detail: p.text.slice(0, 60) });
     beginTurn(p.text, mute, 0);
     endTurn();
     return;

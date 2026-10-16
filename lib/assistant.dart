@@ -351,6 +351,13 @@ class VoiceAssistant extends ChangeNotifier {
   ChatEntry? get queuedBubble =>
       _queuedBubble?.queued == true ? _queuedBubble : null;
 
+  /// Whether the CURRENT turn's events came from GET /poll (set in
+  /// [_bridgeEvents]). On the shared ring, frames of whatever turn was
+  /// already running keep flowing after a polite queue — they must NOT
+  /// fake the pickup and dissolve the pin early (+81). Push (SSE) views
+  /// are per-turn, so there the first frame really is our own.
+  bool _turnViaPoll = false;
+
   /// The pinned message's text for the renderer (kept a plain string so
   /// the view widget needs no import of the log model).
   String? get queuedText => queuedBubble?.blocks.join(' ');
@@ -962,10 +969,11 @@ class VoiceAssistant extends ChangeNotifier {
         }
         final ev = q.removeAt(0);
         _hopReply(); // harness→reply hop crossed: bytes arrived
-        // Any frame back means the harness took this turn (the bridge
-        // keeps a queued /talk silent until it flushes it) — the pin
-        // dissolves and the message joins the flow ahead of its answer.
-        _unpinQueuedBubble();
+        // Push view: our stream is silent until the flush, so ANY
+        // frame is the pickup. Poll view: the ring also carries the
+        // turn we queued BEHIND — only the bridge's explicit 'started'
+        // marker (tool branch below) may dissolve the pin there.
+        if (!_turnViaPoll) _unpinQueuedBubble();
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           _tokLive = false; // the answer closed and is being spoken;
           // nothing is generating to grow a counter over
@@ -984,6 +992,13 @@ class VoiceAssistant extends ChangeNotifier {
           _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
           _mergeContext(ev.inputTokens, ev.contextWindow);
         } else if (ev.kind == 'tool') {
+          if (ev.toolName == 'started') {
+            // The queue's pickup ack (bridge +81): Claude Code has the
+            // prompt NOW. Dissolve the pin, journal the hand-off.
+            _unpinQueuedBubble();
+            _logDebug('queue picked up: "${ev.detail}"');
+            continue;
+          }
           final tally = ev.toolName == 'tokens';
           _logDebug(
             'bridge tool ${ev.toolName} ${ev.detail}${_wireTag(ev)}',
@@ -1909,12 +1924,14 @@ class VoiceAssistant extends ChangeNotifier {
     bool interrupt,
   ) {
     if (!_bridgePollCapable) {
+      _turnViaPoll = false;
       return bridge.talk(
         text,
         interrupt: interrupt,
         onActivity: _markWireAlive,
       );
     }
+    _turnViaPoll = true;
     return _pollTurn(bridge, text, interrupt);
   }
 
@@ -2369,9 +2386,9 @@ class VoiceAssistant extends ChangeNotifier {
           }
           final ev = q.removeAt(0);
           _hopReply(); // harness→reply hop crossed (reattach view)
-          // Same dissolve rule as the /talk loop: frames moving on this
-          // turn mean the harness is working the prompt, pin or no pin.
-          _unpinQueuedBubble();
+          // No unpin here on +81: a reattach backlog is by definition
+          // the OLD turn's frames. Only the 'started' marker (tool
+          // branch below) proves OUR queued prompt was taken.
           // One cleaning up front, then every branch — dedup test, log
           // add, and speak — sees the SAME string the live path stored.
           // The bug this kills: the chat log keeps the cleaner's OUTPUT
@@ -2415,6 +2432,11 @@ class VoiceAssistant extends ChangeNotifier {
             _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
             _mergeContext(ev.inputTokens, ev.contextWindow);
           } else if (ev.kind == 'tool') {
+            if (ev.toolName == 'started') {
+              _unpinQueuedBubble();
+              _logDebug('queue picked up: "${ev.detail}"');
+              continue;
+            }
             final tally = ev.toolName == 'tokens';
             _logDebug(
               'bridge tool ${ev.toolName} ${ev.detail}${_wireTag(ev)}',
