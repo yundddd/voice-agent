@@ -885,7 +885,7 @@ class VoiceAssistant extends ChangeNotifier {
         } else if (ev.kind == 'tool') {
           final tally = ev.toolName == 'tokens';
           _logDebug(
-            'bridge tool ${ev.toolName} ${ev.detail}',
+            'bridge tool ${ev.toolName} ${ev.detail}${_wireTag(ev)}',
             // Token tallies ride every ~0.8 s: fine for the on-screen ring,
             // but in the journal they would flush the 240-entry story of
             // the turn we're actually trying to troubleshoot.
@@ -1853,11 +1853,37 @@ class VoiceAssistant extends ChangeNotifier {
   /// One-line account of a /health snapshot (or its absence) for the
   /// journal: the exact fields the reattach decision turns on, so a
   /// desktop triage read shows WHY the app chose attach/idle/retry.
-  String _healthNote(Map<String, Object>? h) => h == null
-      ? 'UNREACHABLE'
-      : 'turnOpen=${h['turnOpen'] == true} '
-            'backgrounded=${h['backgrounded'] == true} '
-            'missed=${h['missed'] ?? 0} queued=${h['queued'] == true}';
+  String _healthNote(Map<String, Object>? h) {
+    // Every probe doubles as clock calibration: the bridge reports its
+    // wall clock, so frame `_ts` stamps become honest wire ages even
+    // though the phone's clock and the machine's will never agree.
+    if (h != null && h['now'] is num) {
+      final skew =
+          DateTime.now().millisecondsSinceEpoch - (h['now'] as num).toInt();
+      // Absurd skew = a stalled probe answer or a wild phone clock; keep
+      // the last sane value rather than poison the latency column.
+      if (skew.abs() < 10 * 60 * 1000) _bridgeSkewMs = skew;
+    }
+    return h == null
+        ? 'UNREACHABLE'
+        : 'turnOpen=${h['turnOpen'] == true} '
+              'backgrounded=${h['backgrounded'] == true} '
+              'missed=${h['missed'] ?? 0} queued=${h['queued'] == true}';
+  }
+
+  int _bridgeSkewMs = 0; // phone-minus-bridge clock, calibrated per /health
+
+  /// How long this frame sat between the bridge's write and our parse
+  /// (skew-corrected); -1 when the frame (or a pre-stamp bridge) has no
+  /// wire clock to compare against.
+  int _wireAgeMs(BridgeEvent ev) => ev.wireMs == 0
+      ? -1
+      : DateTime.now().millisecondsSinceEpoch - _bridgeSkewMs - ev.wireMs;
+
+  String _wireTag(BridgeEvent ev) {
+    final age = _wireAgeMs(ev);
+    return age < 0 ? '' : ' [wire+${age}ms]';
+  }
 
   Future<void> _reattachPump() async {
     final bridge = _bridge;
@@ -2072,7 +2098,7 @@ class VoiceAssistant extends ChangeNotifier {
           } else if (ev.kind == 'tool') {
             final tally = ev.toolName == 'tokens';
             _logDebug(
-              'bridge tool ${ev.toolName} ${ev.detail}',
+              'bridge tool ${ev.toolName} ${ev.detail}${_wireTag(ev)}',
               toJournal: !tally, // token tallies: ring yes, journal no
             );
             if (tally) {

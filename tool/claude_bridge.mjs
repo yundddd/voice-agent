@@ -389,8 +389,13 @@ const relayEst = (dir) => {
 const fmtTok = (n) => n < 1000 ? `${n}`
   : n < 1e6 ? `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
   : `${(n / 1e6).toFixed(1)}M`;
+// Every frame leaves stamped with the bridge's wall clock (`_ts`), so the
+// phone can log how long a frame sat on the wire by the time it rendered:
+// the render side subtracts the clock skew it calibrated from /health's
+// own `now`. Replay frames are stamped at replay (the field means "when
+// this crossed the wire", not "when the turn event happened").
 const sse = (res, ev, data) =>
-  res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  res.write(`event: ${ev}\ndata: ${JSON.stringify({...data, _ts: Date.now()})}\n\n`);
 // Relay a turn event to whoever is listening — the attached client live,
 // or the backlog for a future /attach. Transient frames (the ~0.8 s token
 // tally, the ctx preview) stay live-only: a reattaching phone re-derives
@@ -1234,6 +1239,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true, claudeUp: !childDead, sessionId,
+      // Bridge wall clock: the phone calibrates its skew against this
+      // (on every /health probe) so frame stamps become honest latencies.
+      now: Date.now(),
       turnOpen, queued: !!pending,
       backgrounded: turnOpen && !curRes,
       // A turn (or its tail) ran with nobody listening: /attach replays

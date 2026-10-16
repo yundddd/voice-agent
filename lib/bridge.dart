@@ -26,6 +26,7 @@ class BridgeEvent {
     this.toolKind = '',
     this.thought = '',
     this.draft = '',
+    this.wireMs = 0,
   });
 
   /// 'say' | 'tool' | 'context' | 'done' | 'error'.
@@ -68,6 +69,13 @@ class BridgeEvent {
   /// ignored), so the chat bubble simply stays on the working line.
   final String draft;
 
+  /// The bridge's wall-clock milliseconds at the moment this frame
+  /// crossed the wire (`_ts` on every SSE frame; 0 from older bridges).
+  /// The assistant subtracts its /health-calibrated clock skew and logs
+  /// the age next to tool lines — the instrument that tells whether
+  /// batching happens on the wire or in this app's socket stack.
+  final int wireMs;
+
   /// A complete assistant message — feed straight into the TTS path.
   bool get isSay => kind == 'say';
   bool get isDone => kind == 'done';
@@ -97,6 +105,7 @@ class BridgeEvent {
           toolKind: '${data['kind'] ?? ''}',
           thought: '${data['thought'] ?? ''}',
           draft: '${data['draft'] ?? ''}',
+          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
         );
       case 'context':
         final n = data['in'], w = data['window'];
