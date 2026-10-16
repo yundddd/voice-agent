@@ -112,8 +112,12 @@ Silero ever sees it:
   A watchdog reopens the mic automatically if Android ends the capture
   session (our own media playback can trigger that), so the session
   self-heals within seconds.
-  Backgrounding the app **pauses the conversation** (mic released, in-flight
-  turn abandoned); returning to the foreground resumes it automatically.
+  Backgrounding the app **pauses the conversation** (mic released); a local
+  echo turn is abandoned, but a **bridge turn keeps running while hidden** —
+  the harness is still answering, every say streams into the chat log (no
+  synth, no audio), and returning to the foreground **speaks the newest
+  reply** then reopens the mic as the user left it. If says are still
+  arriving at that moment the stream simply becomes audible from there on.
 - **Push to talk.** Tap to start, tap to stop and send — the original
   behavior. Switchable at the top of the screen; both modes share the same
   worker, ASR and TTS path. On turn end (release / endpoint) the assistant
@@ -291,12 +295,46 @@ switch (on from the factory, persisted in `bridge_prefs.json`) routes
 whatever you say in push-to-talk or conversation mode to the harness
 instead of repeating it back — say "what still has uncommitted changes?"
 and Claude Code runs the git commands and answers in your assistant
-voice; while a harness turn runs, the mic button doubles as "Stop the
-harness" (it ends the audio *and* the working, context intact for the
-next turn). Tool activity shows as live status text, `say` events
-are synthesised sentence-stream through the same chunked player replies
+voice. While a harness turn runs, push-to-talk steers by RELEASE
+GESTURE (0.1.0+25): the in-flight bubble carries a Claude Code-style
+progress line — the braille spinner wheel (⠋⠙⠹⠸⠼…), the live status
+(tool activity included), an elapsed-seconds counter (`_HarnessSpinner`
+in `main.dart`) — and while the model generates, that status shows a
+live token tally ("thinking · 1.2k out · 48k in", exact at every
+message boundary, ~4 chars/token in between; `--include-partial-messages`
+stream_event deltas in `claude_bridge.mjs`). A context bar above the
+button shows conversation consumption vs the model's window (`context`
+SSE events + the `/health` snapshot, `_ContextBar` in `main.dart`) —
+the same numbers Claude Code's /context prints. A fresh hold *anytime* during that turn detaches
+it (the tool call goes to background and finishes its work unheard,
+output dropped) and opens the mic right there. Release in place or slide
+RIGHT and your words are QUEUED politely: the turn in flight finishes
+first, then yours goes next; slide UP and a mere thinking turn is
+SIGINT'd so your prompt starts in a heartbeat (an open tool call is
+still never cut — it finishes, and your prompt goes next); a quick tap
+remains the hard stop: detach + `/stop`, the old "Stop the harness".
+The terminal-icon badge stays lit while a detached turn keeps working
+unheard. In conversation mode the mic button likewise keeps working
+mid-turn. `say` events are
+synthesised sentence-stream through the same chunked player voice replies
 use, and everything the harness answers runs past `cleanForSpeech` first
 (a bullet list would otherwise be *spoken*; markdown/emoji are stripped).
+Backgrounding a turn does not cancel it: every answer streams into the
+chat log unseen and the newest one is spoken when you switch back.
+**Barge-in backgrounds too** (0.1.0+20): speaking over a running harness
+turn DETACHES the phone from it — the bridge turns it into a *background*
+turn (Claude Code style: the harness finishes its work, output is dropped)
+— and your new words go out seconds later as a fresh turn, QUEUED behind
+an open tool call or ahead of a cut-short thinking turn (the bridge SIGINTs
+pure-thinking turns at queue time when the takeover wants to be heard —
+`interrupt=1`, the default for spoken barge-in and PTT slide-up; PTT's
+slide-right passes `interrupt=0` and the queue waits politely; in either
+flavour a new prompt goes next even while a tool-free answer was
+mid-air). Tapping Stop is the hard
+flavour: same detach plus a `/stop` so the harness quits working too.
+Smoke-tested end-to-end against a stubbed `claude` child: detach-mid-tool
+queues and answers after the tool; detach-mid-thinking interrupts and
+answers inside ~1.5 s.
 Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run

@@ -74,6 +74,48 @@ void main() {
       ]);
       expect(evs.single.isDone && evs.single.isError, isTrue);
     });
+
+    test('context frame decodes tokens and window (0 = unknown)', () async {
+      final evs = await parse([
+        'event: context',
+        'data: ${jsonEncode({'in': 48123, 'window': 467232})}',
+        '',
+        'event: context',
+        'data: ${jsonEncode({'in': 15801})}', // window not yet named
+        '',
+      ]);
+      expect(evs[0].kind, 'context');
+      expect(evs[0].inputTokens, 48123);
+      expect(evs[0].contextWindow, 467232);
+      expect(evs[1].inputTokens, 15801);
+      expect(evs[1].contextWindow, 0);
+    });
+
+    test('tool tokens frame carries numeric tally; absent fields degrade',
+        () async {
+      final evs = await parse([
+        'event: tool',
+        'data: ${jsonEncode({
+              'name': 'tokens',
+              'detail': 'thinking · 1.2k out · 21k in',
+              'out': 1234,
+              'in': 21001,
+              'kind': 'thinking',
+            })}',
+        '',
+        'event: tool',
+        'data: {"name":"tokens","detail":"500 out · 0 in"}', // old wire
+        '',
+      ]);
+      expect(evs[0].toolName, 'tokens');
+      expect(evs[0].outTokens, 1234);
+      expect(evs[0].inputTokens, 21001);
+      expect(evs[0].toolKind, 'thinking');
+      // An old bridge (or a plain tool_use frame) leaves the numerics
+      // zeroed — the app still has the display string to show.
+      expect(evs[1].outTokens, 0);
+      expect(evs[1].toolKind, '');
+    });
   });
 
   group('cleanForSpeech', () {

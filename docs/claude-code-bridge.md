@@ -30,14 +30,36 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
 
     node tool/claude_bridge.mjs --dir ~/some-project --token SECRET [--port 8732]
 
-- `POST /talk?token=…` — body = the utterance text → SSE stream:
-  `say` {text} (a complete assistant message, speak it), `tool`
+- `POST /talk?token=…&interrupt=1` — body = the utterance text → SSE
+  stream: `say` {text} (a complete assistant message, speak it), `tool`
   {name,detail} (the harness is running something — speak a short
   progress line or ignore), `done` {isError} (turn over), `error`.
-- `POST /stop` — barge-in: SIGINT only while a turn is in flight (SIGINT
-  on an *idle* process kills it; next `/talk` respawns and `--resume`s,
-  context intact — both paths verified).
-- `POST /new` — forget the conversation; `GET /health` — liveness.
+  Detaching mid-turn (closing the SSE without `/stop`) does NOT cancel
+  the work: the turn goes BACKGROUND — the harness finishes, output is
+  dropped, and the session's next `result` frees the slot. The next
+  `/talk` while a turn is in flight (heard or backgrounded) is QUEUED
+  (never refused): it gets a `tool queued` progress line, then its turn
+  arrives. If the open turn has a tool call, the queue waits for it
+  either way (Claude Code's "background the long job, type the next
+  thing"). If it was only thinking, the `interrupt` flag decides: `1`
+  (the default — typed text, spoken barge-in, push-to-talk slide-UP)
+  SIGINTs the thinking turn and the queue flushes in a heartbeat; `0`
+  (push-to-talk slide-right, the polite queue) lets the turn in flight
+  run to its natural end first. `/stop` hard-stops an open turn either
+  way (attached or backgrounded); a queued prompt then takes over on its
+  result. Two `context` events {in,window} ride the same stream: one at
+  every API call start (live consumption; window may be 0 until the
+  first result names it) and the authoritative post-turn figure before
+  `done`. The same numbers snapshot into `GET /health` as `context`, so
+  even a phone that never attached gets the reading (the app paints it
+  as a context bar above the talk button, Claude Code style).
+- `POST /stop` — SIGINT while any turn is OPEN (SIGINT on an *idle*
+  process kills it; next `/talk` respawns and `--resume`s, context
+  intact — both paths verified).
+- `POST /new` — forget the conversation (also clears a background turn
+  and a queued prompt); `GET /health` — liveness + `turnOpen` /
+  `backgrounded` / `queued` flags + `context` (last known tokens-in-
+  context and the model's window, snapshotted at every result).
 - Session id persists to `<dir>/.claude_bridge_session`, so a bridge
   restart resumes the same voice conversation.
 
@@ -85,11 +107,28 @@ the Bridge screen. Notes that matter when touching this code:
    moment it lands — play begins while the harness still composes the
    next message. Per-message (not per-token) granularity is right for
    TTS: whole sentences, no half-word ever spliced.
-3. Barge-in: the Stop chip, a mic tap mid-reply, or any new voice turn
-   all bump the generation; `runQuickCommand` notices and POSTs `/stop`
-   so the harness quits *working*, not just talking (verified semantics:
-   mid-turn SIGINT ends the turn with context intact; the conversation
-   resumes on the next chip).
+3. Barge-in has two flavours (`_abandonBridgeTurn`). A SPOKEN takeover —
+   VAD speech-start mid-reply, or any new voice/typed turn — DETACHES:
+   the generation is bumped and the /talk subscription is cancelled, so
+   the bridge backgrounds the turn (the harness keeps *working*: long
+   tool calls run to completion; their output is dropped). The utterance
+   that follows becomes a fresh `/talk` seconds later and is queued:
+   behind an open tool, or ahead of a cut-short thinking turn (the
+   bridge SIGINTs those at queue time). A TAPPED stop — Stop chip, FAB,
+   mode switch, clone/bench takeover — is the hard flavour: same detach
+   plus a `/stop` (SIGINT) so the harness quits working too (verified
+   semantics: mid-turn SIGINT ends the turn with context intact; the
+   conversation resumes on the next chip). PUSH-TO-TALK releases steer
+   by GESTURE (0.1.0+25, `pttDown`/`pttUp` in `assistant.dart`): the
+   press over a running turn detaches it (the tool call backgrounds and
+   keeps working, output dropped) and opens the mic; a slide-UP release
+   sends the new prompt with `interrupt=1` (a mere thinking turn is cut,
+   an open tool still finishes first — the prompt goes next either way);
+   a plain or slide-RIGHT release sends with `interrupt=0` (polite
+   queue: the turn in flight completes, then the prompt is processed);
+   a quick tap stays the hard stop (detach + `/stop`). The terminal-icon
+   badge stays lit while a detached turn works unheard
+   (`harnessBackgrounded`).
 4. `tool` events show as live status text ("The harness is working —
    Bash flutter test"). The bridge's voice system prompt asks the
    harness for a one-line narration *before* each tool pass, which
@@ -120,7 +159,11 @@ the Bridge screen. Notes that matter when touching this code:
    and the ack suppresses. `/new` is NOT sent over stdin: stream-json
    has no /new, and the bridge's own endpoint must also forget the
    persisted session id or the next respawn re-hydrates the old
-   context. Free text with a leading `/` runs any CLI command the same
+   context. The chip also clears the APP's chat log (memory and
+   `chat_log.json`) from the same events hook, so "a fresh
+   conversation" means a blank screen on the phone exactly when the
+   harness drops its session — the spoken ack promises as much. Free
+   text with a leading `/` runs any CLI command the same
    way (`/context`, `/usage`, ...) — and the CLI's own error replies
    arrive speakable, so nothing dead-airs.
 

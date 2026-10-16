@@ -20,14 +20,34 @@ class BridgeEvent {
     this.toolName = '',
     this.detail = '',
     this.isError = false,
+    this.inputTokens = 0,
+    this.contextWindow = 0,
+    this.outTokens = 0,
+    this.toolKind = '',
   });
 
-  /// 'say' | 'tool' | 'done' | 'error'.
+  /// 'say' | 'tool' | 'context' | 'done' | 'error'.
   final String kind;
   final String text;
   final String toolName;
   final String detail;
   final bool isError;
+
+  /// For 'context' (and for 'tool {name:tokens}', where it is that
+  /// frame's `in`): tokens of conversation context the next call will
+  /// carry, and the model's window (0 = the bridge has not seen a
+  /// `result` naming one yet).
+  final int inputTokens;
+  final int contextWindow;
+
+  /// For 'tool {name:tokens}' (the live spinner counter): output tokens
+  /// this turn (estimate or exact — the bridge says which by when it
+  /// sends), the call's context tokens in [inputTokens] (same field the
+  /// `context` frame uses), and the activity word in [toolKind]
+  /// ('thinking', 'answering', 'calling Bash', …). A pre-numbers bridge
+  /// leaves these zero/empty and the app shows [detail] verbatim.
+  final int outTokens;
+  final String toolKind;
 
   /// A complete assistant message — feed straight into the TTS path.
   bool get isSay => kind == 'say';
@@ -47,10 +67,22 @@ class BridgeEvent {
       case 'say':
         return BridgeEvent._('say', text: '${data['text'] ?? ''}');
       case 'tool':
+        final n = data['in'];
+        final o = data['out'];
         return BridgeEvent._(
           'tool',
           toolName: '${data['name'] ?? ''}',
           detail: '${data['detail'] ?? ''}',
+          inputTokens: n is num ? n.toInt() : 0,
+          outTokens: o is num ? o.toInt() : 0,
+          toolKind: '${data['kind'] ?? ''}',
+        );
+      case 'context':
+        final n = data['in'], w = data['window'];
+        return BridgeEvent._(
+          'context',
+          inputTokens: n is num ? n.toInt() : 0,
+          contextWindow: w is num ? w.toInt() : 0,
         );
       case 'done':
         return BridgeEvent._('done', isError: data['isError'] == true);
@@ -113,20 +145,33 @@ class BridgeClient {
   final String baseUrl; // e.g. http://192.168.1.20:8732
   final String token;
 
-  Uri _u(String path) => Uri.parse(
+  Uri _u(String path, [Map<String, String>? extra]) => Uri.parse(
     baseUrl.endsWith('/')
         ? '${baseUrl.substring(0, baseUrl.length - 1)}$path'
         : '$baseUrl$path',
-  ).replace(queryParameters: {'token': token});
+  ).replace(queryParameters: {'token': token, ...?extra});
 
   /// Sends an utterance; the stream yields say/tool events as the harness
   /// works and a final done (or error) event, then closes. The HTTP
   /// request *is* the turn: cancelling the subscription closes the
   /// connection and the bridge's response-close hook cleans up.
-  Stream<BridgeEvent> talk(String text) async* {
+  ///
+  /// [interrupt] decides what a QUEUED prompt does to the turn in flight
+  /// (only relevant while one is already running backgrounded): true
+  /// (the default — typed text, conversation barge-in, PTT slide-up)
+  /// SIGINTs a mere thinking turn so this prompt starts in a heartbeat;
+  /// false (the PTT slide-right polite queue) lets the turn finish its
+  /// work first. An open tool is never interrupted — it runs to
+  /// completion and this prompt goes next either way.
+  Stream<BridgeEvent> talk(
+    String text, {
+    bool interrupt = true,
+  }) async* {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
-      final req = await client.postUrl(_u('/talk'));
+      final req = await client.postUrl(
+        _u('/talk', {'interrupt': interrupt ? '1' : '0'}),
+      );
       req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
       req.add(utf8.encode(text));
       final res = await req.close();
@@ -158,18 +203,31 @@ class BridgeClient {
 
   /// GET /health → null when reachable and claude is up, else the reason.
   Future<String?> health() async {
+    final h = await _healthRaw();
+    if (h.body == null) return h.why ?? 'unreachable';
+    return h.body!['claudeUp'] == true ? null : 'claude is not up: ${h.body}';
+  }
+
+  /// GET /health verbatim ({ok, claudeUp, sessionId, turnOpen, queued,
+  /// backgrounded}) — what the Bridge screen shows as the session id;
+  /// null when the bridge can't be reached at all.
+  Future<Map<String, Object>?> healthInfo() async => (await _healthRaw()).body;
+
+  Future<({Map<String, Object>? body, String? why})> _healthRaw() async {
     try {
-      final req = await HttpClient()
+      final res = await HttpClient()
           .getUrl(_u('/health'))
           .then((r) => r.close())
           .timeout(const Duration(seconds: 6));
-      final body = await req.transform(utf8.decoder).join();
-      if (req.statusCode != 200) return 'HTTP ${req.statusCode}';
-      final j = BridgeEvent.tryJson(body);
-      if (j is! Map) return 'unexpected reply: $body';
-      return j['claudeUp'] == true ? null : 'claude is not up: $body';
+      final text = await res.transform(utf8.decoder).join();
+      if (res.statusCode != 200) {
+        return (body: null, why: 'HTTP ${res.statusCode}');
+      }
+      final j = BridgeEvent.tryJson(text);
+      if (j is! Map) return (body: null, why: 'unexpected reply: $text');
+      return (body: j.cast<String, Object>(), why: null);
     } on Object catch (e) {
-      return '$e';
+      return (body: null, why: '$e');
     }
   }
 
@@ -221,6 +279,16 @@ String cleanForSpeech(String t) {
   return s;
 }
 
+/// 12400 -> '12.4k', 467232 -> '467k', 1_250_000 -> '1.3M'. Shared by
+/// the context bar (main.dart) and the live token ticker
+/// (VoiceAssistant.tokenTickerLabel), mirroring the bridge's own
+/// fmtTok so phone and wire never disagree about how a number reads.
+String fmtTokenCount(int n) => n < 1000
+    ? '$n'
+    : n < 1000000
+    ? '${(n / 1000).toStringAsFixed(n < 10000 ? 1 : 0)}k'
+    : '${(n / 1000000).toStringAsFixed(1)}M';
+
 /// Persisted bridge settings (mirrors the tts_prefs.json pattern).
 /// The field defaults ship pointing at the dev machine's always-on demo
 /// bridge (tailscale IP, port 8732, --token testtok): a fresh install
@@ -239,16 +307,33 @@ class BridgePrefs {
     this.url = defaultUrl,
     this.token = defaultToken,
     this.voice = true,
+    this.narrate = true,
   });
   String url, token;
   bool voice;
+
+  /// 'Narrate progress' (the factory setting): the harness's work becomes
+  /// audible AS IT HAPPENS — every `tool` event the bridge emits at a
+  /// step's start gets a spoken line, and a long silent step (a
+  /// three-minute build) repeats its line as a still-at-it heartbeat, so
+  /// a turn never sounds like dead air followed by one block of speech
+  /// at the end. Off restores the quiet regime: status text only, the
+  /// answer arrives when it's ready. Read live by
+  /// VoiceAssistant.runQuickCommand's event loop (no wire involvement).
+  bool narrate;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
 
-  Map<String, Object> toJson() => {'url': url, 'token': token, 'voice': voice};
+  Map<String, Object> toJson() => {
+    'url': url,
+    'token': token,
+    'voice': voice,
+    'narrate': narrate,
+  };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
     token: j['token'] as String? ?? BridgePrefs.defaultToken,
     voice: j['voice'] as bool? ?? true,
+    narrate: j['narrate'] as bool? ?? true,
   );
 }
 
