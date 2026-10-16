@@ -997,6 +997,14 @@ class VoiceAssistant extends ChangeNotifier {
                 : '${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = stepLine;
+            // Steps whose fetching is pure plumbing get label-only
+            // treatment: the eyes see 'WebFetch …', the ears get
+            // nothing — no immediate narration AND no heartbeat line
+            // (latestWork stays empty so the 15 s pulse has nothing to
+            // re-speak). Web fetches and their searches are the ones
+            // nobody asked to hear phonemes for.
+            final stepIsSilent = ev.toolName == 'WebFetch' ||
+                ev.toolName == 'WebSearch';
             // What the VOICE gets is not always the label on screen:
             // a raw shell line is the one thing nobody wants spoken
             // ('Bash git diff dash stat pipe head minus twenty'), so a
@@ -1007,7 +1015,9 @@ class VoiceAssistant extends ChangeNotifier {
             // prose. One side effect in our favor: consecutive Bash
             // steps share the spoken line, and the narrate gate already
             // hushes repeats, so a command burst won't machine-gun.
-            latestWork = ev.toolName == 'Bash'
+            latestWork = stepIsSilent
+                ? ''
+                : ev.toolName == 'Bash'
                 ? 'Running a command…'
                 : stepLine;
             // No step line in the conversation any more: the spinner's
@@ -1015,7 +1025,9 @@ class VoiceAssistant extends ChangeNotifier {
             // steps spoken) carry tool progress; the journal keeps every
             // step with its wire stamp. The chat log is for words.
             notifyListeners();
-            if (narrationQuiet() && latestWork != lastNarrated) {
+            if (latestWork.isNotEmpty &&
+                narrationQuiet() &&
+                latestWork != lastNarrated) {
               unawaited(narrateProgress(latestWork));
             }
           }
