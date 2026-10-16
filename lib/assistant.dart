@@ -1198,7 +1198,11 @@ class VoiceAssistant extends ChangeNotifier {
     );
     if (hardStop) unawaited(_bridge?.stop());
     _bridgeBusy = false;
-    _harnessSince = null;
+    // A SOFT detach (badge lit) keeps the elapsed clock: the turn is
+    // working on the bridge exactly as before — pressing the mic must
+    // not visually kill the spinner the user is watching (0.1.0+72).
+    // A hard stop, or a detach into the void, zeroes it as always.
+    if (!_harnessBackgrounded) _harnessSince = null;
     final sub = _bridgeSub;
     _bridgeSub = null;
     unawaited(sub?.cancel());
@@ -2163,11 +2167,13 @@ class VoiceAssistant extends ChangeNotifier {
       // open, and the release lands on 'phase=idle not listening' with
       // eleven seconds of speech thrown away.
       _harnessBackgrounded = false;
+      _harnessSince = null;
       _logDebug('orphan retired DURING a live press — phase left alone');
       return;
     }
     _harnessBackgrounded = false; // the bridge just said nothing is open (or
     // we stopped listening on its only channel) — the badge must not lie
+    _harnessSince = null;
     _idleReady();
     _status = 'Lost the bridge mid-turn — its answer ended unheard.';
     _logDebug('ORPHAN retired: spinner cleared, answer gone unheard');
@@ -2455,7 +2461,7 @@ class VoiceAssistant extends ChangeNotifier {
         if (stillOurs) _wireCheck?.cancel();
         if (_bridgeTurnSeq == mySeq) {
           _bridgeBusy = false;
-          _harnessSince = null;
+          if (!_harnessBackgrounded) _harnessSince = null; // detach holds
         }
         if (turn.isEmpty) _removeEmptyTurn(turn);
         if (gen == _generation) {
@@ -3703,6 +3709,7 @@ class VoiceAssistant extends ChangeNotifier {
         if (interrupt || heldMs < _pttTapStopMs) {
           unawaited(_bridge?.stop());
           _harnessBackgrounded = false;
+          _harnessSince = null;
           _status = 'Heard nothing — stopped the harness.';
         } else {
           _status =

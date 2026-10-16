@@ -146,9 +146,17 @@ class _AssistantScreenState extends State<AssistantScreen>
     // The in-flight harness turn: while a bridge turn runs, its bubble is
     // the last (possibly still empty) assistant entry — where the Claude
     // Code-style working line (below the last spoken block) gets painted.
-    final liveTurn = a.bridgeBusy && a.chat.isNotEmpty && !a.chat.last.fromUser
-        ? a.chat.last
-        : null;
+    // A DETACHED-but-still-running turn counts too (0.1.0+72): pressing
+    // the mic over live work backgrounds the stream — it never stopped
+    // the work, and since +72 it no longer stops the display either.
+    // The wheel and its command line keep ticking under the bubble for
+    // the whole hold, as if the finger had never touched the screen.
+    final liveTurn =
+        (a.bridgeBusy || a.harnessBackgrounded) &&
+                a.chat.isNotEmpty &&
+                !a.chat.last.fromUser
+            ? a.chat.last
+            : null;
 
     final (icon, color) = switch ((a.phase, a.userSpeaking)) {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
