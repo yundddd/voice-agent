@@ -701,10 +701,13 @@ function handleEvent(line) {
         // one extra frame per closed message is nothing on the wire, and
         // it is the number the app's local growth will be judged against.
         tokOutExact += o; tokLastMsgOut = o; tokChars = 0;
-        if (curRes) {
-          tokSentAt = Date.now();
-          relay('tool', tokFrame(tokOutExact));
-        }
+        // +75: no curRes gate anymore. 'CurRes' is the PUSH view, and a
+        // pull-mode phone never sets one — every later tally frame died
+        // behind this if and the ring kept only the turn-start zero
+        // (field report: "still see zero token count"). relay() feeds
+        // the ring and the view/backlog itself; the ring is capped.
+        tokSentAt = Date.now();
+        relay('tool', tokFrame(tokOutExact));
       }
     }
     if (e.type === 'content_block_stop') lastTextOpen = false;
@@ -716,7 +719,7 @@ function handleEvent(line) {
     // whoever attaches next) but relays nothing. Between relays the
     // phone extrapolates at the rate its own consecutive relays taught
     // it, so the displayed number grows smoothly, not in 2-second jumps.
-    if (curRes && tokChars && Date.now() - tokSentAt >= 800) {
+    if (tokChars && Date.now() - tokSentAt >= 800) {
       tokSentAt = Date.now();
       relay('tool', tokFrame(tokOutExact + Math.floor(tokChars / 4)));
     }
@@ -884,10 +887,8 @@ function handleEvent(line) {
           if (tailNow !== thinkBuf && Date.now() - tokSentAt >= 800) {
             thinkBuf = tailNow;
             tokSentAt = Date.now();
-            if (curRes) {
-              relay('tool',
-                tokFrame(tokOutExact + Math.floor(tokChars / 4)));
-            }
+            relay('tool',
+              tokFrame(tokOutExact + Math.floor(tokChars / 4)));
           }
         }
       }
