@@ -7,7 +7,7 @@ import 'model_packs.dart';
 import 'speech_worker.dart' show TtsSpec;
 
 /// One selectable TTS voice: a display entry + the packs it needs + how to
-/// build a [TtsSpec] from its unpacked files. All packs download lazily when
+/// build a [TtsSpec] from its unpacked files. Packs download lazily when
 /// the voice is first selected, and can be deleted again (except the voice
 /// currently in use — the assistant refuses those).
 class TtsVoice {
@@ -17,136 +17,35 @@ class TtsVoice {
   final String sizeLabel;
   final List<ModelPack> packs;
 
-  /// Piper/VITS: model + tokens file names inside the first pack's dir.
-  final String? vitsModel, vitsTokens;
-
-  /// True = ZipVoice zero-shot cloning engine (needs a recorded reference).
-  final bool isClone;
-
-  /// True = NeuTTS (Neuphonic) engine: GGUF backbone + pure-Rust codec via
-  /// our own FFI bridge, preset reference voices picked with [specIn]'s sid
-  /// (4 MIT-licensed reference samples; seed pinned for stable output).
-  final bool isNeutts;
-
-  /// True = Kyutai Pocket TTS (sherpa-onnx ONNX export): zero-shot clone from
-  /// a bundled reference wav per preset — sid picks it, no transcript needed.
-  final bool isPocket;
-
-  /// True = Kokoro-82M v1.0 (fp32 ONNX): studio-grade one-pass renderer,
-  /// 54 built-in speaker styles picked with sid after load. No cloning, no
-  /// reference: text in, whole sentence out, cold-start-free.
-  final bool isKokoro;
   const TtsVoice({
     required this.id,
     required this.label,
     required this.note,
     required this.sizeLabel,
     required this.packs,
-    this.vitsModel,
-    this.vitsTokens = 'tokens.txt',
-    this.isClone = false,
-    this.isNeutts = false,
-    this.isPocket = false,
-    this.isKokoro = false,
   });
-
-  /// Pocket TTS preset references (`voices/<name>.wav` in the pack, in slider
-  /// order). Wavs from the ungated kyutai/tts-voices repo (CC-BY-4.0).
-  static const pocketRefs = [
-    'jane', // f, conversation
-    'anna', // f, conversation
-    'jean', // m, conversation
-    'michael', // m, conversation
-    'alba', // m, reading
-    'bill_boerst', // m, reading
-  ];
 
   String get dirName => packs.first.dirName;
 
   static String _f(String modelsDir, String dirName, String file) =>
       p.join(modelsDir, dirName, file);
 
-  /// Absolute-path job spec for the speech worker.
-  ///
-  /// [neuttsLib] overrides the FFI bridge library file (host tests; empty =
-  /// dlopen the APK-packaged one).
-  TtsSpec specIn(
-    String modelsDir, {
-    int sid = 0,
-    String referenceWav = '',
-    String referenceText = '',
-    String neuttsLib = '',
-  }) {
-    if (isClone) {
-      return TtsSpec.zipvoice(
-        zipTokens: _f(modelsDir, dirName, 'tokens.txt'),
-        zipEncoder: _f(modelsDir, dirName, 'encoder.int8.onnx'),
-        zipDecoder: _f(modelsDir, dirName, 'decoder.int8.onnx'),
-        zipDataDir: _f(modelsDir, dirName, 'espeak-ng-data'),
-        zipLexicon: _f(modelsDir, dirName, 'lexicon.txt'),
-        vocoder: _f(modelsDir, dirName, 'vocos_24khz.onnx'),
-        referenceWav: referenceWav,
-        referenceText: referenceText,
-      );
-    }
-    if (isNeutts) {
-      // The Rust bridge .so rides *inside the pack* (not the APK): it only
-      // downloads when the voice is picked. espeakDataDir doubles as the
-      // phonemizer's unpack destination; modelsDir is app-writable.
-      return TtsSpec.neutts(
-        neuttsGguf: _f(modelsDir, dirName, 'neutts-nano-Q4_0.gguf'),
-        neuttsDecoder: _f(modelsDir, dirName, 'neucodec_decoder.safetensors'),
-        neuttsVoices: _f(modelsDir, dirName, 'voices'),
-        neuttsRefs: const ['jo', 'greta', 'mateo', 'juliette'],
-        neuttsSeed: 7,
-        espeakDataDir: p.join(modelsDir, 'espeak-neutts'),
-        neuttsLib: neuttsLib.isNotEmpty
-            ? neuttsLib
-            : _f(modelsDir, dirName, 'libneutts_bridge.so'),
-        sid: sid,
-      );
-    }
-    if (isKokoro) {
-      // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
-      // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
-      // + espeak fallback cover everything we speak).
-      return TtsSpec.kokoro(
-        kokoroModel: _f(modelsDir, dirName, 'model.onnx'),
-        kokoroVoices: _f(modelsDir, dirName, 'voices.bin'),
-        kokoroTokens: _f(modelsDir, dirName, 'tokens.txt'),
-        kokoroDataDir: _f(modelsDir, dirName, 'espeak-ng-data'),
-        kokoroLexicon: [
-          _f(modelsDir, dirName, 'lexicon-us-en.txt'),
-          _f(modelsDir, dirName, 'lexicon-gb-en.txt'),
-        ].join(','),
-        sid: sid,
-      );
-    }
-    if (isPocket) {
-      // sherpa-onnx's PocketTTS engine: reference wav alone (no transcript),
-      // resampled to 24 kHz and capped at 10 s inside the native layer.
-      final refs = pocketRefs;
-      return TtsSpec.pocket(
-        pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.onnx'),
-        pocketLmMain: _f(modelsDir, dirName, 'lm_main.onnx'),
-        pocketEncoder: _f(modelsDir, dirName, 'encoder.onnx'),
-        pocketDecoder: _f(modelsDir, dirName, 'decoder.onnx'),
-        pocketTextConditioner: _f(modelsDir, dirName, 'text_conditioner.onnx'),
-        pocketVocabJson: _f(modelsDir, dirName, 'vocab.json'),
-        pocketTokenScoresJson: _f(modelsDir, dirName, 'token_scores.json'),
-        pocketRefs: refs,
-        referenceWav: _f(
-          modelsDir,
-          dirName,
-          'voices/${refs[sid.clamp(0, refs.length - 1)]}.wav',
-        ),
-        sid: sid,
-      );
-    }
-    return TtsSpec.vits(
-      vitsModel: _f(modelsDir, dirName, vitsModel!),
-      vitsTokens: _f(modelsDir, dirName, vitsTokens!),
-      espeakDataDir: _f(modelsDir, dirName, 'espeak-ng-data'),
+  /// Absolute-path job spec for the speech worker. Kokoro is the app's
+  /// only engine — the Piper/VITS, Pocket, ZipVoice and NeuTTS engines
+  /// were removed (Kokoro won the A/B on sound by a wide margin).
+  TtsSpec specIn(String modelsDir, {int sid = 0}) {
+    // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
+    // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
+    // + espeak fallback cover everything we speak).
+    return TtsSpec.kokoro(
+      kokoroModel: _f(modelsDir, dirName, 'model.onnx'),
+      kokoroVoices: _f(modelsDir, dirName, 'voices.bin'),
+      kokoroTokens: _f(modelsDir, dirName, 'tokens.txt'),
+      kokoroDataDir: _f(modelsDir, dirName, 'espeak-ng-data'),
+      kokoroLexicon: [
+        _f(modelsDir, dirName, 'lexicon-us-en.txt'),
+        _f(modelsDir, dirName, 'lexicon-gb-en.txt'),
+      ].join(','),
       sid: sid,
     );
   }
@@ -175,81 +74,9 @@ class TtsVoice {
 const _k2fsaTts =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
 
-const _modelsRelease =
-    'https://github.com/yundddd/voice-agent/releases/download/models-v1';
-
-/// Voices on offer, in display order. Lessac is the default and downloads on
-/// first run; the rest are lazy (only fetched if the user picks them).
-/// The int8 Piper voices are the small, fast variants (~20 MB each).
+/// Voices on offer, in display order. Kokoro is the default and downloads on
+/// first run.
 const ttsVoices = <TtsVoice>[
-  TtsVoice(
-    id: 'lessac',
-    label: 'Lessac',
-    note: 'American woman — the built-in default',
-    sizeLabel: '65 MB',
-    packs: [defaultTtsPack],
-    vitsModel: 'en_US-lessac-medium.onnx',
-  ),
-  TtsVoice(
-    id: 'ryan',
-    label: 'Ryan',
-    note: 'American man — expressive',
-    sizeLabel: '20 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: Ryan',
-        url: '$_k2fsaTts/vits-piper-en_US-ryan-medium-int8.tar.bz2',
-        dirName: 'tts-ryan-medium-int8',
-        markerFile: 'en_US-ryan-medium.onnx',
-      ),
-    ],
-    vitsModel: 'en_US-ryan-medium.onnx',
-  ),
-  TtsVoice(
-    id: 'amy',
-    label: 'Amy',
-    note: 'American woman — clear and quick',
-    sizeLabel: '20 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: Amy',
-        url: '$_k2fsaTts/vits-piper-en_US-amy-medium-int8.tar.bz2',
-        dirName: 'tts-amy-medium-int8',
-        markerFile: 'en_US-amy-medium.onnx',
-      ),
-    ],
-    vitsModel: 'en_US-amy-medium.onnx',
-  ),
-  TtsVoice(
-    id: 'alba',
-    label: 'Alba',
-    note: 'Scottish woman',
-    sizeLabel: '20 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: Alba',
-        url: '$_k2fsaTts/vits-piper-en_GB-alba-medium-int8.tar.bz2',
-        dirName: 'tts-alba-medium-int8',
-        markerFile: 'en_GB-alba-medium.onnx',
-      ),
-    ],
-    vitsModel: 'en_GB-alba-medium.onnx',
-  ),
-  TtsVoice(
-    id: 'libritts',
-    label: 'LibriTTS-R',
-    note: 'American man — pick any of 60 reader styles once loaded',
-    sizeLabel: '22 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: LibriTTS-R',
-        url: '$_k2fsaTts/vits-piper-en_US-libritts_r-medium-int8.tar.bz2',
-        dirName: 'tts-libritts-r-medium-int8',
-        markerFile: 'en_US-libritts_r-medium.onnx',
-      ),
-    ],
-    vitsModel: 'en_US-libritts_r-medium.onnx',
-  ),
   TtsVoice(
     id: 'kokoro',
     label: 'Kokoro v1.0',
@@ -266,71 +93,6 @@ const ttsVoices = <TtsVoice>[
         markerFile: 'model.onnx',
       ),
     ],
-    isKokoro: true,
-  ),
-  TtsVoice(
-    id: 'pocket',
-    label: 'Pocket TTS',
-    note:
-        'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
-        'Michael/Alba/Bill) once loaded; any one of them also clones from a '
-        'recording later. Full-precision graphs: subjective A/B on our '
-        'renders preferred them over the int8 quantized ones (the ~10 kHz '
-        'Mimi-codec ceiling is shared, but the int8 AR path measured a '
-        'drier, less reliable head). Runs on the shared sherpa-onnx engine.',
-    sizeLabel: '~205 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: Pocket TTS (engine + voices)',
-        url: '$_modelsRelease/pocket-tts-v2.zip',
-        dirName: 'pocket-tts',
-        markerFile: 'pack-v2.ok', // sentinel: bump to force pack re-download
-      ),
-    ],
-    isPocket: true,
-  ),
-  TtsVoice(
-    id: 'clone',
-    label: 'My voice',
-    note: 'Cloned from a 10-second recording of you (ZipVoice)',
-    sizeLabel: '155 MB',
-    packs: [
-      ModelPack(
-        label: 'voice cloning engine',
-        url:
-            '$_k2fsaTts/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2',
-        dirName: 'tts-zipvoice',
-        markerFile: 'encoder.int8.onnx',
-      ),
-      ModelPack(
-        label: 'cloning vocoder',
-        url:
-            'https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx',
-        dirName: 'tts-zipvoice',
-        markerFile: 'vocos_24khz.onnx',
-        fileName: 'vocos_24khz.onnx', // raw file, not an archive
-      ),
-    ],
-    isClone: true,
-  ),
-  TtsVoice(
-    id: 'neutts',
-    label: 'NeuTTS Nano',
-    note:
-        'Neuphonic neural codec voice — four preset styles (Greta/Jo/'
-        'Mateo/Juliette) once loaded; the Rust engine ships inside the '
-        'download. Android (arm64) only.',
-    sizeLabel: '~500 MB',
-    packs: [
-      ModelPack(
-        label: 'voice: NeuTTS Nano (engine + voices)',
-        url: '$_modelsRelease/neutts-nano-v1.zip',
-        dirName: 'neutts-nano',
-        markerFile: 'pack-v3.ok', // sentinel: presence forces pack re-download
-        // (v2 shipped the pre-EOS-fix engine; bump on any bridge rebuild)
-      ),
-    ],
-    isNeutts: true,
   ),
 ];
 
@@ -347,29 +109,13 @@ class TtsPrefs {
   String voiceId;
   int sid;
 
-  /// Recorded clone sample: wav path + what the user said in it (filled in
-  /// by Whisper right after recording — ZipVoice needs the transcript).
-  String sampleWav, sampleText;
+  TtsPrefs({this.voiceId = 'kokoro', this.sid = 0});
 
-  TtsPrefs({
-    this.voiceId = 'lessac',
-    this.sid = 0,
-    this.sampleWav = '',
-    this.sampleText = '',
-  });
-
-  Map<String, Object> toJson() => {
-    'voice': voiceId,
-    'sid': sid,
-    'sampleWav': sampleWav,
-    'sampleText': sampleText,
-  };
+  Map<String, Object> toJson() => {'voice': voiceId, 'sid': sid};
 
   static TtsPrefs fromJson(Map<String, Object?> j) => TtsPrefs(
-    voiceId: j['voice'] as String? ?? 'lessac',
+    voiceId: j['voice'] as String? ?? 'kokoro',
     sid: j['sid'] as int? ?? 0,
-    sampleWav: j['sampleWav'] as String? ?? '',
-    sampleText: j['sampleText'] as String? ?? '',
   );
 }
 

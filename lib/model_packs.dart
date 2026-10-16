@@ -19,15 +19,6 @@ const modelPacks = [
   ),
 ];
 
-/// The default TTS voice pack (also referenced by the 'lessac' voice entry).
-const defaultTtsPack = ModelPack(
-  label: 'voice synthesis (Piper lessac-medium)',
-  url:
-      'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-lessac-medium.zip',
-  dirName: 'tts-lessac-medium',
-  markerFile: 'espeak-ng-data/phondata',
-);
-
 const _vadAsset = 'assets/models/silero_vad.onnx';
 
 /// Directory holding the unpacked model subdirectories (created on demand).

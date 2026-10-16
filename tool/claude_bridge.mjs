@@ -23,7 +23,16 @@
 //                every API call start and after each turn: live context
 //                consumption plus the model's window (same numbers
 //                snapshot into /health as `context`, for turns the phone
-//                never heard). A body
+//                never heard). It ALSO arrives early and often as a
+//                PREVIEW {in,window,preview:true}: at turn start (last
+//                turn's exact context + the new utterance's size) and on
+//                every fresh tool_result (its text weight at ~4
+//                chars/token, images flat) — so the phone's in-count
+//                grows while the model is still READING, not only once
+//                message_start proves it. Exact frames always overrule
+//                previews; /health stores exact figures only (and /new
+//                drops the snapshot so the bar goes blank with the
+//                chat). A body
 //                starting with / is written to stdin as PLAIN-STRING
 //                content, so the CLI executes it as a real slash command
 //                (block-array content would just feed it to the model —
@@ -35,8 +44,9 @@
 //                next /talk while a background turn runs is QUEUED behind
 //                it (a `tool queued` event says which flavour you got):
 //                an open long-running tool is left to finish (Claude Code
-//                backgrounding), a mere thinking turn gets SIGINT'd so
-//                your prompt starts seconds later — unless the queue came
+//                backgrounding), a mere thinking turn is cut short with
+//                an in-band interrupt so your prompt starts seconds
+//                later — unless the queue came
 //                with ?interrupt=0 (the push-to-talk slide-right polite
 //                flavour): then the turn in flight is left to finish
 //                naturally and the queue flushes on its `result`. /stop hard-cuts an
@@ -47,13 +57,21 @@
 //                a still-working heartbeat through silent steps — the
 //                Narrate switch on the app's Bridge screen (see
 //                BridgePrefs.narrate).
-//   POST /stop   SIGINT the OPEN turn (attached or backgrounded); context
-//                survives. No-op while idle (idle-SIGINT kills the process)
+//   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
+//                the CLI's control protocol; context survives, the
+//                PROCESS stays alive. No-op while idle.
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
 //                + context (last known tokens-in-context and the model's
 //                window, snapshotted at every result)
+//
+// Latency note: the upstream proxy re-reads the entire conversation on
+// every request (prompt caching is not in play there — cache_read is
+// verifiably always 0), so context size IS per-utterance latency. The
+// bridge deliberately does NOT auto-compact: /new and /compact stay
+// the user's call (the app shows both as chips; the context bar in the
+// app makes the size visible while you decide).
 //
 // Voice events are derived from the raw stream-json: assistant text
 // arrives as it closes (no token deltas — the TTS wants whole sentences),
@@ -90,6 +108,15 @@ const sysPrompt =
 // free, network tools denied) or dontAsk (locked-down) if the voice ever
 // stops being the only trigger.
 const permMode = arg('permission-mode', 'bypassPermissions');
+// NOTE on the model behind this bridge: the upstream proxy re-reads the
+// WHOLE conversation as input on every request (observed
+// cache_read_input_tokens = 0 always — Anthropic-style prompt caching
+// is not in play). Context size therefore translates one-to-one into
+// per-utterance latency: a 128k-token chat pays ~10 s even for "hello",
+// a 30k chat ~2.5 s. The bridge does not force this on the session:
+// /new and /compact stay the user's manual levers (the app shows the
+// chip; the context bar right above the talk button shows the number
+// that matters).
 
 // -- claude child process: one per /new, kept alive across /talk ----------
 let child = null;       // claude process
@@ -99,11 +126,21 @@ const sidFile = join(dir, '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
+// Events a detached turn produced while NOBODY was listening. The phone's
+// stream can die while the app is hidden (Android process death, an OS-
+// dropped socket): the turn then runs unheard to its result, and without
+// this buffer its entire output was dropped on the floor — the phone came
+// back to nothing. An attaching client (GET /attach) replays these first.
+const backlog = [];
+const BACKLOG_CAP = 200;
+let turnStartAt = 0;    // when the open turn began (survives a detach: the
+                        // replay-timestamp guards read this, not curRes)
 // tool_use ids still without tool_result in the open turn. This is the
 // evidence that decides what a new /talk does while a backgrounded turn
 // runs: an open tool means "genuinely working — queue mine behind it and
 // let the tool finish" (Claude Code backgrounding); none means "it is
-// only thinking — SIGINT cuts that, my prompt starts in a heartbeat".
+// only thinking — an in-band interrupt cuts that (the process survives),
+// my prompt starts in a heartbeat".
 const openTools = new Set();
 // ── Live token tally (the TUI's "thinking · N tokens" progress) ──
 // With --include-partial-messages the CLI streams `stream_event`
@@ -131,11 +168,67 @@ let tokSentAt = 0;    // relay throttle clock
 // /health can answer even for turns the phone never attached to.
 let ctxWindow = 0; // model context window (0 until a result names it)
 let lastCtx = {'in': 0, 'window': 0}; // {in, window} snapshot for /health
+// ── In-token PREVIEW (why the phone was dead air over a big read) ──
+// The API only reports a call's input tokens in its `message_start` —
+// which arrives AFTER the server has taken the whole prompt in (tens of
+// seconds of prefill on a cache miss, and the CLI live log screaming
+// about 100k input tokens while the phone's box said "Asking the
+// bridge…" with nothing to show). The bridge cannot know the exact
+// figure before the API says so, but it can carry the best number it
+// DOES have and grow it as it watches the turn: the previous turn's
+// authoritative `lastCtx.in` (exact — that IS what the next call
+// starts from), plus ~tokens/4 of the fresh user text, plus ~tokens/4
+// of every tool_result's text blocks (images counted at a flat
+// ~1600-token vision allowance, not their base64 byte count, or a
+// screenshot would read as 30k tokens) relayed the moment the wrapper
+// crosses the stream. Frame shape is the same `context` event with
+// `preview: true`, so an app can style estimates differently if it
+// cares. The next `message_start` (exact, incl. server-side
+// compaction) or the turn's `result` always overrules a preview; so
+// does /health, which only ever stores exact figures.
+let estIn = 0;      // preview tally in force right now
+let estSentIn = 0;  // what we last relayed (delta-gate for relays)
+// Rough token count of stream-json content (string or block array):
+// text at Claude Code's own ~4 chars/token, images flat (a base64
+// screenshot's 150 KB is NOT 37k tokens of reading).
+const estTokens = (content) => {
+  if (typeof content === 'string') return Math.ceil(content.length / 4);
+  if (!Array.isArray(content)) return 0;
+  let n = 0;
+  for (const b of content) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'image') { n += 1600; continue; }
+    n += estTokens(b.content) + (typeof b.text === 'string' ? Math.ceil(b.text.length / 4) : 0)
+       + (typeof b.thinking === 'string' ? Math.ceil(b.thinking.length / 4) : 0);
+  }
+  return n;
+};
+// Relay the preview (when attached and it moved the needle) — one
+// `context` frame per growth step, not per byte.
+const ctxPreviewFrame = () =>
+  sse(curRes.res, 'context', { in: estIn, window: ctxWindow, preview: true });
+const relayEst = (dir) => {
+  estIn = Math.max(0, estIn + dir);
+  if (curRes && estIn > 0 && Math.abs(estIn - estSentIn) >= 300) {
+    estSentIn = estIn;
+    ctxPreviewFrame();
+  }
+};
 const fmtTok = (n) => n < 1000 ? `${n}`
   : n < 1e6 ? `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
   : `${(n / 1e6).toFixed(1)}M`;
 const sse = (res, ev, data) =>
   res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+// Relay a turn event to whoever is listening — the attached client live,
+// or the backlog for a future /attach. Transient frames (the ~0.8 s token
+// tally, the ctx preview) stay live-only: a reattaching phone re-derives
+// them, and a backlog of counters is noise, not memory.
+const relay = (ev, data) => {
+  if (curRes) { sse(curRes.res, ev, data); return; }
+  backlog.push({ ev, data });
+  if (backlog.length > BACKLOG_CAP) backlog.shift();
+  console.error(`  [backlog] ${ev} (n=${backlog.length})`);
+};
 // The wire shape of the spinner's live counter: a display string (for
 // anything that only shows text) plus numeric fields so the phone can
 // paint the exact number AND keep it growing between relays. out is
@@ -178,7 +271,8 @@ function spawnClaude(resume) {
     // --resumes on its own).
     turnOpen = false;
     openTools.clear();
-    if (curRes) { sse(curRes.res, 'error', { error: 'claude exited' }); endTurn(); }
+    relay('error', { error: 'claude exited' });
+    if (curRes) endTurn();
     flushPending();
   });
 }
@@ -197,8 +291,10 @@ function handleEvent(line) {
             + (u.cache_creation_input_tokens ?? 0);
       // Live context consumption as the API call begins (window may be
       // 0 = still unknown until the first result names it; the bar just
-      // shows tokens with no fill).
-      if (curRes) sse(curRes.res, 'context', { in: tokIn, window: ctxWindow });
+      // shows tokens with no fill). The exact number also ends any
+      // preview run: the estimate grows from here on, not from there.
+      estIn = tokIn; estSentIn = tokIn;
+      relay('context', { in: tokIn, window: ctxWindow });
     } else if (e.type === 'content_block_start') {
       const b = e.content_block ?? {};
       tokKind = b.type === 'thinking' ? 'thinking'
@@ -244,6 +340,20 @@ function handleEvent(line) {
       if (c.type === 'tool_use' && c.id) openTools.add(c.id);
       else if (c.type === 'tool_result' && c.tool_use_id) openTools.delete(c.tool_use_id);
     }
+    // A tool output is the next call's newest read: preview its weight
+    // the moment it crosses the stream, so the bar grows WHILE the
+    // model chokes on a 40 KB test log instead of 20 s later at that
+    // call's message_start. Replays from a --resume (stale timestamps)
+    // are history, not fresh weight — same guard as the say path.
+    if (m.type === 'user') {
+      const replay = m.timestamp && turnStartAt &&
+        Date.parse(m.timestamp) < turnStartAt;
+      if (!replay) {
+        for (const c of content) {
+          if (c.type === 'tool_result') relayEst(estTokens(c.content));
+        }
+      }
+    }
   }
   if (m.type === 'result') {
     // The turn's last word — processed even when no one is listening, so
@@ -267,13 +377,11 @@ function handleEvent(line) {
         .reduce((a, x) => Math.max(a, x?.contextWindow ?? 0), 0);
     if (win) ctxWindow = win;
     if (used) lastCtx = { in: used, window: ctxWindow };
-    if (curRes && lastCtx.in) {
-      sse(curRes.res, 'context', { in: lastCtx.in, window: ctxWindow });
+    if (lastCtx.in) {
+      relay('context', { in: lastCtx.in, window: ctxWindow });
     }
-    if (curRes) {
-      sse(curRes.res, 'done', { costUsd: m.total_cost_usd, isError: m.is_error });
-      endTurn();
-    }
+    relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
+    if (curRes) endTurn();
     flushPending();
     return;
   }
@@ -282,16 +390,15 @@ function handleEvent(line) {
   // filter every resume re-speaks the whole conversation history — heard as
   // "the same response, over and over". Fresh events carry now-stamps, so
   // anything older than this turn's start is history, not an answer.
-  if (m.type === 'assistant' && m.timestamp && curRes && curRes.turnStart &&
-      Date.parse(m.timestamp) < curRes.turnStart) {
+  if (m.type === 'assistant' && m.timestamp && turnStartAt &&
+      Date.parse(m.timestamp) < turnStartAt) {
     console.error('  (replay, skipped)');
     return;
   }
   // No attached listener: this turn runs BACKGROUND. The process keeps
-  // working (that is the point), and its output is dropped on the floor
-  // until the `result` above clears the way for a queued prompt.
-  if (!curRes) return;
-  const res = curRes.res;
+  // working (that is the point); its output now lands in the backlog —
+  // a reattaching phone replays it instead of finding nothing ever
+  // happened — until the `result` above clears the way for a queued prompt.
   switch (m.type) {
     case 'assistant': {
       // Snapshot handling. The proxy re-emits the growing message but NOT
@@ -316,11 +423,11 @@ function handleEvent(line) {
           if (spokenTexts.has(t)) continue;
           spokenTexts.add(t);
           console.error(`  -> say "${t.slice(0, 40)}"`);
-          sse(res, 'say', { text: t });
+          relay('say', { text: t });
         }
         if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
           spokenTools.add(c.id);
-          sse(res, 'tool', { name: c.name, detail: summarize(c) });
+          relay('tool', { name: c.name, detail: summarize(c) });
         }
       }
       break;
@@ -332,7 +439,7 @@ function handleEvent(line) {
       // tool-style progress instead of dead air.
       if (m.subtype === 'compact_boundary') {
         console.error('  -> tool compact');
-        sse(res, 'tool', {
+        relay('tool', {
           name: 'compact',
           detail: 'condensed conversation summary',
         });
@@ -373,17 +480,43 @@ function summarize(tool) {
   const i = tool.input ?? {};
   return String(i.command ?? i.file_path ?? i.pattern ?? i.url ?? '').slice(0, 80);
 }
+// In-band turn interrupt via the CLI's control protocol (verified live on
+// 2.1.296): a control_request on stdin cancels the OPEN turn — its
+// `result` still arrives (is_error: true) and the process keeps running.
+// This replaces SIGINT, which in headless -p mode kills the WHOLE process:
+// the next utterance then respawns with --resume, the CLI rebuilds the
+// conversation from the transcript under a different request prefix, the
+// proxy's prompt cache misses, and every turn pays a full cold prefill.
+function interruptTurn() {
+  if (!child || childDead) return;
+  try {
+    child.stdin.write(JSON.stringify({
+      type: 'control_request', request_id: randomUUID(),
+      request: { subtype: 'interrupt' },
+    }) + '\n');
+  } catch {}
+}
 // Attach `res` as the heard view of a brand-new turn and release the
 // prompt to claude. The 15 s keep-alive pinger belongs to the turn object
 // now: a backgrounded turn and whatever replaces it each carry their own.
 function beginTurn(text, res, keep) {
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
-  curRes = { res, keep, turnStart: Date.now() - 5000 }; // slack: clock skew
+  turnStartAt = Date.now() - 5000; // slack: clock skew
+  curRes = { res, keep, turnStart: turnStartAt };
+  backlog.length = 0; // a new turn: the old one's buffered frames are stale
   turnOpen = true;
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
   tokKind = '';
+  // Preview the coming call's size BEFORE the first message_start (which
+  // only lands after the server finishes reading): last turn's exact
+  // context + this utterance's own tokens, relayed as the turn's very
+  // first frame. A brand-new conversation has no baseline to preview
+  // from (0 = nothing honest to say yet; the first message_start will).
+  estIn = lastCtx.in > 0 ? lastCtx.in + estTokens(text) : 0;
+  estSentIn = estIn;
+  if (estIn > 0) ctxPreviewFrame();
   writeUserMsg(text);
 }
 // A queued prompt got its slot: hand over the floor the moment the
@@ -401,9 +534,9 @@ function flushPending() {
 // front (latest wins; the prior pending's response is ended). The
 // `interrupt` flag decides what happens to the turn in flight: true (the
 // default — typed text, conversation barge-in, PTT slide-UP) cuts a mere
-// thinking turn with a SIGINT — nothing but the model holding it, and
-// interrupting an OPEN turn is a turn-cancel, not the idle-process killer
-// — so its `result` flushes the queue in a heartbeat; false (PTT
+// thinking turn with an in-band interrupt — nothing but the model holding
+// it, the process never dies (no --resume, no cold prefill on the next
+// turn) — so its `result` flushes the queue in a heartbeat; false (PTT
 // slide-right, the polite queue) lets the in-flight turn run to its
 // natural end first. Either way a long-running OPEN tool is left to
 // finish: letting it complete is the entire point of backgrounding, and
@@ -420,7 +553,7 @@ function talk(text, res, interrupt = true) {
   // stream before claude ever answers. res 'close' = client hung up or
   // response finished.
   res.on('close', () => {
-    if (curRes && curRes.res === res) endTurn(); // detach → background it
+    if (curRes && curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
     else if (pending && pending.res === res) { endKeep(pending); pending = null; }
   });
   if (curRes || turnOpen) {
@@ -440,7 +573,7 @@ function talk(text, res, interrupt = true) {
           ? 'cutting the thinking turn short; your message goes next'
           : 'finishing the current turn; your message goes next',
     });
-    if (interrupt && !openTools.size) child?.kill('SIGINT');
+    if (interrupt && !openTools.size) interruptTurn();
     return;
   }
   beginTurn(text, res, keep);
@@ -465,11 +598,36 @@ const server = http.createServer((req, res) => {
       ok: true, claudeUp: !childDead, sessionId,
       turnOpen, queued: !!pending,
       backgrounded: turnOpen && !curRes,
+      // A turn (or its tail) ran with nobody listening: /attach replays
+      // this many buffered events, even after the turn itself ended.
+      missed: backlog.length,
       // Last known context consumption and the model's window (0s until
       // the first result names them): lets a phone that missed the live
       // events still fill its context bar.
       context: lastCtx,
     }));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/attach') {
+    // The phone's ear died mid-turn (Android killed the app, the OS
+    // dropped the socket): replay everything that happened unheard, then
+    // go live. Two shapes: the turn is still open — the attacher becomes
+    // its heard view (closing the connection backgrounds it again); the
+    // turn already ended — the buffered tail (done included) replays and
+    // the stream closes, a complete delivery either way. Cancelling the
+    // GET is harmless: worst case the turn detaches and keeps working.
+    res.writeHead(200, { 'content-type': 'text/event-stream',
+      'cache-control': 'no-cache', connection: 'keep-alive' });
+    const keep = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch {}
+    }, 15000);
+    for (const { ev, data } of backlog) sse(res, ev, data);
+    backlog.length = 0;
+    if (!turnOpen) { clearInterval(keep); res.end(); return; }
+    curRes = { res, keep, turnStart: turnStartAt };
+    res.on('close', () => {
+      if (curRes && curRes.res === res) endTurn(); // detach → background it
+    });
     return;
   }
   if (req.method !== 'POST') { res.writeHead(405).end(); return; }
@@ -480,21 +638,27 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream',
         'cache-control': 'no-cache', connection: 'keep-alive' });
       // ?interrupt=0 = the polite queue (PTT slide-right): let the turn
-      // in flight finish instead of SIGINTing a thinking-only one.
+      // in flight finish instead of interrupting a thinking-only one.
       talk(body.trim(), res, url.searchParams.get('interrupt') !== '0');
     } else if (url.pathname === '/stop') {
-      // Hard stop (tap-Stop): SIGINT ends the turn whether the phone is
-      // still listening to it or backgrounded it. Context survives, and a
-      // queued prompt flushes on the resulting `result` event. Only fires
-      // while a turn is OPEN: SIGINT on an idle process kills it (it
-      // respawns + --resumes on the next /talk, recoverable, but slow).
-      if (turnOpen && !childDead) child?.kill('SIGINT');
+      // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
+      // the phone is still listening to it or backgrounded it. Context
+      // survives, the PROCESS survives (no kill → no --resume → no cold
+      // prefill), and a queued prompt flushes on the resulting `result`
+      // event. Only fires while a turn is OPEN.
+      if (turnOpen) interruptTurn();
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
       try { rmSync(sidFile); } catch {}
       sessionId = null;
       turnOpen = false;
       openTools.clear();
+      // The dead conversation's size is not the fresh one's: drop the
+      // context snapshot (and any preview run) so the bar goes blank
+      // instead of wearing old numbers. /health reports in:0 from now
+      // on until the new session's first message_start proves itself.
+      lastCtx = { in: 0, window: ctxWindow };
+      estIn = estSentIn = 0;
       if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
       endTurn();
       child?.kill('SIGTERM'); child = null; childDead = true;

@@ -114,7 +114,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       case AppLifecycleState.detached:
         _assistant.pauseConversation();
       case AppLifecycleState.resumed:
-        _assistant.resumeConversation();
+        unawaited(_assistant.resumeConversation());
       case AppLifecycleState.inactive:
         break; // transient (notification shade, permission prompt)
     }
@@ -166,8 +166,8 @@ class _AssistantScreenState extends State<AssistantScreen>
         AssistantPhase.listening => (
           true,
           a.pttHoldOverTurn
-              ? 'Release to queue — slide up to interrupt'
-              : 'Release to send',
+              ? 'Release to queue — up to interrupt — right to dismiss'
+              : 'Release to send — right to dismiss',
         ),
         AssistantPhase.transcribing || AssistantPhase.speaking => (
           true,
@@ -608,8 +608,10 @@ class _LatencyStrip extends StatelessWidget {
 /// window, a percentage, and a fill that goes indeterminate while a
 /// turn runs with no window figure yet, and warms toward error colors
 /// as the conversation fills up. Numbers arrive on `context` SSE
-/// events (every message_start, and the authoritative one at `result`)
-/// plus every /health read — see VoiceAssistant._mergeContext.
+/// events — exact at every message_start and at `result`, PREVIEWED at
+/// turn start and on every fresh tool_result (the in-count grows while
+/// the model reads, not only once the API proves it) — plus every
+/// /health read (exact only) — see VoiceAssistant._mergeContext.
 class _ContextBar extends StatelessWidget {
   const _ContextBar({required this.assistant});
 
@@ -713,6 +715,19 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // reflow the line; the tool-name labels stay the plain style.
     final live = a.tokenTickerOn;
     final label = live ? a.tokenTickerLabel : widget.label;
+    // Whatever the line says, the phone's best-known input figure
+    // rides at its end the moment it exists — including during the
+    // long silent reads (prefill after a fat tool output, a slow first
+    // token) where no deltas flow and the ticker has nothing to grow.
+    // The bridge feeds this from exact message_start numbers AND from
+    // previews (previous turn's exact size + the bytes of each fresh
+    // tool_result, relayed the instant they cross the stream), so
+    // "Asking the bridge…" is never the whole truth for twenty seconds
+    // while the model chokes on a test log. The live ticker already
+    // carries its own in-number, so only the frozen states append it.
+    final shownIn = live ? 0 : a.contextIn;
+    final line = '$label${shownIn > 0 ? '  ·  ${_fmtTok(shownIn)} in' : ''}'
+        '  ·  ${secs}s  ·  tap Stop to interrupt';
     return Row(
       children: [
         Text(
@@ -724,12 +739,12 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            '$label  ·  ${secs}s  ·  tap Stop to interrupt',
+            line,
             style: Theme.of(
               context,
             ).textTheme.labelMedium?.copyWith(
               color: scheme.onSurfaceVariant,
-              fontFamily: live ? 'monospace' : null,
+              fontFamily: live || shownIn > 0 ? 'monospace' : null,
             ),
           ),
         ),

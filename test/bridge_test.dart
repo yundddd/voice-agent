@@ -91,6 +91,21 @@ void main() {
       expect(evs[1].contextWindow, 0);
     });
 
+    test('context PREVIEW frame (extra preview key) decodes like exact',
+        () async {
+      // The bridge relays estimated in-token growth with a
+      // `preview: true` key; the parser must not care (exact frames
+      // simply lack it).
+      final evs = await parse([
+        'event: context',
+        'data: ${jsonEncode({'in': 90123, 'window': 467232, 'preview': true})}',
+        '',
+      ]);
+      expect(evs.single.kind, 'context');
+      expect(evs.single.inputTokens, 90123);
+      expect(evs.single.contextWindow, 467232);
+    });
+
     test('tool tokens frame carries numeric tally; absent fields degrade',
         () async {
       final evs = await parse([

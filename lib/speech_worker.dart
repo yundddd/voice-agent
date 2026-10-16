@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -7,9 +6,7 @@ import 'dart:typed_data';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import 'audio_dsp.dart';
-import 'audio_io.dart' show decodeWav;
 import 'model_paths.dart';
-import 'neutts_engine.dart';
 
 const double _ln10 = 2.302585092994046;
 
@@ -80,12 +77,9 @@ class _Event {
 /// cuts when followed by whitespace, end-of-text, or a closing
 /// quote/bracket, so "3.14", "1,000" and "U.S.A." stay intact. A unit
 /// still beyond twice the cap is hard-split at word boundaries, and text
-/// without any punctuation stays one chunk (each engine's own guards
-/// cover it: VITS caps a pass near 44 s of audio, and the Rust NeuTTS
-/// infer re-chunks defensively inside any call). Descended from
-/// split_for_tts in the vendored neutts crate (same constants), since
-/// broadened for streamed prose that is mostly one long comma-spliced
-/// sentence.
+/// without any punctuation stays one chunk. Descended from split_for_tts
+/// in the vendored neutts crate (same constants), since broadened for
+/// streamed prose that is mostly one long comma-spliced sentence.
 
 List<String> splitForTts(String text) {
   const maxWords = 40;
@@ -169,82 +163,6 @@ List<String> splitForTts(String text) {
   return chunks;
 }
 
-/// Pocket-specific chunk merge over [splitForTts] output. Two reasons it
-/// exists, and the second one is why the rules changed:
-/// 1. a Generate call with very few text tokens misbehaves in this model
-///    (kyutai's own guards: pad short prompts, ignore EOS for 6 frames,
-///    split_into_best_sentences). In the ONNX port a 2-word piece reliably
-///    garbles the first syllable, and a voice that never emits EOS decodes
-///    up to max_frames — 40 s of babble measured. Merging neighbours to
-///    >= 30 chars matches sherpa's internal min_char_in_sentence so C++'s
-///    own sentence pass never sees a runt either.
-/// 2. EVERY separate Generate call re-pays the cold-start ritual (the
-///    '....' pause, the growl region trimmed by pocketLeadIn, the inserted
-///    lead silence, plus one more player prepare seam). Long answers split
-///    sentence-by-sentence into short pieces therefore "broke up"
-///    audibly — measured seams of 0.3-0.7 s of silence per sentence. So
-///    pieces now merge up to [maxChars] regardless of runt status: a
-///    whole typical assistant answer becomes ONE call, and the model's own
-///    punctuation-driven pauses (kept whole by silenceScale 1.0) provide
-///    natural paragraph flow instead of our splice points.
-List<String> mergePocketChunks(List<String> pieces) {
-  const minChars = 30; // runt floor: below this a piece garbles
-  // Speech runs ~0.94-1.2 frames/char (all six preset voices measured, and
-  // a full 373-char answer rendered at 321 frames); one frame = 80 ms and
-  // the per-call frame guard grants ~1.35 frames/char + 30 of slack against
-  // the model's 500-frame (40 s) ceiling. At 400 chars the guard clamps to
-  // that ceiling, which measured ~18 s of margin on the slowest realistic
-  // delivery — a clamp hit trims trailing silence, never words, and only
-  // in a pathological EOS miss.
-  const maxChars = 400;
-  final out = <String>[];
-  for (final p in pieces) {
-    if (out.isNotEmpty &&
-        (out.last.length < minChars ||
-            p.length < minChars ||
-            out.last.length + p.length + 1 <= maxChars)) {
-      out.last = '${out.last} $p';
-    } else {
-      out.add(p);
-    }
-  }
-  if (out.length > 1 && out.last.length < minChars) {
-    // Folding the tail runt in can overshoot the ideal cap a little (a
-    // few chars of extra allowance is covered by the guard's +30 slack;
-    // a clamp hit only trims trailing silence, never mid-word content at
-    // this size).
-    out[out.length - 2] = '${out[out.length - 2]} ${out.removeLast()}';
-  }
-  return out;
-}
-
-/// Lead-in repair for one Pocket Generate output. Paired with the '....'
-/// text prefix (see the synthesize arm): the model itself opens with a
-/// generated pause — the port decodes the first frames of that pause as a
-/// low growl instead of silence (its NaN/zeros cold start, not the
-/// reference's BOS-primed prompt-tail state), and the pause absorbs it.
-/// Drop the first 250 ms (growl + pause head), ramp the cut in over 30 ms
-/// so the splice adds no click, and prepend a short silence so the phone's
-/// post-capture output ramp (measured ~150 ms, plus mic-teardown mute on
-/// PTT) also lands inside silence, not speech — the generated pause behind
-/// it (~0.5-0.9 s after the drop) carries the protection the 800 ms lead
-/// used to provide alone. Measured with the prefix: 10/10 head hits across
-/// presets (whisper-tiny re-transcription, first phrase WIN in 10 of 10).
-Float32List pocketLeadIn(Float32List s) {
-  const rate = 24000; // Pocket is fixed at 24 kHz.
-  const drop = rate * 250 ~/ 1000;
-  const lead = rate * 3 ~/ 10;
-  if (s.length <= drop) return s;
-  final fade = rate * 30 ~/ 1000;
-  final out = Float32List(s.length - drop + lead);
-  for (var i = 0; i < s.length - drop; i++) {
-    var v = s[i + drop];
-    if (i < fade) v *= i / fade;
-    out[i + lead] = v;
-  }
-  return out;
-}
-
 final RegExp _ws = RegExp(r'\s+');
 bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
 
@@ -295,201 +213,22 @@ class _JobResult {
 /// Which TTS voice the worker should speak with — plain data so it can be
 /// sent to the worker isolate at startup or swapped via [SpeechWorker.useTts].
 ///
-/// * `kind: 'vits'` — a fixed Piper/VITS voice ([vitsModel] + [vitsTokens],
-///   [espeakDataDir] for phonemisation, [sid] to pick a speaker when the
-///   model has several).
-/// * `kind: 'zipvoice'` — zero-shot voice cloning: the ZipVoice engine
-///   ([zipEncoder]/[zipDecoder]/[vocoder]/...) speaks in the voice of
-///   [referenceWav], a wave file of the target speaker, whose spoken words
-///   must be given verbatim in [referenceText].
-/// * `kind: 'neutts'` — NeuTTS (Neuphonic) via the Rust bridge: the GGUF
-///   backbone [neuttsGguf] + NeuCodec decoder [neuttsDecoder] speak using a
-///   preset reference from [neuttsVoices]/[neuttsRefs] (picked by [sid]).
-///   Runs through [NeuttsEngine], not sherpa-onnx.
-/// * `kind: 'pocket'` — Kyutai Pocket TTS (ONNX export) via sherpa-onnx:
-///   the AR backbone + flow-matched decoder files speak in the voice of
-///   [referenceWav], a preset picked by [sid] out of [pocketRefs].
-///   Zero-shot cloning needs no reference transcript (unlike ZipVoice).
+/// Kokoro-82M v1.0 (the k2-fsa kokoro-multi-lang-v1_0 pack, fp32 — our A/B
+/// measured the int8 build audible-muted AND ~4x slower on CPU (RTF 0.37 vs
+/// 0.10): ORT's int8 kernels lose to plain fp32 at this model size). The app
+/// ships this one engine only — the Piper/VITS, Pocket, ZipVoice and NeuTTS
+/// engines were removed when Kokoro proved the best-sounding by a wide
+/// margin. No cold-start ritual, no codec bottleneck: one forward pass,
+/// clean heads, so it rides the generic OfflineTts synth arm. [sid] indexes
+/// the 54-voice roster (reported by the model itself, so the voice screen's
+/// style slider picks it up). [kokoroLexicon] is a comma-joined list of
+/// absolute lexicon paths; zh would additionally need the jieba dict, which
+/// the Dart binding does not plumb (dictDir is dropped), so we wire English
+/// only. espeak-ng under [kokoroDataDir] backs out-of-lexicon words.
 class TtsSpec {
-  final String kind; // 'vits' | 'zipvoice' | 'neutts' | 'pocket' | 'kokoro'
-  final String vitsModel, vitsTokens, espeakDataDir;
-  final String zipTokens, zipEncoder, zipDecoder, zipDataDir, zipLexicon;
-  final String vocoder;
-  final String referenceWav, referenceText;
-  final int sid;
-  // kind == 'neutts': GGUF backbone, decoder safetensors, preset voices dir,
-  // preset names, and (host probes) an explicit bridge .so path.
-  // espeakDataDir doubles as the phonemizer's unpack target.
-  final String neuttsGguf, neuttsDecoder, neuttsVoices, neuttsLib;
-  final List<String> neuttsRefs;
-
-  /// Pins the NeuTTS sampler seed (null = upstream: re-randomised per synth).
-  final int? neuttsSeed;
-
-  // kind == 'pocket': the five ONNX graphs + tokenizer data of the Kyutai
-  // Pocket TTS export (sherpa-onnx file set). No espeak: Pocket tokenises
-  // text itself; referenceWav carries the preset reference picked by sid
-  // out of pocketRefs (cloning needs no reference transcript, unlike
-  // ZipVoice). pocketNumSteps = flow-matching steps (Kyutai distilled the
-  // decoder to one step: 2 is plenty; 0 = sherpa's default of 5).
-  final String pocketLmFlow, pocketLmMain, pocketEncoder, pocketDecoder;
-  final String pocketTextConditioner, pocketVocabJson, pocketTokenScoresJson;
-  final List<String> pocketRefs;
-  final int pocketNumSteps;
-
-  // kind == 'kokoro': Kokoro-82M (the k2-fsa kokoro-multi-lang-v1_0 pack,
-  // fp32 — our A/B measured the int8 build audible-muted AND ~4x slower on
-  // CPU (RTF 0.37 vs 0.10): ORT's int8 kernels lose to plain fp32 at this
-  // model size). No cold-start ritual, no codec bottleneck: one forward
-  // pass, clean heads, so it rides the generic OfflineTts synth arm.
-  // sid indexes the 54-voice roster (reported by the model itself, so the
-  // voice screen's style slider picks it up). kokoroLexicon is a
-  // comma-joined list of absolute lexicon paths; zh would additionally
-  // need the jieba dict, which the Dart binding does not plumb (dictDir
-  // is dropped), so we wire English only. espeak-ng under kokoroDataDir
-  // backs out-of-lexicon words.
   final String kokoroModel, kokoroVoices, kokoroTokens, kokoroDataDir;
   final String kokoroLexicon;
-
-  const TtsSpec.vits({
-    required this.vitsModel,
-    required this.vitsTokens,
-    required this.espeakDataDir,
-    this.sid = 0,
-  }) : kind = 'vits',
-       zipTokens = '',
-       zipEncoder = '',
-       zipDecoder = '',
-       zipDataDir = '',
-       zipLexicon = '',
-       vocoder = '',
-       referenceWav = '',
-       referenceText = '',
-       neuttsGguf = '',
-       neuttsDecoder = '',
-       neuttsVoices = '',
-       neuttsLib = '',
-       neuttsRefs = const [],
-       neuttsSeed = null,
-       pocketLmFlow = '',
-       pocketLmMain = '',
-       pocketEncoder = '',
-       pocketDecoder = '',
-       pocketTextConditioner = '',
-       pocketVocabJson = '',
-       pocketTokenScoresJson = '',
-       pocketRefs = const [],
-       pocketNumSteps = 0,
-       kokoroModel = '',
-       kokoroVoices = '',
-       kokoroTokens = '',
-       kokoroDataDir = '',
-       kokoroLexicon = '';
-
-  const TtsSpec.zipvoice({
-    required this.zipTokens,
-    required this.zipEncoder,
-    required this.zipDecoder,
-    required this.zipDataDir,
-    required this.zipLexicon,
-    required this.vocoder,
-    required this.referenceWav,
-    required this.referenceText,
-  }) : kind = 'zipvoice',
-       vitsModel = '',
-       vitsTokens = '',
-       espeakDataDir = '',
-       sid = 0,
-       neuttsGguf = '',
-       neuttsDecoder = '',
-       neuttsVoices = '',
-       neuttsLib = '',
-       neuttsRefs = const [],
-       neuttsSeed = null,
-       pocketLmFlow = '',
-       pocketLmMain = '',
-       pocketEncoder = '',
-       pocketDecoder = '',
-       pocketTextConditioner = '',
-       pocketVocabJson = '',
-       pocketTokenScoresJson = '',
-       pocketRefs = const [],
-       pocketNumSteps = 0,
-       kokoroModel = '',
-       kokoroVoices = '',
-       kokoroTokens = '',
-       kokoroDataDir = '',
-       kokoroLexicon = '';
-
-  const TtsSpec.neutts({
-    required this.neuttsGguf,
-    required this.neuttsDecoder,
-    required this.neuttsVoices,
-    required this.neuttsRefs,
-    required this.espeakDataDir,
-    this.sid = 0,
-    this.neuttsLib = '',
-    this.neuttsSeed,
-  }) : kind = 'neutts',
-       vitsModel = '',
-       vitsTokens = '',
-       zipTokens = '',
-       zipEncoder = '',
-       zipDecoder = '',
-       zipDataDir = '',
-       zipLexicon = '',
-       vocoder = '',
-       referenceWav = '',
-       referenceText = '',
-       pocketLmFlow = '',
-       pocketLmMain = '',
-       pocketEncoder = '',
-       pocketDecoder = '',
-       pocketTextConditioner = '',
-       pocketVocabJson = '',
-       pocketTokenScoresJson = '',
-       pocketRefs = const [],
-       pocketNumSteps = 0,
-       kokoroModel = '',
-       kokoroVoices = '',
-       kokoroTokens = '',
-       kokoroDataDir = '',
-       kokoroLexicon = '';
-
-  const TtsSpec.pocket({
-    required this.pocketLmFlow,
-    required this.pocketLmMain,
-    required this.pocketEncoder,
-    required this.pocketDecoder,
-    required this.pocketTextConditioner,
-    required this.pocketVocabJson,
-    required this.pocketTokenScoresJson,
-    required this.referenceWav,
-    required this.pocketRefs,
-    this.sid = 0,
-    this.pocketNumSteps = 2,
-  }) : kind = 'pocket',
-       vitsModel = '',
-       vitsTokens = '',
-       espeakDataDir = '',
-       zipTokens = '',
-       zipEncoder = '',
-       zipDecoder = '',
-       zipDataDir = '',
-       zipLexicon = '',
-       vocoder = '',
-       referenceText = '',
-       neuttsGguf = '',
-       neuttsDecoder = '',
-       neuttsVoices = '',
-       neuttsLib = '',
-       neuttsRefs = const [],
-       neuttsSeed = null,
-       kokoroModel = '',
-       kokoroVoices = '',
-       kokoroTokens = '',
-       kokoroDataDir = '',
-       kokoroLexicon = '';
+  final int sid;
 
   const TtsSpec.kokoro({
     required this.kokoroModel,
@@ -498,33 +237,7 @@ class TtsSpec {
     required this.kokoroDataDir,
     required this.kokoroLexicon,
     this.sid = 0,
-  }) : kind = 'kokoro',
-       vitsModel = '',
-       vitsTokens = '',
-       espeakDataDir = '',
-       zipTokens = '',
-       zipEncoder = '',
-       zipDecoder = '',
-       zipDataDir = '',
-       zipLexicon = '',
-       vocoder = '',
-       referenceWav = '',
-       referenceText = '',
-       neuttsGguf = '',
-       neuttsDecoder = '',
-       neuttsVoices = '',
-       neuttsLib = '',
-       neuttsRefs = const [],
-       neuttsSeed = null,
-       pocketLmFlow = '',
-       pocketLmMain = '',
-       pocketEncoder = '',
-       pocketDecoder = '',
-       pocketTextConditioner = '',
-       pocketVocabJson = '',
-       pocketTokenScoresJson = '',
-       pocketRefs = const [],
-       pocketNumSteps = 0;
+  });
 }
 
 /// One-way speech pipeline notification.
@@ -580,13 +293,11 @@ class SpeechWorker {
     void Function(SpeechEvent)? onEvent,
     double endpointSilence = 1.0,
   }) async {
-    // Default: the Piper voice baked into [paths] (back-compat for tests
-    // and probes that don't care about voice choice).
-    tts ??= TtsSpec.vits(
-      vitsModel: paths.vitsModel,
-      vitsTokens: paths.vitsTokens,
-      espeakDataDir: paths.espeakDataDir,
-    );
+    // [tts] may be null: the worker then starts with ASR/VAD only and no
+    // engine loaded — Kokoro (the only TTS) is a lazy-download pack, so
+    // loading anything at startup would demand an absent model. The app
+    // always calls [useTts] right after start; synthesize jobs before that
+    // come back with an error.
     final ready = Completer<void>();
     final controlPort = ReceivePort();
     late final SpeechWorker worker;
@@ -630,7 +341,7 @@ class SpeechWorker {
 
     worker._isolate = await Isolate.spawn(
       (arg) {
-        final (SendPort toParent, (ModelPaths, double, TtsSpec) cfg) = arg;
+        final (SendPort toParent, (ModelPaths, double, TtsSpec?) cfg) = arg;
         _runWorker(toParent, cfg.$1, cfg.$2, cfg.$3);
       },
       (controlPort.sendPort, (paths, endpointSilence, tts)),
@@ -653,9 +364,9 @@ class SpeechWorker {
   /// gate goes into hard mode (self-interruption protection).
   void setPlaying(bool on) => _toWorker?.send(_Job.playing(on));
 
-  /// Swap the speaking voice (and for ZipVoice, the cloned reference).
-  /// Blocks until the new engine is loaded (a second or so for Piper,
-  /// longer for the cloning model). Returns the new engine's speaker count.
+  /// Swap the speaking voice (the Kokoro style roster index rides in the
+  /// spec). Blocks until the new engine is loaded. Returns the new
+  /// engine's speaker count.
   Future<int> useTts(TtsSpec spec) async {
     final result = await _send(_Job.useTts(++_nextId, spec));
     if (result.error != null) throw StateError(result.error!);
@@ -740,7 +451,7 @@ Future<void> _runWorker(
   SendPort toParent,
   ModelPaths p,
   double endpointSilence,
-  TtsSpec spec,
+  TtsSpec? spec,
 ) async {
   await sherpa_onnx.initBindingsAsync();
 
@@ -762,57 +473,25 @@ Future<void> _runWorker(
     ),
   );
 
-  // The TTS engine is swappable at runtime ('useTts' job below): a fixed
-  // Piper voice, or ZipVoice cloning the user's voice from a reference wav.
+  // The TTS engine is swappable at runtime ('useTts' job below) — but only
+  // one engine exists: Kokoro. It may also be absent entirely until the
+  // first useTts (the pack is a lazy download; see [SpeechWorker.start]).
   sherpa_onnx.OfflineTts buildTts(TtsSpec s) => sherpa_onnx.OfflineTts(
     sherpa_onnx.OfflineTtsConfig(
       model: sherpa_onnx.OfflineTtsModelConfig(
-        vits: s.kind == 'vits'
-            ? sherpa_onnx.OfflineTtsVitsModelConfig(
-                model: s.vitsModel,
-                tokens: s.vitsTokens,
-                dataDir: s.espeakDataDir,
-              )
-            : const sherpa_onnx.OfflineTtsVitsModelConfig(),
-        zipvoice: s.kind == 'zipvoice'
-            ? sherpa_onnx.OfflineTtsZipVoiceModelConfig(
-                encoder: s.zipEncoder,
-                decoder: s.zipDecoder,
-                vocoder: s.vocoder,
-                tokens: s.zipTokens,
-                dataDir: s.zipDataDir,
-                lexicon: s.zipLexicon,
-              )
-            : const sherpa_onnx.OfflineTtsZipVoiceModelConfig(),
-        pocket: s.kind == 'pocket'
-            ? sherpa_onnx.OfflineTtsPocketModelConfig(
-                lmFlow: s.pocketLmFlow,
-                lmMain: s.pocketLmMain,
-                encoder: s.pocketEncoder,
-                decoder: s.pocketDecoder,
-                textConditioner: s.pocketTextConditioner,
-                vocabJson: s.pocketVocabJson,
-                tokenScoresJson: s.pocketTokenScoresJson,
-              )
-            : const sherpa_onnx.OfflineTtsPocketModelConfig(),
-        // Kokoro: the generic (tts as OfflineTts).generate() synth arm below
-        // already fits — per-piece forward pass, sid selection, clean heads
-        // (no prefix/trim/lead-in ritual, no max_frames guard: nothing here
-        // can babble). Measured RTF 0.10 at 4 threads on this desktop's
-        // CPU; expect a phone to land real-time-comfortable too.
-        kokoro: s.kind == 'kokoro'
-            ? sherpa_onnx.OfflineTtsKokoroModelConfig(
-                model: s.kokoroModel,
-                voices: s.kokoroVoices,
-                tokens: s.kokoroTokens,
-                dataDir: s.kokoroDataDir,
-                lexicon: s.kokoroLexicon,
-              )
-            : const sherpa_onnx.OfflineTtsKokoroModelConfig(),
-        numThreads:
-            (s.kind == 'zipvoice' || s.kind == 'pocket' || s.kind == 'kokoro')
-            ? 4
-            : 2,
+        // The generic (tts as OfflineTts).generate() synth arm below already
+        // fits — per-piece forward pass, sid selection, clean heads (no
+        // prefix/trim/lead-in ritual, no max_frames guard: nothing here can
+        // babble). Measured RTF 0.10 at 4 threads on this desktop's CPU;
+        // expect a phone to land real-time-comfortable too.
+        kokoro: sherpa_onnx.OfflineTtsKokoroModelConfig(
+          model: s.kokoroModel,
+          voices: s.kokoroVoices,
+          tokens: s.kokoroTokens,
+          dataDir: s.kokoroDataDir,
+          lexicon: s.kokoroLexicon,
+        ),
+        numThreads: 4,
         debug: false,
         provider: 'cpu',
       ),
@@ -820,42 +499,7 @@ Future<void> _runWorker(
     ),
   );
 
-  // NeuTTS runs through our own Rust bridge, not sherpa-onnx.
-  NeuttsEngine buildNeutts(TtsSpec s) => NeuttsEngine(
-    gguf: s.neuttsGguf,
-    decoder: s.neuttsDecoder,
-    voicesDir: s.neuttsVoices,
-    refNames: s.neuttsRefs,
-    sid: s.sid,
-    espeakDir: s.espeakDataDir,
-    libPath: s.neuttsLib,
-    seed: s.neuttsSeed,
-  );
-
-  /// Speaker-style count for the UI slider: reference presets for NeuTTS
-  /// and Pocket (zero-shot engines expose no speaker table), the model's
-  /// speaker count for Piper/VITS.
-  int numSpeakersOf(Object engine, TtsSpec s) => switch (s.kind) {
-    'neutts' => (engine as NeuttsEngine).refCount,
-    'pocket' => s.pocketRefs.length,
-    _ => (engine as sherpa_onnx.OfflineTts).numSpeakers,
-  };
-
-  // Cloned voice + Pocket presets: reference wav decoded once per engine
-  // (samples + rate). Pocket resamples the reference internally to 24 kHz.
-  (Float32List, int)? reference;
-  void loadReference(TtsSpec s) {
-    reference = null;
-    if (s.kind != 'zipvoice' && s.kind != 'pocket') return;
-    final (samples, sampleRate) = decodeWav(
-      File(s.referenceWav).readAsBytesSync(),
-    );
-    reference = (samples, sampleRate);
-  }
-
-  var tts = spec.kind == 'neutts' ? buildNeutts(spec) : buildTts(spec);
-
-  loadReference(spec);
+  sherpa_onnx.OfflineTts? tts = spec == null ? null : buildTts(spec);
 
   sherpa_onnx.VoiceActivityDetector? vad;
   if (p.vadModel.isNotEmpty) {
@@ -1058,96 +702,37 @@ Future<void> _runWorker(
           stream.free();
           toParent.send(_JobResult.text(message.id, text));
         case 'useTts':
-          // Load reference + new engine *before* freeing the old one, so a
-          // bad path or missing wav leaves the current voice usable.
+          // Load the new engine *before* freeing the old one, so a bad
+          // path leaves the current voice usable.
           final next = message.spec!;
-          loadReference(next);
           final old = tts;
-          tts = next.kind == 'neutts' ? buildNeutts(next) : buildTts(next);
+          tts = buildTts(next);
           spec = next;
-          if (old is NeuttsEngine) {
-            old.free();
-          } else {
-            (old as sherpa_onnx.OfflineTts).free();
-          }
+          old?.free();
           // Drop any half-heard utterance across the switch.
           vad?.reset();
           resetSpeechState();
-          toParent.send(_JobResult.ok(message.id, numSpeakersOf(tts, spec)));
+          toParent.send(_JobResult.ok(message.id, tts.numSpeakers));
         case 'synthesize':
-          // Sentence-chunked synthesis: every engine streams piece by
-          // piece, so the assistant can start playing the first sentence
-          // while the rest is still rendering. This also keeps each VITS
-          // graph pass inside its trained length envelope — long replies
-          // measured truncated at ~44 s otherwise (length-regulator cap,
-          // separate from NeuTTS's early-EOS bug, which the Rust infer
-          // chunks internally as well). Non-final pieces get a ~62 ms
-          // silent tail: a natural sentence gap that hides the seam.
-          final pieces = spec.kind == 'pocket'
-              ? mergePocketChunks(splitForTts(message.text!))
-              : splitForTts(message.text!);
+          // Sentence-chunked synthesis: Kokoro streams piece by piece, so
+          // the assistant can start playing the first sentence while the
+          // rest is still rendering. Non-final pieces get a ~62 ms silent
+          // tail: a natural sentence gap that hides the seam.
+          if (tts == null || spec == null) {
+            toParent.send(
+              _JobResult.error(
+                message.id,
+                'No TTS engine loaded yet — pick a voice first.',
+              ),
+            );
+            break;
+          }
+          final pieces = splitForTts(message.text!);
           for (var i = 0; i < pieces.length; i++) {
             final piece = pieces[i];
             final isLast = i == pieces.length - 1;
-            final (samples, sampleRate) = switch (spec.kind) {
-              'neutts' => (tts as NeuttsEngine).synth(piece),
-              'zipvoice' || 'pocket' => () {
-                final isPocket = spec.kind == 'pocket';
-                // max_frames keeps a missed EOS inside the text's natural
-                // length (0.08 s per frame, +30 frames of slack) instead of
-                // the 500-frame default = 40 s of runaway babble. The '....'
-                // prefix makes the model ITSELF open with a generated pause
-                // (kyutai FAQ, issue #6): the port starts speaking ~0.4 s
-                // earlier than the reference (its pooled voice embedding
-                // loses the prompt-tail pause), so without the pause the
-                // first words land inside the cold-start damage window and
-                // vanish; the pause absorbs the growl and the trim instead.
-                // silenceScale 1.0: the Dart default 0.2 would squash the
-                // generated pause (and every other silence) to 20%.
-                final extra = isPocket
-                    ? <String, Object>{
-                        // ~1 frame per char is the measured speech rate
-                        // (0.94-1.2 across preset voices); grant 1.35 + 30
-                        // frames so even the slowest delivery finishes
-                        // before the guard on merged pieces, clamped at
-                        // the model's own 500-frame (40 s) ceiling.
-                        'max_frames': (piece.length * 135 ~/ 100 + 30).clamp(
-                          60,
-                          500,
-                        ),
-                      }
-                    : const <String, Object>{};
-                final audio = (tts as sherpa_onnx.OfflineTts)
-                    .generateWithConfig(
-                      text: isPocket ? '.... $piece' : piece,
-                      config: sherpa_onnx.OfflineTtsGenerationConfig(
-                        referenceAudio: reference!.$1,
-                        referenceSampleRate: reference!.$2,
-                        // ZipVoice speaks the reference *transcript*; Pocket
-                        // takes the voice from the wav alone.
-                        referenceText: spec.kind == 'zipvoice'
-                            ? spec.referenceText
-                            : '',
-                        numSteps: isPocket && spec.pocketNumSteps > 0
-                            ? spec.pocketNumSteps
-                            : 5,
-                        silenceScale: isPocket ? 1.0 : 0.2,
-                        extra: extra,
-                      ),
-                    );
-                return isPocket
-                    ? (pocketLeadIn(audio.samples), audio.sampleRate)
-                    : (audio.samples, audio.sampleRate);
-              }(),
-              _ => () {
-                final audio = (tts as sherpa_onnx.OfflineTts).generate(
-                  text: piece,
-                  sid: spec.sid,
-                  speed: 1.0,
-                );
-                return (audio.samples, audio.sampleRate);
-              }(),
-            };
+            final audio = tts.generate(text: piece, sid: spec.sid, speed: 1.0);
+            final (samples, sampleRate) = (audio.samples, audio.sampleRate);
             var data = samples;
             if (!isLast) {
               data = Float32List(samples.length + sampleRate ~/ 16)

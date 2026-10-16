@@ -40,9 +40,6 @@ Future<void> main() async {
       whisperDecoder:
           '$m/sherpa-onnx-whisper-tiny.en/tiny.en-decoder.int8.onnx',
       whisperTokens: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-tokens.txt',
-      vitsModel: '$m/vits-piper-en_US-lessac-medium/en_US-lessac-medium.onnx',
-      vitsTokens: '$m/vits-piper-en_US-lessac-medium/tokens.txt',
-      espeakDataDir: '$m/vits-piper-en_US-lessac-medium/espeak-ng-data',
       vadModel: '$m/silero_vad.onnx',
     ),
   );

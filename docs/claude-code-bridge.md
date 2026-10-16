@@ -43,23 +43,45 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   either way (Claude Code's "background the long job, type the next
   thing"). If it was only thinking, the `interrupt` flag decides: `1`
   (the default — typed text, spoken barge-in, push-to-talk slide-UP)
-  SIGINTs the thinking turn and the queue flushes in a heartbeat; `0`
-  (push-to-talk slide-right, the polite queue) lets the turn in flight
-  run to its natural end first. `/stop` hard-stops an open turn either
+  cuts the thinking turn with an IN-BAND interrupt (a `control_request`
+  on the CLI's stdin control protocol) and the queue flushes in a
+  heartbeat; `0` (push-to-talk slide-right, the polite queue) lets the
+  turn in flight run to its natural end first. `/stop` hard-stops an open turn either
   way (attached or backgrounded); a queued prompt then takes over on its
-  result. Two `context` events {in,window} ride the same stream: one at
-  every API call start (live consumption; window may be 0 until the
-  first result names it) and the authoritative post-turn figure before
-  `done`. The same numbers snapshot into `GET /health` as `context`, so
-  even a phone that never attached gets the reading (the app paints it
-  as a context bar above the talk button, Claude Code style).
-- `POST /stop` — SIGINT while any turn is OPEN (SIGINT on an *idle*
-  process kills it; next `/talk` respawns and `--resume`s, context
-  intact — both paths verified).
+  result. `context {in,window}` frames ride the same stream: exact at
+  every API call start and authoritative before `done`, plus PREVIEW
+  frames (`preview: true`) whenever the bridge sees the next call's
+  input grow (fresh tool_result outputs) while the model is still
+  reading. The same numbers snapshot into `GET /health` as `context`,
+  so even a phone that never attached gets the reading (the app paints
+  it as a context bar above the talk button, Claude Code style).
+- Latency and context size, stated plainly: the upstream proxy has no
+  working prompt cache (observed `cache_read_input_tokens: 0` on every
+  call, even back-to-back ones), so every request re-prefills the whole
+  conversation — a 128k-token chat pays ~10 s even for "hello". The
+  bridge does not auto-compact to hide this; `/new` and `/compact`
+  remain the user's manual levers (app chips), and the context bar +
+  preview frames exist precisely so the number that drives latency is
+  visible while it grows.
+- `POST /stop` — in-band interrupt (`control_request` on the CLI's
+  stdin control protocol) while any turn is OPEN. The turn ends, context
+  and the process both survive (SIGINT was the old mechanism — in
+  headless `-p` mode it kills the whole process, and the next `/talk`
+  then respawns with `--resume`, whose rebuilt request prefix misses the
+  prompt cache and pays a full cold prefill; verified both ways).
 - `POST /new` — forget the conversation (also clears a background turn
   and a queued prompt); `GET /health` — liveness + `turnOpen` /
-  `backgrounded` / `queued` flags + `context` (last known tokens-in-
-  context and the model's window, snapshotted at every result).
+  `backgrounded` / `queued` flags + `context` (last known EXACT
+  tokens-in-context and the model's window, snapshotted at every
+  result; zeroed by `/new`, previews never enter the snapshot). Mid-
+  turn the same numbers reach the phone on `context` SSE frames —
+  exact at every message_start and at the result, PREVIEWED (a
+  `preview: true` frame) at turn start from the last exact figure plus
+  the utterance's size, and again on every fresh tool_result: the
+  input bar grows while the model is still reading a fat transcript,
+  instead of the box sitting on "Asking the bridge…" until the API
+  proves the number (and the app's spinner line carries the
+  best-known in-count even while frozen over a tool run).
 - Session id persists to `<dir>/.claude_bridge_session`, so a bridge
   restart resumes the same voice conversation.
 
@@ -114,11 +136,14 @@ the Bridge screen. Notes that matter when touching this code:
    tool calls run to completion; their output is dropped). The utterance
    that follows becomes a fresh `/talk` seconds later and is queued:
    behind an open tool, or ahead of a cut-short thinking turn (the
-   bridge SIGINTs those at queue time). A TAPPED stop — Stop chip, FAB,
+   bridge cuts those at queue time with an in-band interrupt — the
+   process never dies, so the warm prompt-cache prefix keeps working).
+   A TAPPED stop — Stop chip, FAB,
    mode switch, clone/bench takeover — is the hard flavour: same detach
-   plus a `/stop` (SIGINT) so the harness quits working too (verified
-   semantics: mid-turn SIGINT ends the turn with context intact; the
-   conversation resumes on the next chip). PUSH-TO-TALK releases steer
+   plus a `/stop` (in-band interrupt) so the harness quits working too
+   (verified semantics: mid-turn interrupt ends the turn with context
+   and process intact; the conversation resumes on the next chip).
+   PUSH-TO-TALK releases steer
    by GESTURE (0.1.0+25, `pttDown`/`pttUp` in `assistant.dart`): the
    press over a running turn detaches it (the tool call backgrounds and
    keeps working, output dropped) and opens the mic; a slide-UP release

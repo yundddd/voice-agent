@@ -284,8 +284,9 @@ plain-string content, which the CLI executes natively — it condenses the
 transcript into a summary; the bridge relays the resulting
 `compact_boundary` as live progress and the app speaks a confirmation
 when the turn stays silent) — plus "Stop" while a turn is in flight
-(barge-in sends SIGINT to the harness turn; the conversation survives —
-verified). The old canned-command chips (*Repo status, Run tests, Build
+(barge-in interrupts the harness turn in-band via the CLI's control
+protocol — the conversation AND the process survive, so no `--resume`
+re-prefill; verified). The old canned-command chips (*Repo status, Run tests, Build
 APK, Catch me up*) are gone: a harness you can converse with takes dictation
 better than scripts. The Bridge screen also has a free-text box so
 *anything* you type goes to the harness and comes back spoken — a line
@@ -305,12 +306,18 @@ message boundary, ~4 chars/token in between; `--include-partial-messages`
 stream_event deltas in `claude_bridge.mjs`). A context bar above the
 button shows conversation consumption vs the model's window (`context`
 SSE events + the `/health` snapshot, `_ContextBar` in `main.dart`) —
-the same numbers Claude Code's /context prints. A fresh hold *anytime* during that turn detaches
+the same numbers Claude Code's /context prints. And since this
+upstream re-prefills the entire chat every request (prompt caching is a
+no-op behind the proxy: `cache_read` is verifiably always 0), that
+number IS your latency — context size doubles the seconds, triples the
+cost, even for "hello". The bridge does not force `/compact` on you:
+watch the bar, and use the /new and /compact chips when *you* decide
+the conversation has grown heavy enough. A fresh hold *anytime* during that turn detaches
 it (the tool call goes to background and finishes its work unheard,
 output dropped) and opens the mic right there. Release in place or slide
 RIGHT and your words are QUEUED politely: the turn in flight finishes
-first, then yours goes next; slide UP and a mere thinking turn is
-SIGINT'd so your prompt starts in a heartbeat (an open tool call is
+first, then yours goes next; slide UP and a mere thinking turn is cut
+short in-band so your prompt starts in a heartbeat (an open tool call is
 still never cut — it finishes, and your prompt goes next); a quick tap
 remains the hard stop: detach + `/stop`, the old "Stop the harness".
 The terminal-icon badge stays lit while a detached turn keeps working
@@ -325,8 +332,9 @@ chat log unseen and the newest one is spoken when you switch back.
 turn DETACHES the phone from it — the bridge turns it into a *background*
 turn (Claude Code style: the harness finishes its work, output is dropped)
 — and your new words go out seconds later as a fresh turn, QUEUED behind
-an open tool call or ahead of a cut-short thinking turn (the bridge SIGINTs
-pure-thinking turns at queue time when the takeover wants to be heard —
+an open tool call or ahead of a cut-short thinking turn (the bridge cuts
+pure-thinking turns at queue time with an in-band interrupt — the process
+never dies, so the warm prefix cache keeps working — when the takeover wants to be heard —
 `interrupt=1`, the default for spoken barge-in and PTT slide-up; PTT's
 slide-right passes `interrupt=0` and the queue waits politely; in either
 flavour a new prompt goes next even while a tool-free answer was

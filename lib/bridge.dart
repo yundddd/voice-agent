@@ -36,7 +36,11 @@ class BridgeEvent {
   /// For 'context' (and for 'tool {name:tokens}', where it is that
   /// frame's `in`): tokens of conversation context the next call will
   /// carry, and the model's window (0 = the bridge has not seen a
-  /// `result` naming one yet).
+  /// `result` naming one yet). A context frame may also be a PREVIEW
+  /// (extra `preview: true` key, ignored here): the bridge's estimate
+  /// of the growing input while the model is still reading — turn
+  /// start and every fresh tool_result — which the next exact frame
+  /// overrules.
   final int inputTokens;
   final int contextWindow;
 
@@ -159,7 +163,9 @@ class BridgeClient {
   /// [interrupt] decides what a QUEUED prompt does to the turn in flight
   /// (only relevant while one is already running backgrounded): true
   /// (the default — typed text, conversation barge-in, PTT slide-up)
-  /// SIGINTs a mere thinking turn so this prompt starts in a heartbeat;
+  /// interrupts a mere thinking turn in-band so this prompt starts in a
+  /// heartbeat (the CLI process itself survives — no kill, no `--resume`,
+  /// no cold prefill next turn);
   /// false (the PTT slide-right polite queue) lets the turn finish its
   /// work first. An open tool is never interrupted — it runs to
   /// completion and this prompt goes next either way.
@@ -174,6 +180,38 @@ class BridgeClient {
       );
       req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
       req.add(utf8.encode(text));
+      final res = await req.close();
+      if (res.statusCode != 200) {
+        final body = (await res.transform(utf8.decoder).join()).trim();
+        throw BridgeException(
+          'bridge said HTTP ${res.statusCode}'
+          '${body.isEmpty ? '' : ': $body'}',
+        );
+      }
+      yield* bridgeEventsFromLines(
+        res.transform(utf8.decoder).transform(const LineSplitter()),
+      );
+    } on BridgeException {
+      rethrow;
+    } on Object catch (e) {
+      throw BridgeException('bridge unreachable: $e');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Re-attaches to a turn the bridge is running with NO listener — the
+  /// phone's stream died while the app was hidden (Android killed the
+  /// process, or the OS dropped the socket): the bridge replays the
+  /// events that happened unheard, then streams live until the turn's
+  /// done. Cancelling the subscription backgrounds the turn again,
+  /// exactly like a hung-up /talk. A turn that already ended replays its
+  /// buffered tail (done included) and closes — the same events either
+  /// way, so the caller needs no special-casing.
+  Stream<BridgeEvent> attach() async* {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.getUrl(_u('/attach'));
       final res = await req.close();
       if (res.statusCode != 200) {
         final body = (await res.transform(utf8.decoder).join()).trim();

@@ -1,4 +1,4 @@
-// Round-trip smoke test: wav fixture -> Whisper ASR -> text -> Piper TTS.
+// Round-trip smoke test: wav fixture -> Whisper ASR -> text -> Kokoro TTS.
 //
 // Runs on the Linux host (no mic, no speaker) against the raw extracted
 // model directories in models/ (not the zipped app assets). Run with:
@@ -7,7 +7,9 @@
 //     flutter test test/roundtrip_test.dart
 //
 // The synthesized reply is written to build/roundtrip_reply.wav so you can
-// listen to exactly what the app would have spoken.
+// listen to exactly what the app would have spoken. Kokoro is the app's
+// only TTS engine; the test skips its leg until the pack is staged (the
+// app downloads it on selection; KOKORO_DIR overrides the path).
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -16,35 +18,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/audio_io.dart';
 import 'package:voice_agent/model_paths.dart';
 import 'package:voice_agent/speech_worker.dart';
-import 'package:voice_agent/tts_voices.dart' show TtsVoice;
 
 void main() {
   final asrDir = Directory('models/sherpa-onnx-whisper-tiny.en').absolute.path;
-  final ttsDir = Directory(
-    'models/vits-piper-en_US-lessac-medium',
-  ).absolute.path;
   final paths = ModelPaths(
     whisperEncoder: '$asrDir/tiny.en-encoder.int8.onnx',
     whisperDecoder: '$asrDir/tiny.en-decoder.int8.onnx',
     whisperTokens: '$asrDir/tiny.en-tokens.txt',
-    vitsModel: '$ttsDir/en_US-lessac-medium.onnx',
-    vitsTokens: '$ttsDir/tokens.txt',
-    espeakDataDir: '$ttsDir/espeak-ng-data',
     vadModel: Directory('models/silero_vad.onnx').absolute.path,
   );
 
-  final haveModels =
-      File(paths.whisperDecoder).existsSync() &&
-      File(paths.vitsModel).existsSync();
+  final haveModels = File(paths.whisperDecoder).existsSync();
 
-  test('voice round trip: wav -> text -> wav', () async {
+  test('ASR: wav fixture -> Whisper -> text', () async {
     if (!haveModels) {
       // ignore: avoid_print
       print('SKIPPED: extracted models not found under models/');
       return;
     }
 
-    // 1. Transcribe a real speech fixture (same wavs ship with the model).
+    // Transcribe a real speech fixture (same wavs ship with the model).
     final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
     final (samples, sampleRate) = decodeWav(wav);
 
@@ -59,26 +52,6 @@ void main() {
         '${swAsr.elapsedMilliseconds} ms)',
       );
       expect(text.trim(), isNotEmpty);
-
-      // 2. Speak the transcription back.
-      final swTts = Stopwatch()..start();
-      final (audio, ttsSampleRate) = await worker.synthesize(text.trim());
-      swTts.stop();
-      final audioSeconds = audio.length / ttsSampleRate;
-      // ignore: avoid_print
-      print(
-        'TTS: ${audioSeconds}s of audio generated in '
-        '${swTts.elapsedMilliseconds} ms '
-        '(${(swTts.elapsedMilliseconds / audioSeconds).round()} ms/audio-sec)',
-      );
-      expect(audio.length, greaterThan(ttsSampleRate)); // > 1 second
-
-      // 3. Persist the reply so it can be listened to.
-      final out = File('build/roundtrip_reply.wav')
-        ..createSync(recursive: true);
-      out.writeAsBytesSync(encodeWav(audio, ttsSampleRate));
-      // ignore: avoid_print
-      print('Reply audio written to ${out.absolute.path}');
     } finally {
       worker.dispose();
     }
@@ -142,273 +115,6 @@ void main() {
     }
   }, timeout: const Timeout(Duration(minutes: 2)));
 
-  // Voice-cloning leg: hot-swaps the worker engine from Piper to ZipVoice
-  // and checks the clone is intelligible by transcribing it back. Skips
-  // when the extracted clone pack is not around (it downloads on demand in
-  // the app; the host probe tool/clone_probe.dart covers the same ground).
-  test('TTS voice swap: Piper -> ZipVoice clone speaks the user voice', () async {
-    const zipDir =
-        '/tmp/opencode/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia';
-    const vocoder = '/tmp/opencode/vocos_24khz.onnx';
-    if (!haveModels ||
-        !File('$zipDir/encoder.int8.onnx').existsSync() ||
-        !File(vocoder).existsSync()) {
-      // ignore: avoid_print
-      print('SKIPPED: zipvoice pack not extracted under /tmp/opencode');
-      return;
-    }
-
-    final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
-    final (refSamples, refRate) = decodeWav(wav);
-
-    final worker = await SpeechWorker.start(paths);
-    try {
-      // The reference transcript comes from the very Whisper that ships
-      // in the app, exactly like the clone capture flow does.
-      final refText = (await worker.transcribe(refSamples, refRate)).trim();
-      expect(refText, isNotEmpty);
-
-      final speakers = await worker.useTts(
-        TtsSpec.zipvoice(
-          zipTokens: '$zipDir/tokens.txt',
-          zipEncoder: '$zipDir/encoder.int8.onnx',
-          zipDecoder: '$zipDir/decoder.int8.onnx',
-          zipDataDir: '$zipDir/espeak-ng-data',
-          zipLexicon: '$zipDir/lexicon.txt',
-          vocoder: vocoder,
-          referenceWav: '$asrDir/test_wavs/0.wav',
-          referenceText: refText,
-        ),
-      );
-      expect(speakers, greaterThan(0));
-
-      const line = 'Hello Tim. This is what your cloned voice will sound like.';
-      final sw = Stopwatch()..start();
-      final (audio, sampleRate) = await worker.synthesize(line);
-      sw.stop();
-      final seconds = audio.length / sampleRate;
-      // ignore: avoid_print
-      print(
-        'clone TTS: ${seconds.toStringAsFixed(1)}s generated in '
-        '${sw.elapsedMilliseconds} ms '
-        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
-      );
-      expect(audio.length, greaterThan(sampleRate));
-      expect(sampleRate, 24000); // vocos_24khz output
-
-      final out = File('build/roundtrip_clone.wav')
-        ..createSync(recursive: true);
-      out.writeAsBytesSync(encodeWav(audio, sampleRate));
-
-      // Intelligible in *any* voice? Transcribe the clone with Whisper.
-      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
-      final hits = line
-          .split(' ')
-          .where((w) => w.length > 3)
-          .where((w) => heard.contains(w.toLowerCase()))
-          .length;
-      // ignore: avoid_print
-      print('clone ASR: "$heard" ($hits long words matched)');
-      expect(hits, greaterThan(3));
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 4)));
-
-  // NeuTTS leg: hot-swaps to the NeuTTS Nano engine (our Rust FFI bridge,
-  // not sherpa-onnx) and verifies the reply is intelligible. Skipped until
-  // the gated model files land: fetch the GGUF + converted decoder into
-  // NEUTTS_DIR (default /tmp/opencode/neutts-assets — see README).
-  test('TTS voice swap: Piper -> NeuTTS Nano speaks preset voices', () async {
-    final dir =
-        Platform.environment['NEUTTS_DIR'] ?? '/tmp/opencode/neutts-assets';
-    final bridge =
-        Platform.environment['NEUTTS_BRIDGE'] ??
-        '/tmp/opencode/neutts-rs/target/release/libneutts_bridge.so';
-    if (!haveModels ||
-        !File(bridge).existsSync() ||
-        !File('$dir/neutts-nano-Q4_0.gguf').existsSync() ||
-        !File('$dir/neucodec_decoder.safetensors').existsSync() ||
-        !File('$dir/voices/jo.npy').existsSync()) {
-      // ignore: avoid_print
-      print('SKIPPED: NeuTTS assets not staged under $dir');
-      return;
-    }
-
-    final worker = await SpeechWorker.start(paths);
-    try {
-      final speakers = await worker.useTts(
-        TtsSpec.neutts(
-          neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
-          neuttsDecoder: '$dir/neucodec_decoder.safetensors',
-          neuttsVoices: '$dir/voices',
-          neuttsRefs: const ['jo', 'mateo'],
-          espeakDataDir: '/tmp/opencode/espeak-neutts-test',
-          neuttsLib: bridge,
-          neuttsSeed: 7,
-        ),
-      );
-      expect(speakers, 2); // jo + mateo presets drive the style slider
-
-      const line =
-          'Hello Tim. NeuTTS nano speaking, generated entirely on this device.';
-      final sw = Stopwatch()..start();
-      final (audio, sampleRate) = await worker.synthesize(line);
-      sw.stop();
-      // Phone-relevant cost: peak RSS of this whole process (the worker
-      // isolate is in-process; safetensors land as f32 on the native heap).
-      final rss = RegExp(
-        r'VmHWM:\s+(\d+) kB',
-      ).firstMatch(File('/proc/self/status').readAsStringSync())?.group(1);
-      // ignore: avoid_print
-      print('neutts memory: peak RSS ${rss ?? "??"} kB');
-      final seconds = audio.length / sampleRate;
-      // ignore: avoid_print
-      print(
-        'neutts TTS: ${seconds.toStringAsFixed(1)}s generated in '
-        '${sw.elapsedMilliseconds} ms '
-        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
-      );
-      expect(audio.length, greaterThan(sampleRate));
-      expect(sampleRate, 24000); // NeuCodec output
-
-      File('build/roundtrip_neutts.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio, sampleRate));
-
-      // Second preset (jo) should differ but be equally intelligible.
-      await worker.useTts(
-        TtsSpec.neutts(
-          neuttsGguf: '$dir/neutts-nano-Q4_0.gguf',
-          neuttsDecoder: '$dir/neucodec_decoder.safetensors',
-          neuttsVoices: '$dir/voices',
-          neuttsRefs: const ['jo', 'mateo'],
-          espeakDataDir: '/tmp/opencode/espeak-neutts-test',
-          neuttsLib: bridge,
-          neuttsSeed: 7,
-          sid: 1,
-        ),
-      );
-      final (audio2, _) = await worker.synthesize(line);
-      File('build/roundtrip_neutts_jo.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
-
-      // Intelligible? Transcribe both with Whisper.
-      var preset = 0;
-      for (final a in [audio, audio2]) {
-        final heard = (await worker.transcribe(a, sampleRate)).toLowerCase();
-        final hits = line
-            .split(' ')
-            .where((w) => w.length > 3)
-            .where((w) => heard.contains(w.toLowerCase()))
-            .length;
-        // ignore: avoid_print
-        print(
-          'neutts ASR (preset $preset): "$heard" ($hits long words matched)',
-        );
-        expect(hits, greaterThan(3));
-        preset++;
-      }
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 8)));
-
-  // Pocket TTS leg: hot-swaps to the sherpa-onnx PocketTTS engine (Kyutai
-  // ONNX export) and verifies the preset references clone through Whisper.
-  // Skipped until the pack is staged: run tool/build_pocket_pack.sh (assets
-  // land under POCKET_DIR, default /tmp/opencode/pocket-pack/pocket-tts).
-  test('TTS voice swap: Piper -> Pocket TTS speaks preset voices', () async {
-    final dir =
-        Platform.environment['POCKET_DIR'] ??
-        '/tmp/opencode/pocket-pack/pocket-tts';
-    final refs = TtsVoice.pocketRefs;
-    TtsSpec spec(int sid) => TtsSpec.pocket(
-      pocketLmFlow: '$dir/lm_flow.onnx',
-      pocketLmMain: '$dir/lm_main.onnx',
-      pocketEncoder: '$dir/encoder.onnx',
-      pocketDecoder: '$dir/decoder.onnx',
-      pocketTextConditioner: '$dir/text_conditioner.onnx',
-      pocketVocabJson: '$dir/vocab.json',
-      pocketTokenScoresJson: '$dir/token_scores.json',
-      referenceWav: '$dir/voices/${refs[sid]}.wav',
-      pocketRefs: refs,
-      sid: sid,
-    );
-    if (!haveModels ||
-        !File('$dir/lm_main.onnx').existsSync() ||
-        !File('$dir/voices/${refs.first}.wav').existsSync()) {
-      // ignore: avoid_print
-      print('SKIPPED: Pocket TTS assets not staged under $dir');
-      return;
-    }
-
-    final worker = await SpeechWorker.start(paths);
-    try {
-      final speakers = await worker.useTts(spec(0));
-      expect(speakers, refs.length); // references drive the style slider
-
-      const line =
-          'Hello Tim. Pocket TTS speaking, generated entirely on this device.';
-      final sw = Stopwatch()..start();
-      final (audio, sampleRate) = await worker.synthesize(line);
-      sw.stop();
-      final seconds = audio.length / sampleRate;
-      // ignore: avoid_print
-      print(
-        'pocket TTS: ${seconds.toStringAsFixed(1)}s generated in '
-        '${sw.elapsedMilliseconds} ms '
-        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
-      );
-      expect(audio.length, greaterThan(sampleRate));
-      expect(sampleRate, 24000); // Pocket's output rate
-
-      File('build/roundtrip_pocket.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio, sampleRate));
-
-      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
-      final hits = line
-          .split(' ')
-          .where((w) => w.length > 3)
-          .where((w) => heard.contains(w.toLowerCase()))
-          .length;
-      // ignore: avoid_print
-      print('pocket ASR: "$heard" ($hits long words matched)');
-      // Body words must land (>= 3): the ONNX port's cold-start head can eat
-      // the first syllable even after the lead-in repair (see pocketLeadIn),
-      // and tiny.en drops the trailing words of a long take, so assert on the
-      // middle of the sentence — that is what the engine guarantees.
-      expect(hits, greaterThan(2));
-
-      // Second preset sounds different but is equally intelligible.
-      await worker.useTts(
-        spec(5),
-      ); // bill_boerst: the most stable re-transcription
-      final (audio2, _) = await worker.synthesize(line);
-      File('build/roundtrip_pocket_bill.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
-      final heard2 = (await worker.transcribe(
-        audio2,
-        sampleRate,
-      )).toLowerCase();
-      final hits2 = line
-          .split(' ')
-          .where((w) => w.length > 3)
-          .where((w) => heard2.contains(w.toLowerCase()))
-          .length;
-      // ignore: avoid_print
-      print('pocket ASR (bill_boerst): "$heard2" ($hits2 long words matched)');
-      expect(hits2, greaterThan(2));
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 8)));
-
-  // Skipped until the pack is staged: any k2-fsa kokoro-multi-lang-v1_0
-  // extraction (the app downloads it on selection; KOKORO_DIR overrides).
   test('Kokoro v1_0 fp32 speaks preset styles', () async {
     final dir =
         Platform.environment['KOKORO_DIR'] ??
@@ -451,9 +157,11 @@ void main() {
         );
         expect(audio.length, greaterThan(sampleRate));
         expect(sampleRate, 24000);
-        File('build/roundtrip_kokoro_sid$sid.wav')
-          ..createSync(recursive: true)
-          ..writeAsBytesSync(encodeWav(audio, sampleRate));
+        final out = File('build/roundtrip_reply_sid$sid.wav')
+          ..createSync(recursive: true);
+        out.writeAsBytesSync(encodeWav(audio, sampleRate));
+        // ignore: avoid_print
+        print('Reply audio written to ${out.absolute.path}');
         final heard = (await worker.transcribe(
           audio,
           sampleRate,
@@ -466,8 +174,8 @@ void main() {
         // ignore: avoid_print
         print('kokoro ASR (sid $sid): "$heard" ($hits long words matched)');
         // Kokoro has no cold-start damage (one forward pass, no codec):
-        // unlike the pocket assertion, the FIRST long word ('quick') must
-        // be present too — that is the whole point of this engine.
+        // the FIRST long word ('quick') must be present — that is the
+        // whole point of this engine.
         expect(hits, greaterThan(2));
         expect(heard, contains('quick'));
       }

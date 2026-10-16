@@ -58,6 +58,27 @@ class BenchRun {
   });
 }
 
+/// Emoji stamp for a tool-call line in the conversation (silent lines, no
+/// voice): the glyph reads the kind of work at a glance, before the name.
+const Map<String, String> _toolGlyphs = {
+  'read': '📖',
+  'bash': '📓',
+  'write': '✏️',
+  'edit': '✏️',
+  'multiedit': '✏️',
+  'notebookedit': '🗒️',
+  'grep': '🔍',
+  'glob': '🔍',
+  'webfetch': '🌐',
+  'websearch': '🌐',
+  'task': '🤖',
+  'todowrite': '📋',
+  'skill': '🪄',
+};
+
+String _toolGlyph(String toolName) =>
+    _toolGlyphs[toolName.toLowerCase()] ?? '🔧';
+
 /// Orchestrates the voice round trip:
 ///   mic -> VAD endpointing -> Whisper (ASR) -> text -> Piper VITS (TTS) -> speaker
 /// in two interaction modes (see [InteractionMode]).
@@ -103,19 +124,17 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Voice selection & cloning ────────────────────────────────────────────
   String _modelsDir = '';
   TtsPrefs _prefs = TtsPrefs();
-  String _activeVoiceId = 'lessac';
+  String _activeVoiceId = 'kokoro';
   int _ttsNumSpeakers = 1; // >1 when the loaded engine has several speakers
   String _voiceStatus = ''; // one-line feedback for the voice screen
-  bool _voiceBusy = false; // download / engine swap / sample processing
-  bool _cloneCapturing = false; // recording a clone sample right now
+  bool _voiceBusy = false; // download / engine swap in progress
 
   // ── Latency bench (voice screen panel) ─────────────────────────────────
-  // Push-to-talk -> whisper -> echo in the CURRENT voice: the same mic
-  // hand-off the clone recorder uses, but the reply path is a pure local
-  // echo (no bridge, no chat log), so every millisecond the panel shows
-  // belongs to the models the user picked. All latencies clock from the
-  // button release. History is session-only — it is for feeling out
-  // voices back to back, not a record.
+  // Push-to-talk -> whisper -> echo in the CURRENT voice: a mic capture
+  // whose reply path is a pure local echo (no bridge, no chat log), so
+  // every millisecond the panel shows belongs to the models the user
+  // picked. All latencies clock from the button release. History is
+  // session-only — it is for feeling out voices back to back, not a record.
   bool _benchCapturing = false, _benchBusy = false;
   final List<Float32List> _benchChunks = [];
   Timer? _benchTimer;
@@ -126,10 +145,7 @@ class VoiceAssistant extends ChangeNotifier {
       'Hold the button, speak, release: the app transcribes you and '
       'repeats the sentence in the selected voice, timed end to end.';
   final List<BenchRun> _benchRuns = [];
-  bool _cloneResumeOnDone = false; // conversation to restore after capture
-  double _cloneSeconds = 0;
-  Timer? _cloneTimer;
-  final List<Float32List> _cloneChunks = [];
+  bool _captureResumeOnDone = false; // conversation to restore after capture
   Completer<void>? _previewDone; // set while a preview line plays
 
   // ── Claude Code bridge (lib/bridge.dart, docs/claude-code-bridge.md) ────
@@ -284,11 +300,6 @@ class VoiceAssistant extends ChangeNotifier {
   int get ttsNumSpeakers => _ttsNumSpeakers;
   String get voiceStatus => _voiceStatus;
   bool get voiceBusy => _voiceBusy;
-  bool get cloneCapturing => _cloneCapturing;
-  double get cloneSeconds => _cloneSeconds;
-  String get cloneSampleText => _prefs.sampleText;
-  bool get hasCloneSample =>
-      _prefs.sampleWav.isNotEmpty && File(_prefs.sampleWav).existsSync();
 
   // ── Claude Code bridge API (settings UI in bridge_screen.dart) ─────────
   bool get bridgeConfigured => _bridge != null;
@@ -496,8 +507,9 @@ class VoiceAssistant extends ChangeNotifier {
   /// [events] replaces the /talk call — the /new chip uses it to hit
   /// the bridge's reset endpoint and finish with zero events instead.
   /// [interrupt] is the queue flavour if the bridge turns this into a
-  /// queued prompt behind a still-running turn: true (default) SIGINTs a
-  /// mere thinking turn so this one starts at once; false lets the turn
+  /// queued prompt behind a still-running turn: true (default) interrupts a
+  /// mere thinking turn in-band (the process survives) so this one starts
+  /// at once; false lets the turn
   /// in flight finish first (the push-to-talk slide-right polite queue).
   Future<void> runQuickCommand(
     String utterance, {
@@ -551,7 +563,8 @@ class VoiceAssistant extends ChangeNotifier {
     _warmUpRoute(); // hold the output route while the harness thinks
     _replyQueue.clear();
     _replyStreamDone = false;
-    var sawFirstChunk = false;
+    _ttsSeconds = 0; // the strip tallies per turn: reset, then every
+    _playSeconds = 0; // speak() block below adds its synth/play time
     unawaited(_playReplyChunks(gen));
     final spoken = StringBuffer();
     // ── Progress narration ── 'working towards the goal' means AUDIO
@@ -574,12 +587,16 @@ class VoiceAssistant extends ChangeNotifier {
     String lastNarrated = '';
     var lastNarratedAt = DateTime.fromMillisecondsSinceEpoch(0);
     var lastSpokenAt = lastNarratedAt; // reply-audio activity clock
-    // Speak one answer block end-to-end: synth (streamed into the play
-    // queue, status flips on the first audio chunk), then the log — the
-    // reply card follows the audio, never leads it (an interrupted turn's
-    // tail chunks drop on the gen guard, and without this order the card
-    // kept growing while the loop had already stopped feeding the player
-    // — the old "text with no audio" on long answers).
+    // Speak one answer block end-to-end: synth streamed into the play
+    // queue, and the log entry lands the moment the FIRST audio chunk
+    // queues — voice and text enter the conversation together. Waiting
+    // for the whole sentence to synthesise (the old order) let the voice
+    // win the race on long answers: audible seconds before any text. The
+    // first-chunk stamp also can't lead the audio (the chunk still has to
+    // reach the player after this), while an interrupted turn keeps the
+    // sections whose audio actually started — tail chunks still drop on
+    // the gen guard, so the card never grows while the loop has already
+    // stopped feeding the player (the old "text with no audio").
     Future<void> speak(String text) async {
       lastSpokenAt = DateTime.now(); // audio just became active: hush
       if (_backgrounded) {
@@ -596,15 +613,21 @@ class VoiceAssistant extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      final swTts = Stopwatch()..start();
+      var blockOnAir = false; // per-BLOCK: every say logs its own text at
+      // its own first audio chunk (the voice must never lead the text)
       final (audio, rate) = await _worker!.synthesizeStream(
         text,
         onChunk: (chunk, sampleRate) {
           if (gen != _generation) return;
-          if (!sawFirstChunk) {
-            sawFirstChunk = true;
+          if (!blockOnAir) {
+            blockOnAir = true;
             _phase = AssistantPhase.speaking;
             _status = 'Speaking the bridge: “$text” — tap to cut me off.';
-            notifyListeners();
+            spoken.write('$text ');
+            turn.blocks.add(text);
+            _lastReplyText = text;
+            _touchChat(); // persists + notifies with the status flip above
           }
           _replyQueue.add((chunk, sampleRate));
           _replyWake?.complete();
@@ -612,11 +635,10 @@ class VoiceAssistant extends ChangeNotifier {
         },
       );
       if (gen != _generation) return;
+      swTts.stop();
+      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      _playSeconds += audio.length / rate;
       _noteTts(audio, rate); // last message's raw audio: debug replay
-      spoken.write('$text ');
-      turn.blocks.add(text);
-      _lastReplyText = text;
-      _touchChat();
     }
 
     // Narration gate + line pipeline (declared after speak(): they run
@@ -741,6 +763,18 @@ class VoiceAssistant extends ChangeNotifier {
                 : 'The harness is working — ${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
             _status = latestWork;
+            // The step itself lands in the conversation as a silent line:
+            // one block of the live bubble (each gets its own line, divider
+            // between), never spoken — the narrate switch owns the audio
+            // side of tool progress. 'queued' is our own utterance parking
+            // behind a running tool, not a tool call, so it stays out.
+            if (ev.toolName != 'queued') {
+              final label = ev.detail.isEmpty
+                  ? ev.toolName
+                  : '${ev.toolName} ${ev.detail}';
+              turn.blocks.add('${_toolGlyph(ev.toolName)} $label');
+              _touchChat();
+            }
             notifyListeners();
             if (narrationQuiet() && latestWork != lastNarrated) {
               unawaited(narrateProgress(latestWork));
@@ -808,7 +842,7 @@ class VoiceAssistant extends ChangeNotifier {
       // site calls _abandonBridgeTurn, and that decides — voice barge-in
       // DETACHES (the harness keeps working as a background turn, long
       // tools finish, the next prompt queues behind them), the stop chip
-      // adds a SIGINT via its sigint flag.
+      // adds a hard stop via its hardStop flag.
       if (gen == _generation && spoken.isEmpty && _error.isEmpty) {
         // (spoken, not sawFirstChunk: a turn answered entirely while
         // hidden buffered text without ever synthesising audio)
@@ -826,15 +860,17 @@ class VoiceAssistant extends ChangeNotifier {
   /// turn: the harness keeps working (a long-running tool call finishes
   /// its work!), the output goes nowhere, and the queue logic in
   /// claude_bridge.mjs decides what your next utterance does — it waits
-  /// behind an open tool, or cuts a mere thinking turn short via SIGINT
-  /// and starts within a heartbeat. [sigint] is the hard-stop variant
+  /// behind an open tool, or cuts a mere thinking turn short in-band
+  /// and starts within a heartbeat. [hardStop] is the hard-stop variant
   /// (stop-chip taps — "stop working", not "I'll steer"): the harness is
-  /// told to quit the turn itself, exactly as before. Mode switches no
+  /// told to quit the turn itself (/stop — an in-band interrupt; the
+  /// CLI process survives, so no `--resume` re-prefill next turn).
+  /// Mode switches no
   /// longer come through here at all while a turn is live: the bridge
   /// session survives them (see [setMode]).
-  void _abandonBridgeTurn({bool sigint = false}) {
+  void _abandonBridgeTurn({bool hardStop = false}) {
     if (!_bridgeBusy) return;
-    if (sigint) unawaited(_bridge?.stop());
+    if (hardStop) unawaited(_bridge?.stop());
     _bridgeBusy = false;
     _harnessSince = null;
     final sub = _bridgeSub;
@@ -851,13 +887,14 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   /// Stop chip / conversation-mode stop during a bridge turn: silence the
-  /// speaker, hard-stop the harness's WORK (SIGINT, not just detach), and
+  /// speaker, hard-stop the harness's WORK (a /stop interrupt, not just
+  /// detach), and
   /// leave the conversation usable — a follow-up utterance goes straight
   /// out, the interrupted session context carries over.
   void bridgeStop() {
     if (_harnessBackgrounded) {
       // A turn the phone detached is still working invisibly: /stop hits
-      // it too (SIGINT lands whether attached or backgrounded).
+      // it too (the interrupt lands whether attached or backgrounded).
       unawaited(_bridge?.stop());
       _harnessBackgrounded = false;
       _status = 'Stopped the harness — the detached turn was cut short.';
@@ -867,7 +904,7 @@ class VoiceAssistant extends ChangeNotifier {
     _generation++;
     _stopPlayback();
     // Hard stop incl. the streamed-player teardown inside the helper.
-    _abandonBridgeTurn(sigint: true);
+    _abandonBridgeTurn(hardStop: true);
     _harnessBackgrounded = false; // nothing left working invisibly
     _idleReady();
   }
@@ -901,6 +938,18 @@ class VoiceAssistant extends ChangeNotifier {
           // /new that leaves its own tombstone on screen is not blank.
           _chat.clear();
           _touchChat();
+          // And the meter goes blank with the chat, not into a
+          // monotonic decline from last week's number: /health will now
+          // answer in:0 (the bridge cleared its snapshot), and
+          // _mergeContext ignores zeros, so the reset has to happen
+          // here. The first message_start of the new conversation puts
+          // an honest number back on the bar.
+          _contextIn = 0;
+          _tokIn = _tokOut = 0;
+          _tokKind = '';
+          _tokLive = false;
+          _tokRate = 0;
+          notifyListeners();
           return Stream<BridgeEvent>.empty();
         },
       );
@@ -915,12 +964,7 @@ class VoiceAssistant extends ChangeNotifier {
     );
   }
 
-  TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(
-    _modelsDir,
-    sid: sid,
-    referenceWav: _prefs.sampleWav,
-    referenceText: _prefs.sampleText,
-  );
+  TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(_modelsDir, sid: sid);
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -933,13 +977,12 @@ class VoiceAssistant extends ChangeNotifier {
       _loadChat(); // restore the on-screen conversation (file read is tiny)
       _rebuildBridge();
       unawaited(_refreshSession()); // chat-screen top row knows the id
-      // The saved voice must be fully on disk (pack present and, for the
-      // clone, its reference wav too); otherwise fall back to the default,
-      // which downloads on first run just like before.
-      var voice = voiceById(_prefs.voiceId) ?? voiceById('lessac')!;
-      if (!await voice.installedIn(modelsDir) ||
-          (voice.isClone && !hasCloneSample)) {
-        voice = voiceById('lessac')!;
+      // The saved voice must be fully on disk (pack present); otherwise
+      // fall back to the default, which downloads on first run just like
+      // before.
+      var voice = voiceById(_prefs.voiceId) ?? voiceById('kokoro')!;
+      if (!await voice.installedIn(modelsDir)) {
+        voice = voiceById('kokoro')!;
       }
       _prefs.voiceId = voice.id;
       await voice.ensureIn(modelsDir, onProgress: _modelProgress);
@@ -951,6 +994,10 @@ class VoiceAssistant extends ChangeNotifier {
       );
       _activeVoiceId = voice.id;
       _idleReady();
+      // Cold start while a turn runs (or just finished) on the bridge —
+      // Android killed the process mid-turn: adopt it. Nothing to do when
+      // the bridge has nothing open; the health gate inside decides.
+      unawaited(reattachBackgroundTurn());
     } catch (e) {
       _fail('Model init failed: $e');
     }
@@ -969,8 +1016,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Switch the speaking voice, downloading its pack first if needed
   /// (progress shows in [voiceStatus]). [sid] picks a speaker for models
-  /// that have several; pass `force` to re-apply the current voice (e.g.
-  /// after editing the clone transcript).
+  /// that have several; pass `force` to re-apply the current voice.
   Future<void> selectVoice(
     String id, {
     int sid = -1,
@@ -981,11 +1027,6 @@ class VoiceAssistant extends ChangeNotifier {
     if (v == null) return;
     final newSid = sid < 0 ? _prefs.sid : sid;
     if (!force && id == _activeVoiceId && newSid == _prefs.sid) return;
-    if (v.isClone && !hasCloneSample) {
-      _voiceStatus = 'Record a voice sample first (button below).';
-      notifyListeners();
-      return;
-    }
     _voiceBusy = true;
     _voiceStatus = 'Setting up ${v.label}…';
     notifyListeners();
@@ -1034,123 +1075,6 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
-  /// Record the reference clip the clone will speak with: takes the mic from
-  /// any running capture (auto-stops at 20 s). Finish with [stopCloneCapture]
-  /// — the clip is saved and Whisper transcribes it (ZipVoice needs the text
-  /// of the reference audio).
-  Future<void> startCloneCapture() async {
-    if (_worker == null ||
-        _cloneCapturing ||
-        _benchCapturing ||
-        _benchBusy ||
-        _voiceBusy) {
-      return;
-    }
-    _cloneResumeOnDone = _micStreamWanted; // conversation/PTT we displaced
-    _generation++; // abandon any in-flight turn
-    _abandonBridgeTurn(sigint: true); // the clone needs the mic, end work
-    _shutdownAudio();
-    _cloneChunks.clear();
-    _cloneSeconds = 0;
-    _cloneCapturing = true; // _onMicData routes bytes into the sample
-    _phase = AssistantPhase.listening;
-    _error = '';
-    _status = 'Recording your voice sample…';
-    _voiceStatus = 'Read one sentence clearly, about 8–15 seconds.';
-    _cloneTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!_cloneCapturing) return;
-      _status =
-          'Recording your voice sample… '
-          '${_cloneSeconds.toStringAsFixed(1)}s (stop between 2 and 20 s)';
-      notifyListeners();
-    });
-    notifyListeners();
-    try {
-      await _openMicStream(); // reuses the watchdog-protected capture path
-    } catch (e) {
-      _cloneCapturing = false;
-      _cloneTimer?.cancel();
-      _cloneTimer = null;
-      _fail('Could not open the mic: $e');
-    }
-  }
-
-  Future<void> stopCloneCapture() async {
-    if (!_cloneCapturing) return;
-    _cloneCapturing = false; // first: ignores trailing stream data
-    _cloneTimer?.cancel();
-    _cloneTimer = null;
-    _micWatchdog?.cancel();
-    _micWatchdog = null;
-    await _recSub?.cancel();
-    _recSub = null;
-    try {
-      await _recorder.stop();
-    } catch (_) {}
-    _phase = AssistantPhase.idle;
-    final total = _cloneChunks.fold<int>(0, (n, c) => n + c.length);
-    _cloneSeconds = total / 16000.0;
-    if (total < 32000) {
-      // under 2 seconds: nothing worth cloning
-      _cloneChunks.clear();
-      _voiceStatus = 'That was too short — record at least 2 seconds.';
-      notifyListeners();
-      _afterCapture();
-      return;
-    }
-    _voiceBusy = true;
-    _status = 'Saving your voice sample…';
-    notifyListeners();
-    try {
-      final pcm = Float32List(total);
-      var off = 0;
-      for (final c in _cloneChunks) {
-        pcm.setRange(off, off + c.length, c);
-        off += c.length;
-      }
-      _cloneChunks.clear();
-      final wavPath = p.join(_modelsDir, 'clone_reference.wav');
-      await File(wavPath).writeAsBytes(encodeWav(pcm, 16000));
-      _status = 'Transcribing the sample…';
-      notifyListeners();
-      final text = (await _worker!.transcribe(pcm, 16000)).trim();
-      if (text.split(' ').length < 3) {
-        throw StateError(
-          'I could not understand the sample — speak a bit louder and '
-          'try again.',
-        );
-      }
-      _prefs.sampleWav = wavPath;
-      _prefs.sampleText = text;
-      await saveTtsPrefs(_modelsDir, _prefs);
-      _voiceStatus =
-          'Sample saved (${_cloneSeconds.toStringAsFixed(1)}s). Press '
-          '"Use my voice" to download the cloning model (about 155 MB, '
-          'one time) and hear it speak.';
-      _status = 'Voice sample saved.';
-    } catch (e) {
-      _cloneChunks.clear();
-      _voiceStatus = 'Clone failed: $e';
-      _status = 'Voice sample failed — tap the voices screen to retry.';
-    } finally {
-      _voiceBusy = false;
-      notifyListeners();
-    }
-    _afterCapture();
-  }
-
-  Future<void> cancelCloneCapture() async {
-    if (!_cloneCapturing) return;
-    _cloneCapturing = false;
-    _cloneTimer?.cancel();
-    _cloneTimer = null;
-    _cloneChunks.clear();
-    _shutdownAudio();
-    _phase = AssistantPhase.idle;
-    _status = 'Sample recording cancelled.';
-    notifyListeners();
-    _afterCapture();
-  }
 
   // ── Latency bench (voice screen panel) ─────────────────────────────────
 
@@ -1168,17 +1092,16 @@ class VoiceAssistant extends ChangeNotifier {
     return 'current voice';
   }
 
-  /// Start a bench recording: takes the mic exactly like [startCloneCapture]
-  /// (whatever capture it displaces resumes when the run ends) — but the
-  /// buffer feeds the timed echo turn, not a clone sample. Release with
-  /// [finishBenchCapture]; a lost release auto-closes at 20 s.
+  /// Start a bench recording: takes the mic (whatever capture it displaces
+  /// resumes when the run ends) — the buffer feeds the timed echo turn.
+  /// Release with [finishBenchCapture]; a lost release auto-closes at 20 s.
   Future<void> benchDown() async {
-    if (_worker == null || _benchCapturing || _cloneCapturing || _voiceBusy) {
+    if (_worker == null || _benchCapturing || _voiceBusy) {
       return;
     }
-    _cloneResumeOnDone = _micStreamWanted; // reuse the clone's resume latch
+    _captureResumeOnDone = _micStreamWanted;
     _generation++; // abandon any in-flight reply turn
-    _abandonBridgeTurn(sigint: true); // bench timing can't share the harness
+    _abandonBridgeTurn(hardStop: true); // bench timing can't share the harness
     _shutdownAudio();
     _benchChunks.clear();
     _benchSeconds = 0;
@@ -1195,7 +1118,7 @@ class VoiceAssistant extends ChangeNotifier {
     });
     notifyListeners();
     try {
-      await _openMicStream(); // watchdog-protected capture path, same as clone
+      await _openMicStream(); // watchdog-protected capture path
     } catch (e) {
       _benchCapturing = false;
       _benchTimer?.cancel();
@@ -1335,36 +1258,6 @@ class VoiceAssistant extends ChangeNotifier {
     _afterCapture();
   }
 
-  /// Correct what Whisper heard in the reference clip (ZipVoice speaks the
-  /// reference *transcript*, so a mis-heard word colors the clone).
-  Future<void> updateCloneSampleText(String text) async {
-    if (_voiceBusy) return;
-    _prefs.sampleText = text.trim();
-    await saveTtsPrefs(_modelsDir, _prefs);
-    if (_activeVoiceId == 'clone') {
-      await selectVoice('clone', force: true); // reload the reference
-    }
-    notifyListeners();
-  }
-
-  Future<void> deleteCloneSample() async {
-    if (_voiceBusy) return;
-    _voiceBusy = true;
-    try {
-      await File(_prefs.sampleWav).delete();
-    } catch (_) {}
-    _prefs.sampleWav = '';
-    _prefs.sampleText = '';
-    _voiceBusy = false;
-    _voiceStatus = 'Voice recording deleted.';
-    if (_activeVoiceId == 'clone') {
-      _activeVoiceId = ''; // force the switch past the same-voice guard
-      await selectVoice('lessac', force: true);
-    }
-    await saveTtsPrefs(_modelsDir, _prefs);
-    notifyListeners();
-  }
-
   /// Synthesize + play a demo line with the *current* engine (no phase
   /// changes; the gate is pinned so a hot mic cannot hear it as speech).
   Future<void> previewVoice({
@@ -1415,8 +1308,8 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   void _afterCapture() {
-    final resume = _cloneResumeOnDone;
-    _cloneResumeOnDone = false;
+    final resume = _captureResumeOnDone;
+    _captureResumeOnDone = false;
     if (resume && _mode == InteractionMode.conversation && !_backgrounded) {
       unawaited(_beginConversation());
     }
@@ -1431,7 +1324,7 @@ class VoiceAssistant extends ChangeNotifier {
       // harness session or retire its chat spinner mid-turn (the old
       // hard-stop made toggling the control feel like pulling the plug).
       // Same survival rule as pauseConversation: no _generation bump —
-      // that would break the turn's event stream — and no SIGINT. Close
+      // that would break the turn's event stream — and no hard stop. Close
       // just the mic half: the recorder and the old mode's listeners go,
       // while the streamed reply player deliberately survives the switch
       // (no _stopPlayback: it would also drop the unplayed chunk queue),
@@ -1443,7 +1336,7 @@ class VoiceAssistant extends ChangeNotifier {
     } else {
       _shutdownAudio();
       _generation++; // abandon any in-flight voice turn
-      _abandonBridgeTurn(sigint: true);
+      _abandonBridgeTurn(hardStop: true);
       _idleReady();
     }
   }
@@ -1455,22 +1348,21 @@ class VoiceAssistant extends ChangeNotifier {
   /// and the last one is buffered to be spoken by [resumeConversation].
   /// Any other in-flight reply (local echo TTS mid-synthesis) is abandoned.
   void pauseConversation() {
-    // A clone sample in flight dies with the app going hidden (the mic is
-    // yanked); remember whether a conversation waited behind it.
+    if (_backgrounded) {
+      // Already hidden. The lifecycle fires hidden AND paused on the way
+      // down — and hidden AGAIN on the way up (paused → hidden → inactive
+      // → resumed): a second pass here would snapshot the "when you're
+      // back" notice as the working line (_pausedWorking), and the resume
+      // would restore it — the spinner quoting the hide notice while we
+      // ARE back, the turn looking like it stopped doing anything.
+      return;
+    }
     var live =
         _mode == InteractionMode.conversation &&
         (_phase == AssistantPhase.listening ||
             _phase == AssistantPhase.transcribing ||
             _phase == AssistantPhase.speaking);
-    final cloneDropped = _cloneCapturing;
-    if (_cloneCapturing) {
-      live = _cloneResumeOnDone; // listening phase belongs to the capture
-      _cloneCapturing = false;
-      _cloneTimer?.cancel();
-      _cloneTimer = null;
-      _cloneChunks.clear();
-    }
-    _cloneResumeOnDone = false;
+    _captureResumeOnDone = false;
     // A bridge turn in flight survives the hide: no _generation bump (that
     // would break its event stream AND tell the harness to stop), so its
     // remaining says keep flowing into speak()'s backgrounded branch. Seed
@@ -1487,9 +1379,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (!bridgeLive) _generation++; // no talking to an empty app
     _shutdownAudio();
     _phase = AssistantPhase.idle;
-    _status = cloneDropped
-        ? 'Voice sample cancelled — the app went to the background.'
-        : bridgeLive
+    _status = bridgeLive
         ? 'Working in the background — I\'ll show every reply and speak '
               'the last one when you\'re back.'
         : live
@@ -1504,7 +1394,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// while hidden (the newest reply only — the chat log already shows all
   /// of them), then reopen the conversation exactly as the user left it
   /// (VAD reseeded, watchdog rearmed — all inside [_beginConversation]).
-  void resumeConversation() {
+  Future<void> resumeConversation() async {
     _backgrounded = false;
     final pending = _resumeReplyText;
     _resumeReplyText = null;
@@ -1536,12 +1426,196 @@ class VoiceAssistant extends ChangeNotifier {
       if (restart) unawaited(_beginConversation());
       return;
     }
+    // A stream that DIED while hidden (process death, OS-dropped socket)
+    // is the one state the branch below cannot restore: the turn ran on
+    // unheard, and its output sits in the bridge's backlog. Reattach
+    // first — it supersedes a pending replay (the gen bump here would
+    // kill it, and the backlog covers everything after the drop; the
+    // half-heard pre-hide block is already in the log).
+    if (await reattachBackgroundTurn()) return;
     if (pending != null && _worker != null) {
       unawaited(_replayPendingReply(pending, thenListen: restart));
       return;
     }
     if (!restart) return;
     unawaited(_beginConversation());
+  }
+
+  /// The bridge is running a turn — or finished one — with NO listener:
+  /// the phone's stream died while the app was hidden (Android killed the
+  /// process, or the OS dropped the socket). Reattach: the bridge replays
+  /// everything that happened unheard (says are spoken, tool lines land
+  /// in the chat with their glyphs, context frames refill the bar), the
+  /// working line comes back, and the turn's remainder is heard live.
+  /// This is the fix for "background → foreground and nothing happens".
+  /// Returns true when a reattach actually started (the caller must then
+  /// NOT also run a pending-reply replay — the gen bump here would
+  /// supersede it, and the backlog already covers the missed window).
+  Future<bool> reattachBackgroundTurn() async {
+    final bridge = _bridge;
+    if (bridge == null || _worker == null) return false;
+    if (_bridgeBusy ||
+        _backgrounded ||
+        _benchCapturing ||
+        _benchBusy) {
+      return false;
+    }
+    final h = await bridge.healthInfo();
+    final missedCount = h?['missed'];
+    final missed = missedCount is num && missedCount > 0;
+    if (h?['backgrounded'] != true && !missed) return false;
+    final gen = ++_generation;
+    final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
+    _bridgeBusy = true;
+    _harnessBackgrounded = false; // heard again from here on
+    _harnessSince = DateTime.now(); // the chat spinner counts from here
+    _error = '';
+    _tokLive = false;
+    _tokKind = '';
+    _phase = AssistantPhase.transcribing;
+    _status = 'Reattached — the harness is working…';
+    notifyListeners();
+    _warmUpRoute();
+    // A fresh bubble continues the story: the pre-drop blocks live in the
+    // old one (the chat log is the history, not this loop's state).
+    final turn = ChatEntry.assistant();
+    _chat.add(turn);
+    _touchChat();
+    _stopPlayback(); // cut any current audio, like the voice preview does
+    _replyQueue.clear();
+    _replyStreamDone = false;
+    unawaited(_playReplyChunks(gen));
+    final spoken = StringBuffer();
+
+    // One replayed or live say, end-to-end — the same first-chunk block
+    // stamp as runQuickCommand's speak (the voice never leads the text).
+    Future<void> speak(String text) async {
+      final swTts = Stopwatch()..start();
+      var blockOnAir = false;
+      final (audio, rate) = await _worker!.synthesizeStream(
+        text,
+        onChunk: (chunk, sampleRate) {
+          if (gen != _generation) return;
+          if (!blockOnAir) {
+            blockOnAir = true;
+            _phase = AssistantPhase.speaking;
+            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            spoken.write('$text ');
+            turn.blocks.add(text);
+            _lastReplyText = text;
+            _touchChat();
+          }
+          _replyQueue.add((chunk, sampleRate));
+          _replyWake?.complete();
+          _replyWake = null;
+        },
+      );
+      if (gen != _generation) return;
+      swTts.stop();
+      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      _playSeconds += audio.length / rate;
+      _noteTts(audio, rate); // last message's raw audio: debug replay
+    }
+
+    unawaited(() async {
+      final q = <BridgeEvent>[];
+      var closed = false;
+      Object? streamError;
+      Completer<void>? wake;
+      void wakeNow() {
+        final w = wake;
+        wake = null;
+        w?.complete();
+      }
+
+      _bridgeDetachWake = wakeNow;
+      final sub = bridge.attach().listen(
+        q.add,
+        onError: (Object e, StackTrace _) {
+          streamError = e is BridgeException ? e : BridgeException('$e');
+          closed = true;
+          wakeNow();
+        },
+        onDone: () {
+          closed = true;
+          wakeNow();
+        },
+      );
+      _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
+      try {
+        while (true) {
+          if (gen != _generation) break; // interrupted: drop the rest
+          if (q.isEmpty) {
+            if (closed) break; // stream ended (done event or close)
+            await (wake ??= Completer<void>()).future;
+            continue;
+          }
+          final ev = q.removeAt(0);
+          if (ev.isSay && ev.text.trim().isNotEmpty) {
+            _tokLive = false;
+            await speak(cleanForSpeech(ev.text.trim()));
+          } else if (ev.kind == 'context') {
+            if (ev.inputTokens > 0 && ev.inputTokens != _tokIn) {
+              _tokIn = ev.inputTokens;
+              notifyListeners();
+            }
+            _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
+            _mergeContext(ev.inputTokens, ev.contextWindow);
+          } else if (ev.kind == 'tool') {
+            _logDebug('bridge tool ${ev.toolName} ${ev.detail}');
+            if (ev.toolName == 'tokens') {
+              _onTokensFrame(ev);
+            } else {
+              _tokLive = false;
+              _status = 'The harness is working — ${ev.toolName}'
+                  '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
+              final label = ev.detail.isEmpty
+                  ? ev.toolName
+                  : '${ev.toolName} ${ev.detail}';
+              turn.blocks.add('${_toolGlyph(ev.toolName)} $label');
+              _touchChat();
+              notifyListeners();
+            }
+          } else if (ev.isDone) {
+            if (ev.isError && gen == _generation) {
+              _error = 'the harness reported an error';
+            }
+            break;
+          } else if (ev.kind == 'error') {
+            _fail('Bridge: ${ev.text}');
+            break;
+          }
+        }
+        final err = streamError;
+        if (err != null && gen == _generation) {
+          _fail(err is BridgeException ? err.message : '$err');
+        }
+      } finally {
+        // Same teardown discipline as runQuickCommand: never touch a
+        // successor turn's subscription, wake hook, or busy flag.
+        unawaited(_refreshSession());
+        unawaited(sub.cancel());
+        if (identical(_bridgeSub, sub)) _bridgeSub = null;
+        if (identical(_bridgeDetachWake, wakeNow)) _bridgeDetachWake = null;
+        if (_bridgeTurnSeq == mySeq) {
+          _bridgeBusy = false;
+          _harnessSince = null;
+        }
+        if (turn.isEmpty) _removeEmptyTurn(turn);
+        if (gen == _generation) {
+          _replyStreamDone = true;
+          _replyWake?.complete();
+          _replyWake = null;
+        }
+        final said = spoken.toString().trim();
+        if (said.isNotEmpty) _lastSpoken = said;
+        if (gen == _generation && spoken.isEmpty && _error.isEmpty) {
+          _idleReady();
+        }
+        notifyListeners();
+      }
+    }());
+    return true;
   }
 
   /// Speak a bridge reply that landed while the app was hidden. The text is
@@ -1639,8 +1713,8 @@ class VoiceAssistant extends ChangeNotifier {
   // flight (v0.1.0+25): the press itself detaches that turn (the bridge
   // backgrounds it — the tool call keeps working, output is dropped) and
   // the mic opens over it. Slide the finger UP past a thumb's width and
-  // release to INTERRUPT: a mere thinking turn gets SIGINT'd (bridge
-  // `interrupt=1`) so your prompt starts in a heartbeat; an open tool
+  // release to INTERRUPT: a mere thinking turn is cut short in-band (bridge
+  // `interrupt=1`, the process survives) so your prompt starts in a heartbeat; an open tool
   // still can't be cut and your prompt queues behind it. Release in
   // place or slide RIGHT to QUEUE politely: the turn in flight finishes
   // its work first, then your prompt goes next (`interrupt=0`). A quick
@@ -1672,15 +1746,24 @@ class VoiceAssistant extends ChangeNotifier {
   /// hard stop (detach + /stop), the old tap-Stop behaviour, not a hold.
   static const int _pttTapStopMs = 400;
 
-  /// True when the release happened after dragging clearly UPWARD past
-  /// [_pttSlideUpPx] (vertical-dominant, so a right-slide or a diagonal
-  /// drift toward the queue reading never cuts thinking by accident).
-  bool _pttSlideUpAt(Offset? upAt) {
+  /// Classifies the release gesture from the press point: `up` — dragged
+  /// clearly UPWARD past [_pttSlideUpPx] (vertical-dominant, so a
+  /// right-slide or a diagonal drift toward the queue reading never cuts
+  /// thinking by accident) — the interrupt slide; `right` — dragged
+  /// clearly RIGHTWARD past [_pttSlideRightPx] (horizontal-dominant) —
+  /// the DISMISS slide: the recording is thrown away unsent. Both read
+  /// the same press point in one pass, so the two are exclusive by
+  /// construction.
+  static const double _pttSlideRightPx = 48;
+  (bool, bool) _pttSlidesAt(Offset? upAt) {
     final start = _pttDownPos;
     _pttDownPos = null;
-    if (upAt == null || start == null) return false;
+    if (upAt == null || start == null) return (false, false);
     final d = upAt - start;
-    return d.dy < -_pttSlideUpPx && d.dy.abs() > d.dx.abs();
+    return (
+      d.dy < -_pttSlideUpPx && d.dy.abs() > d.dx.abs(),
+      d.dx > _pttSlideRightPx && d.dx.abs() > d.dy.abs(),
+    );
   }
 
   void pttDown([Offset? at]) {
@@ -1727,7 +1810,8 @@ class VoiceAssistant extends ChangeNotifier {
 
   void pttUp([Offset? at]) {
     pttEdgeCount++;
-    debugPrint('PTT-UP ptr=$_pttPointers slideup=${_pttSlideUpAt(at)}');
+    final (slideUp, slideRight) = _pttSlidesAt(at);
+    debugPrint('PTT-UP ptr=$_pttPointers slideup=$slideUp dismiss=$slideRight');
     if (_pttPointers == 0) {
       _pttDownPos = null; // keep the stale-drag reading harmless
       return;
@@ -1737,12 +1821,16 @@ class VoiceAssistant extends ChangeNotifier {
     _pttMaxTimer?.cancel();
     _pttMaxTimer = null;
     _warmUpRoute(); // connect the output route while we transcribe (see below)
-    unawaited(_stopAndRespond(interrupt: _pttSlideUpAt(at)));
+    if (slideRight) {
+      unawaited(_stopAndRespond(discard: true));
+    } else {
+      unawaited(_stopAndRespond(interrupt: slideUp));
+    }
   }
 
   void pttCancel() {
     // Back gesture / system interruption: behave exactly like a release
-    // with no slide (never discard the recording, never SIGINT by
+    // with no slide (never discard the recording, never a hard stop by
     // accident), so the mic can never be left open.
     _pttPointers = 0;
     _pttMaxTimer?.cancel();
@@ -1775,9 +1863,8 @@ class VoiceAssistant extends ChangeNotifier {
   /// Whether a live mic stream is expected right now (drives the watchdog).
   /// In conversation mode the mic must stay alive through our reply, both for
   /// barge-in and so capture recovers if Android kills it during playback.
-  /// Clone-sample capture counts too (same stream, different sink).
+  /// Bench capture counts too (same stream, different sink).
   bool get _micStreamWanted =>
-      _cloneCapturing ||
       _benchCapturing ||
       _phase == AssistantPhase.listening ||
       (_mode == InteractionMode.conversation &&
@@ -1891,17 +1978,9 @@ class VoiceAssistant extends ChangeNotifier {
   void _onMicData(Uint8List bytes) {
     _lastMicAt = DateTime.now();
     if (_debugPlaying) return; // stream stays live for the watchdog only
-    if (_cloneCapturing) {
-      // Voice-sample recorder: buffer instead of feeding VAD/PTT chunks.
-      final c = pcm16ToFloat32(bytes);
-      _cloneChunks.add(c);
-      _cloneSeconds += c.length / 16000.0;
-      if (_cloneSeconds >= 20) unawaited(stopCloneCapture()); // hard cap
-      return;
-    }
     if (_benchCapturing) {
-      // Latency bench: same hand-off as the clone recorder, feeding the
-      // timed echo turn in finishBenchCapture instead of a sample file.
+      // Latency bench: mic hand-off feeding the timed echo turn in
+      // finishBenchCapture instead of a sample file.
       final c = pcm16ToFloat32(bytes);
       _benchChunks.add(c);
       _benchSeconds += c.length / 16000.0;
@@ -2035,7 +2114,7 @@ class VoiceAssistant extends ChangeNotifier {
     _userSpeaking = false;
     _generation++;
     // No ear left on the harness: hard-stop its in-flight turn too.
-    _abandonBridgeTurn(sigint: true);
+    _abandonBridgeTurn(hardStop: true);
     _phase = AssistantPhase.idle;
     _status = message;
     notifyListeners();
@@ -2045,7 +2124,7 @@ class VoiceAssistant extends ChangeNotifier {
     _generation++; // abandon any in-flight turn
     // Tap = explicit stop: hard-quit the harness's work too (a spoken
     // barge-in detaches/backgrounds instead — see _abandonBridgeTurn).
-    _abandonBridgeTurn(sigint: true);
+    _abandonBridgeTurn(hardStop: true);
     _stopDebugPlayback();
     _stopPlayback();
     _worker?.resetVad();
@@ -2084,7 +2163,7 @@ class VoiceAssistant extends ChangeNotifier {
         _logDebug('kill reply after ${heardMs}ms of reply');
         _stopPlayback();
         _generation++; // abandon the response we were speaking
-        // Spoken takeover = DETACH (no SIGINT): the harness keeps
+        // Spoken takeover = DETACH (no hard stop): the harness keeps
         // working behind the scenes — a long tool call runs on, and the
         // utterance landing in a moment queues behind it (or cuts the
         // thinking turn short at the bridge). That is Claude Code's
@@ -2464,7 +2543,7 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
-  Future<void> _stopAndRespond({bool interrupt = false}) async {
+  Future<void> _stopAndRespond({bool interrupt = false, bool discard = false}) async {
     if (_phase != AssistantPhase.listening) return;
     // Snapshot the hold's context before any await: was this recording
     // made OVER an in-flight harness turn (pttDown detached it into a
@@ -2484,6 +2563,21 @@ class VoiceAssistant extends ChangeNotifier {
       _recordSeconds += c.length / 16000.0;
     }
     final total = _chunks.fold<int>(0, (n, c) => n + c.length);
+    if (discard) {
+      // Slide-right release: throw the recording away unsent. The mic is
+      // closed, the chunks dropped — whatever length they were — and a
+      // detached harness turn (if this hold opened over one) keeps
+      // working in the background untouched. Never a hard stop: dismissing
+      // what I said is not a comment on what the harness is doing.
+      _chunks.clear();
+      _recordSeconds = 0;
+      _phase = AssistantPhase.idle;
+      _status = bridgeHold
+          ? 'Dismissed — the harness keeps working in the background.'
+          : 'Dismissed — nothing sent.';
+      notifyListeners();
+      return;
+    }
     if (total < 16000 ~/ 4) {
       _phase = AssistantPhase.idle;
       if (bridgeHold) {
@@ -2548,7 +2642,7 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   /// The INPUT half of [_shutdownAudio]: watchdog, recorder, VAD
-  /// buffers, and any in-flight clone/bench capture. Split out so a mode
+  /// buffers, and any in-flight bench capture. Split out so a mode
   /// switch during a live bridge turn can close the mic without touching
   /// the streamed reply player — stopping the player there would silence
   /// the harness mid-turn and (via _stopPlayback's queue clear) drop the
@@ -2563,15 +2657,6 @@ class VoiceAssistant extends ChangeNotifier {
     _worker?.resetVad();
     _chunks.clear();
     _vadBuf.clear();
-    _cloneTimer?.cancel();
-    _cloneTimer = null;
-    if (_cloneCapturing) {
-      // Something else took the mic away mid-capture (conversation closed,
-      // mode switch, error path): the partial sample is worthless.
-      _cloneCapturing = false;
-      _cloneChunks.clear();
-      _voiceStatus = 'Sample recording cancelled — the mic was closed.';
-    }
     if (_benchCapturing || _benchBusy) {
       // Same for a bench run in flight: its timing is no longer trustworthy.
       _benchCapturing = false;
