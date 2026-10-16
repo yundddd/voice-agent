@@ -101,30 +101,35 @@ function handleEvent(line) {
   if (!res) return; // no listener on this turn (client hung up): keep process alive
   switch (m.type) {
     case 'assistant': {
-      // A message snapshot is PREFIX-GROWING and can be re-emitted under the
-      // same id as later blocks complete. Without a watermark we speak the
-      // already-audited text blocks again — long answers came back with
-      // repeated passages and the re-synth churn read as discontinuous
-      // audio. Speak only blocks past the watermark, then advance it.
-      const id = m.message?.id ?? '';
+      // Snapshot handling. The proxy re-emits the growing message but NOT
+      // necessarily as an appending prefix: under thinking mode we observed
+      // event 1 = [thinking] and event 2 = [text] under the SAME message id,
+      // content *replaced* (both length 1). An index watermark therefore
+      // skipped the text block (seen=1, nothing past it) and long answers
+      // came back with `done` but no `say` — the phone's "the harness ran,
+      // but had nothing to say". So: scan every block of every snapshot and
+      // let the per-turn exact-text set be the single source of truth —
+      // it catches prefix-regrow repeats, re-UUID replays, and same-tuple
+      // re-emissions alike. Tools dedupe on their unique c.id (tool_use
+      // ids are stable across snapshots). History replays from --resume
+      // never reach here at all: the timestamp guard above eats them.
       const content = m.message?.content ?? [];
-      const seen = id ? (spokenMsgs.get(id) ?? 0) : 0;
-      for (let i = seen; i < content.length; i++) {
-        const c = content[i];
+      for (const c of content) {
         if (c.type === 'text' && c.text.trim()) {
           const t = c.text.trim();
-          // Second safety net: replays can arrive under a fresh message id
-          // (new-UUID copies of an old turn's text); within one turn, relay
-          // each exact text once. Identical consecutive progress lines lose
-          // their second copy — right trade for audio.
+          // Within one turn, relay each exact text once. Identical
+          // consecutive progress lines lose their second copy — right
+          // trade for audio.
           if (spokenTexts.has(t)) continue;
           spokenTexts.add(t);
           console.error(`  -> say "${t.slice(0, 40)}"`);
           sse(res, 'say', { text: t });
         }
-        if (c.type === 'tool_use') sse(res, 'tool', { name: c.name, detail: summarize(c) });
+        if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
+          spokenTools.add(c.id);
+          sse(res, 'tool', { name: c.name, detail: summarize(c) });
+        }
       }
-      if (id) spokenMsgs.set(id, content.length);
       break;
     }
     case 'result':
@@ -136,7 +141,7 @@ function handleEvent(line) {
 function endTurn() {
   if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
   if (curRes) { curRes.end(); curRes = null; }
-  spokenMsgs.clear(); // every message lives inside one turn
+  spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
   if (sessionId) { try { writeFileSync(sidFile, sessionId); } catch {} }
 }
@@ -158,10 +163,11 @@ function talk(text, res) {
   child.stdin.write(msg + '\n');
 }
 let keepAlive = null;
-// message id -> number of content blocks already relayed (see handleEvent).
-// Cleared at endTurn: ids are unique per process, but a turn is the
-// natural lifecycle here and it keeps the map from growing forever.
-const spokenMsgs = new Map();
+// tool_use ids already relayed this turn (tool_use ids are unique per
+// call and stable across snapshots of the same message). Cleared at
+// endTurn: a turn is the natural lifecycle here and it keeps the set from
+// growing forever.
+const spokenTools = new Set();
 // Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 const spokenTexts = new Set();
