@@ -4,9 +4,10 @@ On-device voice assistant prototype in Flutter: you speak, the app transcribes
 your speech **on-device**, and speaks the transcription back — the full
 speech-to-text → text → speech-to-text round trip runs with no network.
 
-A future gateway (remote LLM that returns the *text* reply) plugs in between
-the ASR and TTS stages; only that hop goes over the network. Both speech models
-stay on the phone.
+That "future gateway" now exists for the desktop Claude Code harness (see
+"Claude Code bridge" below): one tap or one spoken command, the harness on
+your machine does the thinking, and the answer comes back spoken in your
+chosen voice. Both speech models still stay on the phone.
 
 ## Research: which on-device models?
 
@@ -214,6 +215,33 @@ One port caveat to know before judging a recording: the k2-fsa ONNX
   k2-fsa fix the export, these workarounds retire one function at a time;
   the official renders under `ref6_*.wav` make the A/B audition trivial.
   
+
+## Claude Code bridge
+
+The app can put the desktop's Claude Code harness between its ASR and TTS:
+speak (or tap a chip), the text goes over the LAN/tailnet to a tiny bridge
+process next to the harness, and the harness's answer is streamed back and
+spoken with the app's selected voice. Start the bridge on the machine that
+runs claude (Node, zero dependencies):
+
+```bash
+node tool/claude_bridge.mjs --dir ~/voice-agent --token SOMETHING_SECRET
+# optional: --claude ~/.local/bin/claude --port 8732
+```
+
+In the app: terminal icon → set `http://<machine>:8732` (tailscale IPs
+work too) + the token → Save & check. Command chips then appear above the
+mic button: *Repo status, Run tests, Build APK, Catch me up* — each one is
+a phrased utterance (visible on the Bridge screen, editable list in
+`VoiceAssistant.quickCommands`), plus "Stop" while a turn is in flight
+(barge-in sends SIGINT to the harness turn; the conversation survives —
+verified). The Bridge screen also has a free-text box so *anything* you
+type goes to the harness and comes back spoken, and a restart button for a
+fresh conversation. Tool activity shows as live status text, `say` events
+are synthesised sentence-stream through the same chunked player replies
+use, and everything the harness answers runs past `cleanForSpeech` first
+(a bullet list would otherwise be *spoken*; markdown/emoji are stripped).
+Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run
 

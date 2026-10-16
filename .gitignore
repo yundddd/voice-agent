@@ -52,3 +52,4 @@ app.*.map.json
 
 # Built by tool/build_neutts_pack.sh (shipped inside the voice pack)
 android/app/src/main/jniLibs/
+.claude_bridge_session

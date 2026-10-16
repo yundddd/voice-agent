@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import 'audio_io.dart';
+import 'bridge.dart';
 import 'model_packs.dart';
 import 'model_paths.dart';
 import 'speech_worker.dart';
@@ -67,6 +68,11 @@ class VoiceAssistant extends ChangeNotifier {
   Timer? _cloneTimer;
   final List<Float32List> _cloneChunks = [];
   Completer<void>? _previewDone; // set while a preview line plays
+
+  // ── Claude Code bridge (lib/bridge.dart, docs/claude-code-bridge.md) ────
+  BridgePrefs _bridgePrefs = BridgePrefs();
+  BridgeClient? _bridge;
+  bool _bridgeBusy = false; // a bridge turn is in flight (chips disabled)
 
   StreamSubscription<Uint8List>? _recSub;
   final List<Float32List> _chunks = []; // push-to-talk buffer
@@ -164,6 +170,163 @@ class VoiceAssistant extends ChangeNotifier {
   bool get hasCloneSample =>
       _prefs.sampleWav.isNotEmpty && File(_prefs.sampleWav).existsSync();
 
+  // ── Claude Code bridge API (settings UI in bridge_screen.dart) ─────────
+  bool get bridgeConfigured => _bridge != null;
+  bool get bridgeBusy => _bridgeBusy;
+  String get bridgeUrlText => _bridgePrefs.url;
+  String get bridgeTokenText => _bridgePrefs.token;
+
+  /// One-tap harness commands shown as chips on the main screen. The
+  /// phrasing matters: the bridge's voice system prompt asks the harness
+  /// for short SPOKEN answers, and every chip leans on that hard.
+  static const quickCommands = <(String, String)>[
+    (
+      'Repo status',
+      'Check git status and the uncommitted diff. Tell me which files '
+          'have changes in one short spoken sentence, and nothing else.',
+    ),
+    (
+      'Run tests',
+      'Run the project test suite now. When it finishes tell me pass or '
+          'fail in one short spoken sentence; if it failed add the '
+          'single most important error line.',
+    ),
+    (
+      'Build APK',
+      'Build the arm64 release APK with the documented command. Tell me '
+          'success or failure in one short spoken sentence, nothing else.',
+    ),
+    (
+      'Catch me up',
+      'In two short spoken sentences: what changed most recently in this '
+          'repo, and what is the obvious next thing to do.',
+    ),
+  ];
+
+  /// Saves bridge settings (empty url disables the feature entirely).
+  Future<void> setBridge({required String url, required String token}) async {
+    _bridgePrefs
+      ..url = url.trim().replaceAll(RegExp(r'/+$'), '')
+      ..token = token.trim();
+    _bridge = _bridgePrefs.configured
+        ? BridgeClient(_bridgePrefs.url, _bridgePrefs.token)
+        : null;
+    await saveBridgePrefs(_modelsDir, _bridgePrefs);
+    notifyListeners();
+  }
+
+  /// Probes /health for the settings screen: null = alive and healthy.
+  Future<String?> bridgeCheck() async =>
+      _bridge?.health() ?? 'bridge not configured — set url and token';
+
+  /// Runs one quick command (or free text from the bridge screen):
+  /// utterance -> /talk -> speak each `say` event the moment it lands,
+  /// streamed through the same chunked player voice replies use. Tool
+  /// activity shows up as live status text instead of dead air.
+  Future<void> runQuickCommand(String utterance) async {
+    final bridge = _bridge;
+    if (bridge == null) {
+      _fail('No bridge — open the terminal icon and set url + token.');
+      return;
+    }
+    if (_bridgeBusy) return; // one bridge turn at a time
+    if (_worker == null) {
+      _fail('Models are still loading — try again in a moment.');
+      return;
+    }
+    final gen = ++_generation; // supersedes any in-flight voice reply
+    _stopPlayback(); // cut the current audio, like the voice preview does
+    _bridgeBusy = true;
+    _error = '';
+    _transcript = utterance;
+    _phase = AssistantPhase.transcribing;
+    _status = 'Asking the bridge…';
+    notifyListeners();
+    _warmUpRoute(); // hold the output route while the harness thinks
+    _replyQueue.clear();
+    _replyStreamDone = false;
+    var sawFirstChunk = false;
+    unawaited(_playReplyChunks(gen));
+    final spoken = StringBuffer();
+    try {
+      await for (final ev in bridge.talk(utterance)) {
+        if (gen != _generation) break; // interrupted: drop the rest
+        if (ev.isSay && ev.text.trim().isNotEmpty) {
+          final text = cleanForSpeech(ev.text.trim());
+          spoken.write('$text ');
+          final (audio, rate) = await _worker!.synthesizeStream(
+            text,
+            onChunk: (chunk, sampleRate) {
+              if (gen != _generation) return;
+              if (!sawFirstChunk) {
+                sawFirstChunk = true;
+                _phase = AssistantPhase.speaking;
+                _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+                notifyListeners();
+              }
+              _replyQueue.add((chunk, sampleRate));
+              _replyWake?.complete();
+              _replyWake = null;
+            },
+          );
+          if (gen != _generation) break;
+          _noteTts(audio, rate); // last message's raw audio: debug replay
+        } else if (ev.kind == 'tool') {
+          _status = 'The harness is working — ${ev.toolName}'
+              '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}';
+          _logDebug('bridge tool ${ev.toolName} ${ev.detail}');
+          notifyListeners();
+        } else if (ev.isDone) {
+          if (ev.isError && gen == _generation) {
+            _error = 'the harness reported an error';
+          }
+          break;
+        } else if (ev.kind == 'error') {
+          _fail('Bridge: ${ev.text}');
+          break;
+        }
+      }
+    } on BridgeException catch (e) {
+      if (gen == _generation) _fail(e.message);
+    } finally {
+      _bridgeBusy = false;
+      _replyStreamDone = true;
+      _replyWake?.complete();
+      _replyWake = null;
+      final said = spoken.toString().trim();
+      if (said.isNotEmpty) _lastSpoken = said;
+      if (gen != _generation) {
+        // We were interrupted (barge-in / stop chip): end the harness's
+        // turn too — otherwise it edits files while it thinks we left.
+        unawaited(bridge.stop());
+      } else if (!sawFirstChunk && _error.isEmpty) {
+        _status = 'The harness ran, but had nothing to say.';
+        _phase = AssistantPhase.idle;
+      }
+      notifyListeners();
+    }
+  }
+
+  /// Stop chip / conversation-mode stop during a bridge turn: silence the
+  /// speaker, abandon the turn, and tell the harness to stop working.
+  void bridgeStop() {
+    if (!_bridgeBusy) return;
+    _generation++;
+    _stopPlayback();
+    _replyStreamDone = true;
+    _replyWake?.complete();
+    _replyWake = null;
+    unawaited(_bridge?.stop());
+    _idleReady();
+  }
+
+  /// New chat chip: forget the conversation on both sides.
+  void bridgeNew() {
+    unawaited(_bridge?.reset());
+    _logDebug('bridge: new session');
+  }
+
+
   TtsSpec _spec(TtsVoice v, {int sid = 0}) => v.specIn(
     _modelsDir,
     sid: sid,
@@ -178,6 +341,10 @@ class VoiceAssistant extends ChangeNotifier {
       final modelsDir = await unpackModels(onProgress: _modelProgress);
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
+      _bridgePrefs = await loadBridgePrefs(modelsDir);
+      if (_bridgePrefs.configured) {
+        _bridge = BridgeClient(_bridgePrefs.url, _bridgePrefs.token);
+      }
       // The saved voice must be fully on disk (pack present and, for the
       // clone, its reference wav too); otherwise fall back to the default,
       // which downloads on first run just like before.

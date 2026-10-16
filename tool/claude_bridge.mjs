@@ -97,6 +97,7 @@ function handleEvent(line) {
   }
 }
 function endTurn() {
+  if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
   if (curRes) { curRes.end(); curRes = null; }
   if (sessionId) { try { writeFileSync(sidFile, sessionId); } catch {} }
 }
@@ -108,10 +109,15 @@ function talk(text, res) {
   if (curRes) { sse(res, 'error', { error: 'busy: one turn at a time' }); res.end(); return; }
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
   curRes = res;
+  // SSE comment every 15 s: a 3-minute gradle build emits nothing, and
+  // idle-detection on the link (NAT, tailscale, Dart clients) should not
+  // get creative with a stream that is merely thinking.
+  keepAlive = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
   const msg = JSON.stringify({ type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] } });
   child.stdin.write(msg + '\n');
 }
+let keepAlive = null;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');

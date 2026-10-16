@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import 'assistant.dart';
+import 'bridge_screen.dart';
 import 'voice_screen.dart';
 
 void main() async {
@@ -35,6 +36,13 @@ class AssistantScreen extends StatefulWidget {
 
 class _AssistantScreenState extends State<AssistantScreen>
     with WidgetsBindingObserver {
+  static const _chipIcons = [
+    Icons.account_tree, // Repo status
+    Icons.playlist_add_check, // Run tests
+    Icons.android, // Build APK
+    Icons.auto_stories, // Catch me up
+  ];
+
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
 
@@ -104,6 +112,16 @@ class _AssistantScreenState extends State<AssistantScreen>
       appBar: AppBar(
         title: const Text('Voice Agent'),
         actions: [
+          IconButton(
+            tooltip: 'Claude Code bridge',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => BridgeScreen(assistant: a)),
+            ),
+            icon: Badge(
+              isLabelVisible: a.bridgeBusy,
+              child: const Icon(Icons.terminal),
+            ),
+          ),
           IconButton(
             tooltip: 'Assistant voice',
             onPressed: () => Navigator.of(context).push(
@@ -182,6 +200,44 @@ class _AssistantScreenState extends State<AssistantScreen>
                   ),
                 ),
               ),
+              if (a.bridgeConfigured) ...[
+                // One-tap harness commands. Taps deliberately interrupt any
+                // voice reply mid-flight (runQuickCommand supersedes), which
+                // is the right feel: a chip press means "do THIS now".
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 4),
+                      for (final (i, cmd)
+                          in VoiceAssistant.quickCommands.indexed)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            avatar: Icon(
+                              _chipIcons[i % _chipIcons.length],
+                              size: 18,
+                            ),
+                            label: Text(cmd.$1),
+                            onPressed: a.bridgeBusy
+                                ? null
+                                : () => a.runQuickCommand(cmd.$2),
+                          ),
+                        ),
+                      if (a.bridgeBusy)
+                        ActionChip(
+                          avatar: const Icon(
+                            Icons.stop_circle_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Stop'),
+                          onPressed: a.bridgeStop,
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               _LatencyStrip(assistant: a),
               if (_debugMode && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
                 Padding(

@@ -55,29 +55,43 @@ against Anthropic pricing — on the local `flash-next` proxy they're
 fiction. One caveat found: `unrecognized_model` on stderr at startup is
 harmless probe noise here (turns still succeed).
 
-## App-side plan (Flutter, next task)
+## App side (shipped in 0.1.0+8 — lib/bridge.dart, lib/bridge_screen.dart)
 
-The pieces all exist already; this swaps the *text source* of a reply.
+All the pieces already existed; this swapped the *text source* of a reply.
+Shipped as chips on the main screen (visible once a url+token is saved in
+the terminal-icon Bridge screen): **Repo status / Run tests / Build APK /
+Catch me up** (`VoiceAssistant.quickCommands`, phrased to force terse
+spoken answers) plus **Stop** while a turn flies, and a free-text box on
+the Bridge screen. Notes that matter when touching this code:
 
-1. `BridgeClient` (new, `lib/bridge_client.dart`): `http` + streamed
-   `POST /talk`, hand-parse the few SSE line shapes (no new package; the
-   pack downloader already streams over `http`). Settings UI: base URL +
-   token, tested against `/health`.
-2. `_startTurn`: after Whisper, if bridge mode is on — instead of
-   parroting the transcript — open `/talk` and feed each `say` event's
-   text through the *existing* sentence-chunking synth path
-   (`_replyQueue` was built exactly for play-while-it-arrives).
-   Per-message (not per-token) streaming is the right granularity for
-   TTS anyway: sentence chunks, no half-word ever spliced.
-3. Barge-in: PTT release/`interrupt()` during a reply additionally POSTs
-   `/stop` (the app's echo guard already keeps it from answering itself).
-4. `tool` events: speak a one-liner ("running the tests now") when a
-   tool starts — the bridge's voice system prompt already asks for a
-   narration line, which arrives as its own `say` before the tool_use,
-   so even a v1 that ignores `tool` still narrates via `say`.
-5. Long task answers: prompt says "1–3 sentences"; belt-and-braces, run
-   the final text through a markdown-stripper before TTS (code blocks,
-   `**` and bullet lines would otherwise be *spoken*).
+1. `BridgeClient` (`lib/bridge.dart`): `dart:io` `HttpClient` + streamed
+   `POST /talk`, SSE parsed by a pure line state machine
+   (`bridgeEventsFromLines`, unit-tested without a socket). No new
+   package — the pack downloader already streams over `dart:io`.
+   Settings persist next to the TTS prefs (`bridge_prefs.json`).
+   Android needed `usesCleartextTraffic="true"` (the bridge is plain
+   http; all other app traffic stays https).
+2. `VoiceAssistant.runQuickCommand(utterance)` (chips and free text both
+   route here): bumps `_generation` (supersedes any live voice reply),
+   warms the output route, then feeds each `say` event through the
+   *existing* chunked synth path (`_replyQueue`/`_playReplyChunks`) the
+   moment it lands — play begins while the harness still composes the
+   next message. Per-message (not per-token) granularity is right for
+   TTS: whole sentences, no half-word ever spliced.
+3. Barge-in: the Stop chip, a mic tap mid-reply, or any new voice turn
+   all bump the generation; `runQuickCommand` notices and POSTs `/stop`
+   so the harness quits *working*, not just talking (verified semantics:
+   mid-turn SIGINT ends the turn with context intact; the conversation
+   resumes on the next chip).
+4. `tool` events show as live status text ("The harness is working —
+   Bash flutter test"). The bridge's voice system prompt asks the
+   harness for a one-line narration *before* each tool pass, which
+   arrives as its own speakable `say` — so long commands never dead-air.
+5. Everything spoken passes `cleanForSpeech`: code blocks → "(code
+   omitted)", links → their text, markdown/heading/bullet syntax
+   stripped, bullet lines joined with "and", sentence stopper appended
+   (Piper reads a comma-final clause oddly). Unit-tested in
+   `test/bridge_test.dart`.
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message

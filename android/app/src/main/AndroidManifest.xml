@@ -2,9 +2,13 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The Claude Code bridge (lib/bridge.dart) is plain http on the LAN
+         or tailnet (Android blocks cleartext since API 28); every other
+         request this app makes is https. -->
     <application
         android:label="voice_agent"
         android:name="${applicationName}"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
