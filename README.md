@@ -306,12 +306,21 @@ message boundary, ~4 chars/token in between; `--include-partial-messages`
 stream_event deltas in `claude_bridge.mjs`). A context bar above the
 button shows conversation consumption vs the model's window (`context`
 SSE events + the `/health` snapshot, `_ContextBar` in `main.dart`) —
-the same numbers Claude Code's /context prints. And since this
-upstream re-prefills the entire chat every request (prompt caching is a
-no-op behind the proxy: `cache_read` is verifiably always 0), that
-number IS your latency — context size doubles the seconds, triples the
-cost, even for "hello". The bridge does not force `/compact` on you:
-watch the bar, and use the /new and /compact chips when *you* decide
+the same numbers Claude Code's /context prints. And since context that
+misses the prefix cache re-prefills at a measured ~7-8k tok/s — every
+byte over the cache boundary is ~1 ms of dead air even for "hello" —
+that number IS your latency; context size doubles the seconds, triples
+the cost. It no longer re-prefills wholesale, though: the per-turn miss
+turned out to be the CLI's experimental betas re-rendering a history
+envelope ~1.5k tokens into an otherwise byte-stable request (captured
+bodies + replays: pinned envelope 15k re-prefill → 64-token top-up,
+1.13 s → 0.20 s), so the bridge spawns the CLI with
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and a warm chat now pays
+only the new tail. What the bar still prices honestly: the first turn
+of a session (full prefill), turns after a second tenant flushed the
+cache's few mamba prefix branches, and every turn as history grows —
+so the bridge does not force `/compact` on you: watch the bar, and use
+the /new and /compact chips when *you* decide
 the conversation has grown heavy enough. A fresh hold *anytime* during that turn detaches
 it (the tool call goes to background and finishes its work unheard,
 output dropped) and opens the mic right there. Release in place or slide

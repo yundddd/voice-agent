@@ -366,7 +366,26 @@ function spawnClaude(resume) {
   if (resume) args.push('--resume', resume);
   console.error('  [claude] spawn (resume=' +
     (resume ? resume.slice(0, 8) : 'none — fresh session') + ')');
-  child = spawn(claudeBin, args, { cwd: dir, env: process.env });
+  // Experimental betas are poison for our prefix cache — captured
+  // request bodies + controlled replays, see the "Latency and context
+  // size" bullets in docs/claude-code-bridge.md: with betas on, every
+  // turn opens with a `thinking.display:"updates"` request that our
+  // adapter 400s (then the SDK retries = 2 model requests/turn), and
+  // the transcript-reload path re-renders the history's leading
+  // environment envelope from a text-block ARRAY back to a plain
+  // STRING — a byte change ~1.5k tokens into the prompt
+  // that diverges sglang's radix cache and re-prefills the whole rest of the
+  // context EVERY turn (measured: same request with the envelope pinned to
+  // its prior bytes: 0.20s vs 1.13s at 16k; scaled to a 166k voice session
+  // that is the 9-12s per-turn prefill). With betas off both instabilities
+  // vanish: envelope is a string from turn 1, no 400, no context_management
+  // edits; the cache_control breakpoint still wanders per turn but the
+  // adapter does pure longest-prefix radix and ignores marker position
+  // (turn-2 replay hit 15,936 cached / 64 new tokens).
+  child = spawn(claudeBin, args, { cwd: dir, env: {
+    ...process.env,
+    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
+  } });
   childDead = false;
   let lineBuf = '';
   child.stdout.on('data', (b) => {

@@ -55,31 +55,71 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   reading. The same numbers snapshot into `GET /health` as `context`,
   so even a phone that never attached gets the reading (the app paints
   it as a context bar above the talk button, Claude Code style).
-- Latency and context size, stated plainly (corrected by field probe,
-  2026-10-16, docker logs in hand): the serving stack HAS a working
-  prefix (radix) cache — intra-turn tool-loop calls log
-  `#cached-token: 349k+` with 64–448-token incremental prefills — but
-  it cannot serve CROSS-TURN voice utterances: the Claude Code CLI
-  re-initializes and re-renders its whole request on every user message
-  (a fresh `system/init` per turn, same process — probe: msg2 of a
-  two-message session re-prefilled `#new-token: 15936, #cached-token:
-  0` with the repo untouched), so the prompt prefix is never
-  byte-stable between turns; the Anthropic-compat layer reports
-  `cache_read: 0` structurally regardless (which is what made the old
-  draft say "no working prompt cache" — right behaviour, wrong
-  mechanism), and the hybrid linear-attention server keeps only a few
-  cached prefix branches (mamba slots), so a second concurrent session
-  flushes the tree (observed: full usage 0.37 → 0.02) and even a
-  stable prefix pays one re-prefill after a flush. Net: every voice
-  utterance pays ~context/prefill-rate — a 128k chat ~10 s even for
-  "hello", ~9 s measured at 156k — and background/foreground churn
-  does not change that (the reattach path only changes who is LISTEN-
-  ING, never what is SENT). The bridge still does not auto-compact to
-  hide this; `/new` and `/compact` remain the user's manual levers
-  (app chips), the context bar shows the number that IS latency, and
-  the per-turn `[census]` line now prints time-to-first-partial as an
-  explicit PREFIX CACHE HIT/MISS verdict — so this paragraph is
-  checkable from the journal, not folklore.
+- Latency and context size, stated plainly (root-caused 2026-10-16 with
+  a recording proxy capturing live CLI turn bodies + controlled
+  replays): the stack HAS a working prefix (radix) cache — intra-turn
+  tool-loop calls log 64–448-token incremental prefills against
+  `#cached-token: 349k+` — and cross-turn voice utterances can use it
+  too, since the CLI child was pinned off its experimental betas. The
+  killer was NOT the CLI's per-turn re-render per se: consecutive
+  turn bodies diff nearly empty (system blocks and tools
+  byte-identical across turns; history strictly append-only). Two
+  **experimental-beta** artefacts were the drift: (a) every turn
+  opened with a `thinking.display:"updates"` request that the
+  Anthropic-compat adapter 400s at validation (`Input should be
+  'summarized' or 'omitted'`), and the SDK retried — two model
+  requests per turn, one always wasted; (b) the beta transcript-reload
+  path re-renders the history's leading environment envelope from a
+  one-text-block ARRAY to a plain STRING on the next turn — a byte
+  change ~1.5k tokens into the prompt, so the radix tree forks there
+  and the ENTIRE rest of the context re-prefills every turn
+  (controlled replay at 16k: real next-turn body 1.13 s vs the same
+  body with that envelope pinned to its prior bytes 0.20 s; the
+  re-prefill region scales with context, which is exactly the ~9-12 s
+  measured at 156k). `cache_control` breakpoints still migrate per
+  turn, but the adapter is pure longest-prefix radix and ignores
+  marker position (a turn-2 replay hit `15,936 cached / 64 new`), and
+  `cache_read: 0` is reported structurally by that layer regardless
+  (which is what made the old draft say "no working prompt cache" —
+  right symptom, wrong mechanism). The bridge now spawns the CLI with
+  `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`: no beta field, no 400
+  pair, no envelope rewrite (it is a string from turn one), so
+  cross-turn re-prefill is bounded to the new few-hundred-token tail.
+  What remains (unchanged): the hybrid linear-attention server keeps
+  only a few cached prefix branches (mamba slots), so a second
+  concurrent session flushes the tree (observed: full usage 0.37 →
+  0.02) and each session's first turn after a flush pays one full
+  re-prefill; and the context still grows, so `/compact` remains the
+  user's manual lever for the number that IS baseline latency (app
+  chips). The `[census]` HIT/MISS verdict line keeps every claim in
+  this paragraph checkable from the journal, not folklore.
+- The forensics behind that pin (so it can be re-derived, not
+  trusted): a recording proxy on :8061 captured a live CLI child's
+  `/v1/messages?beta=true` bodies across turns (settings.json's `env`
+  block overrides the bridge process env — point the CLI elsewhere via
+  inline `--settings`). Turn-2-vs-turn-3 diff at 16k context: exactly
+  ONE content change — `messages[1]` (the 8.4 KB leading
+  `# Environment` system message) arriving as a text-block ARRAY on
+  turn 1 and a plain STRING from turn 2 (single-block flatten on
+  transcript reload), while `system`/`tools` stayed byte-identical.
+  Controlled replays against the live backend: real next-turn body
+  1.13 s (the ~15k-token re-prefill), same body with that one message
+  pinned to its prior bytes 0.20 s, re-run 0.26 s (hit — so nothing
+  was evicted; the byte move alone caused the miss). A beta-OFF
+  capture (2 user messages) confirmed both fixes at once: exactly 2
+  requests (no 400 pair), no `context_management`, envelope already a
+  string on turn 1 — the only remaining drift was the `cache_control`
+  breakpoint migrating (turn-1 last block → turn-2 newest block),
+  which a replay showed harmless here: the adapter does pure
+  longest-prefix radix and ignored the marker move (15,936 cached /
+  64 new). Related levers elsewhere, if the census ever says MISS
+  again: (i) teach the Anthropic-compat adapter to accept
+  `display:"updates"` and flatten single-text-block arrays before
+  tokenizing, which removes the drift at the source and would let
+  betas stay on; (ii) raise mamba prefix-branch capacity
+  (`--max-mamba-cache-size`, or a larger radix pool) so concurrent
+  tenants stop evicting each other's trees — observed full usage
+  crashing 0.37 → 0.02 whenever a second session prefills.
 - Progress that cannot read as "ignored" (0.1.0+30): a turn's FIRST SSE
   frame is now a `tool {name:"tokens", kind:"thinking"}` tally (out 0,
   in = best known), so the phone's working line flips from "Asking the
@@ -140,15 +180,17 @@ Verified end-to-end on this machine:
 - claude's auto-memory wrote the secret word to its memory file and
   recalled it across turns *and* across a bridge restart;
 - bridge restart → `--resume` → same session, no context loss;
-- (2026-10-16 re-verification) ONE process survives multiple user
-  messages (probe: two messages, exit only on stdin close) — but it
-  emits `system/init` per user message and re-renders the request
-  every turn: msg2 paid a full `#new-token` prefill with the repo
-  untouched between messages. Cross-turn prefix-cache misses are the
-  CLI's own behaviour, independent of the bridge, the reattach path,
+- (2026-10-16 re-verification, recording-proxy capture) ONE process
+  survives multiple user messages (probe: two messages, exit only on
+  stdin close), and it re-renders its request per message in
+  near-identical bytes — consecutive turn bodies diff empty except
+  beta artefacts (an env-envelope list→string collapse and a migrated
+  cache_control marker). Cross-turn cache misses were that beta
+  drift, not the re-render itself and not the bridge, reattach path,
   or background/foreground; the earlier 'one process kept warm by
-  avoiding --resume' framing overstates what stays warm (see latency
-  bullet above);
+  avoiding --resume' framing still overstated it (warm process +
+  drifting bytes = miss), which the beta-off pin now corrects — see
+  the latency bullet above;
 - `--permission-mode bypassPermissions` approves every tool without a
   prompt — the only sane default for voice (verified A/B on 2.1.296:
   under `acceptEdits` WebFetch comes back silently *denied*, under
@@ -196,10 +238,11 @@ the Bridge screen. Notes that matter when touching this code:
    behind an open tool, or ahead of a cut-short thinking turn (the
    bridge cuts those at queue time with an in-band interrupt — the
    process never dies, so no respawn and no transcript re-hydration;
-   note this does NOT keep a warm prompt cache across turns either —
-   this CLI re-renders its request per user message, see the latency
-   bullet above, which is why barge-in costs an interrupt's result,
-   not a prefill surprise).
+   and since the bridge pins the CLI's experimental betas off (see the
+   latency bullet above), the warm request prefix now DOES survive
+   across turns — the earlier 're-renders per message, so nothing
+   stays warm' caveat was really beta drift in disguise — which is why
+   barge-in costs an interrupt's result, not a prefill surprise).
    A TAPPED stop — Stop chip, FAB,
    mode switch, clone/bench takeover — is the hard flavour: same detach
    plus a `/stop` (in-band interrupt) so the harness quits working too
