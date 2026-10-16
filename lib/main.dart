@@ -787,9 +787,20 @@ class _LatencyStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget cell(String label, String value) => Column(
+    // A metric that has never fired this session shows a grey dash, not a
+    // confident-looking '0.00s' — that zero reads like a broken stopwatch
+    // when it really means "hasn't happened yet". Real timings, including
+    // genuine sub-second ones, print in full.
+    Widget cell(String label, double seconds, int digits) => Column(
       children: [
-        Text(value, style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          seconds <= 0
+              ? '–'
+              : '${seconds.toStringAsFixed(digits)}s',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: seconds <= 0 ? Theme.of(context).disabledColor : null,
+          ),
+        ),
         Text(label, style: Theme.of(context).textTheme.labelSmall),
       ],
     );
@@ -807,9 +818,9 @@ class _LatencyStrip extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        cell('heard', '${assistant.recordSeconds.toStringAsFixed(1)}s'),
+        cell('heard', assistant.recordSeconds, 1),
         arrow(assistant.hopAsr),
-        cell('asr', '${assistant.asrSeconds.toStringAsFixed(2)}s'),
+        cell('asr', assistant.asrSeconds, 2),
         arrow(assistant.hopSent),
         Icon(
           Icons.computer,
@@ -817,9 +828,9 @@ class _LatencyStrip extends StatelessWidget {
           color: lit ? Colors.green : Theme.of(context).disabledColor,
         ),
         arrow(assistant.hopReply),
-        cell('reply', '${assistant.playSeconds.toStringAsFixed(1)}s'),
+        cell('reply', assistant.playSeconds, 1),
         arrow(assistant.hopTts),
-        cell('tts', '${assistant.ttsSeconds.toStringAsFixed(2)}s'),
+        cell('tts', assistant.ttsSeconds, 2),
       ],
     );
   }
