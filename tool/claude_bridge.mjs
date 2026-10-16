@@ -403,7 +403,11 @@ const fmtTok = (n) => n < 1000 ? `${n}`
 // batcher has to move now; frames cost ~1.3 KB apiece, a rounding error
 // at our event rate.
 const sse = (res, ev, data) => {
-  const body = JSON.stringify({...data, _ts: Date.now()});
+  // Stamp at first write, never again: /attach replay pushes the very
+  // data objects the turn relayed hours ago, and re-stamping them with
+  // NOW would erase the age the phone needs to tell a live reply from
+  // an archaeological one.
+  const body = JSON.stringify({...data, _ts: data._ts ?? Date.now()});
   const room = 1300 - body.length - ev.length - 6;
   res.write(`event: ${ev}\ndata: ${body}` +
     (room > 0 ? `\n: ${'p'.repeat(room)}\n` : '') + `\n\n`);

@@ -2197,7 +2197,19 @@ class VoiceAssistant extends ChangeNotifier {
           }
           final ev = q.removeAt(0);
           _hopReply = true; // harness→reply hop crossed (reattach view)
-          if (ev.isSay && ev.text.trim().isNotEmpty) {
+          if (ev.isSay &&
+              ev.text.trim().isNotEmpty &&
+              _wireAgeMs(ev) > 120000) {
+            // Archaeology, not news: the backlog replayed a line from
+            // before the app went away (an APK update, a kill — the
+            // frames are minutes or hours old). It belongs in the
+            // conversation as text, never in the speaker again — the
+            // user already lived through this exchange.
+            turn.blocks.add(ev.text.trim());
+            _touchChat();
+            final ageSec = ev.wireMs == 0 ? 'unstamped' : '${_wireAgeMs(ev) ~/ 1000}s old';
+            _logDebug('replay $ageSec: logged silently, not spoken');
+          } else if (ev.isSay && ev.text.trim().isNotEmpty) {
             _tokLive = false;
             await speak(cleanForSpeech(ev.text.trim()));
           } else if (ev.kind == 'context') {

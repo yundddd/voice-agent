@@ -97,7 +97,11 @@ class BridgeEvent {
     final data = decoded.cast<String, Object>();
     switch (event) {
       case 'say':
-        return BridgeEvent._('say', text: '${data['text'] ?? ''}');
+        return BridgeEvent._(
+          'say',
+          text: '${data['text'] ?? ''}',
+          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
+        );
       case 'tool':
         final n = data['in'];
         final o = data['out'];
