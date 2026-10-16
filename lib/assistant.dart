@@ -2671,6 +2671,16 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Big-button action, interpreted per mode + phase.
   Future<void> toggle() async {
+    // The big-button story, journalled (0.1.0+79): a tap that produced
+    // no message after a reinstall left no trace of WHICH branch it
+    // took — pushToTalk's gesture arm eats the tap before this method
+    // ever sees it (pttUp's 'press never landed' is all the journal
+    // said). One line per dispatch pins the mode, phase and busy flags
+    // at the moment the finger lifted.
+    _logDebug(
+      'TOGGLE: mode=${_mode.name} phase=${_phase.name} '
+      'busy=$_voiceBusy worker=${_worker != null}',
+    );
     switch (_mode) {
       case InteractionMode.conversation:
         switch (_phase) {
