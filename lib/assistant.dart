@@ -728,7 +728,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
-            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            // No echo of the words being spoken here: the conversation
+            // bubble already shows them — this strip only has to say
+            // what state we're in and that a tap interrupts.
+            _status = 'Speaking — tap to cut me off.';
             spoken.write('$text ');
             turn.blocks.add(text);
             _lastReplyText = text;
@@ -2097,7 +2100,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (!blockOnAir) {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
-            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            // No echo of the words being spoken here: the conversation
+            // bubble already shows them — this strip only has to say
+            // what state we're in and that a tap interrupts.
+            _status = 'Speaking — tap to cut me off.';
             spoken.write('$text ');
             turn.blocks.add(text);
             _lastReplyText = text;
@@ -2307,7 +2313,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (!onAir) {
             onAir = true;
             _phase = AssistantPhase.speaking;
-            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            // No echo of the words being spoken here: the conversation
+            // bubble already shows them — this strip only has to say
+            // what state we're in and that a tap interrupts.
+            _status = 'Speaking — tap to cut me off.';
             _lastReplyText = text; // the re-hide seed sees this replay as
             // the last reply (re-playing a block hides audio again =
             // pauseConversation's own restart-the-block rule)
@@ -2363,7 +2372,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (!sawFirstChunk) {
             sawFirstChunk = true;
             _phase = AssistantPhase.speaking;
-            _status = 'Speaking the bridge: “$text” — tap to cut me off.';
+            // No echo of the words being spoken here: the conversation
+            // bubble already shows them — this strip only has to say
+            // what state we're in and that a tap interrupts.
+            _status = 'Speaking — tap to cut me off.';
             notifyListeners();
           }
           _replyQueue.add((chunk, sampleRate));
@@ -3075,7 +3087,7 @@ class VoiceAssistant extends ChangeNotifier {
                 if (!sawFirstChunk) {
                   sawFirstChunk = true;
                   _phase = AssistantPhase.speaking;
-                  _status = 'Speaking: “$text” — jump in any time.';
+                  _status = 'Speaking — jump in any time.';
                   notifyListeners();
                 }
                 _replyQueue.add((chunk, sampleRate));
