@@ -815,7 +815,16 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeDetachWake = wakeNow;
     final sub = (events ??
             () => _bridgeEvents(bridge, utterance, interrupt))().listen(
-      q.add,
+      // Wake the consumer on EVERY event: `q.add` alone leaves a frame
+      // parked until the loop's next accidental resume — which streaming
+      // disguised (each processed say drains into the next) but a quiet
+      // tool run exposed: the poll delivered frames within milliseconds,
+      // and the loop sat on them until the 15 s heartbeat's speak churn
+      // stumbled past. The wire was fixed one event handler from home.
+      (BridgeEvent ev) {
+        q.add(ev);
+        wakeNow();
+      },
       onError: (Object e, StackTrace _) {
         streamError = e is BridgeException ? e : BridgeException('$e');
         closed = true;
@@ -2148,7 +2157,11 @@ class VoiceAssistant extends ChangeNotifier {
 
       _bridgeDetachWake = wakeNow;
       final sub = bridge.attach(onActivity: _markWireAlive).listen(
-        q.add,
+        // Same wake-on-data contract as the /talk loop (see its note).
+        (BridgeEvent ev) {
+          q.add(ev);
+          wakeNow();
+        },
         onError: (Object e, StackTrace _) {
           streamError = e is BridgeException ? e : BridgeException('$e');
           closed = true;
