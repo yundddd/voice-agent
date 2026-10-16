@@ -606,9 +606,13 @@ class VoiceAssistant extends ChangeNotifier {
     _tokDraft = ev.toolKind == 'answering' ? ev.draft : '';
     _tokAt = now;
     _tokLive = true;
-    // The stepped label also feeds the plain status strip (everything
-    // that is not the live bubble's spinner).
-    _status = ev.detail;
+    // +76: the tally no longer overwrites the status with its stepped
+    // 'thinking · 80 out · 300k in' label. That put the SAME numbers on
+    // the spinner's first line that its second line already owns — and
+    // slower, arriving in 0.8 s stair-steps while the meter already
+    // interpolates every 120 ms tick. Status keeps naming the WORK;
+    // counts live on the meter line alone. (Frames still update the
+    // counters below and wake the widget.)
     notifyListeners();
   }
 
