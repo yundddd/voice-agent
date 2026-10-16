@@ -932,10 +932,19 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
   @override
   void initState() {
     super.initState();
-    _tick = Timer.periodic(
-      const Duration(milliseconds: 120),
-      (_) => setState(() => _frame = (_frame + 1) % _wheel.length),
-    );
+    _tick = Timer.periodic(const Duration(milliseconds: 120), (_) {
+      // Spin ONLY while the agent works. Mid-reply the wheel used to
+      // whirl through every spoken chunk — busywork theater while the
+      // harness was merely talking (or quiet between streamed
+      // paragraphs), so the user couldn't tell 'still computing' from
+      // 'reading me a book'. While the assistant's phase is 'speaking'
+      // the frame freezes; the phase transitions themselves notify (the
+      // first audio chunk flips it, playback end flips it back), so the
+      // wheel resumes the moment the harness is really working again —
+      // no setState while frozen either, a still line stays still.
+      if (widget.assistant.phase == AssistantPhase.speaking) return;
+      setState(() => _frame = (_frame + 1) % _wheel.length);
+    });
   }
 
   @override
@@ -971,13 +980,19 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     final shownIn = live ? 0 : a.contextIn;
     final line = '$label${shownIn > 0 ? '  ·  ${_fmtTok(shownIn)} in' : ''}'
         '  ·  ${secs}s  ·  tap Stop to interrupt';
+    // The frozen frame is also dimmed: motion OR color, never neither,
+    // is the honest way to say "the agent is not churning right now" —
+    // the status label beside it already reads 'Speaking…' while paused.
+    final talking = a.phase == AssistantPhase.speaking;
     final working = Row(
       children: [
         Text(
           _wheel[_frame],
           style: Theme.of(
             context,
-          ).textTheme.titleMedium?.copyWith(color: scheme.primary),
+          ).textTheme.titleMedium?.copyWith(
+            color: talking ? scheme.outline : scheme.primary,
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(
