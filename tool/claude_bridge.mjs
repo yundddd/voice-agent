@@ -729,6 +729,24 @@ function handleEvent(line) {
         relay('tool', tokFrame(tokOutExact));
       }
     }
+    if (e.type === 'message_stop') {
+      // +83: the answer's TEXT is final at this instant — everything
+      // after it is the phone rendering audio (and the CLI's own
+      // accounting before 'result' closes the turn). Without this the
+      // spinner kept whoring for a dozen seconds after the last word,
+      // honest about the socket being open but lying about there being
+      // work left. 'settled' on the tally tells the phone the truth;
+      // a still-open tool run means generation WILL continue, so we
+      // stay quiet and the wheel keeps its well-earned spin.
+      if (!openTools.size) {
+        tokKind = 'settled';
+        tokSentAt = Date.now();
+        // Carry the un-spoken draft tail explicitly: tokFrame only
+        // attaches it while 'answering', and the phone needs those
+        // sentences on screen until their audio actually lands.
+        relay('tool', { ...tokFrame(tokOutExact), draft: draftTail(1300) });
+      }
+    }
     if (e.type === 'content_block_stop') {
       // The text is final: the sentence buffer must empty completely,
       // including an un-terminated tail the streaming pass would wait

@@ -1053,6 +1053,11 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
           a.harnessElapsed == Duration.zero) {
         return;
       }
+      // +84: the bridge says the TEXT is done and only audio rendering
+      // remains ('settled'): nothing left to compute, so the wheel
+      // stops even though the socket hasn't closed yet. (The old
+      // dozen-seconds of honest-socket dishonest-spinner this kills.)
+      if (a.turnSettled) return;
       setState(() => _frame = (_frame + 1) % _wheel.length);
     });
   }
@@ -1111,7 +1116,12 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
               _wheel[_frame],
               style: Theme.of(
                 context,
-              ).textTheme.titleMedium?.copyWith(color: scheme.primary),
+              ).textTheme.titleMedium?.copyWith(
+                // settled = frozen AND dimmed: motion or color, never
+                // neither (the +57 honesty rule, extended to the new
+                // resting state).
+                color: a.turnSettled ? scheme.outline : scheme.primary,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(

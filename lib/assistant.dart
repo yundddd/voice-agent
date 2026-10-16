@@ -556,7 +556,14 @@ class VoiceAssistant extends ChangeNotifier {
   /// bridge (no `draft` field) or a silent answerer keeps the working
   /// line alone, exactly as before.
   String get tokenDraft =>
-      _tokLive && _tokKind == 'answering' ? _tokDraft : '';
+      _tokLive && (_tokKind == 'answering' || _tokKind == 'settled')
+      ? _tokDraft
+      : '';
+
+  /// The bridge declared the answer's text final (message_stop, no open
+  /// tools): the wheel must stop — the only thing left is the phone
+  /// rendering audio (0.1.0+83/84).
+  bool get turnSettled => _tokKind == 'settled';
 
   /// The growing label. Only meaningful while [tokenTickerOn]; the
   /// spinner asks the assistant for it on every one of its 120 ms
@@ -610,7 +617,15 @@ class VoiceAssistant extends ChangeNotifier {
     if (ev.inputTokens > 0) _tokIn = ev.inputTokens;
     _tokKind = ev.toolKind;
     _tokThought = ev.toolKind == 'thinking' ? ev.thought : '';
-    _tokDraft = ev.toolKind == 'answering' ? ev.draft : '';
+    // +83: 'settled' means the TEXT is final (bridge message_stop) but
+    // the draft tail may still hold sentences whose audio hasn't played
+    // — keep painting it, exactly as while answering.
+    _tokDraft =
+        ev.toolKind == 'answering' ||
+            ev.toolKind == 'settled' ||
+            ev.draft.isNotEmpty
+        ? ev.draft
+        : _tokDraft;
     _tokAt = now;
     _tokLive = true;
     // +76: the tally no longer overwrites the status with its stepped
