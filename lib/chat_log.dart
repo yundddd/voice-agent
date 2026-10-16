@@ -7,21 +7,40 @@ import 'dart:convert';
 /// turn start but never filled (error/nothing-to-say turns) stays empty
 /// and the UI hides it.
 class ChatEntry {
-  ChatEntry({required this.fromUser, List<String>? blocks})
+  ChatEntry({required this.fromUser, List<String>? blocks, this.queued = false})
     : blocks = blocks ?? <String>[];
 
-  ChatEntry.user(String text) : fromUser = true, blocks = [text];
+  ChatEntry.user(String text, {this.queued = false})
+    : fromUser = true,
+      blocks = [text];
 
-  ChatEntry.assistant() : fromUser = false, blocks = <String>[];
+  ChatEntry.assistant()
+    : fromUser = false,
+      blocks = <String>[],
+      queued = false;
 
   final bool fromUser;
   final List<String> blocks;
 
+  /// A politly-queued prompt (interrupt-off press over a live turn):
+  /// the renderer parks it in the pinned-at-bottom card instead of the
+  /// flow until the harness takes the turn (first streamed frame), at
+  /// which point it joins the conversation where it was spoken.
+  bool queued;
+
   bool get isEmpty => blocks.isEmpty;
 
-  Map<String, Object> toJson() => {'user': fromUser, 'blocks': blocks};
+  Map<String, Object> toJson() => {
+    'user': fromUser,
+    'blocks': blocks,
+    if (queued) 'queued': true,
+  };
 
   static ChatEntry fromJson(Map<String, Object?> j) => ChatEntry(
+    // Pins deliberately do NOT survive a reload: the pin belongs to a
+    // turn this process was watching; after a restart nobody is holding
+    // it, and a stale pin would hang at the bottom forever. The message
+    // itself stays in the log.
     fromUser: j['user'] == true,
     blocks: [for (final b in (j['blocks'] as List? ?? const <Object>[])) '$b'],
   );

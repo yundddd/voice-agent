@@ -325,10 +325,14 @@ class _AssistantScreenState extends State<AssistantScreen>
                             // The in-flight harness turn renders even while
                             // still block-free: its bubble carries the live
                             // working line (below the last spoken block).
+                            // A queued press is EXCLUDED from the flow —
+                            // it rides the pinned card below instead,
+                            // until the harness starts its turn and the
+                            // entry dissolves back in at its place.
                             for (final e in a.chat)
-                              if (e.fromUser ||
-                                  e.blocks.isNotEmpty ||
-                                  identical(e, liveTurn))
+                              if (identical(e, liveTurn) ||
+                                  (e.blocks.isNotEmpty &&
+                                      !(e.fromUser && e.queued)))
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
@@ -411,6 +415,97 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     ],
                                   ),
                                 ),
+                            // The polite-queue pin: a slide-up-off press
+                            // that the bridge parked behind the live
+                            // turn. It stays at the very bottom of the
+                            // channel — under whatever the current work
+                            // keeps printing — until Claude Code takes
+                            // it, at which point the flag clears and
+                            // the message re-renders in the flow above.
+                            if (a.queuedText case final String qtext)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.centerRight,
+                                        child: ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            maxWidth:
+                                                constraints.maxWidth * 0.86,
+                                          ),
+                                          child: Card(
+                                            color: scheme.primaryContainer,
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 14,
+                                                    vertical: 10,
+                                                  ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.end,
+                                                children: [
+                                                  Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Icon(
+                                                        Icons
+                                                            .schedule_outlined,
+                                                        size: 14,
+                                                        color:
+                                                            scheme.onPrimaryContainer
+                                                                .withValues(
+                                                                  alpha: 0.7,
+                                                                ),
+                                                      ),
+                                                      const SizedBox(
+                                                        width: 6,
+                                                      ),
+                                                      Text(
+                                                        'Queued — waiting '
+                                                        'for the current '
+                                                        'work',
+                                                        style: Theme.of(
+                                                          context,
+                                                        ).textTheme.labelSmall
+                                                            ?.copyWith(
+                                                              color: scheme
+                                                                  .onPrimaryContainer
+                                                                  .withValues(
+                                                                    alpha:
+                                                                        0.7,
+                                                                  ),
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  const SizedBox(height: 6),
+                                                  SelectableText(
+                                                    qtext,
+                                                    textAlign: TextAlign.end,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodyLarge
+                                                        ?.copyWith(
+                                                          color: scheme
+                                                              .onPrimaryContainer,
+                                                        ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
                       ),

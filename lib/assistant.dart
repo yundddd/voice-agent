@@ -343,8 +343,34 @@ class VoiceAssistant extends ChangeNotifier {
   int get chatVersion => _chatVersion;
 
   static const _chatCap = 80; // entries kept on screen and on disk
-  void _addUserChat(String text) {
-    _chat.add(ChatEntry.user(text));
+  /// The user entry currently wearing the pin (polite-queue mode), if
+  /// any. Cleared the first time that turn's stream shows life — the
+  /// harness picked it up, so the message drops from the pinned card
+  /// into the conversation flow where its answer will follow.
+  ChatEntry? _queuedBubble;
+  ChatEntry? get queuedBubble =>
+      _queuedBubble?.queued == true ? _queuedBubble : null;
+
+  /// The pinned message's text for the renderer (kept a plain string so
+  /// the view widget needs no import of the log model).
+  String? get queuedText => queuedBubble?.blocks.join(' ');
+
+  void _unpinQueuedBubble() {
+    final q = _queuedBubble;
+    _queuedBubble = null;
+    if (q != null && q.queued) {
+      q.queued = false;
+      _touchChat();
+    }
+  }
+
+  void _addUserChat(String text, {bool queued = false}) {
+    // One pin at a time: a newer queued press outranks the old one,
+    // whose turn is by definition dead (superseded on the wire).
+    if (queued) _unpinQueuedBubble();
+    final entry = ChatEntry.user(text, queued: queued);
+    _chat.add(entry);
+    if (queued) _queuedBubble = entry;
     _touchChat();
   }
 
@@ -673,13 +699,21 @@ class VoiceAssistant extends ChangeNotifier {
     // Bump FIRST: an abandoned event loop notices the superseded
     // generation and exits — a bare subscription cancel would leave it
     // parked on the wake future forever.
+    // A live turn (even a softly-detached one — detach keeps the busy
+    // flag) means an interrupt-off prompt goes behind it on the bridge:
+    // capture that before the abandon so the bubble knows to wear the
+    // pin until the harness actually starts on it.
+    final queuedBehindLiveTurn =
+        !interrupt && (_bridgeBusy || _harnessBackgrounded);
     _generation++;
     _abandonBridgeTurn();
     if (_worker == null) {
       _fail('Models are still loading — try again in a moment.');
       return;
     }
-    if (bubble != null && bubble.trim().isNotEmpty) _addUserChat(bubble.trim());
+    if (bubble != null && bubble.trim().isNotEmpty) {
+      _addUserChat(bubble.trim(), queued: queuedBehindLiveTurn);
+    }
     // One assistant bubble for the whole turn, sections appended as each
     // say's audio queues (text follows the voice, never leads it). An
     // interrupted turn keeps the sections actually spoken — that IS what
@@ -911,6 +945,10 @@ class VoiceAssistant extends ChangeNotifier {
         }
         final ev = q.removeAt(0);
         _hopReply(); // harness→reply hop crossed: bytes arrived
+        // Any frame back means the harness took this turn (the bridge
+        // keeps a queued /talk silent until it flushes it) — the pin
+        // dissolves and the message joins the flow ahead of its answer.
+        _unpinQueuedBubble();
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           _tokLive = false; // the answer closed and is being spoken;
           // nothing is generating to grow a counter over
@@ -2280,6 +2318,9 @@ class VoiceAssistant extends ChangeNotifier {
           }
           final ev = q.removeAt(0);
           _hopReply(); // harness→reply hop crossed (reattach view)
+          // Same dissolve rule as the /talk loop: frames moving on this
+          // turn mean the harness is working the prompt, pin or no pin.
+          _unpinQueuedBubble();
           // One cleaning up front, then every branch — dedup test, log
           // add, and speak — sees the SAME string the live path stored.
           // The bug this kills: the chat log keeps the cleaner's OUTPUT
@@ -3236,8 +3277,18 @@ class VoiceAssistant extends ChangeNotifier {
       _lastSpoken = text;
       // The conversation log keeps everything: what we heard lands as a
       // user bubble now (in either mode), the answer as assistant
-      // bubbles section by section as it is spoken.
-      _addUserChat(text);
+      // bubbles section by section as it is spoken. A polite-queue
+      // press (slide-up off, interrupt=false) over a live turn wears
+      // the pin instead: the card sits at the bottom of the channel
+      // until the harness begins this turn, then the message joins the
+      // flow right where its answer will follow.
+      _addUserChat(
+        text,
+        // _bridgeBusy alone lies here: the DOWN-time detach cleared it
+        // while the bridge turn lives on (badge = _harnessBackgrounded)
+        // — behind THAT is what a polite release queues.
+        queued: !interrupt && (_bridgeBusy || _harnessBackgrounded),
+      );
 
       if (_bridge != null && _bridgePrefs.voice) {
         // Voice -> Claude Code: the utterance becomes a harness turn, and
