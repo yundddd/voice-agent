@@ -281,6 +281,27 @@ the Bridge screen. Notes that matter when touching this code:
    frames are deliberately kept OUT of the journal (they ride every
    0.8 s and would flush the 240-entry story of the turn being
    troubleshot out of the ring).
+   PUSH transport (0.1.0+32) after field testing: the dial-back premise
+   FAILED on real phones — the Android Tailscale client accepts no
+   inbound connections (the phone's tailnet peer advertised no such
+   capability), and behind carrier NAT there is no route to dial at all
+   — so bridge→phone polling logged `connection refused` forever,
+   indistinguishable from the app being frozen. Every relayed entry now
+   runs through ONE ingest path whether PULLED (GET /applog, dialable
+   dev peers, polled on --applog-interval) or PUSHED (POST /applog: the
+   app sends the same envelope outbound, batched behind a 3 s debounce,
+   the watermark advancing only on the bridge's `ok`, backing off while
+   unreachable, and force-flushed at the hide/resume bookends — exactly
+   the moments a freezing isolate would otherwise swallow, since
+   freeze-window measurement turns on those timestamps). At-least-once
+   push + seq-dedupe at the bridge = convergent. The last pushed
+   envelope is mirrored server-side (240 entries + flags): `GET
+   /applogs` answers from the mirror (source:'push') when the phone
+   can't be dialed and falls back to the mirror when a live pull fails;
+   /health's `appLog.mode` reports push / pull / silent (silent = the
+   phone answers neither: frozen or killed), and the pump deliberately
+   stays quiet about dial refusals while pushes prove life — an
+   inbound-refused Android phone is a normal phone, not an outage.
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message

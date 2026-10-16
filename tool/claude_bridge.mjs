@@ -89,19 +89,32 @@
 //                + context (last known tokens-in-context and the model's
 //                window, snapshotted at every result) + appLog (the
 //                phone-journal poller's peer / watermark / reachability)
-//   GET  /applogs?since=N  proxy live to the phone app's own event
-//                journal (lib/app_events.dart): what the PHONE side did
-//                during a turn — lifecycle callbacks, stream deaths,
-//                reattach verdicts. The bridge also polls that journal
-//                every --applog-interval ms (default 5000; 0 = off) and
-//                relays new entries to stderr as `[app HH:MM:SS.mmm]`
-//                lines, so journalctl shows both machines' views of one
-//                misbehaving turn. Poll failure is logged as
-//                frozen-or-killed (3 strikes, once) and its end — the
-//                app's own timestamps then bracket the freeze window.
-//                App requests teach the bridge where to dial: every call
-//                carries ?logport= and the peer is the request's source
-//                address (same route the turn rides, no NAT puzzle).
+//   ANY   /applog  The phone app's OWN event journal (lib/app_events.dart):
+//                what the PHONE side did during a turn — lifecycle
+//                callbacks, stream deaths, reattach verdicts. TWO
+//                transports, one ingest path (same watermark, same
+//                `[app HH:MM:SS.mmm]` stderr relay, so journalctl shows
+//                both machines' views of one misbehaving turn either
+//                way):
+//                  GET  /applogs?since=N on this bridge proxies the
+//                  phone live when it can be dialed (desktop/LAN
+//                  peers), else answers from the server-side mirror of
+//                  what the phone last PUSHED; source:'push'|'pull'
+//                  says which. The bridge polls on
+//                  --applog-interval (default 5000; 0 = off).
+//                  POST /applog with an envelope body is the PUSH
+//                  transport: phones dialed by nobody (Android
+//                  tailscale refuses inbound; carrier NAT has no route
+//                  at all) push their journal out instead — at-least-
+//                  once, deduped by seq here. The pump distinguishes
+//                  "refused to be dialed but pushes" (quiet, push mode)
+//                  from "answered neither — frozen or killed?" (3
+//                  strikes, logged once, recovery logged too).
+//                Every app request carries ?logport= so a peer address
+//                (the request's own source, same route the turn rides)
+//                is always on file for the pull attempt. /health's
+//                appLog block reports peer, watermark, mode (push /
+//                pull / silent) and last push time.
 //
 // Latency note: the upstream proxy re-reads the entire conversation on
 // every request (prompt caching is not in play there — cache_read is
@@ -717,21 +730,67 @@ const spokenTools = new Set();
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 const spokenTexts = new Set();
 
-// ── Phone-side journal: poll, relay, proxy, liveness ────────────────────
+// ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
 // The app keeps a seq-numbered event journal of its OWN lifecycle story
-// (lib/app_events.dart) and serves it over HTTP; every request it makes
-// carries ?logport=, and the peer address is simply the connection source
-// the turn already rides — same route, so NAT/Tailscale ACLs never puzzle
-// the return leg. Every few seconds we GET /applog?since=<watermark> and
-// relay new entries to stderr, which puts BOTH machines' views of one
-// misbehaving turn into the same journalctl stream (the entry carries the
-// phone's own clock — inter-machine skew is exactly what a bracketed
-// freeze window should be judged against, not guessed at). Poll FAILURE
-// is telemetry too: a frozen or killed phone app answers nothing, so the
-// bridge logs the outage and its end, and the timestamp burst in the
-// recovered journal brackets the freeze window from the inside.
+// (lib/app_events.dart); see the file header /applog entry for the two
+// transports. The pull model was the original design and stays useful
+// for dialable peers (desktop dev boxes, LAN): every few seconds we GET
+// /applog?since=<watermark> and relay new entries to stderr, putting
+// BOTH machines' views of one misbehaving turn into the same
+// journalctl stream (the entry carries the phone's own clock —
+// inter-machine skew is exactly what a bracketed freeze window should
+// be judged against, not guessed at). Pull FAILURE is telemetry too —
+// but it is read as 'frozen or killed' ONLY when push is quiet as well;
+// an Android phone that refuses dials yet pushes is alive and talking
+// (see the push-mode branch of pumpAppLog and the PUSH intake block).
 const appLogEveryMs = Number(arg('applog-interval', 5000)); // 0 = off
 const appPeer = {host: null, port: 0, seq: 0, fails: 0, down: false, seen: 0};
+
+// ── PUSH intake: the journal transport that always works ──────────────
+// Every relayed entry — PULLED (GET /applog, dialed back) or PUSHED (POST
+// /applog, the app's own outbound connection) — runs through this ONE
+// path, so the two transports can never diverge on watermark, dedupe or
+// output format. Push exists because dialing back is a lie we told: the
+// Android Tailscale client accepts no inbound connections by default, and
+// behind carrier NAT there IS no route to dial — while the phone's
+// OUTBOUND to this bridge always works (it carries every turn already).
+// The last pushed envelope is also CACHED (phoneJournal): a curl-able
+// desktop mirror of a phone nothing can dial, which is what makes
+// journalctl-free triage still possible on inbound-refused nodes.
+const PHONE_JOURNAL_CAP = 240;
+const phoneJournal = {events: [], seq: 0, flags: {}, at: 0};
+function ingestAppEnvelope(j, src) {
+  if (j.ok !== true || !Array.isArray(j.events)) return false;
+  const fresh = j.events
+      .filter(e => typeof e.seq === 'number' && e.seq > appPeer.seq)
+      .sort((a, b) => a.seq - b.seq);
+  const head = Math.max(appPeer.seq, j.seq || 0,
+                        ...fresh.map(e => e.seq));
+  // Gap before the first fresh entry (rolled off between relays), or a
+  // head advance with nothing fresh at all.
+  const lost = fresh.length
+      ? fresh[0].seq - appPeer.seq - 1
+      : head - appPeer.seq;
+  appPeer.seq = head; // at-least-once redelivery is deduped right here
+  for (const e of fresh) {
+    const ts = new Date(e.t || Date.now()).toISOString().slice(11, 23);
+    console.error(`  [app ${ts}] #${e.seq}${src === 'push' ? ' (p)' : ''} ${e.msg}`);
+  }
+  if (lost > 0) {
+    console.error(`  [applog] ${lost} phone entries rolled off unread (${src})`);
+  }
+  appPeer.fails = 0;
+  if (appPeer.down) { console.error('  [applog] phone journal REACHABLE again'); appPeer.down = false; }
+  if (src === 'push') {
+    phoneJournal.at = Date.now();
+    const have = new Set(phoneJournal.events.map(e => e.seq));
+    for (const e of j.events) if (!have.has(e.seq)) phoneJournal.events.push(e);
+    phoneJournal.events = phoneJournal.events.slice(-PHONE_JOURNAL_CAP);
+    phoneJournal.seq = Math.max(phoneJournal.seq, j.seq || 0);
+    phoneJournal.flags = j.flags || phoneJournal.flags;
+  }
+  return true;
+}
 function noteAppPeer(req, url) {
   const host = req.socket.remoteAddress;
   if (!host) return;
@@ -748,6 +807,7 @@ function noteAppPeer(req, url) {
 // honestly (Tailscale peers are IPv4 100.x in practice).
 const dialHost = (h) => h.includes(':') ? `[${h.split('%')[0]}]` : h;
 let appPumpInFlight = false;
+let pushModeNoted = false;
 async function pumpAppLog() {
   if (!appPeer.host || appPumpInFlight || appLogEveryMs <= 0) return;
   appPumpInFlight = true;
@@ -758,24 +818,25 @@ async function pumpAppLog() {
       `?token=${encodeURIComponent(token)}&since=${appPeer.seq}`,
       {signal: AbortSignal.timeout(4000)});
     const j = await r.json();
-    if (j.ok !== true || !Array.isArray(j.events)) throw new Error('bad envelope');
-    for (const e of j.events) {
-      const ts = new Date(e.t).toISOString().slice(11, 23); // HH:MM:SS.mmm
-      console.error(`  [app ${ts}] #${e.seq} ${e.msg}`);
-    }
-    const lost = (j.seq || 0) - appPeer.seq - j.events.length;
-    if (lost > 0) {
-      console.error(`  [applog] ${lost} phone entries rolled off unread`);
-    }
-    appPeer.seq = Math.max(appPeer.seq, j.seq || 0);
-    if (appPeer.down) console.error('  [applog] phone journal REACHABLE again');
-    appPeer.down = false;
-    appPeer.fails = 0;
+    if (!ingestAppEnvelope(j, 'pull')) throw new Error('bad envelope');
+    pushModeNoted = false; // dialable again: the note may apply anew later
   } catch (e) {
     // Tolerate a few misses (the app is legitimately frozen while the OS
     // parks it; a single dropped GET means nothing); log the outage ONCE,
-    // and its end, rather than every 5 s.
-    if (++appPeer.fails >= 3 && !appPeer.down) {
+    // and its end, rather than every 5 s. But a phone that PUSHES and
+    // refuses to be DIALED (Android tailscale, carrier NAT) is neither
+    // frozen nor killed — it is merely unhospitable to the pull model,
+    // and its pushes prove life. Note that once, quietly, and let push
+    // carry the story.
+    if (phoneJournal.at && Date.now() - phoneJournal.at < Math.max(120000, appLogEveryMs * 12)) {
+      if (!pushModeNoted) {
+        pushModeNoted = true;
+        console.error('  [applog] phone refuses inbound dials (Android ' +
+          'tailscale or NAT-ed) — PUSH mode active: the phone POSTs its ' +
+          'journal; GET /applogs serves the server-side mirror');
+      }
+      appPeer.fails = 0; // no down/outage noise while push flows
+    } else if (++appPeer.fails >= 3 && !appPeer.down) {
       console.error(`  [applog] phone journal at ${host}:${port} not answering ` +
         `(${e.message}) — app frozen or killed?`);
       appPeer.down = true;
@@ -797,29 +858,59 @@ const server = http.createServer((req, res) => {
   // the exact route the turn rides, so the return leg needs no DNS, no
   // static lease, no hole-punching.
   if (url.searchParams.has('logport') &&
-      ['/health', '/talk', '/attach', '/stop', '/new'].includes(url.pathname)) {
+      ['/health', '/talk', '/attach', '/stop', '/new', '/applog']
+          .includes(url.pathname)) {
     noteAppPeer(req, url);
   }
   if (req.method === 'GET' && url.pathname === '/applogs') {
     // Pull the phone's WHOLE journal on demand from the desktop:
     //   curl 'http://127.0.0.1:8732/applogs?token=…&since=0'
-    // Pass-through of the app's envelope (flags, seq, events), so triage
-    // sees the phone's view of "now", not only what the poll relayed.
-    if (!appPeer.host) {
-      res.writeHead(400).end('no phone seen yet — the app must talk first\n');
+    // Fresh PUSH beats a doomed dial (inbound-refused Android): the
+    // server-side mirror answers instantly and says source:'push'. A
+    // dialable phone gets the live pull (source:'pull') with the pushed
+    // mirror as its fallback — triage works from one URL either way.
+    const since = Number(url.searchParams.get('since') ?? 0);
+    const pushFresh = phoneJournal.at &&
+        Date.now() - phoneJournal.at < Math.max(120000, appLogEveryMs * 12);
+    const mirror = (fallbackFor) => JSON.stringify({
+      ok: true, source: 'push', seq: phoneJournal.seq,
+      floor: phoneJournal.events.length ? phoneJournal.events[0].seq : phoneJournal.seq,
+      events: phoneJournal.events.filter(e => e.seq > since),
+      flags: phoneJournal.flags,
+      pushedAt: new Date(phoneJournal.at).toISOString(),
+      ...(fallbackFor ? {note: `live pull failed (${fallbackFor})`} : {}),
+    });
+    if (pushFresh || !appPeer.host) {
+      if (!phoneJournal.at) {
+        res.writeHead(400).end('no phone journal yet — the app must talk first\n');
+        return;
+      }
+      res.writeHead(200, {'content-type': 'application/json'});
+      res.end(mirror(null));
       return;
     }
-    const q = new URLSearchParams({
-      token, since: url.searchParams.get('since') ?? '0',
-    });
+    const q = new URLSearchParams({token, since: String(since)});
     fetch(`http://${dialHost(appPeer.host)}:${appPeer.port}/applog?${q}`,
       {signal: AbortSignal.timeout(6000)})
         .then(async (r) => {
-          res.writeHead(r.status, {'content-type': 'application/json'});
-          res.end(await r.text());
-          pumpAppLog(); // a manual pull also advances the relay watermark
+          const text = await r.text();
+          if (!r.ok) { res.writeHead(r.status).end(text); return; }
+          let j;
+          try { j = JSON.parse(text); } catch { j = null; }
+          if (j && j.ok) {
+            ingestAppEnvelope(j, 'pull'); // relay + advance the watermark:
+            // what curl just read is also in the journal, exactly as the
+            // pump would have delivered it moments later
+            res.writeHead(200, {'content-type': 'application/json'});
+            res.end(JSON.stringify({source: 'pull', ...j}));
+          } else res.writeHead(502).end('bad envelope from phone\n');
         })
-        .catch((e) => res.writeHead(502).end(`phone unreachable: ${e}\n`));
+        .catch((e) => {
+          if (phoneJournal.at) {
+            res.writeHead(200, {'content-type': 'application/json'});
+            res.end(mirror(String(e))); // push mirror under a note
+          } else res.writeHead(502).end(`phone unreachable: ${e}\n`);
+        });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/health') {
@@ -834,10 +925,23 @@ const server = http.createServer((req, res) => {
       // Last known phone-journal peer and our relay watermark: visible on
       // the app's Bridge screen (which renders /health) so you can see the
       // loop is closed from either end without touching a terminal.
-      appLog: appPeer.host
-          ? {peer: `${appPeer.host}:${appPeer.port}`, seq: appPeer.seq,
-             down: appPeer.down}
-          : null,
+      appLog: {
+        peer: appPeer.host ? `${appPeer.host}:${appPeer.port}` : null,
+        seq: appPeer.seq, // relay watermark (shared by both transports)
+        down: appPeer.down,
+        // 'push': phone POSTs (inbound-refused Android — the common
+        // phone case). 'pull': dial-back works (desktop/LAN peers).
+        // 'silent': known peer answering neither — frozen or killed.
+        mode: (phoneJournal.at &&
+                Date.now() - phoneJournal.at < 120000)
+            ? 'push'
+            : appPeer.host
+            ? (appPeer.down ? 'silent' : 'pull')
+            : null,
+        pushedAt: phoneJournal.at
+            ? new Date(phoneJournal.at).toISOString()
+            : null,
+      },
       // Last known context consumption and the model's window (0s until
       // the first result names them): lets a phone that missed the live
       // events still fill its context bar.
@@ -919,6 +1023,16 @@ const server = http.createServer((req, res) => {
       endTurn();
       child?.kill('SIGTERM'); child = null; childDead = true;
       res.writeHead(200).end('ok\n');
+    } else if (url.pathname === '/applog') {
+      // PUSHED journal envelope (see ingestAppEnvelope): the transport for
+      // phones nothing can dial back into. Body is the exact envelope
+      // GET /applog serves; one shared ingest, so push and pull can never
+      // diverge. 'ok' only on accept — the app advances its ack watermark
+      // on that alone (at-least-once; dedupe by seq on this side).
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const ok = j && ingestAppEnvelope(j, 'push');
+      res.writeHead(ok ? 200 : 400).end(ok ? 'ok\n' : 'bad envelope\n');
     } else res.writeHead(404).end();
   });
 });

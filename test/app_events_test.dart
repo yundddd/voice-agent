@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -97,6 +98,93 @@ void main() {
       await k.load();
       expect(k.seq, 300); // watermark intact even as the file rolled
       expect(k.eventsAfter(0).length, lessThanOrEqualTo(8));
+    });
+  });
+
+  group('push transport (POST /applog, for dial-refused phones)', () {
+    test('flushNow ships the envelope, ack advances the watermark',
+        () async {
+      final sent = <Map<String, Object>>[];
+      final j = journal();
+      j.transport = (env) async {
+        sent.add(env);
+        return true; // bridge said ok
+      };
+      await j.log('p1');
+      await j.log('p2');
+      expect(await j.flushNow(), isTrue);
+      final env = sent.single;
+      expect(env['ok'], true);
+      expect(env['src'], 'push');
+      expect(env['pushedThrough'], 0);
+      expect((env['events'] as List).length, 2);
+      expect(j.pushedThrough, 2);
+      // Idempotent: nothing outstanding, so nothing ships again.
+      expect(await j.flushNow(), isTrue);
+      expect(sent.length, 1);
+    });
+
+    test('a refused flush keeps the backlog and reships it next time',
+        () async {
+      final sent = <List<int>>[];
+      final j = journal();
+      var online = false;
+      j.transport = (env) async {
+        final seqs = (env['events'] as List)
+            .map((e) => (e as Map)['seq'] as int)
+            .toList();
+        sent.add(seqs);
+        return online;
+      };
+      await j.log('q1');
+      expect(await j.flushNow(), isFalse); // bridge down
+      expect(j.pushedThrough, 0); // nothing acked
+      online = true;
+      await j.log('q2');
+      expect(await j.flushNow(), isTrue); // backlog rode along with q2
+      expect(sent.last, [1, 2]); // at-least-once: q1 resent, bridge dedupes
+      expect(j.pushedThrough, 2);
+    });
+
+    test('events appended mid-POST are NOT acked by that ack', () async {
+      final j = journal();
+      final gate = Completer<void>();
+      var first = true;
+      j.transport = (env) async {
+        if (first) {
+          first = false;
+          await gate.future; // bridge 'slow': app goes on living mid-flight
+        }
+        return true;
+      };
+      await j.log('f1');
+      final inflight = j.flushNow();
+      await j.log('f2'); // appended after the envelope was built
+      gate.complete();
+      expect(await inflight, isTrue);
+      expect(j.pushedThrough, 1); // f2 stays pending...
+      final late = <int>[];
+      j.transport = (env) async {
+        late.add((env['events'] as List).length);
+        return true;
+      };
+      await j.flushNow();
+      expect(late.single, 1); // ...and goes next, exactly once
+    });
+
+    test('log() re-arming honours the failure backoff (no retry storm)',
+        () async {
+      var hits = 0;
+      final j = journal();
+      j.transport = (env) async {
+        hits++;
+        return false; // bridge never answers
+      };
+      await j.log('down1');
+      expect(await j.flushNow(), isFalse);
+      await j.log('down2'); // re-kick inside the backoff window...
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      expect(hits, 1); // ...must NOT fire an immediate second attempt
     });
   });
 

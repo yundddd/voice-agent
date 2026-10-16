@@ -364,7 +364,12 @@ no partials, quiet heartbeat frames keep saying so in words while a
 per-turn `[census]` line in the bridge's journal reports what the wire
 actually delivered (live deltas / usage-only settles / no live events).
 Which one you get is your proxy's choice; now you can read it instead
-of wondering.
+of wondering. The journal itself now PUSHES (0.1.0+32) — the Android
+tailscale client accepts no dialed-in connections and carrier NAT has
+no route at all, so the phone POSTs its journal outbound (batched,
+acked, deduped by seq) and the bridge mirrors the latest envelope:
+`/applogs` answers from the mirror with `source:'push'`, and
+`appLog.mode` in `/health` reads push / pull / silent.
 Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run

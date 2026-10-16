@@ -295,6 +295,32 @@ class BridgeClient {
   /// null when the bridge can't be reached at all.
   Future<Map<String, Object>?> healthInfo() async => (await _healthRaw()).body;
 
+  /// POSTs the app event journal envelope (lib/app_events.dart) — the
+  /// PUSH transport for phones that cannot be dialed back (the Android
+  /// tailscale client refuses inbound connections by default, and behind
+  /// carrier NAT there is no route to dial at all). Outbound is always
+  /// alive; it already carries every turn. The bridge confirms with a
+  /// plain `ok`, and the journal's watermark advances only on that ack —
+  /// delivery is at-least-once, seq-deduped bridge-side, convergent by
+  /// construction. `logport=` rides the request too, so a phone that
+  /// later enables inbound (tailscale toggle) gets its pull leg revived
+  /// automatically.
+  Future<bool> pushJournal(Map<String, Object> envelope) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/applog'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode(envelope)));
+      final res = await req.close();
+      final body = (await res.transform(utf8.decoder).join()).trim();
+      return res.statusCode == 200 && body == 'ok';
+    } on Object {
+      return false; // unreachable/refused: the journal keeps the backlog
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<({Map<String, Object>? body, String? why})> _healthRaw() async {
     try {
       final res = await HttpClient()

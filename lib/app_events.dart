@@ -56,6 +56,25 @@ class AppEventJournal {
   Map<String, Object> Function() _flagsProvider = () => const {};
   static const _file = 'app_events.jsonl';
 
+  // ── PUSH transport (inbound-refused phones) ── the pull model assumes
+  // the bridge can dial back — false in the wild for Android nodes (the
+  // tailscale client refuses dialed-in connections unless it advertises
+  // otherwise, and behind carrier NAT there is no route to dial anyway).
+  // So the journal ALSO pushes: [transport] POSTs the exact envelope
+  // GET /applog would return, batches with a 2 s debounce (coalesces an
+  // event burst into one POST), and the watermark only advances on ack —
+  // at-least-once delivery, seq-deduped at the bridge. Every log()
+  // re-arms, a failed flush retries at +10 s, and lifecycle moments can
+  // flushNow() when a second matters. Wired by VoiceAssistant after the
+  // bridge client exists; null (pull-only) otherwise.
+  Future<bool> Function(Map<String, Object> envelope)? transport;
+  int _pushedThrough = 0;
+  bool _flushInFlight = false;
+  Timer? _pushTimer;
+  DateTime? _pushFailSince;
+  int get pushedThrough => _pushedThrough;
+  DateTime? get pushFailSince => _pushFailSince;
+
   int get seq => _seq;
   int get servedPort => _srv?.port ?? kAppLogDefaultPort;
   File get _path => File(p.join(dir, _file));
@@ -116,6 +135,72 @@ class AppEventJournal {
         );
       }
     } catch (_) {}
+    _schedulePush();
+  }
+
+  // ── Push plumbing ───────────────────────────────────────────────────────
+  // Debounced: log() bursts (a turn start is five events at once) coalesce
+  // into ONE POST. The ack watermark advances only on HTTP 200 'ok' — the
+  // bridge dedupes by seq, so redelivery after a failed/wedged POST is
+  // safe by construction (at-least-once + idempotent consume). On failure
+  // we re-arm at a slow crawl: the pusher must never become a second
+  // conversation-critical job, and every fresh log() re-kicks it anyway.
+  void _schedulePush() {
+    if (transport == null || _flushInFlight) return;
+    _pushTimer?.cancel();
+    // Honour the failure backoff window: a bridge that is DOWN must not
+    // be re-kicked every few seconds just because the phone is busy —
+    // new events extend the retry, they don't reset it to fast.
+    final wait = _pushFailSince == null
+        ? const Duration(seconds: 3)
+        : DateTime.now().difference(_pushFailSince!) <
+                  const Duration(seconds: 60)
+        ? const Duration(seconds: 60) - DateTime.now().difference(_pushFailSince!)
+        : const Duration(seconds: 3);
+    _pushTimer = Timer(wait, () => unawaited(flushNow()));
+  }
+
+  /// Hand everything the push watermark does not cover yet to the
+  /// transport, in the SAME envelope shape GET /applog serves (the bridge
+  /// runs one ingest path for both, so transports can never drift).
+  /// Returns whether the bridge acknowledged it. Public so the app can
+  /// force a flush at moments a second matters (hide/resume bookends).
+  Future<bool> flushNow() async {
+    final t = transport;
+    if (t == null || _flushInFlight) return false;
+    if (_seq <= _pushedThrough) return true; // nothing outstanding
+    _flushInFlight = true;
+    var ok = false;
+    try {
+      final env = envelope(_pushedThrough, _flagsProvider())
+        ..['src'] = 'push';
+      final sentSeq = _seq; // EXACTLY what this envelope covers: events
+      // appended while the POST is in flight stay above the watermark
+      // (advancing to _seq would ack-what-was-never-sent when a log()
+      // lands mid-flight and its _schedulePush is flush-guard-skipped).
+      ok = await t(env);
+      if (ok) {
+        _pushedThrough = sentSeq; // the bridge dedupes by seq, so a lost
+        // 'ok' merely redelivers — at-least-once, idempotent, converging
+        _pushFailSince = null;
+      } else {
+        _pushFailSince ??= DateTime.now();
+      }
+    } finally {
+      _flushInFlight = false;
+      _pushTimer?.cancel();
+      _pushTimer = null;
+      if (_pushedThrough < _seq) {
+        // Success with a mid-flight tail: go again in one short beat.
+        // Failure: slow crawl until the bridge answers again — the
+        // journal is diagnostics, it must never become an outage.
+        _pushTimer = Timer(
+          Duration(seconds: ok ? 3 : 60),
+          () => unawaited(flushNow()),
+        );
+      }
+    }
+    return ok;
   }
 
   /// Entries with seq > [since], oldest first.
@@ -130,6 +215,12 @@ class AppEventJournal {
         'floor': _ring.isEmpty ? _seq : _ring.first.seq,
         'events': eventsAfter(since),
         'flags': flags,
+        // Self-observability: what the push watermark covers, and since
+        // when pushes have been failing — visible from the desktop too
+        // (the bridge caches the last pushed envelope /health shows it).
+        'pushedThrough': _pushedThrough,
+        if (_pushFailSince != null)
+          'pushFailingSince': _pushFailSince!.toIso8601String(),
       };
 
   /// Start the HTTP endpoint. Tries IPv6 dual-stack first (tailscale routes
@@ -200,6 +291,8 @@ class AppEventJournal {
   }
 
   Future<void> stop() async {
+    _pushTimer?.cancel();
+    _pushTimer = null;
     await _srv?.close(force: true);
     _srv = null;
   }

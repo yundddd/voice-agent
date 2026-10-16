@@ -31,6 +31,14 @@ enum InteractionMode {
 
 enum AssistantPhase { idle, listening, transcribing, speaking, error }
 
+/// The direction a push-to-talk hold is being SLID toward, tracked live
+/// while the finger is down (see [VoiceAssistant.pttMove]): the same
+/// thresholds [VoiceAssistant.pttUp] reads on release — `up` armed means
+/// releasing now interrupts the working turn, `right` armed means
+/// releasing now discards the recording — so the button can show exactly
+/// what letting go right now would do.
+enum PttSlide { none, up, right }
+
 /// One measured round trip of the latency bench (voice screen panel):
 /// push-to-talk in, transcript out, transcript echoed by the *current* TTS
 /// engine — bridge and LLM deliberately skipped so every number belongs to
@@ -1163,6 +1171,18 @@ class VoiceAssistant extends ChangeNotifier {
         'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
         'FAILED'} (${await _ifaceIps()})$carried',
       );
+      // PUSH transport: the journal rides an ordinary outbound POST /applog
+      // (batched, acked, backoffed — all handled inside the journal; this
+      // closure is just the wire). Push exists because phones are hard to
+      // dial: Android tailscale refuses inbound and carrier NAT has no
+      // route — while this exact outbound path already carries every
+      // turn. The pull server above stays up for dialable dev peers.
+      j.transport = (env) async {
+        final b = _bridge;
+        return b != null && await b.pushJournal(env);
+      };
+      unawaited(j.flushNow()); // a reloaded mirror may still hold events
+      // the dying process never managed to deliver
       _rebuildBridge();
       unawaited(_refreshSession()); // chat-screen top row knows the id
       // The saved voice must be fully on disk (pack present); otherwise
@@ -1588,6 +1608,11 @@ class VoiceAssistant extends ChangeNotifier {
         : _mode == InteractionMode.conversation
         ? 'Tap the mic to start a conversation. Pause about a second and I\'ll answer.'
         : 'Ready. Hold the button, speak, release to send.';
+    // Push the HIDE record NOW, bypassing the debounce: within seconds
+    // the OS may freeze this isolate, and the timer that would otherwise
+    // deliver it is exactly what dies first. Freeze windows are measured
+    // by push timestamps — the hide/resume pair IS the record.
+    unawaited(_events?.flushNow());
     notifyListeners();
   }
 
@@ -1607,6 +1632,9 @@ class VoiceAssistant extends ChangeNotifier {
       'RESUME: busy=$_bridgeBusy replay=${pending != null} '
       'spinner=${working != null} relisten=$restart',
     );
+    unawaited(_events?.flushNow()); // this half of the freeze-window
+    // bracket, out as soon as the (just-woken) network will have it; a
+    // failure re-arms inside the journal at the slow cadence
     if (_bridgeBusy) {
       // Still streaming as we return: no replay (its next says are audible
       // from here on, and the buffered ones stay visible in the log). Put
@@ -2200,11 +2228,67 @@ class VoiceAssistant extends ChangeNotifier {
     final start = _pttDownPos;
     _pttDownPos = null;
     if (upAt == null || start == null) return (false, false);
-    final d = upAt - start;
-    return (
-      d.dy < -_pttSlideUpPx && d.dy.abs() > d.dx.abs(),
-      d.dx > _pttSlideRightPx && d.dx.abs() > d.dy.abs(),
+    final slide = _pttSlideOf(upAt - start);
+    return (slide == PttSlide.up, slide == PttSlide.right);
+  }
+
+  /// The release classification as a pure function of the drag, shared
+  /// by the release above and the live hold visualisation below — the
+  /// armed state on screen can never disagree with what releasing now
+  /// will do, because both read this one predicate.
+  static PttSlide _pttSlideOf(Offset d) {
+    // (the two are exclusive by construction: a delta cannot be both
+    // vertical-dominant and horizontal-dominant)
+    if (d.dy < -_pttSlideUpPx && d.dy.abs() > d.dx.abs()) return PttSlide.up;
+    if (d.dx > _pttSlideRightPx && d.dx.abs() > d.dy.abs()) {
+      return PttSlide.right;
+    }
+    return PttSlide.none;
+  }
+
+  // ── Live hold visualisation ── [pttMove] rides every pointer drift
+  // while a hold is down, so main.dart's _PttHoldGuide can lean the
+  // button toward the finger and light the slide it is armed on.
+
+  PttSlide _pttSlide = PttSlide.none;
+  Offset _pttDrag = Offset.zero; // quantised live delta (the lean)
+  PttSlide get pttSlide => _pttSlide;
+  Offset get pttDrag => _pttDrag;
+
+  /// A push-to-talk hold is down right now (conversation mode never
+  /// reaches this: its taps don't open these edges).
+  bool get pttHoldActive =>
+      _mode == InteractionMode.pushToTalk && _pttPointers > 0;
+
+  /// Past this many px of drag, more travel adds no more visible lean —
+  /// a far flick and a just-past-the-threshold drag look identical, and
+  /// the button never dodges out from under the thumb.
+  static const double _pttLeanMaxPx = 72;
+
+  void pttMove(Offset at) {
+    final start = _pttDownPos;
+    if (start == null || _pttPointers == 0) return;
+    final d = at - start;
+    final slide = _pttSlideOf(d);
+    // Quantise the lean to 4-px steps and notify only on change: a
+    // 120-Hz finger stream must not rebuild the screen at 120 Hz.
+    final q = Offset(
+      (d.dx.clamp(-_pttLeanMaxPx, _pttLeanMaxPx) / 4).roundToDouble() * 4,
+      (d.dy.clamp(-_pttLeanMaxPx, _pttLeanMaxPx) / 4).roundToDouble() * 4,
     );
+    if (q == _pttDrag && slide == _pttSlide) return;
+    _pttDrag = q;
+    _pttSlide = slide;
+    notifyListeners();
+  }
+
+  void _pttReleaseVisual() {
+    // A released hold shows no armed direction and no lean — and says
+    // so immediately, not once the transcribe path next notifies.
+    if (_pttSlide == PttSlide.none && _pttDrag == Offset.zero) return;
+    _pttSlide = PttSlide.none;
+    _pttDrag = Offset.zero;
+    notifyListeners();
   }
 
   void pttDown([Offset? at]) {
@@ -2216,6 +2300,8 @@ class VoiceAssistant extends ChangeNotifier {
     if (_mode != InteractionMode.pushToTalk || _worker == null) return;
     _pttDownPos = at;
     _pttDownAt = DateTime.now();
+    _pttSlide = PttSlide.none; // a fresh hold starts slid nowhere
+    _pttDrag = Offset.zero;
     if (_phase == AssistantPhase.transcribing ||
         _phase == AssistantPhase.speaking ||
         _bridgeBusy) {
@@ -2259,12 +2345,14 @@ class VoiceAssistant extends ChangeNotifier {
     debugPrint('PTT-UP ptr=$_pttPointers slideup=$slideUp dismiss=$slideRight');
     if (_pttPointers == 0) {
       _pttDownPos = null; // keep the stale-drag reading harmless
+      _pttReleaseVisual();
       return;
     }
     _pttPointers--;
     if (_pttPointers > 0) return; // still holding with another finger
     _pttMaxTimer?.cancel();
     _pttMaxTimer = null;
+    _pttReleaseVisual(); // the guide snaps back the moment the hold ends
     _warmUpRoute(); // connect the output route while we transcribe (see below)
     if (slideRight) {
       unawaited(_stopAndRespond(discard: true));
@@ -2282,6 +2370,7 @@ class VoiceAssistant extends ChangeNotifier {
     _pttMaxTimer = null;
     _warmUpRoute();
     _pttDownPos = null;
+    _pttReleaseVisual();
     unawaited(_stopAndRespond());
   }
 
