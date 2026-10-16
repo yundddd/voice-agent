@@ -1023,8 +1023,14 @@ class VoiceAssistant extends ChangeNotifier {
             // (latestWork stays empty so the 15 s pulse has nothing to
             // re-speak). Web fetches and their searches are the ones
             // nobody asked to hear phonemes for.
-            final stepIsSilent = ev.toolName == 'WebFetch' ||
-                ev.toolName == 'WebSearch';
+            final stepIsSilent =
+                ev.toolName == 'WebFetch' ||
+                ev.toolName == 'WebSearch' ||
+                // +73: and Bash too. The spoken line was the generic
+                // 'Running a command…' — progress theater with no
+                // information in it, injected into the conversation
+                // the command's own output already narrates better.
+                ev.toolName == 'Bash';
             // What the VOICE gets is not always the label on screen:
             // a raw shell line is the one thing nobody wants spoken
             // ('Bash git diff dash stat pipe head minus twenty'), so a
