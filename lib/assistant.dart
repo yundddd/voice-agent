@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import 'app_events.dart';
 import 'audio_io.dart';
 import 'bridge.dart';
 import 'chat_log.dart';
@@ -199,7 +200,16 @@ class VoiceAssistant extends ChangeNotifier {
   final List<String> _debugLog = [];
   List<String> get debugLog => _debugLog;
   bool _micRecoverPending = false;
-  void _logDebug(String what) {
+  // ── Phone-side journal (lib/app_events.dart) ── the same notes mirrored
+  // to disk AND served over HTTP for the bridge to poll: the desktop half
+  // of "background → foreground and nothing happened" triage needs the
+  // phone's OWN account of hide/resume/stream-death timing, in the same
+  // journalctl the bridge's relays land in. Started in init(); null until
+  // the models dir (its home) exists, and survivably null after if the
+  // bind failed — the app never needs its own journal to function.
+  AppEventJournal? _events;
+  int _eventsPort = 0; // what /health & friends announce; 0 = not served
+  void _logDebug(String what, {bool toJournal = true}) {
     final t = DateTime.now();
     final hh = t.hour.toString().padLeft(2, '0');
     final mm = t.minute.toString().padLeft(2, '0');
@@ -208,7 +218,54 @@ class VoiceAssistant extends ChangeNotifier {
     while (_debugLog.length > 80) {
       _debugLog.removeAt(0);
     }
+    if (toJournal) unawaited(_events?.log(what));
     notifyListeners();
+  }
+
+  /// main.dart routes every OS lifecycle callback here BEFORE the folding
+  /// (hidden+paused+detached all collapse onto pauseConversation) — the
+  /// raw sequence is exactly what stream-reattach triage needs: e.g. the
+  /// SECOND hidden that fires on the way back up, and which event wins
+  /// the race against a dead socket's error delivery. The flag snapshot
+  /// on each line says what the app BELIEVED at that instant.
+  void logLifecycle(String state) => _logDebug(
+    'lifecycle $state: busy=$_bridgeBusy hidden=$_backgrounded '
+    'detached=$_harnessBackgrounded phase=${_phase.name} '
+    'gen=$_generation seq=$_bridgeTurnSeq',
+  );
+
+  /// Live state shipped in every journal response: reading the events is
+  /// one thing, knowing what the app currently believes is the other.
+  Map<String, Object> _journalFlags() => {
+    'phase': _phase.name,
+    'mode': _mode.name,
+    'bridgeBusy': _bridgeBusy,
+    'hidden': _backgrounded,
+    'harnessDetached': _harnessBackgrounded,
+    'gen': _generation,
+    'turnSeq': _bridgeTurnSeq,
+    'wireQuietMs': DateTime.now().difference(_wireAliveAt).inMilliseconds,
+    'reattachStep': _reattachStep,
+    'micOpen': _recSub != null,
+    'playerPlaying': _playerPlaying,
+    'replyQueued': _replyQueue.length,
+    'bench': _benchBusy || _benchCapturing,
+    'workerReady': _worker != null,
+  };
+
+  /// What the phone looks like from the network — logged once at startup
+  /// so triage can match the bridge's learned peer address to an
+  /// interface (tailscale 100.x vs LAN) without guesswork.
+  static Future<String> _ifaceIps() async {
+    try {
+      final ifs = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      return [
+        for (final i in ifs)
+          for (final a in i.addresses) '${a.address}/${i.name}',
+      ].join(' ');
+    } on Object {
+      return 'ips?';
+    }
   }
 
   // ── Streamed reply playback: chunks synthesise while earlier ones play ──
@@ -502,6 +559,9 @@ class VoiceAssistant extends ChangeNotifier {
     _bridge = _bridgePrefs.configured
         ? BridgeClient(_bridgePrefs.url, _bridgePrefs.token)
         : null;
+    // Every request the app makes then announces where the bridge may
+    // poll the phone's side of the story (see app_events.dart).
+    _bridge?.journalPort = () => _eventsPort;
   }
 
   /// Probes /health for the settings screen: null = alive and healthy.
@@ -730,6 +790,12 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgeSub = sub; // held locally as well: cleanup must not touch a
     // successor turn's subscription or wake hook (identical() guards below)
     _armWireWatch(); // this connection is watched for quiet from here on
+    _logDebug(
+      events == null
+          ? 'TALK open: gen=$gen interrupt=${interrupt ? 1 : 0} '
+                '"${utterance.length > 40 ? '${utterance.substring(0, 40)}…' : utterance}"'
+          : 'CONTROL stream open (no /talk): $utterance',
+    );
     // The long-silent-step heartbeat: while this turn still owns the
     // busy slot, every 15 s take the pulse — narrationQuiet() hushes it
     // around any real audio, and a same-line repeat under 45 s old keeps
@@ -774,8 +840,15 @@ class VoiceAssistant extends ChangeNotifier {
           _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
           _mergeContext(ev.inputTokens, ev.contextWindow);
         } else if (ev.kind == 'tool') {
-          _logDebug('bridge tool ${ev.toolName} ${ev.detail}');
-          if (ev.toolName == 'tokens') {
+          final tally = ev.toolName == 'tokens';
+          _logDebug(
+            'bridge tool ${ev.toolName} ${ev.detail}',
+            // Token tallies ride every ~0.8 s: fine for the on-screen ring,
+            // but in the journal they would flush the 240-entry story of
+            // the turn we're actually trying to troubleshoot.
+            toJournal: !tally,
+          );
+          if (tally) {
             // Live token tally from the bridge ("thinking · 1.2k out ·
             // 21k in"): the progress line for turns that think for a
             // minute. The spinning wheel already says the harness is
@@ -902,6 +975,22 @@ class VoiceAssistant extends ChangeNotifier {
         _phase = AssistantPhase.idle;
       }
       notifyListeners();
+      _logDebug(
+        'TALK end gen=$gen: ${streamError != null
+              ? 'SOCKET DIED ($streamError)'
+              : sawErrorFrame
+              ? 'bridge error frame'
+              : sawDone
+              ? 'done clean'
+              : 'CLOSED WITHOUT DONE'}'
+        '${wireOrphan
+              ? ' — UNOWNED, reattach chain armed'
+              : gen != _generation
+              ? ' — superseded'
+              : sawDone
+              ? ''
+              : ' — detached on purpose'}',
+      );
       if (wireOrphan) {
         // Our view died mid-turn (the classic background→foreground
         // casualty: the hide killed the socket, the death event merely
@@ -938,6 +1027,11 @@ class VoiceAssistant extends ChangeNotifier {
     // view right off the queued /talk stream the next prompt rides. (The
     // zombie-hop watchdog re-kicks its own chain after calling us.)
     _cancelReattachChain();
+    _logDebug(
+      'bridge view detached on purpose (hardStop=$hardStop): reattach '
+      'chain silenced, sub cancelled, loop parked — turn keeps working '
+      'unheard${hardStop ? ', /stop interrupt sent too' : ''}',
+    );
     if (hardStop) unawaited(_bridge?.stop());
     _bridgeBusy = false;
     _harnessSince = null;
@@ -965,6 +1059,7 @@ class VoiceAssistant extends ChangeNotifier {
       // it too (the interrupt lands whether attached or backgrounded).
       unawaited(_bridge?.stop());
       _harnessBackgrounded = false;
+      _logDebug('user STOP: /stop sent to the DETACHED turn (badge cleared)');
       _status = 'Stopped the harness — the detached turn was cut short.';
       notifyListeners();
     }
@@ -1043,6 +1138,26 @@ class VoiceAssistant extends ChangeNotifier {
       _prefs = await loadTtsPrefs(modelsDir);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
       _loadChat(); // restore the on-screen conversation (file read is tiny)
+      // The journal comes up BEFORE anything else can go wrong, and it
+      // loads its disk mirror first: when Android killed this process
+      // mid-turn last time, the events leading up to the kill — and the
+      // reattach that (didn't) happen after — are exactly what a poll
+      // from the desktop should find waiting.
+      final j = AppEventJournal(dir: modelsDir);
+      await j.load();
+      _events = j;
+      _eventsPort = await j.serve(
+        preferredPort: kAppLogDefaultPort,
+        tokenProvider: () => _bridgePrefs.token,
+        flagsProvider: _journalFlags,
+      );
+      final carried = j.seq > 0
+          ? ' — carried over $j.seq events across the process gap'
+          : '';
+      await j.log(
+        'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
+        'FAILED'} (${await _ifaceIps()})$carried',
+      );
       _rebuildBridge();
       unawaited(_refreshSession()); // chat-screen top row knows the id
       // The saved voice must be fully on disk (pack present); otherwise
@@ -1428,6 +1543,9 @@ class VoiceAssistant extends ChangeNotifier {
       // back" notice as the working line (_pausedWorking), and the resume
       // would restore it — the spinner quoting the hide notice while we
       // ARE back, the turn looking like it stopped doing anything.
+      _logDebug(
+        'pause IGNORED (already hidden — the double event on the way up)',
+      );
       return;
     }
     var live =
@@ -1442,6 +1560,11 @@ class VoiceAssistant extends ChangeNotifier {
     // the resume buffer with the last block heard so far — if the hide cut
     // its audio mid-playback, the replay restarts that block cleanly.
     final bridgeLive = _bridgeBusy;
+    _logDebug(
+      'HIDE: busy=$bridgeLive micLive=$live phase=${_phase.name} '
+      'queue=${_replyQueue.length} — '
+      '${bridgeLive ? 'stream STAYS attached' : 'audio/mic down'}',
+    );
     if (bridgeLive && _lastReplyText != null) _resumeReplyText = _lastReplyText;
     // Snapshot the spinner's working line before the status below overwrites
     // it with the "when you're back" notice: [resumeConversation] puts it
@@ -1475,6 +1598,10 @@ class VoiceAssistant extends ChangeNotifier {
     _pausedWorking = null;
     final restart = _conversationWasLive;
     _conversationWasLive = false;
+    _logDebug(
+      'RESUME: busy=$_bridgeBusy replay=${pending != null} '
+      'spinner=${working != null} relisten=$restart',
+    );
     if (_bridgeBusy) {
       // Still streaming as we return: no replay (its next says are audible
       // from here on, and the buffered ones stay visible in the log). Put
@@ -1505,6 +1632,8 @@ class VoiceAssistant extends ChangeNotifier {
       // backlog covers whatever the zombie lost. A background/foreground
       // blink therefore never strands a running turn on a dead socket.
       _markWireAlive();
+      _logDebug('resume: view believed ALIVE — wire watchdog re-leased (24 s '
+          'of silence will expose a zombie and hop to a fresh /attach)');
       notifyListeners();
       if (restart) unawaited(_beginConversation());
       return;
@@ -1517,6 +1646,7 @@ class VoiceAssistant extends ChangeNotifier {
     // half-heard pre-hide block is already in the log).
     final Map<String, Object>? probe =
         _bridge == null ? null : await _bridge!.healthInfo();
+    _logDebug('resume probe: ${_healthNote(probe)}');
     if (await reattachBackgroundTurn(health: probe)) return;
     if (bridgeReattachNeeded(probe) != false) {
       // Unreachable (null): cannot tell "no turn" from "network still
@@ -1584,6 +1714,8 @@ class VoiceAssistant extends ChangeNotifier {
     _abandonBridgeTurn(); // give up on the zombie view (parked loop retires
     // exactly as any abandoned turn's does — see its docs)
     _startReattachChain(retire: true);
+    _logDebug('zombie hop: /attach will STEAL the bridge view back; spinner '
+        'retires if the probe says nothing is open any more');
   }
 
   /// Silence the retry chain: the user's new prompt is claiming the bridge
@@ -1624,12 +1756,30 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_reattachPump());
   }
 
+  /// One-line account of a /health snapshot (or its absence) for the
+  /// journal: the exact fields the reattach decision turns on, so a
+  /// desktop triage read shows WHY the app chose attach/idle/retry.
+  String _healthNote(Map<String, Object>? h) => h == null
+      ? 'UNREACHABLE'
+      : 'turnOpen=${h['turnOpen'] == true} '
+            'backgrounded=${h['backgrounded'] == true} '
+            'missed=${h['missed'] ?? 0} queued=${h['queued'] == true}';
+
   Future<void> _reattachPump() async {
     final bridge = _bridge;
     if (bridge == null || _worker == null || _bridgeBusy) return;
     final probe = await bridge.healthInfo();
     if (_bridgeBusy) return; // a resume or a chip attached while we probed
     final need = bridgeReattachNeeded(probe);
+    final verdict = need == null
+        ? 'UNREACHABLE (network may still be waking), will retry'
+        : need
+        ? 'ATTACH'
+        : 'nothing open, nothing unheard: go idle';
+    _logDebug(
+      'reattach probe ${_reattachStep + 1}/${_reattachDelays.length + 1}: '
+      '${_healthNote(probe)} → $verdict',
+    );
     if (need == false) {
       _retireOrphanTurn(); // definite verdict: nothing left to hear
       return;
@@ -1666,6 +1816,7 @@ class VoiceAssistant extends ChangeNotifier {
     // we stopped listening on its only channel) — the badge must not lie
     _idleReady();
     _status = 'Lost the bridge mid-turn — its answer ended unheard.';
+    _logDebug('ORPHAN retired: spinner cleared, answer gone unheard');
     notifyListeners();
   }
 
@@ -1700,6 +1851,7 @@ class VoiceAssistant extends ChangeNotifier {
     // the chain keeps probing (a waking phone wakes its network late).
     final probe = health ?? await bridge.healthInfo();
     if (bridgeReattachNeeded(probe) != true) return false;
+    _logDebug('REATTACH start: ${_healthNote(probe)} — replaying backlog');
     final gen = ++_generation;
     final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
     _bridgeBusy = true;
@@ -1781,6 +1933,7 @@ class VoiceAssistant extends ChangeNotifier {
       );
       _bridgeSub = sub; // abandon hooks work on this exactly like a /talk
       _armWireWatch(); // the quiet-wire watchdog rides this connection
+      _logDebug('ATTACH stream open: gen=$gen backlog replay, then live');
       try {
         while (true) {
           if (gen != _generation) break; // interrupted: drop the rest
@@ -1801,8 +1954,12 @@ class VoiceAssistant extends ChangeNotifier {
             _logDebug('bridge context ${ev.inputTokens}/${ev.contextWindow}');
             _mergeContext(ev.inputTokens, ev.contextWindow);
           } else if (ev.kind == 'tool') {
-            _logDebug('bridge tool ${ev.toolName} ${ev.detail}');
-            if (ev.toolName == 'tokens') {
+            final tally = ev.toolName == 'tokens';
+            _logDebug(
+              'bridge tool ${ev.toolName} ${ev.detail}',
+              toJournal: !tally, // token tallies: ring yes, journal no
+            );
+            if (tally) {
               _onTokensFrame(ev);
             } else {
               _tokLive = false;
@@ -1867,6 +2024,20 @@ class VoiceAssistant extends ChangeNotifier {
           _idleReady();
         }
         notifyListeners();
+        _logDebug(
+          'ATTACH end gen=$gen: ${streamError != null
+                ? 'SOCKET DIED ($streamError)'
+                : sawErrorFrame
+                ? 'bridge error frame'
+                : sawDone
+                ? 'done clean'
+                : 'CLOSED WITHOUT DONE'}'
+          '${wireOrphan
+                ? ' — UNOWNED, chain continues (paced)'
+                : gen != _generation
+                ? ' — superseded'
+                : ''}',
+        );
         if (wireOrphan) {
           _reattachGen = gen;
           _reattachSeq = mySeq;
@@ -2055,6 +2226,10 @@ class VoiceAssistant extends ChangeNotifier {
       _pttBridgeHold = _bridgeBusy;
       if (_pttBridgeHold) _harnessBackgrounded = true;
       _generation++;
+      if (_pttBridgeHold) {
+        _logDebug('ptt DOWN over a live turn: detached it — the open tool '
+            'keeps working (badge lit), release gesture routes the prompt');
+      }
       _stopDebugPlayback();
       _stopPlayback();
       _abandonBridgeTurn();
@@ -2954,6 +3129,10 @@ class VoiceAssistant extends ChangeNotifier {
     _disposed = true;
     _wireCheck?.cancel();
     _reattachTimer?.cancel();
+    unawaited(() async {
+      await _events?.log('app dispose (UI went away)');
+      await _events?.stop();
+    }());
     _shutdownAudio();
     _player.dispose();
     _recorder.dispose();

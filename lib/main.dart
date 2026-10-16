@@ -108,6 +108,10 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Raw OS state into the journal BEFORE the folding below: the exact
+    // order of these callbacks (hidden+paused on the way down, hidden
+    // again on the way up) is half of what a resume bug triage is about.
+    _assistant.logLifecycle(state.name);
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:

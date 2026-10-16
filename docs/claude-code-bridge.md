@@ -69,12 +69,17 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   headless `-p` mode it kills the whole process, and the next `/talk`
   then respawns with `--resume`, whose rebuilt request prefix misses the
   prompt cache and pays a full cold prefill; verified both ways).
-- `POST /new` — forget the conversation (also clears a background turn
-  and a queued prompt); `GET /health` — liveness + `turnOpen` /
-  `backgrounded` / `queued` flags + `context` (last known EXACT
-  tokens-in-context and the model's window, snapshotted at every
-  result; zeroed by `/new`, previews never enter the snapshot). Mid-
-  turn the same numbers reach the phone on `context` SSE frames —
+- `POST /new` — forget the conversation (also clears a background turn,
+  a queued prompt, AND the replay backlog — a later attach must not
+  resurrect a discarded conversation's tail); `GET /health` — liveness +
+  `turnOpen` / `backgrounded` / `queued` flags + `context` (last known
+  EXACT tokens-in-context and the model's window, snapshotted at every
+  result; zeroed by `/new`, previews never enter the snapshot) + `appLog`
+  (the phone-journal poller: peer address, watermark, reachability).
+  `GET /applogs?since=N` — proxy live to the phone app's OWN event
+  journal (see app-side item 9): the phone's account of a misbehaving
+  turn, curl-able from the desktop. Mid-turn the same numbers reach the
+  phone on `context` SSE frames —
   exact at every message_start and at the result, PREVIEWED (a
   `preview: true` frame) at turn start from the last exact figure plus
   the utterance's size, and again on every fresh tool_result: the
@@ -221,6 +226,39 @@ the Bridge screen. Notes that matter when touching this code:
    socket, rejoins via the death-event reattach in ~2 s, or hops through
    the watchdog within one quiet window — the reply is replayed from the
    backlog and heard live either way.
+
+9. App-side journal + bridge polling (0.1.0+29): the app now records its
+   OWN lifecycle story — every raw OS lifecycle callback (before the
+   hidden/paused folding, because the ordering is the bug), hide/resume
+   decisions with the flag snapshot the app believed, stream opens,
+   exactly HOW each stream died (`done clean` / `SOCKET DIED` / `CLOSED
+   WITHOUT DONE — UNOWNED`), every reattach probe verdict with the
+   turnOpen/backgrounded/missed fields behind it, watchdog zombie hops,
+   intentional detaches, ptt takeover, /stop — into `app_events.jsonl`
+   (a seq-numbered ring, so an Android process kill cannot erase the
+   evidence; the cold-start reattach then literally reads the story of
+   its own death). `lib/app_events.dart` serves it to the LAN/tailnet:
+   `GET http://<phone>:8733/applog?token=<same bridge token>&since=seq`
+   (walks the port upward if occupied; the chosen port is announced to
+   the bridge as `?logport=` on every app request, and the peer address
+   is simply the request's source — the same route the turn rides, so
+   the return leg traverses no NAT puzzle). The bridge (`--applog-interval`,
+   default 5000 ms, 0 = off) polls that endpoint and relays new entries
+   to its stderr tagged `[app HH:MM:SS.mmm]` — one `journalctl
+   -u claude-voice-bridge` now interleaves BOTH machines' views of one
+   misbehaving turn, each stamped by its own clock. Poll failure is
+   itself telemetry: three consecutive misses (the app frozen by the OS
+   cached-process freezer, or killed) log `not answering — app frozen
+   or killed?` exactly once, and the recovery line + the burst of
+   phone-clock timestamps when the journal refills bracket the freeze
+   window from the inside — which is precisely the datum the
+   reattach-race triage was missing. `GET /applogs?since=0` on the
+   bridge proxies a live full pull for curl, `/health` gained an
+   `appLog` block (peer, watermark, reachability — also visible on the
+   app's Bridge screen, which renders /health raw), and token-tally
+   frames are deliberately kept OUT of the journal (they ride every
+   0.8 s and would flush the 240-entry story of the turn being
+   troubleshot out of the ring).
 
 Latency: local proxy turn ≈ 1–6 s for chat-ish answers (the bridge
 speaks the *first sentence* as soon as the first assistant message

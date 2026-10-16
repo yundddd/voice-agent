@@ -149,11 +149,26 @@ class BridgeClient {
   final String baseUrl; // e.g. http://192.168.1.20:8732
   final String token;
 
-  Uri _u(String path, [Map<String, String>? extra]) => Uri.parse(
-    baseUrl.endsWith('/')
-        ? '${baseUrl.substring(0, baseUrl.length - 1)}$path'
-        : '$baseUrl$path',
-  ).replace(queryParameters: {'token': token, ...?extra});
+  /// The port this app serves its event journal on (lib/app_events.dart).
+  /// Ridden on EVERY request as `?logport=` so the bridge always knows
+  /// where to poll the phone's side of the story from — the peer address
+  /// is simply the connection source the turn already used. Null until
+  /// the app wires it in (or for host tests): the parameter is simply
+  /// absent then, and the bridge leaves polling off.
+  int Function()? journalPort;
+
+  Uri _u(String path, [Map<String, String>? extra]) {
+    final jp = journalPort == null ? null : journalPort!();
+    return Uri.parse(
+      baseUrl.endsWith('/')
+          ? '${baseUrl.substring(0, baseUrl.length - 1)}$path'
+          : '$baseUrl$path',
+    ).replace(queryParameters: {
+      'token': token,
+      if (jp != null && jp > 0) 'logport': '$jp',
+      ...?extra,
+    });
+  }
 
   /// Sends an utterance; the stream yields say/tool events as the harness
   /// works and a final done (or error) event, then closes. The HTTP

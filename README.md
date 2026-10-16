@@ -343,6 +343,20 @@ flavour: same detach plus a `/stop` so the harness quits working too.
 Smoke-tested end-to-end against a stubbed `claude` child: detach-mid-tool
 queues and answers after the tool; detach-mid-thinking interrupts and
 answers inside ~1.5 s.
+**Both sides of a turn are now on the record** (0.1.0+29): the app keeps a
+seq-numbered *event journal* of its lifecycle story — raw hide/resume
+callbacks with the flag snapshot each saw, every stream open and exactly
+how it died, reattach probe verdicts, watchdog zombie hops, detaches —
+mirrored to disk (`app_events.jsonl`: an Android kill can't erase the
+evidence of its own death) and served over HTTP on the tailnet. The
+bridge learns where to dial from the app's own requests and polls the
+journal every 5 s, relaying new lines into its stderr: one `journalctl
+-u claude-voice-bridge` interleaves the phone's and the desktop's views
+of the same misbehaving turn; a frozen or killed phone shows up as
+"not answering" and its recovery timestamps bracket the freeze window.
+`curl 'http://<bridge>:8732/applogs?token=…&since=0'` pulls the whole
+phone journal live; the Bridge screen shows the poller's peer and
+reachability via `/health`.
 Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run
