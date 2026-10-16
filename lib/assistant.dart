@@ -67,27 +67,6 @@ class BenchRun {
   });
 }
 
-/// Emoji stamp for a tool-call line in the conversation (silent lines, no
-/// voice): the glyph reads the kind of work at a glance, before the name.
-const Map<String, String> _toolGlyphs = {
-  'read': '📖',
-  'bash': '📓',
-  'write': '✏️',
-  'edit': '✏️',
-  'multiedit': '✏️',
-  'notebookedit': '🗒️',
-  'grep': '🔍',
-  'glob': '🔍',
-  'webfetch': '🌐',
-  'websearch': '🌐',
-  'task': '🤖',
-  'todowrite': '📋',
-  'skill': '🪄',
-};
-
-String _toolGlyph(String toolName) =>
-    _toolGlyphs[toolName.toLowerCase()] ?? '🔧';
-
 /// Orchestrates the voice round trip:
 ///   mic -> VAD endpointing -> Whisper (ASR) -> text -> Piper VITS (TTS) -> speaker
 /// in two interaction modes (see [InteractionMode]).
@@ -931,18 +910,10 @@ class VoiceAssistant extends ChangeNotifier {
             latestWork = ev.toolName == 'Bash'
                 ? 'Running a command…'
                 : stepLine;
-            // The step itself lands in the conversation as a silent line:
-            // one block of the live bubble (each gets its own line, divider
-            // between), never spoken — the narrate switch owns the audio
-            // side of tool progress. 'queued' is our own utterance parking
-            // behind a running tool, not a tool call, so it stays out.
-            if (ev.toolName != 'queued') {
-              final label = ev.detail.isEmpty
-                  ? ev.toolName
-                  : '${ev.toolName} ${ev.detail}';
-              turn.blocks.add('${_toolGlyph(ev.toolName)} $label');
-              _touchChat();
-            }
+            // No step line in the conversation any more: the spinner's
+            // working line (and the narration switch, for those who want
+            // steps spoken) carry tool progress; the journal keeps every
+            // step with its wire stamp. The chat log is for words.
             notifyListeners();
             if (narrationQuiet() && latestWork != lastNarrated) {
               unawaited(narrateProgress(latestWork));
@@ -2220,11 +2191,9 @@ class VoiceAssistant extends ChangeNotifier {
               _tokLive = false;
               _status = '${ev.toolName}'
                   '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
-              final label = ev.detail.isEmpty
-                  ? ev.toolName
-                  : '${ev.toolName} ${ev.detail}';
-              turn.blocks.add('${_toolGlyph(ev.toolName)} $label');
-              _touchChat();
+              // No step line in the bubble here either — same policy as
+              // the /talk loop: the strip labels the step, the journal
+              // remembers it, the chat log is for words.
               notifyListeners();
             }
           } else if (ev.isDone) {
