@@ -107,6 +107,7 @@ class VoiceAssistant extends ChangeNotifier {
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
+  bool _ttsFirstTimed = false; // first-word latency already stamped
   double _playSeconds = 0;
   // Pipeline-hop moments for the latency strip's flow diagram: each
   // records WHEN its stage last fired — asr: a transcript landed; sent:
@@ -391,6 +392,11 @@ class VoiceAssistant extends ChangeNotifier {
       _phase == AssistantPhase.speaking;
   double get recordSeconds => _recordSeconds;
   double get asrSeconds => _asrSeconds;
+
+  /// First-word latency: seconds from the first reply block arriving to
+  /// its first audio chunk — the dead air the user actually hears before
+  /// the voice starts. (Was a cumulative synth-time sum; that number
+  /// measured the machine, this one measures the wait.)
   double get ttsSeconds => _ttsSeconds;
   double get playSeconds => _playSeconds;
 
@@ -703,8 +709,9 @@ class VoiceAssistant extends ChangeNotifier {
     _warmUpRoute(); // hold the output route while the harness thinks
     _replyQueue.clear();
     _replyStreamDone = false;
-    _ttsSeconds = 0; // the strip tallies per turn: reset, then every
-    _playSeconds = 0; // speak() block below adds its synth/play time
+    _ttsSeconds = 0; // the strip tallies per turn: reset, then the
+    _ttsFirstTimed = false; // first spoken block stamps the tts number
+    _playSeconds = 0; // once (first-word latency) and play time accrues
     unawaited(_playReplyChunks(gen));
     final spoken = StringBuffer();
     // ── Progress narration ── 'working towards the goal' means AUDIO
@@ -765,7 +772,13 @@ class VoiceAssistant extends ChangeNotifier {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
-            // of a spoken block is on its way to the ear.
+            // of a spoken block is on its way to the ear. The block's
+            // own stopwatch began the moment the text arrived, so this
+            // elapsed IS the wait the user hears as dead air.
+            if (!_ttsFirstTimed) {
+              _ttsFirstTimed = true;
+              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+            }
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -782,7 +795,9 @@ class VoiceAssistant extends ChangeNotifier {
       );
       if (gen != _generation) return;
       swTts.stop();
-      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      // No cumulative synth sum anymore: the strip's tts number is the
+      // FIRST-WORD latency — received-to-ear — stamped on the first
+      // chunk below, where the pause the user actually feels lives.
       _playSeconds += audio.length / rate;
       _noteTts(audio, rate); // last message's raw audio: debug replay
     }
@@ -2163,7 +2178,13 @@ class VoiceAssistant extends ChangeNotifier {
             blockOnAir = true;
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
-            // of a spoken block is on its way to the ear.
+            // of a spoken block is on its way to the ear. The block's
+            // own stopwatch began the moment the text arrived, so this
+            // elapsed IS the wait the user hears as dead air.
+            if (!_ttsFirstTimed) {
+              _ttsFirstTimed = true;
+              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+            }
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -2180,7 +2201,9 @@ class VoiceAssistant extends ChangeNotifier {
       );
       if (gen != _generation) return;
       swTts.stop();
-      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      // No cumulative synth sum anymore: the strip's tts number is the
+      // FIRST-WORD latency — received-to-ear — stamped on the first
+      // chunk below, where the pause the user actually feels lives.
       _playSeconds += audio.length / rate;
       _noteTts(audio, rate); // last message's raw audio: debug replay
     }
@@ -2405,7 +2428,13 @@ class VoiceAssistant extends ChangeNotifier {
             onAir = true;
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
-            // of a spoken block is on its way to the ear.
+            // of a spoken block is on its way to the ear. The block's
+            // own stopwatch began the moment the text arrived, so this
+            // elapsed IS the wait the user hears as dead air.
+            if (!_ttsFirstTimed) {
+              _ttsFirstTimed = true;
+              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+            }
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -2422,7 +2451,9 @@ class VoiceAssistant extends ChangeNotifier {
       );
       if (gen != _generation) return; // superseded mid-replay: chunks dropped
       swTts.stop();
-      _ttsSeconds += swTts.elapsedMilliseconds / 1000.0;
+      // No cumulative synth sum anymore: the strip's tts number is the
+      // FIRST-WORD latency — received-to-ear — stamped on the first
+      // chunk below, where the pause the user actually feels lives.
       _playSeconds += audio.length / rate;
       _lastSpoken = text; // echo guard: this voice coming back is ours
       _noteTts(audio, rate);
@@ -2457,6 +2488,12 @@ class VoiceAssistant extends ChangeNotifier {
     _replyStreamDone = false;
     var sawFirstChunk = false;
     unawaited(_playReplyChunks(gen));
+    // The buffered reply's text is old (it arrived before the app went
+    // away), so received-to-ear isn't meaningful here; this stopwatch
+    // starts at synth time and measures the wait the user feels NOW.
+    _ttsSeconds = 0;
+    _ttsFirstTimed = false;
+    final swTts = Stopwatch()..start();
     try {
       final (audio, rate) = await worker.synthesizeStream(
         text,
@@ -2466,7 +2503,13 @@ class VoiceAssistant extends ChangeNotifier {
             sawFirstChunk = true;
             _phase = AssistantPhase.speaking;
             _hopTts(); // reply→audio hop crossed: the first chunk
-            // of a spoken block is on its way to the ear.
+            // of a spoken block is on its way to the ear. The block's
+            // own stopwatch began the moment the text arrived, so this
+            // elapsed IS the wait the user hears as dead air.
+            if (!_ttsFirstTimed) {
+              _ttsFirstTimed = true;
+              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+            }
             // No echo of the words being spoken here: the conversation
             // bubble already shows them — this strip only has to say
             // what state we're in and that a tap interrupts.
@@ -3211,6 +3254,10 @@ class VoiceAssistant extends ChangeNotifier {
                   sawFirstChunk = true;
                   _phase = AssistantPhase.speaking;
                   _hopTts(); // first audio of the reply (see strip)
+                  if (!_ttsFirstTimed) {
+                    _ttsFirstTimed = true;
+                    _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+                  }
                   _status = 'Speaking — jump in any time.';
                   notifyListeners();
                 }
@@ -3223,7 +3270,9 @@ class VoiceAssistant extends ChangeNotifier {
               swTts.stop();
               _noteTts(result.$1, result.$2); // full audio: debug replay
               if (gen != _generation) return;
-              _ttsSeconds = swTts.elapsedMilliseconds / 1000.0;
+              // _ttsSeconds already holds the first-word latency (stamped
+              // on the first chunk above) — the total synth time would
+              // overwrite the number the ear actually waits for.
               _playSeconds = result.$1.length / result.$2;
               _replyStreamDone = true;
               _replyWake?.complete();
