@@ -80,3 +80,20 @@ List<ChatEntry> decodeChatLog(String raw) {
     return const [];
   }
 }
+
+/// The bubble the in-flight working line rides — while a bridge turn is
+/// heard OR backgrounded, the LAST assistant entry. Not literally the
+/// last entry: a queued press over live work appends a user pin on top
+/// of it, and that pin rides the pinned card below, out of the flow,
+/// until the harness takes the turn. Requiring chat.last to be the
+/// assistant bubble made the spinner box vanish the moment the finger
+/// pressed — hiding the very work the detached turn keeps doing (the
+/// field report that gets fixed here; pure and public so it is unit-
+/// guarded, same pattern as activityLabelFor).
+ChatEntry? liveTurnFor(List<ChatEntry> chat, {required bool turnRunning}) {
+  if (!turnRunning) return null;
+  for (final e in chat.reversed) {
+    if (!e.fromUser) return e;
+  }
+  return null;
+}

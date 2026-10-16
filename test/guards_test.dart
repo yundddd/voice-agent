@@ -64,6 +64,29 @@ void main() {
     });
   });
 
+  group('live-turn bubble (0.1.0+91: the press must not hide the spinner)', () {
+    test('a queued pin pressed over live work keeps the work bubble', () {
+      final chat = [
+        ChatEntry.user('first question'),
+        ChatEntry.assistant()..blocks.add('spoken block'),
+        ChatEntry.user('queued press', queued: true),
+      ];
+      // The pin rides the card below, out of the flow — the assistant
+      // entry is still the bubble the working line belongs on.
+      expect(liveTurnFor(chat, turnRunning: true), same(chat[1]));
+    });
+    test('no running turn, no bubble', () {
+      final chat = [
+        ChatEntry.user('q'),
+        ChatEntry.assistant(),
+      ];
+      expect(liveTurnFor(chat, turnRunning: false), isNull);
+    });
+    test('a turn with no assistant bubble yet has none to show', () {
+      expect(liveTurnFor([ChatEntry.user('q')], turnRunning: true), isNull);
+    });
+  });
+
   group('event parsing (0.1.0+81/+84: started and settled frames)', () {
     test('started marker parses as a tool event with the prompt detail', () {
       final ev = BridgeEvent.parse('tool', '{"name":"started","detail":"hello there"}');

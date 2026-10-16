@@ -362,6 +362,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// the view widget needs no import of the log model).
   String? get queuedText => queuedBubble?.blocks.join(' ');
 
+  /// The bubble carrying the in-flight working line. Delegates to
+  /// [liveTurnFor] so the mapping is unit-guarded: a queued pin
+  /// pressed over live work must not drop the spinner — the background
+  /// turn keeps working, and (+91) now keeps showing.
+  ChatEntry? get liveTurnBubble =>
+      liveTurnFor(chat, turnRunning: bridgeBusy || harnessBackgrounded);
+
   void _unpinQueuedBubble() {
     final q = _queuedBubble;
     _queuedBubble = null;

@@ -151,12 +151,11 @@ class _AssistantScreenState extends State<AssistantScreen>
     // the work, and since +72 it no longer stops the display either.
     // The wheel and its command line keep ticking under the bubble for
     // the whole hold, as if the finger had never touched the screen.
-    final liveTurn =
-        (a.bridgeBusy || a.harnessBackgrounded) &&
-                a.chat.isNotEmpty &&
-                !a.chat.last.fromUser
-            ? a.chat.last
-            : null;
+    // +91 extends that honesty over QUEUED presses: the utterance lands
+    // as a pinned card (out of the flow until pickup), so the work
+    // bubble is the last ASSISTANT entry, not the literal last entry —
+    // pressing the mic must not hide the spinner the hold proved wrong.
+    final liveTurn = a.liveTurnBubble;
 
     final (icon, color) = switch ((a.phase, a.userSpeaking)) {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
