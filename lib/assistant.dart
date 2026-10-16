@@ -2033,6 +2033,18 @@ class VoiceAssistant extends ChangeNotifier {
     _reattachRetire = false;
     if (!retire || _bridgeBusy) return;
     if (_reattachGen != _generation || _reattachSeq != _bridgeTurnSeq) return;
+    if (_pttPointers > 0) {
+      // A finger is DOWN right now (the press that detached this very
+      // turn): its hold owns the phase, and the mic is already open
+      // beneath this chain. Retiring the badge is honest; calling
+      // _idleReady here is not — the field bug: DOWN over a speaking
+      // turn, zero-delay probe finds nothing, idle-stomp races the mic
+      // open, and the release lands on 'phase=idle not listening' with
+      // eleven seconds of speech thrown away.
+      _harnessBackgrounded = false;
+      _logDebug('orphan retired DURING a live press — phase left alone');
+      return;
+    }
     _harnessBackgrounded = false; // the bridge just said nothing is open (or
     // we stopped listening on its only channel) — the badge must not lie
     _idleReady();
