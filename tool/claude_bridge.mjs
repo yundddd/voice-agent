@@ -849,7 +849,8 @@ function endKeep(t) {
 // per heard-view object: an SSE comment guards the link (NAT, tailscale,
 // Dart clients) against idle-detection on a merely-thinking stream, and
 // — since the phone's watchdog treats 24 s of wire-silence as a dead
-// socket — at most every 5 s. On each tick, if the HEARD view of an OPEN
+// socket — at most every 2 s (the cadence doubles as retransmit pressure:
+// see the interval note at the bottom). On each tick, if the HEARD view of an OPEN
 // turn has relayed nothing for HEARTBEAT_MS and no tool is open (during
 // a tool run the real "Bash npm test" line owns the spinner, not a
 // frozen counter), push the current tally marked `quiet`: the phone then
@@ -869,7 +870,14 @@ function startKeep(res) {
       }
       res.write(': ping\n\n');
     } catch {}
-  }, Math.min(HEARTBEAT_MS || 15000, 5000));
+  // Ping cadence, was 5 s: a lone frame on a lossy tailscale-over-cellular
+  // path can stall in a retransmit backoff until the NEXT write drags the
+  // backlog out — measured as tool lines landing in one burst at turn end
+  // (phone journal: bridge wrote them seconds apart, the app parsed them
+  // 5 ms apart while attached). A 2 s comment cadence keeps a retransmit
+  // pressure on the link for ~7 bytes a tick; the quiet-TALLY heartbeat
+  // keeps its slower HEARTBEAT_MS clock, so nothing gets spoken more.
+  }, Math.min(HEARTBEAT_MS || 15000, 2000));
 }
 // End the ATTACHED *view* of a turn. This deliberately does NOT clear
 // turnOpen: when the phone hangs up mid-turn the turn itself keeps
