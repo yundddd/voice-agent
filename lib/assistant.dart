@@ -1094,12 +1094,13 @@ class VoiceAssistant extends ChangeNotifier {
         chip,
         bubble: chip,
         status: 'Starting a fresh conversation…',
-        ack: 'Started a fresh conversation. Our chat history is gone.',
+        ack: 'Starting a new conversation.',
         events: () {
           _logDebug('bridge: new session');
           unawaited(_bridge?.reset());
           // The phone forgets too: the app's chat log is the other half
-          // of a fresh start (the ack says as much). Wipe memory and disk
+          // of a fresh start (the spoken ack stays brief; the wipe speaks
+          // for itself on screen). Wipe memory and disk
           // so the screen goes blank exactly when the harness drops its
           // session — both bubbles this chip just added included; a
           // /new that leaves its own tombstone on screen is not blank.
