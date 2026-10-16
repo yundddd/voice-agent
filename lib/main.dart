@@ -1090,6 +1090,14 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // speaks, and the wheel keeps its motion and its primary color.
     final talking =
         a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
+    // Pure playback: the line goes away entirely. It used to sit there
+    // reading 'Speaking — tap to cut me off · Ns · tap Stop to
+    // interrupt' next to a frozen wheel — a working-progress affordance
+    // for a state with no progress to watch. The voice itself is the
+    // status now; a press anywhere still barges in, and the wheel (in
+    // color, turning) returns whenever the harness is still open and
+    // generating ahead of its own voice.
+    if (talking) return const SizedBox.shrink();
     final working = Row(
       children: [
         Text(
