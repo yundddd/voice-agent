@@ -148,9 +148,13 @@
 // talk button shows the number that IS your latency; /new and /compact
 // stay the user's manual levers.
 //
-// Voice events are derived from the raw stream-json: assistant text
-// arrives as it closes (no token deltas — the TTS wants whole sentences),
-// tool_use becomes `tool` progress lines, `result` becomes `done`.
+// Voice events are derived from the raw stream-json: assistant text is
+// spoken sentence by sentence off the live content_block_deltas (the
+// first period lands in TTS mid-message), tool_use becomes `tool`
+// progress lines, `result` becomes `done`. The un-said live tail of the
+// answer rides the tally frames as `draft` so the chat window can paint
+// the reply while it is still being written. On an upstream that sends
+// no partials, both features fall back to the old block-close relay.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -258,6 +262,52 @@ let tokKind = '';     // 'thinking' | 'answering' | 'calling X'
 // frame small no matter how long the model rambles.
 let thinkBuf = '';    // last ~400 chars of thinking deltas
 const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
+// The answer, spoken sentence by sentence instead of block by block:
+// text deltas land in the live buffer below, and the first completed
+// sentence is TTS-able the moment its period arrives — no waiting for
+// the message to close. Buffer state is per live message, per block
+// index; `spoken` is the un-relayed watermark (sentence relays AND the
+// snapshot's remainder both advance it, so no text is ever said twice
+// and none is dropped). The remainder logic in the assistant-snapshot
+// path keeps the no-partials fallback exactly the old block-close
+// behavior.
+const MIN_SENT_CHARS = 40;   // never carve micro-segments ("OK.")
+const MAX_SENT_CHARS = 300;  // bound first-audio latency even unpunctuated
+let curMsg = null;      // {blocks: {idx: {buf, spoken}}} for the LIVE message
+let lastTextBlk = null; // newest live text block (the draft frame's view)
+function relaySentences(blk) {
+  for (;;) {
+    const from = blk.spoken;
+    const win = blk.buf.slice(from, from + MAX_SENT_CHARS * 3);
+    if (win.length < MIN_SENT_CHARS) return;
+    // A sentence end = a punctuation run (with trailing quotes/brackets)
+    // preceded by a word char and followed by whitespace; the word-char
+    // anchor keeps 'main.dart:801' and '3.5' from faking periods.
+    let cut = -1;
+    const re = /\S[.!?…]+["')\]]*(?=[ \n])/g;
+    for (let m; (m = re.exec(win)) !== null;) {
+      if (m.index + m[0].length >= MIN_SENT_CHARS) cut = m.index + m[0].length;
+    }
+    if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
+      const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
+      if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
+    }
+    if (cut < 0) return;
+    const t = blk.buf.slice(from, from + cut).trim();
+    blk.spoken = from + cut;
+    if (t) {
+      console.error(`  -> say(live) "${t.slice(0, 40)}"`);
+      relay('say', {text: t});
+    }
+  } // loop: a fat delta can close several sentences at once
+}
+// The un-said part of the live answer, as the draft field of the tally
+// frames (mirrors how `thought` rides the thinking tail): the phone
+// paints the reply while it is still being written. Rolling cap keeps
+// the frame small no matter how long the answer runs.
+const draftTail = (n) => lastTextBlk
+  ? lastTextBlk.buf.slice(lastTextBlk.spoken).slice(-n).replace(/\s+/g, ' ').trim()
+  : '';
 let tokSentAt = 0;    // relay throttle clock
 // Quiet-token heartbeat period: after this many ms with nothing relayed
 // to the heard view (no deltas, no settles), the keep-pinger re-sends
@@ -374,6 +424,13 @@ const tokFrame = (out, {quiet = false} = {}) => {
     out: o, in: inTok, kind: tokKind,
     ...(tokKind === 'thinking' && thinkTail(160)
       ? {thought: thinkTail(160)} : {}),
+    // The reply, painted before it is spoken: the un-relayed tail of the
+    // live answer rides the same frame the moment the model starts
+    // answering. Old clients ignore the field (unknown keys in a tool
+    // frame are harmless); the chat window shows it while the text
+    // streams. Kept off `quiet` frames — a silent turn has no draft.
+    ...(tokKind === 'answering' && !quiet && draftTail(240)
+      ? {draft: draftTail(240)} : {}),
     ...(quiet ? {quiet: true} : {}),
   };
 };
@@ -526,6 +583,7 @@ function handleEvent(line) {
     }
     if (e.type === 'message_start') {
       census.msgStarts++;
+      curMsg = {blocks: {}}; // the sentence buffer starts fresh per call
       const u = e.message?.usage ?? {};
       tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
             + (u.cache_creation_input_tokens ?? 0);
@@ -540,6 +598,9 @@ function handleEvent(line) {
       // A fresh thinking block starts the rolling window over: the
       // phone only ever shows the CURRENT thought, never an old one.
       if (b.type === 'thinking') thinkBuf = '';
+      if (b.type === 'text' && curMsg) {
+        lastTextBlk = curMsg.blocks[e.index ?? 0] = {buf: '', spoken: 0};
+      }
       tokKind = b.type === 'thinking' ? 'thinking'
         : b.type === 'tool_use' ? `calling ${b.name ?? 'tool'}`
         : b.type === 'text' ? 'answering' : tokKind;
@@ -550,6 +611,12 @@ function handleEvent(line) {
       }
       const n = (d.text ?? d.thinking ?? d.partial_json ?? '').length;
       tokChars += n; census.deltaChars += n;
+      if (typeof d.text === 'string' && d.text) {
+        // The live answer grows — and complete sentences leave the
+        // buffer as say frames right here, before the message closes.
+        const blk = curMsg?.blocks[e.index ?? 0];
+        if (blk) { blk.buf += d.text; relaySentences(blk); }
+      }
     } else if (e.type === 'message_delta') {
       census.msgDeltas++;
       const o = e.usage?.output_tokens;
@@ -696,7 +763,7 @@ function handleEvent(line) {
       // ids are stable across snapshots). History replays from --resume
       // never reach here at all: the timestamp guard above eats them.
       const content = m.message?.content ?? [];
-      for (const c of content) {
+      for (const [i, c] of content.entries()) {
         if (c.type === 'text' && c.text.trim()) {
           const t = c.text.trim();
           // Within one turn, relay each exact text once. Identical
@@ -704,8 +771,19 @@ function handleEvent(line) {
           // trade for audio.
           if (spokenTexts.has(t)) continue;
           spokenTexts.add(t);
-          console.error(`  -> say "${t.slice(0, 40)}"`);
-          relay('say', { text: t });
+          // Sentence relays from the live deltas may have spoken most of
+          // this block already; the snapshot only owes the watermark's
+          // remainder. Advancing `spoken` keeps a grew-again snapshot
+          // from re-speaking what the first one just said. A block with
+          // no deltas (census says some upstreams send none) has
+          // spoken=0 and falls through to the old whole-text relay.
+          const blk = curMsg?.blocks[i];
+          const owed = blk && blk.spoken > 0
+            ? c.text.slice(Math.min(blk.spoken, c.text.length)).trim() : t;
+          if (blk) blk.spoken = c.text.length;
+          if (!owed) continue;
+          console.error(`  -> say "${owed.slice(0, 40)}"`);
+          relay('say', { text: owed });
         }
         if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
           spokenTools.add(c.id);
@@ -852,6 +930,7 @@ function beginTurn(text, res, keep) {
   census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = 0; // fresh token tally
   thinkBuf = ''; // no thought survives into the next turn
+  curMsg = null; lastTextBlk = null; // ditto the live answer buffer
   // Provisional until the first content_block_start relabels it to truth
   // ('answering', 'calling Bash'): between the prompt landing and the
   // first visible token, 'thinking' IS the honest state — and on an

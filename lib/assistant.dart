@@ -475,6 +475,10 @@ class VoiceAssistant extends ChangeNotifier {
   // `thought` field the tally frames carry while kind is 'thinking';
   // cleared the moment kind moves off, so an answered turn never shows
   // the deliberations that got it there.
+  String _tokDraft = ''; // the un-spoken tail of the LIVE answer — the
+  // `draft` field the tally frames carry while kind is 'answering'; the
+  // in-flight bubble paints it as the reply writes itself, and the say
+  // frame that lands on block close replaces it with the confirmed text.
   DateTime? _tokAt; // when the last tally frame landed
   double _tokRate = 0; // learned tok/s (0 = nothing learned yet)
   bool _tokLive = false; // ticking ONLY between a `tokens` frame and a
@@ -491,6 +495,14 @@ class VoiceAssistant extends ChangeNotifier {
   /// the model thinks silently: kind 'thinking', thought '').
   String get tokenThought =>
       _tokLive && _tokKind == 'thinking' ? _tokThought : '';
+
+  /// The live answer tail the in-flight bubble paints under its working
+  /// line while the model writes its reply — non-empty only while the
+  /// tally says 'answering' and the bridge streamed text. An older
+  /// bridge (no `draft` field) or a silent answerer keeps the working
+  /// line alone, exactly as before.
+  String get tokenDraft =>
+      _tokLive && _tokKind == 'answering' ? _tokDraft : '';
 
   /// The growing label. Only meaningful while [tokenTickerOn]; the
   /// spinner asks the assistant for it on every one of its 120 ms
@@ -533,6 +545,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (ev.inputTokens > 0) _tokIn = ev.inputTokens;
     _tokKind = ev.toolKind;
     _tokThought = ev.toolKind == 'thinking' ? ev.thought : '';
+    _tokDraft = ev.toolKind == 'answering' ? ev.draft : '';
     _tokAt = now;
     _tokLive = true;
     // The stepped label also feeds the plain status strip (everything

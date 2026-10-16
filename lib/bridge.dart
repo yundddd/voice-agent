@@ -25,6 +25,7 @@ class BridgeEvent {
     this.outTokens = 0,
     this.toolKind = '',
     this.thought = '',
+    this.draft = '',
   });
 
   /// 'say' | 'tool' | 'context' | 'done' | 'error'.
@@ -60,6 +61,13 @@ class BridgeEvent {
   /// the model simply answers.
   final String thought;
 
+  /// For 'tool {name:tokens}' while [toolKind] is 'answering': a rolling
+  /// one-line tail (~240 chars) of the answer text the bridge has not
+  /// spoken yet — the reply painted while it is still being written.
+  /// Empty on bridges too old to send it (unknown frame keys are
+  /// ignored), so the chat bubble simply stays on the working line.
+  final String draft;
+
   /// A complete assistant message — feed straight into the TTS path.
   bool get isSay => kind == 'say';
   bool get isDone => kind == 'done';
@@ -88,6 +96,7 @@ class BridgeEvent {
           outTokens: o is num ? o.toInt() : 0,
           toolKind: '${data['kind'] ?? ''}',
           thought: '${data['thought'] ?? ''}',
+          draft: '${data['draft'] ?? ''}',
         );
       case 'context':
         final n = data['in'], w = data['window'];

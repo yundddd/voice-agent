@@ -972,8 +972,15 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
     // line alone: kind 'thinking' with no thought is still the honest
     // state for the pre-first-token interval (prefill) the census logs.
     // Max two lines so a rambling thought never shoves the chat around.
+    // And the answer, painted before it is spoken: while the tally says
+    // 'answering' and the bridge streamed the reply, the un-spoken tail
+    // rides the same second line — in plain (not italic) type, because
+    // this is the answer itself arriving, not the deliberations. The
+    // say frame at block close replaces it with the confirmed text.
     final thought = a.tokenThought;
-    if (thought.isEmpty) return working;
+    final draft = a.tokenDraft;
+    if (thought.isEmpty && draft.isEmpty) return working;
+    final shown = thought.isNotEmpty ? thought : draft;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -981,12 +988,14 @@ class _HarnessSpinnerState extends State<_HarnessSpinner> {
         Padding(
           padding: const EdgeInsets.only(left: 34, top: 2),
           child: Text(
-            thought,
+            shown,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontStyle: FontStyle.italic,
+              color: thought.isNotEmpty
+                  ? scheme.onSurfaceVariant
+                  : scheme.onSurface,
+              fontStyle: thought.isNotEmpty ? FontStyle.italic : null,
             ),
           ),
         ),
