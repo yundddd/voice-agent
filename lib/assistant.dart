@@ -2897,11 +2897,22 @@ class VoiceAssistant extends ChangeNotifier {
     );
     if (_pttPointers == 0) {
       // A release with no recorded press (dropped event, double release):
-      // silent no-op today — loud in the journal, because this is one
-      // way a message vanishes without a trace.
+      // loud in the journal, because this is one way a message vanishes
+      // without a trace.
       _logDebug('ptt UP ignored: no pointer down — the press never landed?');
       _pttDownPos = null; // keep the stale-drag reading harmless
       _pttReleaseVisual();
+      // +80: in conversation mode that trace vanished TWICE on cold
+      // starts (22:42:10 and 22:59:57, the second one on the very build
+      // that added the TOGGLE journal — the line never printed, so the
+      // widget's tap branch never ran: the hold guide's recognizers eat
+      // the press-and-hold-then-release before a tap can resolve).
+      // Conversation mode has no hold semantics anyway, so the release
+      // itself IS the classic tap: dispatch it here, unasked.
+      if (_mode == InteractionMode.conversation) {
+        _logDebug('conv-mode release → fallback toggle dispatch');
+        unawaited(toggle());
+      }
       return;
     }
     _pttPointers--;
