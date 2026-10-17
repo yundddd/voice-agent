@@ -28,38 +28,17 @@ class FilePlayerAudioOutput implements AudioOutput {
   String? _file;
   bool _cutting = false;
 
-  // +117: the assistant audio context. The plugin default is plain MEDIA
-  // usage, and a media track does not ask Android for audio focus — so
-  // while another app owned the session (the field log: an APK install
-  // with Telegram in front), our chunks 'played' to a silent route and
-  // only the first blips reached the ear before something else stayed
-  // on top. Applied once, lazily, before the first play.
-  //
-  // +118: the focus mode goes from duck-and-hope to plain GAIN. The
-  // transient-duck lane was the second half of the field story: a
-  // foreground chat chime demanded focus seconds into a chunk, and the
-  // plugin's native reflex on ANY loss is to pause a TTS track with no
-  // resume — the voice died mid-sentence with nothing in the journal.
-  // GAIN is the contract navigation voices use: my speech ducks the
-  // notifications, not the other way round.
-  static final _voiceContext = AudioContext(
-    android: AudioContextAndroid(
-      contentType: AndroidContentType.speech,
-      usageType: AndroidUsageType.assistant,
-      audioFocus: AndroidAudioFocus.gain,
-    ),
-  );
-  Future<void>? _ctx;
-
   @override
   Stream<void> get onNaturalEnd => _ended.stream;
 
   @override
   Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
-    _ctx ??= _player.setAudioContext(_voiceContext).catchError(
-      (_) {},
-    ); // one shot; failures stay silent, playback continues
-    await _ctx;
+    // +119: the audio-context experiment is REVERTED. +117 (no focus)
+    // and +118 (assistant GAIN) both cut replies in the field while the
+    // plugin's plain default spoke all morning clean; the journal's
+    // full-duration plays under a silent speaker smell like a stuck
+    // duck in this device's assistant lane. Dedup and ledger fixes
+    // stay; the route question gets re-earned with data, not guesses.
     final dir = await _tempDir();
     final file = File(
       p.join(
