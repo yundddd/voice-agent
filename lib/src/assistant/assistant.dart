@@ -806,13 +806,14 @@ class VoiceAssistant extends ChangeNotifier {
             // command is chewing.
             if (ev.toolName == 'queued') {
               // +99: the interrupt verdict is CONVERSATION, not a
-              // caption. It lands in the turn's bubble the moment it
-              // arrives and stays — through a minute of backgrounded
-              // build, through reattach replays, through the app's own
-              // restart — where a spinner line gets overwritten by the
-              // next frame. Eyes-only too: the verdict is for reading,
-              // and the answer's own voice must not queue behind it.
-              _chat.addBlock(turn, stepLine);
+              // caption — it stays through backgrounded builds,
+              // reattach replays, and app restarts, where a spinner
+              // line gets overwritten by the next frame. +110 gives it
+              // its OWN bubble instead of a block inside whichever
+              // turn happens to be open: the verdict is about the
+              // interruption, not the answer, and it must not vanish
+              // with (or pollute) either turn. Eyes-only, as ever.
+              _chat.addSystemNote(stepLine);
               latestWork = '';
             } else {
               latestWork = stepIsSilentFor(ev.toolName) ? '' : stepLine;
@@ -950,7 +951,14 @@ class VoiceAssistant extends ChangeNotifier {
       // (see ChatEntry.interrupted). A merely DETACHED turn is NOT
       // stamped: it is still running, and a reattach may deliver its
       // real done. An empty dead turn gets removed below either way.
-      if (!outcome.sawDone && gen != _generation && !turn.isEmpty) {
+      if (!outcome.sawDone && gen != _generation) {
+        // +110: a cut that never got to speak still leaves a bubble.
+        // The interruption of a bare thinking run or a tool call used
+        // to vanish with its empty turn — erasing the very event the
+        // user's own press caused. One line, stamped, permanent.
+        if (turn.isEmpty) {
+          _chat.addBlock(turn, 'Interrupted before answering.');
+        }
         _chat.markInterrupted(turn);
       }
       if (turn.isEmpty) _chat.removeEmptyTurn(turn);

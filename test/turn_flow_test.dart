@@ -448,6 +448,57 @@ void main() {
       expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
     });
 
+    test('the queue verdict gets its own bubble, not the turn\'s (+110)',
+        () async {
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle(); // harness turn opens (empty assistant bubble)
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'queued',
+          detail: 'the thinking was interrupted and aborted; '
+              'your message goes next'));
+      await settle();
+
+      final verdicts = a.chat
+          .where((e) => !e.fromUser && e.blocks.any(
+              (b) => b.startsWith('One moment — the thinking')))
+          .toList();
+      expect(verdicts, hasLength(1));
+      expect(verdicts.single.blocks, hasLength(1),
+          reason: 'a note all by itself: nothing of the answer, nothing '
+              'of the cut turn — its own card in the channel');
+      // The answer's own bubble (the empty assistant entry the turn
+      // opened) sits BEFORE the note and holds none of it.
+      final cutTurn = a.chat[a.chat.indexOf(verdicts.single) - 1];
+      expect(cutTurn.fromUser, isFalse);
+      expect(cutTurn.blocks, isEmpty);
+    });
+
+    test('a cut silent turn still leaves its trace (+110)', () async {
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle(); // turn 1 runs, speaks nothing (a tool works)
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'Bash', detail: 'sleep 60'));
+      await settle();
+
+      time.advance(const Duration(milliseconds: 500));
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle(); // turn 2 supersedes turn 1 before its first word
+
+      final cut = a.chat
+          .where((e) =>
+              !e.fromUser &&
+              e.blocks.contains('Interrupted before answering.'))
+          .single;
+      expect(cut.interrupted, isTrue,
+          reason: 'stamped, so the bubble also carries the +108 mark');
+    });
+
     test('the tail of our own echo is rejected before it ever sends',
         () async {
       engine.transcripts = ['hello there', 'hello there again'];

@@ -69,6 +69,22 @@ void main() {
       expect(store.containsBlock('never said'), isFalse);
     });
 
+    test('a system note is its own bubble and reloads as history (+110)',
+        () {
+      final turn = store.beginTurn();
+      store.addSystemNote('One moment — the thinking was interrupted.');
+      // Standalone: the open turn stays empty — it will collect the
+      // answer; the note stands after it as its own card.
+      expect(turn.blocks, isEmpty);
+      expect(store.entries.last.fromUser, isFalse);
+      expect(store.entries.last.blocks.single,
+          'One moment — the thinking was interrupted.');
+      // On disk it is an ordinary assistant bubble: reloads as history,
+      // with no live pin semantics.
+      store.load(persisted.last);
+      expect(store.entries.last.blocks.single, contains('was interrupted'));
+    });
+
     test('containsBlock matches how the log stores (whitespace, not case)',
         () {
       final t = store.beginTurn();

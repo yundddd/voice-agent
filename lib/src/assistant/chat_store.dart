@@ -82,6 +82,15 @@ class ChatStore {
     touch();
   }
 
+  /// +110: a standalone system bubble — the interruption verdict gets
+  /// its own card in the channel instead of riding inside whichever
+  /// assistant turn happens to be open, so the story of a cut thinking
+  /// run or backgrounded tool call outlives both turns.
+  void addSystemNote(String text) {
+    _entries.add(ChatEntry.assistant()..blocks.add(text));
+    touch();
+  }
+
   /// Open the assistant bubble for a turn: sections are appended as
   /// each say's audio queues (text follows the voice, never leads it).
   /// An interrupted turn keeps the sections actually spoken — that IS
