@@ -569,6 +569,53 @@ void main() {
               'is heard again and what files silently');
     });
 
+    test('the drain parks behind the paragraph still on air (+124)',
+        () async {
+      // The field's last mid-word cut, unit-caught: `missed` is the
+      // backlog's LENGTH, so the teardown verdict fires while the
+      // reply's final paragraph is still on the speaker — and the
+      // reattach it armed opened with stopPlayback, killing the tail
+      // of a perfectly healthy answer at the spinner's dismissal.
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'backgrounded': false,
+        'queued': false,
+        'missed': 3,
+      };
+      harness.emit(BridgeEvent.forTest('say', text: 'Still on the air.'));
+      await settle();
+      expect(out.playing, isTrue, reason: 'the chunk is on the speaker');
+      harness.emit(BridgeEvent.forTest('done')); // the wire ends mid-voice
+      await settle();
+      time.advance(Duration.zero);
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('drain parked')),
+        isTrue,
+        reason: 'the verdict refused to cut audio that had the air',
+      );
+      expect(harness.attachCount, 0,
+          reason: 'no reattach means no stopPlayback means no trampled '
+              'tail — the paragraph gets its own last syllable');
+
+      out.complete(); // the paragraph ends on its own terms
+      await settle();
+      time.advance(Duration.zero);
+      await settle();
+      expect(
+        harness.attachCount,
+        greaterThan(0),
+        reason: 'the natural end collects the parked verdict and drains',
+      );
+    });
+
     test('the tail of our own echo is rejected before it ever sends',
         () async {
       engine.transcripts = ['hello there', 'hello there again'];

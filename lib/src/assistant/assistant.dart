@@ -1063,11 +1063,36 @@ class VoiceAssistant extends ChangeNotifier {
     final missed = (h['missed'] as num?)?.toInt() ?? 0;
     if (missed < 1) return;
     if (gen != _generation || _bridgeTurnSeq != mySeq) return;
+    // +124: the field's last mid-word cut. The bridge's `missed` is the
+    // backlog LENGTH — a replayable history that only the heard-dedup
+    // filters — so this verdict fires at nearly every turn end, and it
+    // fires while our own final paragraph is still on the speaker (the
+    // wire finishes long before the voice does). The chain it armed
+    // opens with stopPlayback: the drain cut a paragraph that was
+    // never going to be re-voiced (the ledger already owns it), and
+    // the listener heard the tail of the answer die at the spinner's
+    // dismissal while the replay babbled on. Park the verdict instead:
+    // _handleNaturalEnd re-runs it the moment the speaker is honestly
+    // silent, and every guard (PTT, hidden, ownership, missed) is
+    // re-checked then.
+    if (_reply.playing) {
+      _drainAfterSpeech = (gen: gen, mySeq: mySeq);
+      _logDebug(
+        'stranded backlog: missed=$missed — audio still on air; '
+        'drain parked to the natural end',
+      );
+      return;
+    }
+    _drainAfterSpeech = null;
     _logDebug('stranded backlog: missed=$missed — draining via reattach');
     _reattachGen = gen;
     _reattachSeq = mySeq;
     _startReattachChain(retire: true, firstProbe: Duration.zero);
   }
+
+  /// A drain verdict the teardown parked behind on-air audio (+124);
+  /// consumed by [_handleNaturalEnd], superseded by any newer verdict.
+  ({int gen, int mySeq})? _drainAfterSpeech;
 
   void _startPump(int gen) =>
       unawaited(_reply.runPump(isStale: () => gen != _generation));
@@ -2905,6 +2930,15 @@ class VoiceAssistant extends ChangeNotifier {
         _status = 'Listening — just talk.';
         notifyListeners();
       }
+    }
+    final parked = _drainAfterSpeech;
+    _drainAfterSpeech = null;
+    if (parked != null) {
+      // +124: the speaker fell silent on its own terms; the parked
+      // backlog verdict gets its second look (a barge-in's stop is not
+      // a natural end, so a parked verdict that dies this way is
+      // simply re-formed by the next turn's teardown — self-healing).
+      unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq));
     }
     _mic.fastCheck();
   }
