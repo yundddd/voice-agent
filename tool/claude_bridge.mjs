@@ -97,7 +97,12 @@
 //                prompt (+106), its `done` is NOT relayed — the phone
 //                cut the turn itself, and a stray done landing on the
 //                reattach view murders the fresh bubble (field report:
-//                slide-up, then no updates at all).
+//                slide-up, then no updates at all). And the spinner
+//                label during a tool pause is the COMMAND ITSELF, bare
+//                (+107): the tool_use relay promotes its summary line
+//                into the activity kind, so a long test reads 'Bash
+//                flutter test · …' on the phone instead of 'Thinking…'
+//                over a frozen counter.
 //   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
 //                PROCESS stays alive. No-op while idle.
@@ -657,8 +662,11 @@ function handleEvent(line) {
       } else if (b.type === 'thinking' || b.type === 'tool_use') {
         lastTextOpen = false;
       }
+      // +107: bare tool name, not 'calling X' — while a call's input
+      // streams the label is the tool itself; the moment the snapshot
+      // lands it grows the command (see the tool_use relay).
       tokKind = b.type === 'thinking' ? 'thinking'
-        : b.type === 'tool_use' ? `calling ${b.name ?? 'tool'}`
+        : b.type === 'tool_use' ? (b.name ?? 'tool')
         : b.type === 'text' ? 'answering' : tokKind;
     } else if (e.type === 'content_block_delta') {
       const d = e.delta ?? {};
@@ -899,6 +907,16 @@ function handleEvent(line) {
         if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
           spokenTools.add(c.id);
           relay('tool', { name: c.name, detail: summarize(c) });
+          // +107: the command line BECOMES the activity label — plain,
+          // no 'running a command' wrapper — until the next block starts
+          // streaming. Without this the tool pause falls back to the
+          // last known kind, and a turn dominated by tool calls reads
+          // 'Thinking…' over a frozen counter while a minute-long test
+          // churns (field report: 'it says thinking but nothing is
+          // thinking, paragraphs just drip out of the TTS'). The bare
+          // command is the honest answer to what the turn is doing.
+          const step = summarize(c);
+          tokKind = step ? `${c.name} ${step}` : c.name;
         }
         if (c.type === 'thinking' && typeof c.thinking === 'string' &&
             c.thinking && census.deltaChars === 0) {
