@@ -85,6 +85,17 @@ void main() {
       expect(store.entries.last.blocks.single, contains('was interrupted'));
     });
 
+    test('a block can be withdrawn; the rest of the bubble stays (+114)', () {
+      final t = store.beginTurn();
+      store.addBlock(t, 'heard fully');
+      store.addBlock(t, 'never aired');
+      store.removeBlock(t, 'never aired');
+      expect(t.blocks, ['heard fully']);
+      // Unknown text is a no-op (double teardown races).
+      store.removeBlock(t, 'never aired');
+      expect(t.blocks, ['heard fully']);
+    });
+
     test('containsBlock matches how the log stores (whitespace, not case)',
         () {
       final t = store.beginTurn();

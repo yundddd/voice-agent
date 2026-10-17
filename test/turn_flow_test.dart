@@ -627,6 +627,40 @@ void main() {
       expect(a.chat.last.blocks, contains('Build done.'));
     });
 
+    test('a wire death withdraws unheard commits from the bubble (+114)',
+        () async {
+      await withBridge();
+      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'Heard, this one.'));
+      await settle(); // fake synth plays at once: this one AIRED
+      expect(a.chat.last.blocks, contains('Heard, this one.'));
+
+      final gate = Completer<void>();
+      engine.holdChunks = gate.future; // next paragraph commits but its
+      // audio is frozen before the first chunk
+      harness.emit(BridgeEvent.forTest('say', text: 'Never aired.'));
+      await settle();
+      expect(a.chat.last.blocks, contains('Never aired.'),
+          reason: 'committed the moment the frame landed (+109)');
+
+      harness.finishView(); // the wire dies mid-synth: no done frame
+      await settle();
+      // A newer turn takes the ear (the field shape: the user's next
+      // press arrives while the unheard paragraph is still frozen in
+      // synth): the dead turn's chunks drop on its alive-guard, and its
+      // teardown retracts what never aired.
+      unawaited(a.runQuickCommand('next'));
+      gate.complete();
+      await settle();
+      expect(a.chat.first.blocks, isNot(contains('Never aired.')),
+          reason: 'never heard, so never owed: withdrawn, and the '
+              'bridge copy stays replayable for a fresh view');
+      expect(a.chat.first.blocks, contains('Heard, this one.'),
+          reason: 'heard text is heard history');
+    });
+
     test('an old unheard paragraph is logged, never re-voiced', () async {
       await withBridge();
       harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};

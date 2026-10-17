@@ -82,6 +82,13 @@ class ChatStore {
     touch();
   }
 
+  /// +114: withdraw one committed block — used at wire death for text
+  /// whose audio never started, so the ledger means what it says:
+  /// every block in it was heard (or is background-buffered on purpose).
+  void removeBlock(ChatEntry turn, String text) {
+    if (turn.blocks.remove(text)) touch();
+  }
+
   /// +110: a standalone system bubble — the interruption verdict gets
   /// its own card in the channel instead of riding inside whichever
   /// assistant turn happens to be open, so the story of a cut thinking

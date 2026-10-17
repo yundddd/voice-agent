@@ -658,6 +658,12 @@ class VoiceAssistant extends ChangeNotifier {
     // text-follows-audio, history being exactly what the room heard.
     String latestWork =
         ''; // newest tool-step progress line, e.g. 'Edit foo.dart…'
+    // +114: what this turn committed to the ledger, and which of those
+    // paragraphs ever had audio START. A wire death retracts the
+    // unheard commits (see the finally) so a block in the ledger means
+    // HEARD — the replay dedup leans entirely on that promise.
+    final committed = <String>[];
+    final aired = <String>{};
     // Speak one answer block end-to-end. +109: the ledger stamp moved
     // from first-chunk-on-air to the moment the block is COMMITTED to
     // the speaker — 'mark it when it starts speaking', the owner's
@@ -685,12 +691,16 @@ class VoiceAssistant extends ChangeNotifier {
         _resumeReplyText = text;
         return;
       }
+      committed.add(text); // +114: audio-path commitment only — hidden
+      // turns buffer their text on purpose and answer that accounting
+      // with _speakResumedPending instead
       await _reply.speakBlock(
         text,
         alive: () => gen == _generation,
         drop: () => text == _dropAfterHide, // hide cut this paragraph
         // mid-play: skip it whole — its chunks die here, no replay
         onAir: (sinceText) {
+          aired.add(text); // +114: the ear has it, the ledger may keep it
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed: the first chunk of a
@@ -951,6 +961,16 @@ class VoiceAssistant extends ChangeNotifier {
       // (see ChatEntry.interrupted). A merely DETACHED turn is NOT
       // stamped: it is still running, and a reattach may deliver its
       // real done. An empty dead turn gets removed below either way.
+      // +114: a wire that died mid-turn owes the user nothing it never
+      // got to say. Every paragraph committed but never aired comes OUT
+      // of the ledger: the bubble mirrors the ear, and the bridge's
+      // always-kept replay copy (+114 bridge) can voice it honestly to
+      // the next view instead of being deduped against a fake "heard".
+      if (!outcome.sawDone) {
+        for (final t in committed) {
+          if (!aired.contains(t)) _chat.removeBlock(turn, t);
+        }
+      }
       if (!outcome.sawDone && gen != _generation) {
         // +110: a cut that never got to speak still leaves a bubble.
         // The interruption of a bare thinking run or a tool call used
@@ -1927,16 +1947,24 @@ class VoiceAssistant extends ChangeNotifier {
     // dedup is that nothing already promised to the speaker ever gets
     // voiced twice, and an on-air stamp left the in-flight paragraphs
     // invisible to it.
+    // +114: the replay gets the same heard-accounting the live turn
+    // has: commit at call, retract at wire death if the audio of it
+    // never started — otherwise a half-delivered backlog permanently
+    // fakes "heard" and the sentence dies mid-replay twice over.
+    final rCommitted = <String>[];
+    final rAired = <String>{};
     Future<void> speak(String text) async {
       spoken.write('$text ');
       _chat.addBlock(turn, text);
       _lastReplyText = text;
+      rCommitted.add(text);
       await _reply.speakBlock(
         text,
         alive: () => gen == _generation,
         drop: () => text == _dropAfterHide, // same skip contract as
         // speak(): a paragraph the hide cut is never re-voiced here
         onAir: (sinceText) {
+          rAired.add(text);
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed
@@ -2086,6 +2114,14 @@ class VoiceAssistant extends ChangeNotifier {
         if (_bridgeTurnSeq == mySeq) {
           _bridgeBusy = false;
           if (!_harnessBackgrounded) _harnessSince = null; // detach holds
+        }
+        // +114, replay side: a view that dies mid-replay withdraws the
+        // paragraphs whose audio never started — the backlog copy for
+        // them lives until a view actually speaks them.
+        if (!outcome.sawDone) {
+          for (final t in rCommitted) {
+            if (!rAired.contains(t)) _chat.removeBlock(turn, t);
+          }
         }
         // Same stamp as the heard-stream teardown (+108): an attach
         // view closed under a newer press leaves its bubble marked.

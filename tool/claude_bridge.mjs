@@ -451,30 +451,28 @@ const relay = (ev, data) => {
   data._ts ??= Date.now();
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
-  if (curRes) {
-    if (ev === 'say' && data.text) heardTexts.add(data.text);
-    sse(curRes.res, ev, data);
-    return;
-  }
-  // +113 (the answered-interruption echo, second attempt): a `say`
-  // heading for the UNHEARD backlog is dropped when this sentence has
-  // ALREADY reached a listening view (heardTexts — recorded on actual
-  // delivery, never at emit time: +112 registered first and ate the
-  // never-heard first copy of an uninterrupted reply), or when an
-  // unheard copy is already parked down there (retire the duplicate
-  // instead of stacking a second the drain would voice twice).
+  if (curRes) sse(curRes.res, ev, data);
+  // +114 (the answered-interruption echo, final form): every `say`
+  // keeps EXACTLY ONE copy in the unheard backlog — even one delivered
+  // live. Delivery to a view is not proof of hearing: the socket can
+  // die between the frame and the speaker, and +112/+113 both learned
+  // some version of that the hard way. The phone's ledger — written at
+  // audio commit, RETRACTED at wire death for anything that never
+  // aired (+114 app side) — is the one authority on heard-or-not, and
+  // the replay dedup defers to it. A re-relay of the same sentence
+  // retires the parked copy rather than stacking a second.
   if (ev === 'say' && data.text) {
-    if (heardTexts.has(data.text)) {
-      console.error('  [backlog] say already heard live: copy dropped');
-      return;
-    }
     for (let i = backlog.length - 1; i >= 0; i--) {
       if (backlog[i].ev === 'say' && backlog[i].data.text === data.text) {
         backlog.splice(i, 1);
-        console.error('  [backlog] say re-relay: unheard copy retired');
       }
     }
+    backlog.push({ ev, data });
+    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    if (!curRes) console.error(`  [backlog] say (n=${backlog.length})`);
+    return;
   }
+  if (curRes) return; // transient frames stay live-only while heard
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
   console.error(`  [backlog] ${ev} (n=${backlog.length})`);
@@ -1093,7 +1091,6 @@ function beginTurn(text, res, keep) {
   turnOpen = true;
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
-  heardTexts.clear(); // per-turn, same lifecycle (+113)
   census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = tokMsgBase = 0; // fresh tally
   thinkBuf = ''; // no thought survives into the next turn
@@ -1255,10 +1252,6 @@ const spokenTools = new Set();
 // Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 const spokenTexts = new Set();
-// +113: exact say texts DELIVERED to a listening view this turn (the
-// only proof a sentence was ever heard — spokenTexts also covers
-// emitted-but-not-delivered ones). Cleared per turn like its sibling.
-const heardTexts = new Set();
 
 // ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
 // The app keeps a seq-numbered event journal of its OWN lifecycle story

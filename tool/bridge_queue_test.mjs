@@ -195,39 +195,43 @@ test('a polite queue on a live stream flushes to its own socket', async () => {
   }
 });
 
-// The +113 guard: the first copy of a sentence that never reached a
-// view MUST be parked in the unheard backlog (the +112 regression ate
-// it — an uninterrupted reply lost its tail mid-air), and a re-relay of
-// the same unheard text must not stack a second copy (the original
-// double-voice). /attach's replay is the ground truth for both.
-test('an unheard sentence reaches the replay backlog exactly once (+113)', async () => {
-  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
-  const proc = startBridge(stubLog, PORT4, {
-    STUB_SAYS: 'Heard once.\nNever twice.\nHeard once.', // third line: the
-    // snapshot re-echoes the first — the dedup's own input
-  });
-  try {
-    await up(PORT4);
-    const a = await call(PORT4, `/talk?token=${TOKEN}`,
-      { body: 'tell me something', method: 'POST' });
-    await until('turn open', async () => (await health(PORT4)).turnOpen === true);
-    a.kill(); // the phone vanishes BEFORE the turn's answers are relayed
+// The +114 invariant: EVERY relayed sentence keeps exactly one copy in
+// the unheard backlog — delivered-live included, because delivery is
+// not hearing (the wire can die between frame and speaker, and the
+// phone's retract-aware ledger decides at replay time). A re-relay of
+// one sentence must never stack a second copy. /attach's replay is the
+// ground truth for both.
+test('every relayed sentence keeps one replayable copy, never two (+114)',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+    const proc = startBridge(stubLog, PORT4, {
+      STUB_SAYS: 'Heard once.\nNever twice.\nHeard once.', // third line: a
+      // re-relay of the first — the copy must stay singular
+    });
+    try {
+      await up(PORT4);
+      const a = await call(PORT4, `/talk?token=${TOKEN}`,
+        { body: 'tell me something', method: 'POST' });
+      await until('turn open', async () => (await health(PORT4)).turnOpen === true);
 
-    await until('turn closed unheard', async () => {
-      const h = await health(PORT4);
-      return h.turnOpen === false && h.missed >= 2;
-    });
-    const replayed = await call(PORT4, `/attach?token=${TOKEN}`);
-    await until('replay closed', async () => {
-      try { return (await health(PORT4)).missed === 0; } catch { return false; }
-    });
-    await sleep(150); // let the replay bytes land in the collector
-    const counts = (needle) =>
-      replayed.text.split(needle).length - 1;
-    assert.equal(counts('Heard once.'), 1,
-      'the unheard first copy was eaten or stacked — +113 regression');
-    assert.equal(counts('Never twice.'), 1);
-  } finally {
-    await stopBridge(proc);
-  }
-});
+      // The phone LISTENS all the way (no kill this time): the say
+      // frames stream live AND still end up backed once each.
+      await until('turn closed', async () => {
+        const h = await health(PORT4);
+        return h.turnOpen === false && h.missed >= 2;
+      });
+      const replayed = await call(PORT4, `/attach?token=${TOKEN}`);
+      await until('backlog drained', async () => {
+        try { return (await health(PORT4)).missed === 0; } catch { return false; }
+      });
+      await sleep(150); // let the replay bytes land in the collector
+      const counts = (needle) =>
+        replayed.text.split(needle).length - 1;
+      assert.equal(counts('Heard once.'), 1,
+        'the live-delivered copy was eaten or stacked (+112/+113 failure modes)');
+      assert.equal(counts('Never twice.'), 1);
+      a.kill();
+    } finally {
+      await stopBridge(proc);
+    }
+  });
