@@ -7,17 +7,22 @@ import 'dart:convert';
 /// turn start but never filled (error/nothing-to-say turns) stays empty
 /// and the UI hides it.
 class ChatEntry {
-  ChatEntry({required this.fromUser, List<String>? blocks, this.queued = false})
-    : blocks = blocks ?? <String>[];
+  ChatEntry({
+    required this.fromUser,
+    List<String>? blocks,
+    this.queued = false,
+    this.interrupted = false,
+  }) : blocks = blocks ?? <String>[];
 
-  ChatEntry.user(String text, {this.queued = false})
+  ChatEntry.user(String text, {this.queued = false, this.interrupted = false})
     : fromUser = true,
       blocks = [text];
 
   ChatEntry.assistant()
     : fromUser = false,
       blocks = <String>[],
-      queued = false;
+      queued = false,
+      interrupted = false;
 
   final bool fromUser;
   final List<String> blocks;
@@ -28,12 +33,21 @@ class ChatEntry {
   /// which point it joins the conversation where it was spoken.
   bool queued;
 
+  /// +108: the turn was CUT by a newer press (or an interrupt) before
+  /// its done arrived: it keeps the sections it actually spoke and says
+  /// so — a silently truncated reply used to read as a deliberately
+  /// short one (field report: interrupted thinking showed nothing).
+  /// Survives a reload: unlike the queue pin, the fact that a turn was
+  /// cut is history, not live machinery.
+  bool interrupted;
+
   bool get isEmpty => blocks.isEmpty;
 
   Map<String, Object> toJson() => {
     'user': fromUser,
     'blocks': blocks,
     if (queued) 'queued': true,
+    if (interrupted) 'interrupted': true,
   };
 
   static ChatEntry fromJson(Map<String, Object?> j) => ChatEntry(
@@ -43,6 +57,7 @@ class ChatEntry {
     // itself stays in the log.
     fromUser: j['user'] == true,
     blocks: [for (final b in (j['blocks'] as List? ?? const <Object>[])) '$b'],
+    interrupted: j['interrupted'] == true,
   );
 }
 

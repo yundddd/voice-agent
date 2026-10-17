@@ -946,6 +946,14 @@ class VoiceAssistant extends ChangeNotifier {
         _bridgeBusy = false;
         _harnessSince = null;
       }
+      // +108: a turn superseded by the user's own newer press died
+      // mid-answer — stamp the bubble so the visualization admits it
+      // (see ChatEntry.interrupted). A merely DETACHED turn is NOT
+      // stamped: it is still running, and a reattach may deliver its
+      // real done. An empty dead turn gets removed below either way.
+      if (!outcome.sawDone && gen != _generation && !turn.isEmpty) {
+        _chat.markInterrupted(turn);
+      }
       if (turn.isEmpty) _chat.removeEmptyTurn(turn);
       if (gen == _generation) {
         // Natural end of the current turn (done event / stream close /
@@ -2038,6 +2046,11 @@ class VoiceAssistant extends ChangeNotifier {
         if (_bridgeTurnSeq == mySeq) {
           _bridgeBusy = false;
           if (!_harnessBackgrounded) _harnessSince = null; // detach holds
+        }
+        // Same stamp as the heard-stream teardown (+108): an attach
+        // view closed under a newer press leaves its bubble marked.
+        if (!outcome.sawDone && gen != _generation && !turn.isEmpty) {
+          _chat.markInterrupted(turn);
         }
         if (turn.isEmpty) _chat.removeEmptyTurn(turn);
         if (gen == _generation) {

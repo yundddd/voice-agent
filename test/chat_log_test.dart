@@ -38,6 +38,23 @@ void main() {
     expect(ChatEntry.assistant().queued, isFalse);
   });
 
+  test('an interrupted stamp survives a reload — it is history (+108)', () {
+    final dead = ChatEntry.assistant()
+      ..blocks.add('The first sections it got to speak');
+    expect(dead.interrupted, isFalse); // born clean
+    dead.interrupted = true;
+    final json = encodeChatLog([dead]);
+    expect(json.contains('"interrupted":true'), isTrue);
+    final back = decodeChatLog(json);
+    expect(back.single.interrupted, isTrue); // unlike the pin, the cut stays
+    expect(back.single.blocks.single, dead.blocks.single); // text untouched
+    // Turns that finished normally never carry the field at all.
+    expect(
+      encodeChatLog([ChatEntry.assistant()..blocks.add('done clean')]),
+      isNot(contains('interrupted')),
+    );
+  });
+
   test('garbage or newer-format files start a fresh log, never throw', () {
     expect(decodeChatLog('not json at all'), isEmpty);
     expect(decodeChatLog('{"objects":"instead of lists"}'), isEmpty);

@@ -69,6 +69,32 @@ class ChatBubble extends StatelessWidget {
                                   ).textTheme.bodyLarge,
                                 ),
                               ],
+                              if (entry.interrupted && !isLiveTurn) ...[
+                                // +108: a cut turn says so — the
+                                // sections above it are what the speaker
+                                // got before the newer press took over.
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.pan_tool_outlined,
+                                      size: 14,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'interrupted',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            fontStyle: FontStyle.italic,
+                                            color: scheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                               if (isLiveTurn) ...[
                                 const SizedBox(height: 12),
                                 HarnessSpinner(assistant: assistant),

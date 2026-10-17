@@ -73,6 +73,15 @@ class ChatStore {
     touch();
   }
 
+  /// +108: stamp a superseded turn so the bubble admits it was cut.
+  /// Idempotent: the original stream and a later reattach replay of the
+  /// same death must not stamp twice (and must not re-persist).
+  void markInterrupted(ChatEntry turn) {
+    if (turn.interrupted) return;
+    turn.interrupted = true;
+    touch();
+  }
+
   /// Open the assistant bubble for a turn: sections are appended as
   /// each say's audio queues (text follows the voice, never leads it).
   /// An interrupted turn keeps the sections actually spoken — that IS
