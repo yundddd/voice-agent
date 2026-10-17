@@ -1070,14 +1070,18 @@ function flushPending() {
 // open. Either way a new prompt never waits on it — it is QUEUED at the
 // front (latest wins; the prior pending's response is ended). The
 // `interrupt` flag decides what happens to the turn in flight: true (the
-// default — typed text, conversation barge-in, PTT slide-UP) cuts a mere
-// thinking turn with an in-band interrupt — nothing but the model holding
-// it, the process never dies (no --resume, no cold prefill on the next
-// turn) — so its `result` flushes the queue in a heartbeat; false (PTT
-// slide-right, the polite queue) lets the in-flight turn run to its
-// natural end first. Either way a long-running OPEN tool is left to
-// finish: letting it complete is the entire point of backgrounding, and
-// /stop still hard-stops it.
+// default — typed text, conversation barge-in, PTT slide-UP) cuts the
+// turn with an in-band interrupt — thinking AND an in-flight tool call
+// alike (the +99 spec: the tool goes to background, the agent is freed
+// to answer the new message at once). Nothing but the model's WAITING
+// is aborted: the process never dies (no --resume, no cold prefill on
+// the next turn) — so its `result` flushes the queue in a heartbeat;
+// false (PTT slide-right, the polite queue) lets the in-flight turn
+// run to its natural end first. Whether the tool's own OS process
+// survives the abort is the harness's call — detached tool modes
+// survive, plain foreground waits may end with the turn; the phone's
+// notice words stay honest either way, and /stop remains the hard
+// flavour it always was.
 function talk(text, res, interrupt = true, poll = false) {
   // SSE comment pinger + quiet-token heartbeat (see startKeep): a
   // 3-minute gradle build emits nothing, and idle-detection on the link
@@ -1117,8 +1121,10 @@ function talk(text, res, interrupt = true, poll = false) {
       // asked to read exactly this: was my interrupt an abort or a
       // backgrounding? A polite queue (interrupt=0) promises neither.
       detail: openTools.size
-        ? 'a tool call was put into background — it keeps working; '
-          + 'your message goes next'
+        ? interrupt
+          ? 'the running tool was put into background — the agent is '
+            + 'freed to answer you now'
+          : 'a tool call is running; your message goes next when it settles'
         : interrupt
           ? 'the thinking was interrupted and aborted; '
             + 'your message goes next'
@@ -1127,7 +1133,15 @@ function talk(text, res, interrupt = true, poll = false) {
     // Poll client: the queue notice is its confirmation — the turn's own
     // frames arrive through the ring when flushPending gives it the floor.
     if (poll) { try { res.end(); } catch {} }
-    if (interrupt && !openTools.size) interruptTurn();
+    // +99 (supersedes the +33 rule): the interrupt gesture cuts the
+    // TURN even with a tool in flight — the field spec: 'put the
+    // running tool into background and free the agent to answer my
+    // next message.' The turn aborts within a heartbeat and
+    // flushPending hands over the floor immediately; what the tool's
+    // own process does next is the harness's business, probed and
+    // reported in the commit note. The polite queue (interrupt=0)
+    // still waits for the turn to settle on its own.
+    if (interrupt) interruptTurn();
     return;
   }
   if (poll) {

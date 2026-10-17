@@ -165,8 +165,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   late final Clock _clock;
   late final Scheduler _scheduler;
-  late final HarnessGateway Function(String url, String token)?
-  _gatewayFactory;
+  late final HarnessGateway Function(String url, String token)? _gatewayFactory;
   SpeechEngine? _worker;
   late final MicPipeline _mic;
   late final ReplyPipeline _reply;
@@ -300,8 +299,10 @@ class VoiceAssistant extends ChangeNotifier {
   // probe must never drop a live turn.
   Timer? _reattachTimer; // next probe of the retry chain
   int _reattachStep = 0; // ladder rungs spent on the current orphan
-  bool _reattachRetire = false; // chain end = retire the spinner (zombie hop failed)
-  int _reattachGen = -1, _reattachSeq = -1; // the orphaned turn a chain belongs to
+  bool _reattachRetire =
+      false; // chain end = retire the spinner (zombie hop failed)
+  int _reattachGen = -1,
+      _reattachSeq = -1; // the orphaned turn a chain belongs to
 
   // Screenshot-able event ring for barge-in/edge forensics: every worker
   // diagnostic note that matters (barge-in candidates), chunk seams, and
@@ -411,8 +412,9 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// How long the in-flight bridge turn has been working (zero when idle):
   /// the elapsed readout on the chat window's Claude Code-style spinner.
-  Duration get harnessElapsed =>
-      _harnessSince == null ? Duration.zero : _clock().difference(_harnessSince!);
+  Duration get harnessElapsed => _harnessSince == null
+      ? Duration.zero
+      : _clock().difference(_harnessSince!);
   bool get bridgeVoice => _bridgePrefs.voice;
   String get bridgeUrlText => _bridgePrefs.url;
   String get bridgeTokenText => _bridgePrefs.token;
@@ -440,9 +442,8 @@ class VoiceAssistant extends ChangeNotifier {
   int get contextWindow => _contextWindow;
 
   /// 0..1 fill for the context bar; 0 when the window is still unknown.
-  double get contextFrac => _contextWindow > 0
-      ? (_contextIn / _contextWindow).clamp(0.0, 1.0)
-      : 0;
+  double get contextFrac =>
+      _contextWindow > 0 ? (_contextIn / _contextWindow).clamp(0.0, 1.0) : 0;
 
   void _mergeContext(int tokens, int window) {
     var changed = false;
@@ -505,8 +506,9 @@ class VoiceAssistant extends ChangeNotifier {
   /// Prefs live in the models dir — a toggle flipped before init
   /// finished (or in tests) flips the in-memory pref without a disk
   /// write, rather than littering the process's cwd.
-  Future<void> _saveBridgePrefs() =>
-      _modelsDir.isEmpty ? Future.value() : saveBridgePrefs(_modelsDir, _bridgePrefs);
+  Future<void> _saveBridgePrefs() => _modelsDir.isEmpty
+      ? Future.value()
+      : saveBridgePrefs(_modelsDir, _bridgePrefs);
 
   /// Session-housekeeping chips on the main screen. They replace the old
   /// canned-command set (which asked the harness to do things it does
@@ -786,7 +788,19 @@ class VoiceAssistant extends ChangeNotifier {
             // stay speakable. Eyes keep the full line either way — for a
             // minute-long build the spinner IS the honest label of which
             // command is chewing.
-            latestWork = stepIsSilentFor(ev.toolName) ? '' : stepLine;
+            if (ev.toolName == 'queued') {
+              // +99: the interrupt verdict is CONVERSATION, not a
+              // caption. It lands in the turn's bubble the moment it
+              // arrives and stays — through a minute of backgrounded
+              // build, through reattach replays, through the app's own
+              // restart — where a spinner line gets overwritten by the
+              // next frame. Eyes-only too: the verdict is for reading,
+              // and the answer's own voice must not queue behind it.
+              _chat.addBlock(turn, stepLine);
+              latestWork = '';
+            } else {
+              latestWork = stepIsSilentFor(ev.toolName) ? '' : stepLine;
+            }
             // No step line in the conversation any more: the spinner's
             // working line (and the narration switch, for those who want
             // steps spoken) carry tool progress; the journal keeps every
@@ -1250,7 +1264,8 @@ class VoiceAssistant extends ChangeNotifier {
     _voiceBusy = true;
     _voiceStatus = 'Making the preview…';
     _reply.stopDebug();
-    _reply.stopPlayback(); // a live reply would fight the preview for the speaker
+    _reply
+        .stopPlayback(); // a live reply would fight the preview for the speaker
     notifyListeners();
     try {
       _worker!.setPlaying(true); // hard-mode gate while we hear ourselves
@@ -1295,10 +1310,7 @@ class VoiceAssistant extends ChangeNotifier {
       if (!_benchCapturing) return;
       _status = 'Bench listening… ${_benchSeconds.toStringAsFixed(1)}s';
       notifyListeners();
-      _benchTimer = _scheduler.after(
-        const Duration(milliseconds: 250),
-        tick,
-      );
+      _benchTimer = _scheduler.after(const Duration(milliseconds: 250), tick);
     }
 
     _benchTimer = _scheduler.after(const Duration(milliseconds: 250), tick);
@@ -1344,7 +1356,8 @@ class VoiceAssistant extends ChangeNotifier {
     _benchChunks.clear();
     _benchT0 = Stopwatch()
       ..start(); // release moment: latencies clock from here
-    _reply.warmUpRoute(); // the route rides the wait exactly like a real PTT turn
+    _reply
+        .warmUpRoute(); // the route rides the wait exactly like a real PTT turn
     _benchNote = 'Transcribing…';
     notifyListeners();
     final gen = _generation; // stays ours unless a newer turn supersedes it
@@ -1375,7 +1388,8 @@ class VoiceAssistant extends ChangeNotifier {
         },
       );
       swTts.stop();
-      _ttsSeconds = swTts.elapsedMilliseconds / 1000.0; // keeps the strip honest
+      _ttsSeconds =
+          swTts.elapsedMilliseconds / 1000.0; // keeps the strip honest
       final secs = _reply.lastTtsAudio!.length / 24000.0;
       _reply.closeStream();
       await playTask; // let the echo finish playing before the next press
@@ -1958,16 +1972,14 @@ class VoiceAssistant extends ChangeNotifier {
       _hops.sent(); // rejoining counts as reached-the-harness too
       _logDebug('ATTACH stream open: gen=$gen backlog replay, then live');
       var outcome = const PumpOutcome(
-      stale: true,
-      sawDone: false,
-      sawErrorFrame: false,
-      streamError: null,
-      detached: false,
-    );
+        stale: true,
+        sawDone: false,
+        sawErrorFrame: false,
+        streamError: null,
+        detached: false,
+      );
       try {
-        outcome = await pump.run(
-          gateway.attach(onActivity: _lease.markAlive),
-        );
+        outcome = await pump.run(gateway.attach(onActivity: _lease.markAlive));
         final err = outcome.streamError;
         if (err != null && gen == _generation) {
           _fail(err is BridgeException ? err.message : '$err');
@@ -2309,8 +2321,7 @@ class VoiceAssistant extends ChangeNotifier {
         // idle so this never stomps a live phase's status (a stray
         // double-release over working machinery must not claim the
         // machinery failed).
-        _status =
-            "That press didn't land — nothing was recorded. Hold again.";
+        _status = "That press didn't land — nothing was recorded. Hold again.";
         notifyListeners();
       }
       return;
@@ -2527,7 +2538,8 @@ class VoiceAssistant extends ChangeNotifier {
       }
       return;
     }
-    if (_reply.debugPlaying) return; // don't let the replay re-enter the pipeline
+    if (_reply.debugPlaying)
+      return; // don't let the replay re-enter the pipeline
     if (event.speechStarted) {
       // Barge-in: the SNR gate already forced this speech to sit well above
       // the echo/noise floor, so muting our reply here is safe.
