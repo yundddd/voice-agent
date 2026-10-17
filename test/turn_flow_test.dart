@@ -438,14 +438,22 @@ void main() {
       expect(
         a.chat.any((e) =>
             !e.fromUser && e.blocks.contains('Stuck in the synth.')),
-        isTrue,
-        reason: 'committed text must be in the bubble AND the dedup '
-            'ledger before a single chunk plays',
+        isFalse,
+        reason: '+116: the ledger waits for the FIRST SOUND — an '
+            'unspoken commit must never fossilise into fake history '
+            '(the in-flight set, not the log, guards the queueing gap)',
       );
+      expect(harness.view != null, isTrue); // frame WAS taken: it is in
 
-      gate.complete(); // the speaker gets it after all: once, and only once
+      gate.complete(); // the speaker gets it: heard once, logged once
       await settle();
       expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
+      expect(
+        a.chat.any((e) =>
+            !e.fromUser && e.blocks.contains('Stuck in the synth.')),
+        isTrue,
+        reason: 'air is the stamp (+116)',
+      );
     });
 
     test('the queue verdict gets its own bubble, not the turn\'s (+110)',
@@ -638,12 +646,13 @@ void main() {
       expect(a.chat.last.blocks, contains('Heard, this one.'));
 
       final gate = Completer<void>();
-      engine.holdChunks = gate.future; // next paragraph commits but its
-      // audio is frozen before the first chunk
+      engine.holdChunks = gate.future; // next paragraph enters the
+      // speaker's flight but its audio is frozen before the first chunk
       harness.emit(BridgeEvent.forTest('say', text: 'Never aired.'));
       await settle();
-      expect(a.chat.last.blocks, contains('Never aired.'),
-          reason: 'committed the moment the frame landed (+109)');
+      expect(a.chat.last.blocks, isNot(contains('Never aired.')),
+          reason: '+116: no block without sound — and nothing to '
+              'retract later either, the lie was never written');
 
       harness.finishView(); // the wire dies mid-synth: no done frame
       await settle();

@@ -664,30 +664,30 @@ class VoiceAssistant extends ChangeNotifier {
     // HEARD — the replay dedup leans entirely on that promise.
     final committed = <String>[];
     final aired = <String>{};
-    // Speak one answer block end-to-end. +109: the ledger stamp moved
-    // from first-chunk-on-air to the moment the block is COMMITTED to
-    // the speaker — 'mark it when it starts speaking', the owner's
-    // call. The on-air stamp let a reattach replay re-voice paragraphs
-    // that were still synthesising or queued behind playing audio: the
-    // dedup ledger only knew blocks whose audio had already reached
-    // the player, and the same answer came out of the speaker twice
-    // (field report 20:09:58, 'you are repeating yourself twice after
-    // I interrupt'). The trade the old comment feared — text with no
-    // audio when a block dies before its first chunk — is the one
-    // accepted here: a committed paragraph whose turn is cut keeps its
-    // line in the bubble, honest words the voice got close to saying.
+    // Speak one answer block end-to-end. +116 returns to the owner's
+    // exact words — 'mark it when it STARTS speaking': the ledger write
+    // lands at the first audio chunk, the moment sound genuinely begins
+    // (not merely enqueues). +109's enqueue-time write fed the ledger
+    // lies a process death could not take back: an APK swap between
+    // commit and first chunk left a persisted block for words that
+    // never sounded, and every later replay skipped them as 'already
+    // heard' (two field reports on the install). The double-voice race
+    // +109 was built for is covered INSTEAD by the in-flight set below:
+    // live in memory for the live process, gone with a dead one — the
+    // honest half of the ledger's truth. Until air, the bubble shows
+    // the draft tail the tally frames already carry, so the screen
+    // speaks no words the speaker has not said.
     Future<void> speak(String text) async {
       _narr.audioActivity(); // audio just became active: hush
-      // Committed: ledger first, audio next, in every mode.
-      spoken.write('$text ');
-      _chat.addBlock(turn, text); // persists + repaints; a replay from
-      // here on dedups against it, the speaker can still be silent
       _lastReplyText = text;
       if (_backgrounded) {
         // App is hidden: keep drinking the harness's firehose but skip
         // synth and audio entirely (the speaker is gone anyway). The
-        // block still lands above like everywhere else, and the most
+        // block still lands like everywhere else — no audio is EXPECTED
+        // while hidden, so a text stamp is not a lie — and the most
         // recent one is what [_speakResumedPending] speaks on resume.
+        spoken.write('$text ');
+        _chat.addBlock(turn, text);
         _resumeReplyText = text;
         return;
       }
@@ -703,6 +703,9 @@ class VoiceAssistant extends ChangeNotifier {
         onAir: (sinceText) {
           aired.add(text); // +114: the ear has it, the ledger may keep it
           _inFlight.remove(text); // +115: the ledger is the truth from here
+          // +116: the ledger stamp itself, at true first sound:
+          spoken.write('$text ');
+          _chat.addBlock(turn, text);
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed: the first chunk of a
@@ -1957,8 +1960,6 @@ class VoiceAssistant extends ChangeNotifier {
     final rCommitted = <String>[];
     final rAired = <String>{};
     Future<void> speak(String text) async {
-      spoken.write('$text ');
-      _chat.addBlock(turn, text);
       _lastReplyText = text;
       rCommitted.add(text);
       _inFlight.add(text); // +115: a replayed paragraph is equally
@@ -1971,6 +1972,9 @@ class VoiceAssistant extends ChangeNotifier {
         onAir: (sinceText) {
           rAired.add(text);
           _inFlight.remove(text); // +115
+          // +116: ledger stamp at first sound, same law as the live turn:
+          spoken.write('$text ');
+          _chat.addBlock(turn, text);
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed
@@ -2034,17 +2038,16 @@ class VoiceAssistant extends ChangeNotifier {
           } else if (sayText.isNotEmpty &&
               (_chat.containsBlock(sayText) ||
                   _inFlight.contains(sayText))) {
-            // Already heard — or already airborne in this process. The
-            // persisted chat log remembers the block (it joins the
-            // conversation the moment its audio is COMMITTED, +109),
-            // and _inFlight (+115) covers the gap between that commit
-            // and the first chunk: a commit that outlives its process
-            // (APK swap, kill) loses its in-flight claim, which is
-            // exactly what makes the relaunched app re-voice a tail
-            // that never actually spoke instead of gaslighting the
-            // ear. One trade kept from the old law: a paragraph cut off
-            // MID-audio counts as heard and its tail is not repeated —
-            // never re-listening beats never not-listening.
+            // Already heard — or already airborne in this process.
+            // +116 makes the first half TRUE: the persisted log only
+            // ever carries blocks whose audio started, so containsBlock
+            // means heard, full stop — and _inFlight (+115) covers the
+            // seconds before that first chunk for the process doing the
+            // speaking, dying with it so a crash cannot fossilise a lie
+            // (the install-day reports). One trade kept from the old
+            // law: a paragraph cut off MID-audio counts as heard and
+            // its tail is not repeated — never re-listening beats
+            // never not-listening, said every chat client ever.
             _logDebug('replay dedup: paragraph already in chat — skipped');
           } else if (sayText.isNotEmpty) {
             _ticker.markSpoken();
