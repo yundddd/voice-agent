@@ -312,6 +312,9 @@ function relaySentences(blk, {force = false} = {}) {
     force,
     emit: (t) => {
       console.error(`  -> say(live) "${t.slice(0, 40)}"`);
+      spokenTexts.add(t); // +112: a sentence the streaming pass spoke (or
+      // tried to, view or no view) is accounted for — a later copy of it
+      // must never land in the unheard backlog a drain replays.
       relay('say', {text: t});
     },
   });
@@ -450,6 +453,21 @@ const relay = (ev, data) => {
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
   if (curRes) { sse(curRes.res, ev, data); return; }
+  // +112 (the answered-interruption echo): a `say` whose text was
+  // already relayed this turn is a re-relay, not news — and this copy
+  // is heading for the UNHEARD backlog, which a drain replays verbatim.
+  // Retire any copy already parked there instead of stacking a second:
+  // two unheard entries of one sentence meant the phone spoke it twice
+  // after one interrupt (field report on the +111 drain's first flight).
+  if (ev === 'say' && data.text && spokenTexts.has(data.text)) {
+    for (let i = backlog.length - 1; i >= 0; i--) {
+      if (backlog[i].ev === 'say' && backlog[i].data.text === data.text) {
+        backlog.splice(i, 1);
+        console.error('  [backlog] say re-relay: unheard copy retired');
+      }
+    }
+    return; // the first copy (or the heard original) already carries it
+  }
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
   console.error(`  [backlog] ${ev} (n=${backlog.length})`);
