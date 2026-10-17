@@ -1262,6 +1262,9 @@ class VoiceAssistant extends ChangeNotifier {
       _ttsNumSpeakers = _worker!.ttsNumSpeakers;
       _activeVoiceId = voice.id;
       _idleReady();
+      // +120: open the output route AT LAUNCH, once, before any press
+      // exists to race it (see ReplyPipeline.warmUpRoute).
+      _reply.warmUpRoute();
       // Cold start while a turn runs (or just finished) on the bridge —
       // Android killed the process mid-turn: adopt it. Nothing to do when
       // the bridge has nothing open; the health gate inside decides. If

@@ -446,11 +446,25 @@ class ReplyPipeline {
   /// no waiter); the first real play() simply takes over, and a dead
   /// round ends with silence no one hears. Same path each round: it
   /// just gets overwritten, no litter.
+  /// +120: the route needs opening ONCE per process, and the launch call
+  /// in the assistant's init does it before any press can collide with
+  /// it. The field signature this kills: a fresh app start answering
+  /// its first question into silence while the SECOND reply played
+  /// fine — the two-second warm-up, fired on release, still owning the
+  /// player when the quick local TTS handed it the real chunk; the
+  /// overlap killed the chunk and the once-per-release call sites just
+  /// re-armed the same race all afternoon long.
+  bool _warmedUp = false;
+
   void warmUpRoute() {
+    if (_warmedUp) return;
+    _warmedUp = true;
     unawaited(() async {
       try {
         await output.play(Float32List(48000), 24000, tag: 'warmup'); // 2 s
-      } catch (_) {}
+      } catch (_) {
+        _warmedUp = false; // a failed opening may be tried again later
+      }
     }());
   }
 
