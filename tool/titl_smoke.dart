@@ -6,7 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:piper_phonemize/piper_phonemize.dart' as piper;
-import 'package:voice_agent/titl_engine.dart';
+import 'package:voice_agent/src/speech/titl_engine.dart';
 
 Future<void> main(List<String> argv) async {
   final text = argv.isEmpty

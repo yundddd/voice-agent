@@ -10,14 +10,20 @@
 // listen to exactly what the app would have spoken. Kokoro is the app's
 // only TTS engine; the test skips its leg until the pack is staged (the
 // app downloads it on selection; KOKORO_DIR overrides the path).
+//
+// Where libonnxruntime cannot load (no LD_LIBRARY_PATH), every test here
+// SKIPS instead of failing: the default run stays green, and the
+// deterministic pipeline coverage lives in worker_fake_test.dart — the
+// same worker isolate and job protocol on FakeBackends, no ONNX.
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/audio_io.dart';
-import 'package:voice_agent/model_paths.dart';
-import 'package:voice_agent/speech_worker.dart';
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
+import 'package:voice_agent/src/audio/audio_io.dart';
+import 'package:voice_agent/src/models/model_paths.dart';
+import 'package:voice_agent/src/speech/speech_worker.dart';
 
 void main() {
   final asrDir = Directory('models/sherpa-onnx-whisper-tiny.en').absolute.path;
@@ -30,12 +36,37 @@ void main() {
 
   final haveModels = File(paths.whisperDecoder).existsSync();
 
-  test('ASR: wav fixture -> Whisper -> text', () async {
+  bool? runtimeOk;
+  Future<bool> nativeUsable() async {
+    // dlopen fails identically from any isolate, so probing here predicts
+    // the worker's fate; initBindingsAsync caches across the suite.
+    if (runtimeOk == true) return true;
+    try {
+      await sherpa_onnx.initBindingsAsync();
+      runtimeOk = true;
+    } catch (_) {
+      runtimeOk = false;
+    }
+    return runtimeOk == true;
+  }
+
+  Future<bool> ready(String what) async {
     if (!haveModels) {
       // ignore: avoid_print
-      print('SKIPPED: extracted models not found under models/');
-      return;
+      print('SKIPPED $what: extracted models not found under models/');
+      return false;
     }
+    if (!await nativeUsable()) {
+      // ignore: avoid_print
+      print('SKIPPED $what: libonnxruntime not loadable '
+          '(set LD_LIBRARY_PATH to the sherpa_onnx_linux lib dir)');
+      return false;
+    }
+    return true;
+  }
+
+  test('ASR: wav fixture -> Whisper -> text', () async {
+    if (!await ready('ASR roundtrip')) return;
 
     // Transcribe a real speech fixture (same wavs ship with the model).
     final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
@@ -58,11 +89,7 @@ void main() {
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   test('VAD endpointing: streamed speech + 1s silence -> segment', () async {
-    if (!haveModels) {
-      // ignore: avoid_print
-      print('SKIPPED: extracted models not found under models/');
-      return;
-    }
+    if (!await ready('VAD endpointing')) return;
 
     final wav = File('$asrDir/test_wavs/1.wav').readAsBytesSync();
     final (samples, sampleRate) = decodeWav(wav);
@@ -127,11 +154,11 @@ void main() {
       kokoroLexicon: '$dir/lexicon-us-en.txt,$dir/lexicon-gb-en.txt',
       sid: sid,
     );
-    if (!haveModels ||
+    if (!await ready('Kokoro TTS') ||
         !File('$dir/model.onnx').existsSync() ||
         !File('$dir/voices.bin').existsSync()) {
       // ignore: avoid_print
-      print('SKIPPED: Kokoro assets not staged under $dir');
+      print('SKIPPED Kokoro assets: not staged under $dir');
       return;
     }
 

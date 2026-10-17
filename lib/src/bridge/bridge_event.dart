@@ -1,0 +1,192 @@
+/// One parsed SSE frame from the harness bridge (/talk, /attach or the
+/// /poll ring), plus the pure SSE state machine that decodes them.
+///
+/// Kept free of any socket or client reference: a test feeds it scripted
+/// lines (or maps from a poll page) and asserts the frames out.
+library;
+
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
+class BridgeEvent {
+  const BridgeEvent._(
+    this.kind, {
+    this.text = '',
+    this.toolName = '',
+    this.detail = '',
+    this.isError = false,
+    this.inputTokens = 0,
+    this.contextWindow = 0,
+    this.outTokens = 0,
+    this.toolKind = '',
+    this.thought = '',
+    this.draft = '',
+    this.wireMs = 0,
+  });
+
+  /// Test seam: build frames verbatim without inventing wire payloads.
+  @visibleForTesting
+  const BridgeEvent.forTest(
+    this.kind, {
+    this.text = '',
+    this.toolName = '',
+    this.detail = '',
+    this.isError = false,
+    this.inputTokens = 0,
+    this.contextWindow = 0,
+    this.outTokens = 0,
+    this.toolKind = '',
+    this.thought = '',
+    this.draft = '',
+    this.wireMs = 0,
+  });
+
+  /// 'say' | 'tool' | 'context' | 'done' | 'error'.
+  final String kind;
+  final String text;
+  final String toolName;
+  final String detail;
+  final bool isError;
+
+  /// For 'context' (and for 'tool {name:tokens}', where it is that
+  /// frame's `in`): tokens of conversation context the next call will
+  /// carry, and the model's window (0 = the bridge has not seen a
+  /// `result` naming one yet). A context frame may also be a PREVIEW
+  /// (extra `preview: true` key, ignored here): the bridge's estimate
+  /// of the growing input while the model is still reading — turn
+  /// start and every fresh tool_result — which the next exact frame
+  /// overrules.
+  final int inputTokens;
+  final int contextWindow;
+
+  /// For 'tool {name:tokens}' (the live spinner counter): output tokens
+  /// this turn (estimate or exact — the bridge says which by when it
+  /// sends), the call's context tokens in [inputTokens] (same field the
+  /// `context` frame uses), and the activity word in [toolKind]
+  /// ('thinking', 'answering', 'calling Bash', …). A pre-numbers bridge
+  /// leaves these zero/empty and the app shows [detail] verbatim.
+  final int outTokens;
+  final String toolKind;
+
+  /// For 'tool {name:tokens}' while [toolKind] is 'thinking': a rolling
+  /// one-line tail (~160 chars) of the model's LIVE thinking text — the
+  /// words behind the word "thinking". Empty when not thinking, or when
+  /// the model simply answers.
+  final String thought;
+
+  /// For 'tool {name:tokens}' while [toolKind] is 'answering': a rolling
+  /// one-line tail (~240 chars) of the answer text the bridge has not
+  /// spoken yet — the reply painted while it is still being written.
+  /// Empty on bridges too old to send it (unknown frame keys are
+  /// ignored), so the chat bubble simply stays on the working line.
+  final String draft;
+
+  /// The bridge's wall-clock milliseconds at the moment this frame
+  /// crossed the wire (`_ts` on every SSE frame; 0 from older bridges).
+  /// The assistant subtracts its /health-calibrated clock skew and logs
+  /// the age next to tool lines — the instrument that tells whether
+  /// batching happens on the wire or in this app's socket stack.
+  final int wireMs;
+
+  /// A complete assistant message — feed straight into the TTS path.
+  bool get isSay => kind == 'say';
+  bool get isDone => kind == 'done';
+
+  /// Ring/poll frame shape: the event name and an already-decoded data
+  /// map — same dispatch as [parse], minus the re-encode round trip.
+  static BridgeEvent parseMap(String event, Map<Object?, Object?> data) =>
+      parse(event, jsonEncode(data));
+
+  static BridgeEvent parse(String event, String dataJson) {
+    final decoded = tryJson(dataJson);
+    if (decoded is! Map) {
+      // Non-JSON data line: plain text is only meaningful as a say frame
+      // (a hand-rolled bridge variant); anything else is an error line.
+      return event == 'say'
+          ? BridgeEvent._('say', text: dataJson)
+          : BridgeEvent._('error', text: dataJson, isError: true);
+    }
+    final data = decoded.cast<String, Object>();
+    switch (event) {
+      case 'say':
+        return BridgeEvent._(
+          'say',
+          text: '${data['text'] ?? ''}',
+          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
+        );
+      case 'tool':
+        final n = data['in'];
+        final o = data['out'];
+        return BridgeEvent._(
+          'tool',
+          toolName: '${data['name'] ?? ''}',
+          detail: '${data['detail'] ?? ''}',
+          inputTokens: n is num ? n.toInt() : 0,
+          outTokens: o is num ? o.toInt() : 0,
+          toolKind: '${data['kind'] ?? ''}',
+          thought: '${data['thought'] ?? ''}',
+          draft: '${data['draft'] ?? ''}',
+          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
+        );
+      case 'context':
+        final n = data['in'], w = data['window'];
+        return BridgeEvent._(
+          'context',
+          inputTokens: n is num ? n.toInt() : 0,
+          contextWindow: w is num ? w.toInt() : 0,
+        );
+      case 'done':
+        return BridgeEvent._('done', isError: data['isError'] == true);
+      default:
+        return BridgeEvent._(
+          'error',
+          text: '${data['error'] ?? data['message'] ?? dataJson}',
+          isError: true,
+        );
+    }
+  }
+
+  static Object? tryJson(String s) {
+    try {
+      return jsonDecode(s);
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+/// Splits SSE protocol lines into parsed events — a pure state machine,
+/// unit-testable without any socket. Ignores comments, handles multi-line
+/// data (joined with newlines, per spec), and tolerates the stream ending
+/// without a final blank line (last frame still yielded).
+Stream<BridgeEvent> bridgeEventsFromLines(Stream<String> rawLines) async* {
+  String? event;
+  final data = StringBuffer();
+  var haveData = false;
+  await for (final line in rawLines.map(
+    (l) => l.endsWith('\r') ? l.substring(0, l.length - 1) : l,
+  )) {
+    if (line.isEmpty) {
+      if (haveData && event != null) {
+        yield BridgeEvent.parse(event, data.toString());
+      }
+      event = null;
+      data.clear();
+      haveData = false;
+      continue;
+    }
+    if (line.startsWith(':')) continue; // SSE comment / keep-alive
+    if (line.startsWith('event:')) {
+      event = line.substring(6).trim();
+    } else if (line.startsWith('data:')) {
+      if (haveData) data.write('\n');
+      data.write(line.substring(5).trimLeft());
+      haveData = true;
+    }
+  }
+  // Stream ended mid-frame (no trailing blank line): still deliver it.
+  if (haveData && event != null) {
+    yield BridgeEvent.parse(event, data.toString());
+  }
+}

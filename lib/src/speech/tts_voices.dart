@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:piper_phonemize/piper_phonemize.dart' as piper;
 
-import 'model_packs.dart';
+import '../models/model_packs.dart';
 import 'speech_worker.dart' show TtsSpec;
 
 /// One selectable TTS voice: a display entry + the packs it needs + how to

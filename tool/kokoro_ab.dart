@@ -16,9 +16,9 @@
 import 'dart:io';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as so;
-import 'package:voice_agent/audio_io.dart';
-import 'package:voice_agent/model_paths.dart';
-import 'package:voice_agent/speech_worker.dart';
+import 'package:voice_agent/src/audio/audio_io.dart';
+import 'package:voice_agent/src/models/model_paths.dart';
+import 'package:voice_agent/src/speech/speech_worker.dart';
 
 // Fricatives (/s/ /ʃ/ /f/ /θ/), digits, quote and multi-sentence rhythm:
 // everything a narrowband path or a mis-phonemized lexicon trips over.

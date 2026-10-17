@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piper_phonemize/piper_phonemize.dart' as piper;
-import 'package:voice_agent/titl_engine.dart';
+import 'package:voice_agent/src/speech/titl_engine.dart';
 
 void main() {
   final vocab = <String, int>{

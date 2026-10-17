@@ -11,9 +11,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:voice_agent/audio_io.dart';
-import 'package:voice_agent/model_paths.dart';
-import 'package:voice_agent/speech_worker.dart';
+import 'package:voice_agent/src/audio/audio_io.dart';
+import 'package:voice_agent/src/models/model_paths.dart';
+import 'package:voice_agent/src/speech/speech_worker.dart';
 
 Future<void> main(List<String> args) async {
   final wavPath = args.isEmpty ? 'build/onset_probe.wav' : args.first;

@@ -1,0 +1,74 @@
+/// The harness seam: what the assistant needs from "the thing that
+/// answers", said as a protocol rather than as Claude Code specifics.
+///
+/// Today the only implementation is [BridgeClient] (the Claude Code SSE
+/// bridge in tool/claude_bridge.mjs); tomorrow it can be a different
+/// coding agent's server, a hosted endpoint, or a local in-process
+/// runner — the assistant only ever talks to this interface, and tests
+/// hand it a [FakeHarness].
+library;
+
+import 'bridge_event.dart';
+
+abstract class HarnessGateway {
+  /// The port this app serves its event journal on (src/journal/).
+  /// Ridden on EVERY request as `?logport=` so the harness always knows
+  /// where to poll the phone's side of the story from. Null until the
+  /// app wires it in: the parameter is simply absent then.
+  int Function()? journalPort;
+
+  /// Starts a turn with [text]; the stream yields say/tool/context
+  /// events as the harness works and a final done (or error) event,
+  /// then closes. Cancelling the subscription abandons the phone's VIEW
+  /// of the turn (the harness keeps working, backgrounded).
+  ///
+  /// [interrupt] decides what a QUEUED prompt does to a turn already in
+  /// flight: true interrupts a mere thinking turn in-band; false lets
+  /// the work finish first (the polite queue).
+  ///
+  /// [onActivity] fires for every raw chunk the connection delivers —
+  /// event frames AND keep-alive pings — the liveness signal behind the
+  /// quiet-wire watchdog ([WireLease]).
+  Stream<BridgeEvent> talk(
+    String text, {
+    bool interrupt = true,
+    void Function()? onActivity,
+  });
+
+  /// Pull transport: start a turn whose events are read from the ring
+  /// with [poll] instead of a pushed stream.
+  Future<void> talkPoll(String text, {bool interrupt = true});
+
+  /// One ring page: events with seq > [since]; null = unreachable.
+  Future<Map<String, Object>?> poll(int since);
+
+  /// A fresh heard view of whatever turn the harness is running (or
+  /// just ran): replays the unheard backlog, then streams live.
+  Stream<BridgeEvent> attach({void Function()? onActivity});
+
+  /// Cut the harness's in-flight WORK short (in-band interrupt; the
+  /// conversation itself survives).
+  Future<void> stop();
+
+  /// Forget the conversation (fresh session on the next utterance).
+  Future<void> reset();
+
+  /// Health as a one-line reason: null when alive and healthy.
+  Future<String?> health();
+
+  /// The raw health payload (sessionId, claudeUp, turnOpen, missed,
+  /// poll…): what reattach decisions, the context bar and the session
+  /// row all read. Null when unreachable.
+  Future<Map<String, Object>?> healthInfo();
+
+  /// Deliver a journal envelope out-of-band (push transport for phones
+  /// that cannot be dialled back); true = acknowledged.
+  Future<bool> pushJournal(Map<String, Object> envelope);
+}
+
+class BridgeException implements Exception {
+  BridgeException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}

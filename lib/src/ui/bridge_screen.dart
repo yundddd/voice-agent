@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'assistant.dart';
+import '../assistant/assistant.dart';
 
 /// Bridge settings + live check (the terminal icon). Everything voice-
 /// related about the bridge is one tap deep and needs no manual editing

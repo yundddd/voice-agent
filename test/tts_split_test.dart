@@ -1,7 +1,7 @@
 // Sentence chunking for streamed synthesis (barge-in gaps + short first
 // audio). Mirrors the Rust split_for_tts constants.
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/speech_worker.dart';
+import 'package:voice_agent/src/speech/speech_worker.dart';
 
 void main() {
   test('short replies stay one chunk', () {

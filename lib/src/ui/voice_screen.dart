@@ -2,8 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'assistant.dart';
-import 'tts_voices.dart';
+import '../assistant/assistant.dart';
 
 /// Settings page for the assistant's voice: pick/preview/download/delete
 /// the voice pack and slide through its speaker styles. The pack downloads

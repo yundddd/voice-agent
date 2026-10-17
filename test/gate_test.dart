@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/audio_dsp.dart';
+import 'package:voice_agent/src/audio/audio_dsp.dart';
 
 /// Deterministic pseudo-noise window (LCG, no timing flakiness).
 Float32List noiseWindow(int seed, double amplitude) {

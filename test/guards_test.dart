@@ -1,8 +1,8 @@
 // Regression guards for this session's fixes — one test per field
 // report, mirroring tool/sentence_relay.test.mjs on the JS side.
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/bridge.dart';
-import 'package:voice_agent/chat_log.dart';
+import 'package:voice_agent/src/bridge/bridge.dart';
+import 'package:voice_agent/src/chat/chat_log.dart';
 
 void main() {
   group('token counts (0.1.0+82: two decimals everywhere)', () {

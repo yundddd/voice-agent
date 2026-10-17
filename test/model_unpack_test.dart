@@ -14,7 +14,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/model_unpack.dart';
+import 'package:voice_agent/src/models/model_unpack.dart';
 
 const _tmp = '/tmp/opencode';
 

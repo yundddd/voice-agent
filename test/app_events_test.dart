@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/app_events.dart';
+import 'package:voice_agent/src/journal/app_events.dart';
 
 void main() {
   late Directory dir;

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_agent/chat_log.dart';
+import 'package:voice_agent/src/chat/chat_log.dart';
 
 void main() {
   test('user and sectioned-assistant entries round-trip through json', () {
