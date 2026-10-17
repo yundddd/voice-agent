@@ -33,14 +33,20 @@ class FilePlayerAudioOutput implements AudioOutput {
   // while another app owned the session (the field log: an APK install
   // with Telegram in front), our chunks 'played' to a silent route and
   // only the first blips reached the ear before something else stayed
-  // on top. ASSISTANT usage with transient-duck focus is what voice
-  // UIs get: it ducks music, yields to ringers, and never plays
-  // unheard behind a hog. Applied once, lazily, before the first play.
+  // on top. Applied once, lazily, before the first play.
+  //
+  // +118: the focus mode goes from duck-and-hope to plain GAIN. The
+  // transient-duck lane was the second half of the field story: a
+  // foreground chat chime demanded focus seconds into a chunk, and the
+  // plugin's native reflex on ANY loss is to pause a TTS track with no
+  // resume — the voice died mid-sentence with nothing in the journal.
+  // GAIN is the contract navigation voices use: my speech ducks the
+  // notifications, not the other way round.
   static final _voiceContext = AudioContext(
     android: AudioContextAndroid(
       contentType: AndroidContentType.speech,
       usageType: AndroidUsageType.assistant,
-      audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+      audioFocus: AndroidAudioFocus.gain,
     ),
   );
   Future<void>? _ctx;
