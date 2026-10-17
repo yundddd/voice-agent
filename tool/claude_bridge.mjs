@@ -92,7 +92,12 @@
 //                in the /attach replay for the phone's return. The old
 //                abandon branch ate the utterance (field report: 'the
 //                queued message was lost'); after the `queued` notice
-//                the turn is owed, whatever the transport does.
+//                the turn is owed, whatever the transport does. And when
+//                the turn in flight dies to make room for that queued
+//                prompt (+106), its `done` is NOT relayed — the phone
+//                cut the turn itself, and a stray done landing on the
+//                reattach view murders the fresh bubble (field report:
+//                slide-up, then no updates at all).
 //   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
 //                PROCESS stays alive. No-op while idle.
@@ -230,6 +235,10 @@ const sidFile = join(dir, '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
+// +106: the open turn was cut by interruptTurn to let a waiting prompt
+// through — its `result` is then the phone's own doing, and the `done`
+// relay skips it (see the result branch).
+let cutForPrompt = false;
 // Events a detached turn produced while NOBODY was listening. The phone's
 // stream can die while the app is hidden (Android process death, an OS-
 // dropped socket): the turn then runs unheard to its result, and without
@@ -805,7 +814,23 @@ function handleEvent(line) {
       console.error('  [result-error] ' +
         JSON.stringify(why).slice(0, 300).replace(/\\n/g, ' '));
     }
-    relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
+    // +106: a turn the phone CUT to make room for its own waiting
+    // prompt gets no funeral notice. The +99 interrupt path always
+    // parks the new prompt in `pending` first and marks the cut (see
+    // interruptTurn), and only THAT pairing silences the done: a
+    // politely-settled turn behind a slide-right queue still closes
+    // with done for whoever holds the view, or the old stream just
+    // stops lying open. Relaying done over a cut misfires: the phone's
+    // reattach chain may already be holding an ATTACH view (or the
+    // fresh /talk response is the next stream in line), and the app
+    // files the stray done against the NEW bubble it just sent (field
+    // report: slide-up over a thinking turn, then the conversation
+    // "shows no updates at all" — the fresh turn was born dead ~300 ms
+    // in). The queued turn's own frames — and the +81 'started' marker
+    // on the ring transport — say everything that needs saying.
+    if (!(pending && cutForPrompt)) {
+      relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
+    }
     if (curRes) endTurn();
     flushPending();
     return;
@@ -999,6 +1024,7 @@ function summarize(tool) {
 // fast queue flush, not a warm prefix (see the header latency note).
 function interruptTurn() {
   if (!child || childDead) return;
+  cutForPrompt = true; // this turn's result is a cut, not a close (+106)
   if (dumpDir) {
     try {
       appendFileSync(join(dumpDir, 'MANIFEST'),
@@ -1020,6 +1046,7 @@ function beginTurn(text, res, keep) {
   turnStartAt = Date.now() - 5000; // slack: clock skew
   curRes = { res, keep, turnStart: turnStartAt };
   backlog.length = 0; // a new turn: the old one's buffered frames are stale
+  cutForPrompt = false; // a fresh turn closes with its own done (+106)
   turnOpen = true;
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();

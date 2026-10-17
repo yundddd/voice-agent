@@ -24,6 +24,7 @@ const TOKEN = 'testtok';
 // Wide window, pid-spread, one port per test (each spins its own bridge).
 const PORT1 = 18732 + (process.pid % 977);
 const PORT2 = PORT1 + 1;
+const PORT3 = PORT1 + 2;
 
 function startBridge(stubLog, port) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -123,6 +124,45 @@ test('a polite queue whose phone stream died still gets its turn (+104)', async 
     });
     assert.deepEqual(seen(stubLog), ['first turn', 'second queued message']);
     assert.ok(a.text.includes('event: done'), 'turn A never got its own done');
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// The slide-up interrupt bug (field report: 'the conversation shows no
+// updates at all'): the aborted turn's `done` must not reach a stream —
+// the phone files a stray done against the fresh bubble it just sent,
+// and the new turn is born dead.
+test('an interrupted turn dies without a done of its own (+106)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT3);
+  try {
+    await up(PORT3);
+    const a = await call(PORT3, `/talk?token=${TOKEN}`,
+      { body: 'first turn', method: 'POST' });
+    await until('turn A open', async () => (await health(PORT3)).turnOpen === true);
+    const b = await call(PORT3, `/talk?token=${TOKEN}&interrupt=1`,
+      { body: 'interrupting prompt', method: 'POST' });
+    await until('B queued notice', async () => b.text.includes('"name":"queued"'));
+
+    // A's timer-fired result closes the aborted turn while B is pending:
+    // the view handover happens WITHOUT any done crossing over. Watch
+    // from the flush instant — before B's own result can legitimately
+    // produce one — so a leaking funeral notice shows up as a stray
+    // 'event: done' on either stream.
+    await until('queue flushed', async () => (await health(PORT3)).queued === false);
+    assert.ok(!b.text.includes('event: done'),
+      'stray done murdered the fresh bubble (the +106 bug)');
+    assert.ok(!a.text.includes('event: done'),
+      'the aborted turn leaked a done to the old view');
+
+    // The fresh turn still lives and dies properly: its OWN done closes
+    // its stream exactly once, and the harness got the prompt.
+    await until('B own done', async () => b.text.includes('event: done'));
+    assert.equal(b.text.split('event: done').length - 1, 1,
+      'B saw more than one done');
+    await until('B turn settled', async () => (await health(PORT3)).turnOpen === false);
+    assert.deepEqual(seen(stubLog), ['first turn', 'interrupting prompt']);
   } finally {
     await stopBridge(proc);
   }
