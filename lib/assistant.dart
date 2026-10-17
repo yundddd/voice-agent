@@ -2967,9 +2967,16 @@ class VoiceAssistant extends ChangeNotifier {
   void pttUp([Offset? at]) {
     pttEdgeCount++;
     final (slideUp, slideRight) = _pttSlidesAt(at);
+    // held only reads true when a press was actually recorded: on the
+    // stray branch _pttDownAt still wears the epoch, and printing its
+    // difference produced the nonsense 'held=1792195121943ms' that
+    // made a dropped press look like a two-week hold.
+    final held = _pttPointers == 0
+        ? 'n/a'
+        : '${DateTime.now().difference(_pttDownAt).inMilliseconds}ms';
     _logDebug(
       'ptt UP #$pttEdgeCount: ptr=$_pttPointers slideup=$slideUp '
-      'dismiss=$slideRight held=${DateTime.now().difference(_pttDownAt).inMilliseconds}ms',
+      'dismiss=$slideRight held=$held',
     );
     if (_pttPointers == 0) {
       // A release with no recorded press (dropped event, double release):
@@ -2988,6 +2995,18 @@ class VoiceAssistant extends ChangeNotifier {
       if (_mode == InteractionMode.conversation) {
         _logDebug('conv-mode release → fallback toggle dispatch');
         unawaited(toggle());
+      } else if (_phase == AssistantPhase.idle) {
+        // +95: the push-to-talk flavour of the same swallow was THE
+        // vanishing-message trace — field report: 'the app blocks, a
+        // press-release drops the message, which does not show up in
+        // the conversation.' Nothing was ever recorded, so no bubble
+        // CAN appear — but the button must not be silent about it.
+        // Tell the user on the line they were watching, and only while
+        // idle so this never stomps a live phase's status (a stray
+        // double-release over working machinery must not claim the
+        // machinery failed).
+        _status = "That press didn't land — nothing was recorded. Hold again.";
+        notifyListeners();
       }
       return;
     }
