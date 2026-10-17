@@ -18,15 +18,16 @@ void main() {
 
   group('teacher-in-the-loop text plumbing', () {
     test('aliases fold, unknowns drop, a stop is appended', () {
-      // espeak 'think' older IPA uses 'T'; 'ɾ' folds to 'ɹ'; the bogus
-      // codepoint 0x2044 (fraction slash) is not in the vocab.
+      // espeak 'think' older IPA uses 'T' (folds to θ); 'ɾ' folds to the
+      // pack's capital-T flap token, one pass so it is never re-theta'd;
+      // the bogus codepoint 0x2044 (fraction slash) is not in the vocab.
       final words = [
         'Tɪŋk'.codeUnits,
         'ɾaT'.codeUnits,
         [0x2044],
       ];
       final ph = TitlEngine.phonemesFromWords(words, vocab.keys.toSet());
-      expect(ph, 'θɪŋk ɹaθ.');
+      expect(ph, 'θɪŋk Taθ.');
     });
 
     test('ids are padded at both ends and stay under the graph window', () {

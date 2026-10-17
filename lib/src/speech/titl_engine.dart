@@ -63,20 +63,27 @@ const int _memTypeDefault = 0;
 /// (older TH codepoints, dialect reductions). Fold the known ones;
 /// everything else unknown is dropped at the vocab step — a wrong id
 /// would speak a wrong phoneme, a dropped char only shortens one.
+/// The flap maps to the pack's own capital-T token: that is what
+/// Misaki's espeak fallback feeds for it (its code replaces ɾ with
+/// 'T'), and the graph was trained on that convention — folding to ɹ
+/// instead (our first read) is what made getting/water/parameters land
+/// with a foreign accent against the Hugging Face samples. Folding is
+/// one pass per char, so this coexists with the legacy 'T'→'θ' entry:
+/// espeak's theta sign becomes θ, the tap becomes T, never the reverse.
 const Map<String, String> espeakAliases = {
   'D': 'ð',
   'T': 'θ',
   '1': 'ɨ',
   '2': 'ʉ',
   'ä': 'ɐ',
-  'ɾ': 'ɹ',
+  'ɾ': 'T',
   'ˑ': 'ː',
 };
 
 /// Italian students keep the tap: Kokoro's Italian pipeline (Misaki +
 /// eSpeak NG) trains on espeak's own ɾ — the dental-stop folding the
 /// upstream README documents is all it drops. The English students
-/// take the full [espeakAliases] table (Misaki maps flaps to ɹ).
+/// take the full [espeakAliases] table (Misaki feeds flaps as 'T').
 const Map<String, String> espeakAliasesIt = {
   'D': 'ð',
   'T': 'θ',
