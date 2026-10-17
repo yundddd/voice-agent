@@ -25,6 +25,7 @@ class FakeSpeechEngine implements SpeechEngine {
 
   /// Texts given to synthesizeStream/synthesize, in order.
   final List<String> synthesized = [];
+  final List<int?> synthesizedSids = [];
   final List<Float32List> vadWindows = [];
   int vadResets = 0;
   final List<bool> pins = [];
@@ -60,19 +61,24 @@ class FakeSpeechEngine implements SpeechEngine {
   }
 
   @override
+  int ttsNumSpeakers = 1;
+
+  @override
   Future<Float32List> denoise(Float32List pcm) async => pcm;
 
   @override
-  Future<(Float32List, int)> synthesize(String text) =>
-      synthesizeStream(text);
+  Future<(Float32List, int)> synthesize(String text, {int? sid}) =>
+      synthesizeStream(text, sid: sid);
 
   @override
   Future<(Float32List, int)> synthesizeStream(
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
+    int? sid,
   }) async {
     if (failNext != null) throw failNext!;
     synthesized.add(text);
+    synthesizedSids.add(sid);
     final chunk = Float32List(2400); // 100 ms at 24 kHz
     onChunk?.call(chunk, 24000);
     return (chunk, 24000);
@@ -114,8 +120,11 @@ class FakeHarness implements HarnessGateway {
   int pollCount = 0;
 
   @override
-  Stream<BridgeEvent> talk(String text,
-      {bool interrupt = true, void Function()? onActivity}) {
+  Stream<BridgeEvent> talk(
+    String text, {
+    bool interrupt = true,
+    void Function()? onActivity,
+  }) {
     talkCount++;
     lastInterrupt = interrupt;
     final ctl = StreamController<BridgeEvent>();
@@ -157,8 +166,7 @@ class FakeHarness implements HarnessGateway {
   Future<void> reset() async => resets++;
 
   @override
-  Future<String?> health() async =>
-      healthState == null ? 'unreachable' : null;
+  Future<String?> health() async => healthState == null ? 'unreachable' : null;
 
   @override
   Future<Map<String, Object>?> healthInfo() async => healthState;
@@ -172,8 +180,11 @@ class FakeHarness implements HarnessGateway {
   void finishAttach() => attachView?.close();
 
   /// A ring page carrying events with seq numbers above [since].
-  static Map<String, Object> page(int head, List<BridgeEvent> evs,
-      {int first = 1}) {
+  static Map<String, Object> page(
+    int head,
+    List<BridgeEvent> evs, {
+    int first = 1,
+  }) {
     var seq = first;
     return {
       'ok': true,

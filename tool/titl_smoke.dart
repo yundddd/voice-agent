@@ -34,7 +34,7 @@ Future<void> main(List<String> argv) async {
   final ms = DateTime.now().difference(t0).inMilliseconds;
   stdout.writeln(
     'samples: ${audio.length} (${audio.length / TitlEngine.sampleRate} s) '
-        'in ${ms}ms',
+    'in ${ms}ms',
   );
   var peak = 0.0;
   var sum = 0.0;
@@ -51,8 +51,8 @@ Future<void> main(List<String> argv) async {
   }
   final bytes = pcm.buffer.asUint8List();
   final pcmBytes = Uint8List.fromList(bytes);
+  // Chunk size rides in ck(); the body is the 16-byte fmt data.
   final fmt = Uint8List.fromList([
-    16, 0, 0, 0, // fmt size
     1, 0, // PCM
     1, 0, // mono
     0x3c, 0x5d, 0, 0, // 24000

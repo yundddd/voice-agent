@@ -36,6 +36,7 @@ export 'src/models/model_paths.dart';
 export 'src/models/model_unpack.dart';
 export 'src/platform/audio_output.dart';
 export 'src/platform/mic_source.dart';
+export 'src/speech/kokoro_voices.dart';
 export 'src/speech/speech_worker.dart';
 export 'src/speech/titl_engine.dart';
 export 'src/speech/tts_split.dart';

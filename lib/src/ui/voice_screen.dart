@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../assistant/assistant.dart';
+import '../speech/kokoro_voices.dart';
 
 /// Settings page for the assistant's voice: pick/preview/download/delete
 /// the voice pack and slide through its speaker styles. The pack downloads
@@ -19,7 +20,6 @@ class VoiceScreen extends StatefulWidget {
 class _VoiceScreenState extends State<VoiceScreen> {
   /// voiceId -> pack on disk. Refreshed on open and after every action.
   final Map<String, bool> _installed = {};
-  int? _dragSid; // visual-only slider position while dragging (multi-speaker)
 
   VoiceAssistant get a => widget.assistant;
 
@@ -248,13 +248,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     ],
                   ),
                 ),
-              Text(
-                'VOICE',
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
+              Text('VOICE', style: Theme.of(context).textTheme.labelSmall),
               const SizedBox(height: 4),
               for (final v in a.voices) _voiceTile(v),
-              if (a.ttsNumSpeakers > 1) _speakerSlider(),
+              if (a.ttsNumSpeakers > 1)
+                _styleCard()
+              else if (a.ttsNumSpeakers == 1)
+                const ListTile(
+                  contentPadding: EdgeInsets.symmetric(horizontal: 4),
+                  leading: Icon(Icons.record_voice_over_outlined),
+                  title: Text('Single voice'),
+                  subtitle: Text('This model speaks with one style only.'),
+                ),
               const SizedBox(height: 20),
               Text(
                 'ROUND-TRIP BENCH',
@@ -319,34 +324,229 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  Widget _speakerSlider() {
-    final shownSid = _dragSid ?? a.ttsSid;
+  Widget _styleCard() {
+    final scheme = Theme.of(context).colorScheme;
+    final current = a.ttsRoster.firstWhere(
+      (s) => s.sid == a.ttsSid.clamp(0, a.ttsNumSpeakers - 1),
+    );
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-      title: Text('Speaker ${shownSid + 1} of ${a.ttsNumSpeakers}'),
-      subtitle: Slider(
-        min: 0,
-        max: (a.ttsNumSpeakers - 1).toDouble(),
-        divisions: a.ttsNumSpeakers - 1,
-        value: shownSid.toDouble().clamp(0, (a.ttsNumSpeakers - 1).toDouble()),
-        label: 'Voice ${shownSid + 1}',
-        // Only swap the engine when the finger lifts — every intermediate
-        // value would rebuild the TTS model.
-        onChanged: (s) => setState(() => _dragSid = s.round()),
-        onChangeEnd: (s) {
-          setState(() => _dragSid = null);
-          _pickSpeaker(s.round());
-        },
+      leading: Icon(Icons.record_voice_over_outlined, color: scheme.primary),
+      title: Text(current.name),
+      subtitle: Text('Speaker style · ${current.description}'),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: a.voiceBusy
+          ? null
+          : () => unawaited(
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                useSafeArea: true,
+                builder: (_) => _StylePicker(assistant: a),
+              ),
+            ),
+    );
+  }
+}
+
+/// Full-height roster sheet: every speaker style by name, grouped by
+/// language/accent, each auditionable with one tap (the sid rides the
+/// synth job once — no engine switch) and selected with the row itself.
+/// Works for both engines: Kokoro's 54 style embeddings and the
+/// students' three distilled voices share the picker. The old slider
+/// made "Speaker 27 of 54" the entire UX; this makes the styles
+/// listable, searchable and listenable.
+class _StylePicker extends StatefulWidget {
+  const _StylePicker({required this.assistant});
+
+  final VoiceAssistant assistant;
+
+  @override
+  State<_StylePicker> createState() => _StylePickerState();
+}
+
+class _StylePickerState extends State<_StylePicker> {
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  VoiceAssistant get a => widget.assistant;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  bool _matches(KokoroSpeaker s) =>
+      _query.isEmpty ||
+      s.name.contains(_query) ||
+      s.description.toLowerCase().contains(_query);
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final roster = a.ttsRoster;
+    final shown = roster.where(_matches).toList();
+    // Group by description in first-appearance order: the sid-ordered
+    // roster already puts the English styles (the ones this app speaks
+    // well) at the top, and filtering keeps each surviving group's rows
+    // under the header that introduced it.
+    final groups = <String, List<KokoroSpeaker>>{};
+    for (final s in shown) {
+      (groups[s.description] ??= []).add(s);
+    }
+    final busy = a.voiceBusy;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.85,
+        child: AnimatedBuilder(
+          animation: a,
+          builder: (context, _) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.record_voice_over, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Speaker styles',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.expand_more),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _search,
+                  onChanged: (v) =>
+                      setState(() => _query = v.trim().toLowerCase()),
+                  decoration: InputDecoration(
+                    hintText: 'Search — af_heart, British, male…',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              if (a.voiceStatus.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Row(
+                    children: [
+                      if (busy) ...[
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(
+                        child: Text(
+                          a.voiceStatus,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  children: [
+                    for (final g in groups.entries) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                        child: Text(
+                          g.key +
+                              (g.value.first.english ? '' : ' · non-English'),
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                      for (final s in g.value) _speakerRow(s, busy),
+                    ],
+                    if (groups.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          'No style matches “$_query”.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Text(
+                        a.ttsVoiceId == 'titl'
+                            ? 'Play auditions a style without switching to '
+                                  'it. Tapping a row picks it; a style not '
+                                  'yet on disk downloads its 9 MB graph '
+                                  'first. Student styles speak their own '
+                                  'language — the Italian pair audition in '
+                                  'Italian.'
+                            : 'Play auditions a style without switching to '
+                                  'it. Tapping a row switches — the engine '
+                                  'reloads once. Non-English styles read '
+                                  'English text with an accent; only '
+                                  'English is wired for synthesis here.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  void _pickSpeaker(int sid) {
-    if (!a.voiceBusy) {
-      unawaited(
-        a.selectVoice(a.ttsVoiceId, sid: sid).then((_) => _refreshInstalled()),
-      );
-    }
+  Widget _speakerRow(KokoroSpeaker s, bool busy) {
+    final scheme = Theme.of(context).colorScheme;
+    final active = s.sid == a.ttsSid;
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        color: active ? scheme.primary : null,
+      ),
+      title: Text(
+        s.name,
+        style: TextStyle(
+          fontWeight: active ? FontWeight.w600 : null,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+      trailing: IconButton(
+        tooltip: 'Audition this style',
+        // The audition plays through the SAME loaded engine with a
+        // one-shot sid: on the teacher that costs one forward pass, on
+        // the students one extra 9 MB graph — never a useTts rebuild,
+        // unlike selecting.
+        onPressed: busy
+            ? null
+            : () => a.previewVoice(sid: s.sid, text: s.previewText),
+        icon: Icon(active ? Icons.headphones : Icons.play_arrow_outlined),
+      ),
+      onTap: active || busy
+          ? null
+          : () => unawaited(a.selectVoice(a.ttsVoiceId, sid: s.sid)),
+    );
   }
-
 }

@@ -33,7 +33,12 @@ class TtsSpec {
   // Teacher-in-the-loop: the 8M student graph + Kokoro phoneme vocab;
   // espeak data arrives unpacked by the piper_phonemize plugin (its own
   // copy, extracted to app support — independent of the Kokoro pack's).
-  final String titlModel, titlVocab, espeakDataDir, espeakVoice;
+  // Students are single-voice models, so a speaker style here is *another
+  // graph*: [titlModels]/[titlVocabs]/[espeakVoices] are comma-joined
+  // parallel lists indexed by sid (same shape as [kokoroLexicon]), each
+  // student pack carrying its own model + vocab copy.
+  final String titlModels, titlVocabs, espeakVoices;
+  final String espeakDataDir;
   final int sid;
 
   const TtsSpec.kokoro({
@@ -44,16 +49,16 @@ class TtsSpec {
     required this.kokoroLexicon,
     this.sid = 0,
   }) : engine = 'kokoro',
-       titlModel = '',
-       titlVocab = '',
-       espeakDataDir = '',
-       espeakVoice = '';
+       titlModels = '',
+       titlVocabs = '',
+       espeakVoices = '',
+       espeakDataDir = '';
 
   const TtsSpec.titl({
-    required this.titlModel,
-    required this.titlVocab,
+    required this.titlModels,
+    required this.titlVocabs,
     required this.espeakDataDir,
-    this.espeakVoice = 'en-us',
+    this.espeakVoices = 'en-us',
     this.sid = 0,
   }) : engine = 'titl',
        kokoroModel = '',
@@ -107,9 +112,20 @@ abstract interface class SpeechEngine {
   /// engine's speaker count.
   Future<int> useTts(TtsSpec spec);
 
+  /// Speaker count of the currently loaded engine (0 = none): >1 means
+  /// the voice has a style roster the UI should offer.
+  int get ttsNumSpeakers;
+
   Future<String> transcribe(Float32List samples, int sampleRate);
 
-  Future<(Float32List samples, int sampleRate)> synthesize(String text);
+  /// Render [text] with the loaded engine. [sid] overrides the engine's
+  /// configured speaker for this one call (the style picker's audition
+  /// button) — the Kokoro graph takes the speaker per forward pass, so
+  /// trying a style costs no engine rebuild.
+  Future<(Float32List samples, int sampleRate)> synthesize(
+    String text, {
+    int? sid,
+  });
 
   /// Synthesise [text] in sentence chunks, invoking [onChunk] per chunk
   /// AS IT IS RENDERED — a later sentence is still synthesising while an
@@ -118,6 +134,7 @@ abstract interface class SpeechEngine {
   Future<(Float32List samples, int sampleRate)> synthesizeStream(
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
+    int? sid,
   });
 
   /// Offline cleanup for a finished push-to-talk clip (high-pass + frame

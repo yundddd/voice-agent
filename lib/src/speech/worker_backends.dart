@@ -106,7 +106,8 @@ class RealBackends extends WorkerBackends {
           sileroVad: sherpa_onnx.SileroVadModelConfig(
             model: p.vadModel,
             threshold: 0.35,
-            minSilenceDuration: endpointSilence, // endpoint after N s of silence
+            minSilenceDuration:
+                endpointSilence, // endpoint after N s of silence
             minSpeechDuration: 0.15,
             windowSize: 512,
             maxSpeechDuration: 20.0,
@@ -127,8 +128,9 @@ class RealBackends extends WorkerBackends {
       await piper.initBindingsAsync();
       piper.PiperPhonemize.initialize(s.espeakDataDir);
       return TitlTts(
-        TitlEngine.load(modelPath: s.titlModel, vocabPath: s.titlVocab),
-        s.espeakVoice,
+        models: s.titlModels.split(','),
+        vocabs: s.titlVocabs.split(','),
+        espeakVoices: s.espeakVoices.split(','),
       );
     }
     return SherpaTts(
@@ -172,6 +174,7 @@ class FakeBackends extends WorkerBackends {
     this.vadEndsAt = 4,
     this.ttsChunkSamples = 800,
     this.ttsSampleRate = 24000,
+    this.ttsNumSpeakers = 1,
   });
 
   final List<String> transcripts;
@@ -179,19 +182,21 @@ class FakeBackends extends WorkerBackends {
   final int vadEndsAt;
   final int ttsChunkSamples;
   final int ttsSampleRate;
+  final int ttsNumSpeakers;
 
   @override
   Future<AsrBackend> buildAsr(ModelPaths p) async => FakeAsr(transcripts);
 
   @override
-  Future<VadBackend?> buildVad(
-    ModelPaths p,
-    double endpointSilence,
-  ) async => FakeVad(startsAt: vadStartsAt, endsAt: vadEndsAt);
+  Future<VadBackend?> buildVad(ModelPaths p, double endpointSilence) async =>
+      FakeVad(startsAt: vadStartsAt, endsAt: vadEndsAt);
 
   @override
-  Future<TtsBackend> buildTts(TtsSpec s) async =>
-      FakeTts(chunkSamples: ttsChunkSamples, sampleRate: ttsSampleRate);
+  Future<TtsBackend> buildTts(TtsSpec s) async => FakeTts(
+    chunkSamples: ttsChunkSamples,
+    sampleRate: ttsSampleRate,
+    numSpeakersValue: ttsNumSpeakers,
+  );
 }
 
 // ── Real wrappers ─────────────────────────────────────────────────────────
@@ -253,25 +258,50 @@ class SherpaTts implements TtsBackend {
   void free() => _tts.free();
 }
 
-/// The 8M student: espeak-ng (bundled natives) → Kokoro vocab ids →
-/// the small ONNX graph on sherpa's own libonnxruntime. One voice, so
-/// numSpeakers is a humble 1; the voice style that IS the model.
+/// The 8M students: espeak-ng (bundled natives) → Kokoro vocab ids →
+/// small ONNX graphs on sherpa's own libonnxruntime. Each student IS one
+/// voice, so the roster is one graph per sid — loaded lazily the first
+/// time that sid is spoken (a 9 MB load, no pack required until picked:
+/// a missing pack surfaces as a clear engine-load error at audition)
+/// and cached for the worker's life. The phonemizer voice is per-sid
+/// too (English students read 'en-us', Italian ones 'it').
 class TitlTts implements TtsBackend {
-  final TitlEngine engine;
-  final String espeakVoice; // 'en-us' today, the Italian pair tomorrow
-  TitlTts(this.engine, this.espeakVoice);
+  TitlTts({
+    required this.models,
+    required this.vocabs,
+    required this.espeakVoices,
+  });
+
+  final List<String> models;
+  final List<String> vocabs;
+  final List<String> espeakVoices;
+  final Map<int, TitlEngine> _engines = {};
+
   @override
-  int get numSpeakers => 1;
+  int get numSpeakers => models.length;
+
   @override
   (Float32List, int) generate({
     required String text,
     int sid = 0,
     double speed = 1.0,
   }) {
-    final words = piper.PiperPhonemize.phonemize(text, voice: espeakVoice);
+    final at = sid % models.length;
+    final engine = _engines.putIfAbsent(
+      at,
+      () => TitlEngine.load(modelPath: models[at], vocabPath: vocabs[at]),
+    );
+    final voice = espeakVoices[at % espeakVoices.length];
+    final words = piper.PiperPhonemize.phonemize(text, voice: voice);
     return (
       engine.synth(
-        TitlEngine.phonemesFromWords(words, engine.vocab.keys.toSet()),
+        TitlEngine.phonemesFromWords(
+          words,
+          engine.vocab.keys.toSet(),
+          // Italian graphs were trained on espeak's own tap; the English
+          // fold maps it to the approximant the way Misaki does.
+          aliases: voice.startsWith('it') ? espeakAliasesIt : espeakAliases,
+        ),
         speed: speed,
       ),
       TitlEngine.sampleRate,
@@ -279,7 +309,12 @@ class TitlTts implements TtsBackend {
   }
 
   @override
-  void free() => engine.dispose();
+  void free() {
+    for (final e in _engines.values) {
+      e.dispose();
+    }
+    _engines.clear();
+  }
 }
 
 // ── Fakes ─────────────────────────────────────────────────────────────────
@@ -353,13 +388,17 @@ class FakeVad implements VadBackend {
 /// then encode exactly which piece the splitter produced, and the seam
 /// silence the worker appends shows up as a length delta.
 class FakeTts implements TtsBackend {
-  FakeTts({required this.chunkSamples, required this.sampleRate});
+  FakeTts({
+    required this.chunkSamples,
+    required this.sampleRate,
+    this.numSpeakersValue = 1,
+  });
   final int chunkSamples;
   final int sampleRate;
+  final int numSpeakersValue;
   final List<String> texts = [];
-
   @override
-  int get numSpeakers => 1;
+  int get numSpeakers => numSpeakersValue;
 
   @override
   (Float32List, int) generate({
@@ -368,9 +407,12 @@ class FakeTts implements TtsBackend {
     double speed = 1.0,
   }) {
     texts.add(text);
-    // Amplitude encodes the piece length: a cheap cross-check that no
-    // chunk got merged or dropped on the port.
-    final v = ((text.length % 100) + 1) / 400.0;
+    // Amplitude encodes the piece length AND the sid: a cheap
+    // cross-check that no chunk got merged or dropped on the port,
+    // and the only way to observe the worker's sid selection from
+    // the test side (the fake runs on the isolate). Decode:
+    // (v * 100000) % 250 -> sid; floor(v * 400) -> length % 100 + 1.
+    final v = ((text.length % 100) + 1) / 400.0 + sid / 100000.0;
     return (Float32List.fromList(List.filled(chunkSamples, v)), sampleRate);
   }
 

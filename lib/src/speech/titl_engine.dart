@@ -73,6 +73,19 @@ const Map<String, String> espeakAliases = {
   'ˑ': 'ː',
 };
 
+/// Italian students keep the tap: Kokoro's Italian pipeline (Misaki +
+/// eSpeak NG) trains on espeak's own ɾ — the dental-stop folding the
+/// upstream README documents is all it drops. The English students
+/// take the full [espeakAliases] table (Misaki maps flaps to ɹ).
+const Map<String, String> espeakAliasesIt = {
+  'D': 'ð',
+  'T': 'θ',
+  '1': 'ɨ',
+  '2': 'ʉ',
+  'ä': 'ɐ',
+  'ˑ': 'ː',
+};
+
 class TitlException implements Exception {
   final String message;
   TitlException(this.message);
@@ -108,13 +121,7 @@ class TitlEngine {
   final Map<String, int> vocab;
   bool disposed = false;
 
-  TitlEngine._(
-    this._api,
-    this._env,
-    this._session,
-    this._memInfo,
-    this.vocab,
-  );
+  TitlEngine._(this._api, this._env, this._session, this._memInfo, this.vocab);
 
   /// Load pack files: the graph at [modelPath], vocabulary at
   /// [vocabPath]. Synchronous — the worker isolate already parks the
@@ -129,12 +136,12 @@ class TitlEngine {
         ? 'libonnxruntime.dylib'
         : 'onnxruntime.dll';
     final lib = DynamicLibrary.open(libName);
-    final base = lib
-        .lookupFunction<Pointer Function(), Pointer Function()>(
-          'OrtGetApiBase',
-        )();
+    final base = lib.lookupFunction<Pointer Function(), Pointer Function()>(
+      'OrtGetApiBase',
+    )();
     // OrtApiBase field 0: GetApi(uint32) -> const OrtApi*.
-    final api = base.cast<Pointer<NativeFunction>>()[0]
+    final api = base
+        .cast<Pointer<NativeFunction>>()[0]
         .cast<NativeFunction<Pointer Function(Uint32)>>()
         .asFunction<Pointer Function(int)>()(23);
 
@@ -147,9 +154,11 @@ class TitlEngine {
               Pointer Function(Int32, Pointer<Utf8>, Pointer<Pointer>)
             >
           >()
-          .asFunction<
-            Pointer Function(int, Pointer<Utf8>, Pointer<Pointer>)
-          >()(2, 'voice_agent'.toNativeUtf8(), envP),
+          .asFunction<Pointer Function(int, Pointer<Utf8>, Pointer<Pointer>)>()(
+        2,
+        'voice_agent'.toNativeUtf8(),
+        envP,
+      ),
       'CreateEnv',
     );
     final env = envP.value;
@@ -178,12 +187,7 @@ class TitlEngine {
             >
           >()
           .asFunction<
-            Pointer Function(
-              Pointer,
-              Pointer<Utf8>,
-              Pointer,
-              Pointer<Pointer>,
-            )
+            Pointer Function(Pointer, Pointer<Utf8>, Pointer, Pointer<Pointer>)
           >()(env, modelPath.toNativeUtf8(), optsP.value, sessP),
       'CreateSession $modelPath',
     );
@@ -202,10 +206,10 @@ class TitlEngine {
             NativeFunction<Pointer Function(Int32, Int32, Pointer<Pointer>)>
           >()
           .asFunction<Pointer Function(int, int, Pointer<Pointer>)>()(
-            _allocDevice,
-            _memTypeDefault,
-            miP,
-          ),
+        _allocDevice,
+        _memTypeDefault,
+        miP,
+      ),
       'CreateCpuMemoryInfo',
     );
     final memInfo = miP.value;
@@ -224,19 +228,20 @@ class TitlEngine {
   // ── Pure text plumbing (unit-tested without any native) ───────────────
 
   /// espeak-ng word phonemes (code points per word, the piper_phonemize
-  /// shape) → one Kokoro phoneme string: aliases folded, foreign chars
+  /// shape) → one Kokoro phoneme string: [aliases] folded, foreign chars
   /// dropped against [vocab], words joined on the vocab's own space
   /// char, and a final stop added when the piece lost one (sentence
   /// intonation, like the teacher's own pipeline feeds it).
   static String phonemesFromWords(
     List<List<int>> words,
-    Set<String> vocab,
-  ) {
+    Set<String> vocab, {
+    Map<String, String> aliases = espeakAliases,
+  }) {
     final b = StringBuffer();
     for (final w in words) {
       for (final rune in String.fromCharCodes(w).runes) {
         final c = String.fromCharCode(rune);
-        final folded = espeakAliases[c] ?? c;
+        final folded = aliases[c] ?? c;
         if (vocab.contains(folded)) b.write(folded);
       }
       b.write(' ');
@@ -365,7 +370,15 @@ class TitlEngine {
       final idsV = calloc<Pointer>();
       _checkStatus(
         _api,
-        tensor(_memInfo, data.cast(), ids.length * 8, shape, 2, _dtypeInt64, idsV),
+        tensor(
+          _memInfo,
+          data.cast(),
+          ids.length * 8,
+          shape,
+          2,
+          _dtypeInt64,
+          idsV,
+        ),
         'CreateTensor(input_ids)',
       );
       final speedBuf = calloc<Float>(1);
@@ -375,7 +388,15 @@ class TitlEngine {
       final speedV = calloc<Pointer>();
       _checkStatus(
         _api,
-        tensor(_memInfo, speedBuf.cast(), 4, speedShape, 1, _dtypeFloat, speedV),
+        tensor(
+          _memInfo,
+          speedBuf.cast(),
+          4,
+          speedShape,
+          1,
+          _dtypeFloat,
+          speedV,
+        ),
         'CreateTensor(speed)',
       );
       final names = calloc<Pointer<Utf8>>(2);
@@ -394,12 +415,24 @@ class TitlEngine {
       );
 
       final infoP = calloc<Pointer>();
-      _checkStatus(_api, shapeInfo(output.value, infoP), 'GetTensorTypeAndShape');
+      _checkStatus(
+        _api,
+        shapeInfo(output.value, infoP),
+        'GetTensorTypeAndShape',
+      );
       final countP = calloc<IntPtr>();
-      _checkStatus(_api, elemCount(infoP.value, countP), 'GetShapeElementCount');
+      _checkStatus(
+        _api,
+        elemCount(infoP.value, countP),
+        'GetShapeElementCount',
+      );
       final n = countP.value;
       final dataP = calloc<Pointer>();
-      _checkStatus(_api, tensorData(output.value, dataP), 'GetTensorMutableData');
+      _checkStatus(
+        _api,
+        tensorData(output.value, dataP),
+        'GetTensorMutableData',
+      );
       pieces.add(
         Float32List.fromList(dataP.value.cast<Float>().asTypedList(n)),
       );

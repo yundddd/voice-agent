@@ -61,6 +61,7 @@ import '../platform/audio_output.dart';
 import '../platform/file_player_output.dart';
 import '../platform/mic_source.dart';
 import '../platform/record_mic_source.dart';
+import '../speech/kokoro_voices.dart';
 import '../speech/speech_worker.dart';
 import '../speech/tts_voices.dart';
 
@@ -239,7 +240,7 @@ class VoiceAssistant extends ChangeNotifier {
   String _modelsDir = '';
   TtsPrefs _prefs = TtsPrefs();
   String _activeVoiceId = 'kokoro';
-  int _ttsNumSpeakers = 1; // >1 when the loaded engine has several speakers
+  int _ttsNumSpeakers = 0; // engine roster size; 0 = none loaded yet
   String _voiceStatus = ''; // one-line feedback for the voice screen
   bool _voiceBusy = false; // download / engine swap in progress
 
@@ -275,10 +276,26 @@ class VoiceAssistant extends ChangeNotifier {
   String get benchNote => _benchNote;
   List<BenchRun> get benchRuns => List.unmodifiable(_benchRuns);
 
-  /// Label of the voice the bench echoes with (the one currently in use).
+  /// Speaker-style names for the picker, from the active voice: the
+  /// student roster is fixed (one graph per style), Kokoro's comes from
+  /// the shipped sid→name table sized by what the engine reports.
+  List<KokoroSpeaker> get ttsRoster {
+    final v = voiceById(_activeVoiceId);
+    return v?.staticRoster ?? kokoroRoster(_ttsNumSpeakers);
+  }
+
+  /// Label of the voice the bench echoes with (the one currently in use),
+  /// named down to the speaker style when the engine has a roster.
   String get benchVoiceLabel {
     for (final v in voices) {
-      if (v.id == _activeVoiceId) return v.label;
+      if (v.id == _activeVoiceId) {
+        if (_ttsNumSpeakers > 1) {
+          for (final s in ttsRoster) {
+            if (s.sid == _prefs.sid) return '${v.label} · ${s.name}';
+          }
+        }
+        return v.label;
+      }
     }
     return 'current voice';
   }
@@ -1157,13 +1174,23 @@ class VoiceAssistant extends ChangeNotifier {
         voice = voiceById('kokoro')!;
       }
       _prefs.voiceId = voice.id;
-      await voice.ensureIn(modelsDir, onProgress: _modelProgress);
+      // Only the saved style's graph for student rosters — the rest
+      // download on pick, like every other pack here.
+      await voice.ensureIn(
+        modelsDir,
+        onProgress: _modelProgress,
+        sid: _prefs.sid,
+      );
       _worker = await SpeechWorker.start(
         ModelPaths.fromModelsDir(modelsDir),
         tts: await _spec(voice, sid: _prefs.sid),
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
       );
+      // The engine loaded at start carries its own roster size: Kokoro
+      // must show its style picker on a cold launch, not only after the
+      // first useTts (the old slider hid itself exactly the same way).
+      _ttsNumSpeakers = _worker!.ttsNumSpeakers;
       _activeVoiceId = voice.id;
       _idleReady();
       // Cold start while a turn runs (or just finished) on the bridge —
@@ -1205,13 +1232,18 @@ class VoiceAssistant extends ChangeNotifier {
     if (_worker == null || _voiceBusy) return;
     final v = voiceById(id);
     if (v == null) return;
-    final newSid = sid < 0 ? _prefs.sid : sid;
+    // A different voice starts at style 0: student sids are pack
+    // indexes, Kokoro sids are style embeddings — the numbers mean
+    // nothing across engines. Same-voice calls keep the picked sid.
+    final newSid = sid < 0 ? (id == _activeVoiceId ? _prefs.sid : 0) : sid;
     if (!force && id == _activeVoiceId && newSid == _prefs.sid) return;
     _voiceBusy = true;
     _voiceStatus = 'Setting up ${v.label}…';
     notifyListeners();
     try {
-      await v.ensureIn(_modelsDir, onProgress: _voiceProgress);
+      // Student rosters download only the picked style's graph (9 MB
+      // each); single-pack voices just download their one pack.
+      await v.ensureIn(_modelsDir, onProgress: _voiceProgress, sid: newSid);
       _ttsNumSpeakers = await _worker!.useTts(await _spec(v, sid: newSid));
       _activeVoiceId = v.id;
       _prefs.voiceId = v.id;
@@ -1257,10 +1289,11 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Synthesize + play a demo line with the *current* engine (no phase
   /// changes; the gate is pinned so a hot mic cannot hear it as speech).
-  Future<void> previewVoice({
-    String text = 'Hi! This is how your assistant will sound with this voice.',
-  }) async {
+  /// [sid] tries one speaker style without committing to it.
+  Future<void> previewVoice({String? text, int? sid}) async {
     if (_worker == null || _voiceBusy) return;
+    final line =
+        text ?? 'Hi! This is how your assistant will sound with this voice.';
     _voiceBusy = true;
     _voiceStatus = 'Making the preview…';
     _reply.stopDebug();
@@ -1274,7 +1307,7 @@ class VoiceAssistant extends ChangeNotifier {
       // playOnce treats it like a reply for stop/barge-in bookkeeping
       // (but keeps the phase — the screen's buttons must not change while
       // it plays) and hands the raw audio back for debug replay.
-      await _reply.playOnce(text);
+      await _reply.playOnce(line, sid: sid);
       _voiceStatus = '';
     } catch (e) {
       _voiceStatus = 'Preview failed: $e';

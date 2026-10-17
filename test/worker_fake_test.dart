@@ -45,23 +45,25 @@ void main() {
     int vadStartsAt = 1,
     int vadEndsAt = 4,
     int ttsChunkSamples = 600,
+    int ttsNumSpeakers = 1,
     void Function(SpeechEvent)? onEvent,
     TtsSpec? tts,
-  }) =>
-      SpeechWorker.start(
-        const ModelPaths(
-            whisperEncoder: '',
-            whisperDecoder: '',
-            whisperTokens: ''), // fakes read no files
-        tts: tts,
-        onEvent: onEvent,
-        backends: FakeBackends(
-          transcripts: transcripts,
-          vadStartsAt: vadStartsAt,
-          vadEndsAt: vadEndsAt,
-          ttsChunkSamples: ttsChunkSamples,
-        ),
-      );
+  }) => SpeechWorker.start(
+    const ModelPaths(
+      whisperEncoder: '',
+      whisperDecoder: '',
+      whisperTokens: '',
+    ), // fakes read no files
+    tts: tts,
+    onEvent: onEvent,
+    backends: FakeBackends(
+      transcripts: transcripts,
+      vadStartsAt: vadStartsAt,
+      vadEndsAt: vadEndsAt,
+      ttsChunkSamples: ttsChunkSamples,
+      ttsNumSpeakers: ttsNumSpeakers,
+    ),
+  );
 
   group('fake-backed worker isolate', () {
     test('transcribe answers the script in order (last sticks)', () async {
@@ -72,22 +74,31 @@ void main() {
       expect(await w.transcribe(Float32List(16000), 16000), 'second');
     });
 
-    test('no voice loaded yet: synthesis says so instead of babbling',
-        () async {
-      final w = await startFake(); // tts: null — the lazy-download case
-      addTearDown(w.dispose);
-      await expectLater(
-        w.synthesize('hello'),
-        throwsA(isA<StateError>().having(
-            (e) => e.message, 'message', contains('No TTS engine'))),
-      );
-    });
+    test(
+      'no voice loaded yet: synthesis says so instead of babbling',
+      () async {
+        final w = await startFake(); // tts: null — the lazy-download case
+        addTearDown(w.dispose);
+        await expectLater(
+          w.synthesize('hello'),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('No TTS engine'),
+            ),
+          ),
+        );
+      },
+    );
 
-    test('streamed synthesis splits at sentences and pads the seams',
-        () async {
+    test('streamed synthesis splits at sentences and pads the seams', () async {
       final w = await startFake(
         tts: const TtsSpec.titl(
-            titlModel: '', titlVocab: '', espeakDataDir: ''),
+          titlModels: '',
+          titlVocabs: '',
+          espeakDataDir: '',
+        ),
       );
       addTearDown(w.dispose);
       const text =
@@ -97,8 +108,11 @@ void main() {
           'one piece, the way a real reply does, with commas, semicolons; '
           'and closing marks? Yes it does.';
       final pieces = splitForTts(text);
-      expect(pieces.length, greaterThan(1),
-          reason: 'long prose splits (short prose packs: by design)');
+      expect(
+        pieces.length,
+        greaterThan(1),
+        reason: 'long prose splits (short prose packs: by design)',
+      );
 
       final chunkLens = <int>[];
       final (audio, rate) = await w.synthesizeStream(
@@ -111,8 +125,11 @@ void main() {
       // rate~/16 silent tail to every non-final chunk to hide the seam.
       const seam = 24000 ~/ 16;
       for (var i = 0; i < chunkLens.length; i++) {
-        expect(chunkLens[i], 600 + (i < chunkLens.length - 1 ? seam : 0),
-            reason: 'chunk ${pieces[i]}');
+        expect(
+          chunkLens[i],
+          600 + (i < chunkLens.length - 1 ? seam : 0),
+          reason: 'chunk ${pieces[i]}',
+        );
       }
       expect(audio.length, chunkLens.reduce((a, b) => a + b));
     });
@@ -121,14 +138,16 @@ void main() {
       final w = await startFake();
       addTearDown(w.dispose);
       expect(
-        await w.useTts(const TtsSpec.kokoro(
-          kokoroModel: '',
-          kokoroVoices: '',
-          kokoroTokens: '',
-          kokoroDataDir: '',
-          kokoroLexicon: '',
-          sid: 7,
-        )),
+        await w.useTts(
+          const TtsSpec.kokoro(
+            kokoroModel: '',
+            kokoroVoices: '',
+            kokoroTokens: '',
+            kokoroDataDir: '',
+            kokoroLexicon: '',
+            sid: 7,
+          ),
+        ),
         1, // FakeTts is a humble one-voice model
       );
       final (audio, rate) = await w.synthesize('now I speak');
@@ -136,57 +155,117 @@ void main() {
       expect(rate, 24000);
     });
 
+    test(
+      'synthesize sid override auditions a style without a rebuild',
+      () async {
+        // FakeTts packs the sid it generated with into the chunk amplitude.
+        int heardSid(Float32List audio) =>
+            ((audio.first * 100000).round()) % 250;
+        const spec = TtsSpec.kokoro(
+          kokoroModel: '',
+          kokoroVoices: '',
+          kokoroTokens: '',
+          kokoroDataDir: '',
+          kokoroLexicon: '',
+          sid: 3,
+        );
+        final w = await startFake(tts: spec, ttsNumSpeakers: 8);
+        addTearDown(w.dispose);
+        // In-range override rides this call only…
+        expect(heardSid((await w.synthesize('one piece here', sid: 5)).$1), 5);
+        // …the engine keeps its configured speaker afterwards…
+        expect(heardSid((await w.synthesize('one piece here')).$1), 3);
+        // …and a bogus sid falls back to it rather than faulting the graph.
+        expect(heardSid((await w.synthesize('one piece here', sid: 99)).$1), 3);
+      },
+    );
+
+    test(
+      'a student pick speaks: the spec sid is the synth default too',
+      () async {
+        // Same amplitude decode as the override test above: a TitlTts
+        // roster rides the spec, so a picked style must be what an
+        // un-overridden synthesize speaks (the bug this pins: specIn
+        // dropped the sid and every style silently stayed on pack 0).
+        int heardSid(Float32List audio) =>
+            ((audio.first * 100000).round()) % 250;
+        final w = await startFake(
+          tts: const TtsSpec.titl(
+            titlModels: '',
+            titlVocabs: '',
+            espeakDataDir: '',
+            sid: 2,
+          ),
+          ttsNumSpeakers: 8,
+        );
+        addTearDown(w.dispose);
+        expect(heardSid((await w.synthesize('one piece here')).$1), 2);
+      },
+    );
+
     test('denoise runs the real DSP on the fake worker', () async {
       final w = await startFake();
       addTearDown(w.dispose);
-      final out = await w.denoise(Float32List.fromList(
-          List.generate(16000, (i) => math.sin(i / 7.0))));
+      final out = await w.denoise(
+        Float32List.fromList(List.generate(16000, (i) => math.sin(i / 7.0))),
+      );
       expect(out.length, 16000); // the frame gate shortens, high-pass never
     });
 
-    test('gate + fake VAD: start, endpoint, and a real segment event',
-        () async {
-      final events = <SpeechEvent>[];
-      final w = await startFake(
-        vadStartsAt: 9,
-        vadEndsAt: 30,
-        onEvent: events.add,
-      );
-      addTearDown(w.dispose);
+    test(
+      'gate + fake VAD: start, endpoint, and a real segment event',
+      () async {
+        final events = <SpeechEvent>[];
+        final w = await startFake(
+          vadStartsAt: 9,
+          vadEndsAt: 30,
+          onEvent: events.add,
+        );
+        addTearDown(w.dispose);
 
-      // Settle the noise floor on quiet frames first (the floor drops
-      // instantly and only creeps back up at its capped rate).
-      for (var i = 0; i < 8; i++) {
-        w.sendAudio(quiet(i)); // windows 1..8: VAD stays down
-      }
-      await flushed();
-      expect(events.where((e) => e.speechStarted), isEmpty,
-          reason: 'nothing loud yet');
+        // Settle the noise floor on quiet frames first (the floor drops
+        // instantly and only creeps back up at its capped rate).
+        for (var i = 0; i < 8; i++) {
+          w.sendAudio(quiet(i)); // windows 1..8: VAD stays down
+        }
+        await flushed();
+        expect(
+          events.where((e) => e.speechStarted),
+          isEmpty,
+          reason: 'nothing loud yet',
+        );
 
-      // Loud frames from the VAD's detection window on: after the 5-frame
-      // confirm streak the worker raises speech.
-      for (var i = 0; i < 22; i++) {
-        w.sendAudio(loud(skip: i * 512)); // windows 9..30: detected
-      }
-      await flushed();
-      expect(events.map((e) => e.speechStarted).where((v) => v).length, 1);
+        // Loud frames from the VAD's detection window on: after the 5-frame
+        // confirm streak the worker raises speech.
+        for (var i = 0; i < 22; i++) {
+          w.sendAudio(loud(skip: i * 512)); // windows 9..30: detected
+        }
+        await flushed();
+        expect(events.map((e) => e.speechStarted).where((v) => v).length, 1);
 
-      // Silence: detection falls, and the buffered utterance comes back
-      // as one endpointed segment (22 windows × 512 = 11 264 samples,
-      // comfortably past the 0.2 s duty-cycle check).
-      for (var i = 0; i < 4; i++) {
-        w.sendAudio(quiet(100 + i)); // window 31+: the fall
-      }
-      await flushed();
+        // Silence: detection falls, and the buffered utterance comes back
+        // as one endpointed segment (22 windows × 512 = 11 264 samples,
+        // comfortably past the 0.2 s duty-cycle check).
+        for (var i = 0; i < 4; i++) {
+          w.sendAudio(quiet(100 + i)); // window 31+: the fall
+        }
+        await flushed();
 
-      final segs = events.where((e) => e.segment != null).toList();
-      expect(segs, hasLength(1));
-      expect(segs.single.segment!.length, 22 * 512);
-      expect(
-        events.map((e) => e.speechStarted ? 'start' : e.segment != null ? 'seg' : 'stop'),
-        containsAllInOrder(['start', 'stop']),
-      );
-    });
+        final segs = events.where((e) => e.segment != null).toList();
+        expect(segs, hasLength(1));
+        expect(segs.single.segment!.length, 22 * 512);
+        expect(
+          events.map(
+            (e) => e.speechStarted
+                ? 'start'
+                : e.segment != null
+                ? 'seg'
+                : 'stop',
+          ),
+          containsAllInOrder(['start', 'stop']),
+        );
+      },
+    );
 
     test('mid-reply barge-in needs a full 450 ms (the hard gate)', () async {
       final events = <SpeechEvent>[];
@@ -207,21 +286,30 @@ void main() {
         w.sendAudio(loud(skip: i * 512));
       }
       await flushed();
-      expect(events.where((e) => e.speechStarted), isEmpty,
-          reason: '160 ms of leak is not an interruption');
+      expect(
+        events.where((e) => e.speechStarted),
+        isEmpty,
+        reason: '160 ms of leak is not an interruption',
+      );
 
       for (var i = 10; i < 20; i++) {
         w.sendAudio(loud(skip: i * 512));
       }
       await flushed();
-      expect(events.where((e) => e.speechStarted), hasLength(1),
-          reason: '14 sustained frames = ~450 ms: a real cut-in');
+      expect(
+        events.where((e) => e.speechStarted),
+        hasLength(1),
+        reason: '14 sustained frames = ~450 ms: a real cut-in',
+      );
     });
 
     test('resetVad drops a half-heard utterance', () async {
       final events = <SpeechEvent>[];
       final w = await startFake(
-          vadStartsAt: 1, vadEndsAt: 200, onEvent: events.add);
+        vadStartsAt: 1,
+        vadEndsAt: 200,
+        onEvent: events.add,
+      );
       addTearDown(w.dispose);
       for (var i = 0; i < 8; i++) {
         w.sendAudio(quiet(i));
@@ -239,8 +327,11 @@ void main() {
         w.sendAudio(quiet(50 + i));
       }
       await flushed();
-      expect(events.where((e) => e.segment != null), isEmpty,
-          reason: 'the abandoned utterance never reaches the ASR');
+      expect(
+        events.where((e) => e.segment != null),
+        isEmpty,
+        reason: 'the abandoned utterance never reaches the ASR',
+      );
     });
 
     test('disposal fails pending work instead of hanging it', () async {

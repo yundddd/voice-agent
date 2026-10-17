@@ -144,7 +144,10 @@ The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
   StyleTTS2-lineage one-pass renderer (no neural codec in the path, no
   autoregressive cold start — the first syllable is as clean as the last,
   which the pocket port cannot claim). 54 built-in speaker styles once
-  loaded (style slider), American + British English; RTF ~0.10 on desktop
+  loaded, named and grouped in a searchable roster sheet (tap to switch,
+  ▶ to audition a style without switching — the sid rides the synth job,
+  no engine rebuild; the roster table lives in `kokoro_voices.dart`),
+  American + British English; RTF ~0.10 on desktop
   CPU at 4 threads. Fetched straight from the k2-fsa tts-models release
   (334 MB download, fp32 deliberately: our A/B measured the int8 pack
   audible-muted *and* 4× slower — `tool/kokoro_ab.dart`). Chinese-capable

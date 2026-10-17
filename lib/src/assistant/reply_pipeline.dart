@@ -225,10 +225,7 @@ class ReplyPipeline {
     // pause the user actually feels lives.
     playSeconds += audio.length / rate;
     noteTts(audio, rate); // last message's raw audio: debug replay
-    return SpeakOutcome(
-      onAir: onAirDone,
-      durationSeconds: audio.length / rate,
-    );
+    return SpeakOutcome(onAir: onAirDone, durationSeconds: audio.length / rate);
   }
 
   /// Plays streamed reply chunks in order as they arrive. The seam is
@@ -378,13 +375,15 @@ class ReplyPipeline {
   /// Synthesise [text] in one shot and play it, waiting (bounded) for
   /// the natural end — the voice preview path. The CALLER keeps the
   /// phase (the screen's buttons must not change while it plays).
+  /// [sid] auditions a different speaker style without switching to it.
   Future<Float32List?> playOnce(
     String text, {
     Duration timeout = const Duration(seconds: 120),
+    int? sid,
   }) async {
     final w = worker();
     if (w == null) return null;
-    final (audio, sampleRate) = await w.synthesize(text);
+    final (audio, sampleRate) = await w.synthesize(text, sid: sid);
     noteTts(audio, sampleRate); // voice preview counts as TTS output too
     _previewDone = Completer<void>();
     _playing = true; // treat it like a reply for stop/barge-in bookkeeping

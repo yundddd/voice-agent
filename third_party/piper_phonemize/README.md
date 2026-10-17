@@ -228,3 +228,23 @@ GPL-3.0-or-later (due to espeak-ng dependency)
 - [espeak-ng](https://github.com/espeak-ng/espeak-ng)
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
 - [GitHub Issues](https://github.com/csukuangfj/piper-phonemize/issues)
+
+## voice-agent prune (this vendored copy)
+
+Trimmed for the Telegram 50 MB APK cap; re-applying on a re-sync means
+running this from the unpacked package root:
+
+```bash
+rm -rf wasm                      # 18 MB web bundle, no web builds here
+cd espeak-ng-data
+find . -maxdepth 1 -name '*_dict' ! -name 'en_dict' ! -name 'it_dict' -delete
+```
+
+Keep-list, not a size cut: the first prune (0.1.0+67) deleted the *big*
+dictionaries by mistake, which took `en_dict` — the one file the app
+needs — and left 65 useless ones behind. espeak-ng reports an unreadable
+dictionary on stderr and still initializes, so the symptom was silent:
+the TITL student phonemized to punctuation only and every voice preview
+came out garbled. `extractEspeakNgData()` now throws on a bundle without
+`en_dict`, and its cache dir is versioned (`espeak-ng-data-v2`) so
+affected devices re-extract after the update.

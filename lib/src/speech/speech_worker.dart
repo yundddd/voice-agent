@@ -27,31 +27,36 @@ class _Job {
   final Float32List? samples;
   final int? sampleRate;
   final TtsSpec? spec; // 'useTts' only
+  final int? sid; // 'synthesize': one-shot speaker override (auditions)
   const _Job.audio(this.samples)
     : id = -1,
       op = 'audio',
       text = null,
       sampleRate = null,
-      spec = null;
+      spec = null,
+      sid = null;
   const _Job.resetVad()
     : id = -1,
       op = 'resetVad',
       samples = null,
       text = null,
       sampleRate = null,
-      spec = null;
+      spec = null,
+      sid = null;
   const _Job.playing(bool on)
     : id = -1,
       op = 'playing',
       text = on ? 'on' : 'off',
       samples = null,
       sampleRate = null,
-      spec = null;
+      spec = null,
+      sid = null;
   const _Job.transcribe(this.id, this.samples, this.sampleRate)
     : text = null,
       op = 'transcribe',
-      spec = null;
-  const _Job.synthesize(this.id, this.text)
+      spec = null,
+      sid = null;
+  const _Job.synthesize(this.id, this.text, this.sid)
     : samples = null,
       sampleRate = null,
       op = 'synthesize',
@@ -60,12 +65,14 @@ class _Job {
     : text = null,
       sampleRate = null,
       op = 'denoise',
-      spec = null;
+      spec = null,
+      sid = null;
   const _Job.useTts(this.id, this.spec)
     : text = null,
       samples = null,
       sampleRate = null,
-      op = 'useTts';
+      op = 'useTts',
+      sid = null;
 }
 
 /// One-way events pushed from the worker (gated VAD output + diagnostics).
@@ -78,7 +85,6 @@ class _Event {
   _Event.segment(Float32List s) : kind = 'segment', samples = s, note = null;
   _Event.note(String s) : kind = 'note', samples = null, note = s;
 }
-
 
 /// A job result coming back from the worker.
 class _JobResult {
@@ -140,8 +146,14 @@ class SpeechWorker implements SpeechEngine {
   final Map<int, void Function(Float32List chunk, int sampleRate)> _chunkFans =
       {};
   int _nextId = 0;
+  int _ttsNumSpeakers = 0;
   Isolate? _isolate;
   SendPort? _toWorker;
+
+  /// Speaker count of the engine loaded at [start] (0 = none yet).
+  /// `useTts` keeps its own return value authoritative after swaps.
+  @override
+  int get ttsNumSpeakers => _ttsNumSpeakers;
 
   static Future<SpeechWorker> start(
     ModelPaths paths, {
@@ -176,7 +188,8 @@ class SpeechWorker implements SpeechEngine {
           }
         } else if (message is SendPort) {
           worker._toWorker = message;
-        } else if (message == 'ready') {
+        } else if (message is String && message.startsWith('ready:')) {
+          worker._ttsNumSpeakers = int.tryParse(message.substring(6)) ?? 0;
           if (!ready.isCompleted) ready.complete();
         } else if (message is _Event) {
           worker.onEvent?.call(switch (message.kind) {
@@ -198,7 +211,10 @@ class SpeechWorker implements SpeechEngine {
 
     worker._isolate = await Isolate.spawn(
       (arg) {
-        final (SendPort toParent, (ModelPaths, double, TtsSpec?, WorkerBackends) cfg) = arg;
+        final (
+          SendPort toParent,
+          (ModelPaths, double, TtsSpec?, WorkerBackends) cfg,
+        ) = arg;
         _runWorker(toParent, cfg.$1, cfg.$2, cfg.$3, cfg.$4);
       },
       (controlPort.sendPort, (paths, endpointSilence, tts, backends)),
@@ -231,7 +247,7 @@ class SpeechWorker implements SpeechEngine {
   Future<int> useTts(TtsSpec spec) async {
     final result = await _send(_Job.useTts(++_nextId, spec));
     if (result.error != null) throw StateError(result.error!);
-    return result.number;
+    return _ttsNumSpeakers = result.number;
   }
 
   @override
@@ -242,8 +258,10 @@ class SpeechWorker implements SpeechEngine {
   }
 
   @override
-  Future<(Float32List samples, int sampleRate)> synthesize(String text) =>
-      synthesizeStream(text);
+  Future<(Float32List samples, int sampleRate)> synthesize(
+    String text, {
+    int? sid,
+  }) => synthesizeStream(text, sid: sid);
 
   /// Synthesises [text] in sentence chunks (see splitForTts), invoking
   /// [onChunk] per chunk AS IT IS RENDERED — a later sentence is still
@@ -255,6 +273,7 @@ class SpeechWorker implements SpeechEngine {
   Future<(Float32List samples, int sampleRate)> synthesizeStream(
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
+    int? sid,
   }) async {
     final id = ++_nextId;
     final parts = <Float32List>[];
@@ -264,7 +283,7 @@ class SpeechWorker implements SpeechEngine {
       onChunk?.call(chunk, rate);
     };
     _pending[id] = completer;
-    _toWorker!.send(_Job.synthesize(id, text));
+    _toWorker!.send(_Job.synthesize(id, text, sid));
     final result = await completer.future;
     _chunkFans.remove(id);
     if (result.error != null) throw StateError(result.error!);
@@ -311,9 +330,9 @@ class SpeechWorker implements SpeechEngine {
   }
 }
 
-  // Worker isolate entry point
+// Worker isolate entry point
 
-  Future<void> _runWorker(
+Future<void> _runWorker(
   SendPort toParent,
   ModelPaths p,
   double endpointSilence,
@@ -401,7 +420,10 @@ class SpeechWorker implements SpeechEngine {
 
   final port = ReceivePort();
   toParent.send(port.sendPort);
-  toParent.send('ready');
+  // The ready handshake carries the speaker count of the engine we just
+  // loaded: the app must know whether the current voice has a style
+  // roster (Kokoro: 54) before the user ever calls useTts.
+  toParent.send('ready:${tts?.numSpeakers ?? 0}');
 
   await for (final message in port) {
     if (message is! _Job) continue;
@@ -529,12 +551,20 @@ class SpeechWorker implements SpeechEngine {
             break;
           }
           final pieces = splitForTts(message.text!);
+          // One-shot speaker override (style-picker auditions): valid sids
+          // ride this call only; the engine keeps its configured speaker.
+          final sid =
+              message.sid != null &&
+                  message.sid! >= 0 &&
+                  message.sid! < tts.numSpeakers
+              ? message.sid!
+              : spec.sid;
           for (var i = 0; i < pieces.length; i++) {
             final piece = pieces[i];
             final isLast = i == pieces.length - 1;
             final (samples, sampleRate) = tts.generate(
               text: piece,
-              sid: spec.sid,
+              sid: sid,
               speed: 1.0,
             );
             var data = samples;

@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:piper_phonemize/piper_phonemize.dart' as piper;
 
 import '../models/model_packs.dart';
+import 'kokoro_voices.dart';
 import 'speech_worker.dart' show TtsSpec;
 
 /// One selectable TTS voice: a display entry + the packs it needs + how to
@@ -19,12 +20,18 @@ class TtsVoice {
   final String sizeLabel;
   final List<ModelPack> packs;
 
+  /// Multi-pack voices whose sid selects the pack (the student roster:
+  /// one 9 MB graph per voice). Such a voice counts as installed when
+  /// ANY of its packs is on disk, and only downloads the picked pack.
+  final bool perSidPacks;
+
   const TtsVoice({
     required this.id,
     required this.label,
     required this.note,
     required this.sizeLabel,
     required this.packs,
+    this.perSidPacks = false,
   });
 
   String get dirName => packs.first.dirName;
@@ -32,21 +39,23 @@ class TtsVoice {
   static String _f(String modelsDir, String dirName, String file) =>
       p.join(modelsDir, dirName, file);
 
+  /// Speaker-style names for this voice's engine, or null when the
+  /// engine's roster comes from the device (Kokoro reports its own
+  /// speaker count; the styles are its names).
+  List<KokoroSpeaker>? get staticRoster => id == 'titl' ? titlRoster : null;
+
   /// Absolute-path job spec for the speech worker. Two engines live
   /// here: Kokoro (the teacher; the Piper/VITS, Pocket, ZipVoice and
   /// NeuTTS engines were retired when Kokoro won the A/B on sound) and
-  /// the teacher-in-the-loop student — an 8M single-voice distillation
-  /// run on the same onnxruntime sherpa ships. [sid] is Kokoro-only.
+  /// the teacher-in-the-loop students — 8M single-voice distillations
+  /// run on the same onnxruntime sherpa ships. For the students, [sid]
+  /// indexes the parallel pack lists; for Kokoro it is the style id
+  /// inside the one loaded graph.
   Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
-    if (id == 'titl-heart') {
+    if (id == 'titl') {
       // espeak-ng data rides the piper_phonemize plugin (extracted once
-      // into app support); the graph + Kokoro vocab come from the pack.
-      final dataDir = await piper.extractEspeakNgData();
-      return TtsSpec.titl(
-        titlModel: _f(modelsDir, dirName, 'model.onnx'),
-        titlVocab: _f(modelsDir, dirName, 'vocab.json'),
-        espeakDataDir: dataDir,
-      );
+      // into app support); graph + Kokoro vocab come from each pack.
+      return titlSpec(modelsDir, await piper.extractEspeakNgData(), sid);
     }
     // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
     // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
@@ -64,14 +73,44 @@ class TtsVoice {
     );
   }
 
+  /// The student spec for one picked style: parallel model/vocab lists
+  /// in pack order (sid indexes them), one espeak voice per student
+  /// (af_heart reads English, the Italian pair read Italian — their
+  /// training language), and THE PICKED SID riding the spec: the
+  /// worker's synth default reads it from there, and dropping it was
+  /// how every style after the first silently spoke af_heart again.
+  /// Pure (no plugin extraction) so tests can pin the wiring.
+  TtsSpec titlSpec(String modelsDir, String espeakDataDir, int sid) =>
+      TtsSpec.titl(
+        titlModels: [
+          for (final pack in packs) _f(modelsDir, pack.dirName, 'model.onnx'),
+        ].join(','),
+        titlVocabs: [
+          for (final pack in packs) _f(modelsDir, pack.dirName, 'vocab.json'),
+        ].join(','),
+        espeakVoices: 'en-us,it,it',
+        espeakDataDir: espeakDataDir,
+        sid: sid,
+      );
+
   Future<bool> installedIn(String modelsDir) async {
     for (final pack in packs) {
-      if (!await packInstalled(modelsDir, pack)) return false;
+      final there = await packInstalled(modelsDir, pack);
+      if (there && perSidPacks) return true;
+      if (!there && !perSidPacks) return false;
     }
-    return true;
+    return !perSidPacks;
   }
 
-  Future<void> ensureIn(String modelsDir, {ModelProgress? onProgress}) async {
+  Future<void> ensureIn(
+    String modelsDir, {
+    ModelProgress? onProgress,
+    int? sid,
+  }) async {
+    if (perSidPacks && sid != null && sid < packs.length) {
+      await ensurePack(modelsDir, packs[sid], onProgress: onProgress);
+      return;
+    }
     for (final pack in packs) {
       await ensurePack(modelsDir, pack, onProgress: onProgress);
     }
@@ -92,15 +131,13 @@ const _k2fsaTts =
 /// first run.
 const ttsVoices = <TtsVoice>[
   TtsVoice(
-    id: 'titl-heart',
-    label: 'Heart (8M student)',
+    id: 'titl',
+    label: 'Students (8M)',
     note:
-        'Teacher-in-the-loop: af_heart distilled out of Kokoro-82M into '
-        'an 8M-parameter student — 9 MB, twenty-some times real-time on '
-        'one CPU thread, UTMOS within 0.05 of the teacher (a faint '
-        'metallic ring is the known tell). espeak-ng phonemes instead of '
-        'Misaki; intelligible-first, A/B against the teacher.',
-    sizeLabel: '9 MB',
+        'Faster and lighter than Kokoro, sounds close — but only '
+        '3 speakers, not 54.',
+    sizeLabel: '9 MB per style',
+    perSidPacks: true,
     packs: [
       ModelPack(
         label: 'voice: TITL af_heart',
@@ -109,15 +146,28 @@ const ttsVoices = <TtsVoice>[
         dirName: 'tts-titl-af_heart',
         markerFile: 'model.onnx',
       ),
+      ModelPack(
+        label: 'voice: TITL if_sara',
+        url:
+            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-if_sara.zip',
+        dirName: 'tts-titl-if_sara',
+        markerFile: 'model.onnx',
+      ),
+      ModelPack(
+        label: 'voice: TITL im_nicola',
+        url:
+            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-im_nicola.zip',
+        dirName: 'tts-titl-im_nicola',
+        markerFile: 'model.onnx',
+      ),
     ],
   ),
   TtsVoice(
     id: 'kokoro',
     label: 'Kokoro v1.0',
     note:
-        '85M studio-grade reader — 54 voice styles once loaded. The best-'
-        'sounding voice in the app (fp32; the int8 pack measured muddier '
-        'and slower). Fetches from the k2-fsa release directly.',
+        'The best-sounding voice in the app, with 54 speakers to pick '
+        'from — slower and a big download.',
     sizeLabel: '334 MB',
     packs: [
       ModelPack(
@@ -148,7 +198,12 @@ class TtsPrefs {
   Map<String, Object> toJson() => {'voice': voiceId, 'sid': sid};
 
   static TtsPrefs fromJson(Map<String, Object?> j) => TtsPrefs(
-    voiceId: j['voice'] as String? ?? 'kokoro',
+    // 'titl-heart' was the lone af_heart voice before the roster grew.
+    voiceId: switch (j['voice'] as String?) {
+      null => 'kokoro',
+      'titl-heart' => 'titl',
+      final v => v,
+    },
     sid: j['sid'] as int? ?? 0,
   );
 }

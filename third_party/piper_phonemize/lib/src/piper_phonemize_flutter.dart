@@ -133,7 +133,11 @@ Future<String> extractEspeakNgData() async {
   }
 
   final appDir = await getApplicationSupportDirectory();
-  final targetDir = '${appDir.path}/espeak-ng-data';
+  // Versioned dir name: an old-version install's extraction may predate
+  // (or be missing) files the current asset bundle ships — e.g. en_dict,
+  // which the 0.1.0+67 data prune dropped by accident. Bump the suffix
+  // whenever the vendored espeak-ng-data changes so devices re-extract.
+  final targetDir = '${appDir.path}/espeak-ng-data-v2';
   final targetDirectory = Directory(targetDir);
 
   // Skip if already extracted
@@ -154,8 +158,17 @@ Future<String> extractEspeakNgData() async {
       await file.parent.create(recursive: true);
       await file.writeAsBytes(bytes);
     } catch (_) {
-      // File not in bundle — skip
+      // File not in bundle — skip (the prune removed most dictionaries;
+      // the ones the app's voices need are checked for below).
     }
+  }
+  // A bundle that lost a required dict must fail here, not speak
+  // punctuation-only phonemes at runtime.
+  if (!await File('$targetDir/en_dict').exists()) {
+    throw StateError(
+      'espeak-ng asset bundle is missing en_dict — English phonemization '
+      'will not work (bundle the pruned piper_phonemize data correctly).',
+    );
   }
 
   return targetDir;
