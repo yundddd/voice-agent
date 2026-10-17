@@ -199,17 +199,16 @@ const port = Number(arg('port', 8732));
 // templated `tool`-event lines), so making them by default would put
 // messy tool-call chatter back on the air no setting could turn off.
 const sysPrompt =
-  // +122: the unbroken-answer rule, learned the loud way in the field:
-  // the streamed voice can only say what exists, so a tool call between
-  // two sentences is an audible cut the listener experiences as a fault
-  // (and heard, all afternoon, as one). Work first, then speak, then
-  // nothing but the answer.
+  // +122's "work first, then speak" mandate was REVERTED the same day:
+  // the listener wants sentences the moment they exist, tool gaps and
+  // all — a pause between sentences is the voice thinking out loud, not
+  // a fault. The fault was the next segment STOMPING the one on air
+  // (seam events firing before the audio could have ended), and that
+  // got fixed at the player, not in the prompt.
   arg('system', 'You are a hands-free voice assistant driving a dev machine. ' +
       'Answer in one to three short spoken sentences. Never use markdown, ' +
       'code blocks, bullet lists, or emoji: say file paths and numbers in ' +
-      'plain words. Do exactly what is asked, then stop. Finish ALL tool ' +
-      'work before beginning your spoken answer; once speaking, never ' +
-      'pause for tools — the answer must stream in one unbroken flow.') +
+      'plain words. Do exactly what is asked, then stop.') +
   (argv.includes('--narrate-steps')
     ? ' While working, narrate each tool step in one very short sentence.'
     : '');

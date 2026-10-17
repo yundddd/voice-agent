@@ -52,19 +52,39 @@ class FilePlayerAudioOutput implements AudioOutput {
     if (prev != null) {
       unawaited(File(prev).delete().catchError((_) => File(prev)));
     }
-    _listenOnce();
+    // +123: a completion event that arrives before the audio could
+    // physically have run out is the reset that play() itself performs
+    // when swapping sources (audioplayers fires onPlayerComplete on the
+    // internal stop on several platforms). The old listener took ANY
+    // event as the seam: the incoming chunk's own play() handed us the
+    // previous chunk's farewell event, the pump believed the segment
+    // had finished, and the next sentence stomped the one on air
+    // mid-word — every "cut off but the next segment started fine"
+    // report in one line of code. Guard the seam by the chunk's real
+    // duration, with a little slack for rounding.
+    final minAge = Duration(
+      milliseconds: ((samples.length / sampleRate) * 1000 - 120).round(),
+    );
+    _listenOnce(minAge);
     _cutting = false;
     await _player.play(DeviceFileSource(file.path));
   }
 
-  void _listenOnce() {
+  void _listenOnce(Duration minAge) {
+    final started = Stopwatch()..start();
     late StreamSubscription<void> sub;
     sub = _player.onPlayerComplete.listen((_) {
+      // The completion of a play we deliberately cut is not a natural
+      // end: the pipeline owns that transition itself (and audioplayers
+      // fires the event on stop() too on several platforms).
+      if (_cutting) {
+        sub.cancel();
+        return;
+      }
+      if (started.elapsed < minAge) return; // source-reset artifact, not
+      // the end of this chunk: stay armed for the real one.
       sub.cancel();
-      if (!_cutting) _ended.add(null); // the completion of a play we
-      // deliberately cut is not a natural end: the pipeline owns that
-      // transition itself (and audioplayers fires the event on stop()
-      // too on several platforms).
+      _ended.add(null);
     });
   }
 
