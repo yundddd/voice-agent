@@ -98,17 +98,18 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
     // open bridge turn means it works WHILE speaking — keep the wheel
     // live through its own voice.
     final talking =
-        a.phase == AssistantPhase.speaking &&
-        a.harnessElapsed == Duration.zero;
+        a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
     if (talking) {
       return const SizedBox.shrink();
     } // pure playback: voice is the status
-    // The thinking, spelled out — and the answer painted before it is
-    // spoken — ride a THIRD line when the bridge streamed them (max two
-    // lines so a rambling thought never shoves the chat around).
+    // +97: the thought moved UP onto line one, right behind its label —
+    // 'Thinking… · weighing the two splits' — ellipsized to that single
+    // row. On its own third row it grew line by line mid-thought and
+    // every growth shoved the whole conversation around (the height
+    // wobble this kills). The answer draft keeps the third row: it is
+    // the reply painting itself, and watching it appear is the point.
     final thought = a.tokenThought;
-    final draft = a.tokenDraft;
-    final shown = thought.isNotEmpty ? thought : draft;
+    final shown = a.tokenDraft;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -125,11 +126,23 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                // The tally-translated activity ('Thinking…'), not the
-                // raw status: 'Asking the bridge' must not squat on the
-                // line for a minute of actual thinking (+85).
-                a.activityLabel,
+              child: Text.rich(
+                // The tally-translated activity ('Thinking…') with the
+                // live thought riding behind it in italics (+97) — the
+                // thought used to own a third row and shove the whole
+                // chat with every streamed line. Not the raw status:
+                // 'Asking the bridge' must not squat on the line for a
+                // minute of actual thinking (+85).
+                TextSpan(
+                  children: [
+                    TextSpan(text: a.activityLabel),
+                    if (thought.isNotEmpty)
+                      TextSpan(
+                        text: ' · $thought',
+                        style: const TextStyle(fontStyle: FontStyle.italic),
+                      ),
+                  ],
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -153,15 +166,15 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
           Padding(
             padding: const EdgeInsets.only(left: 34, top: 2),
             child: Text(
+              // The answer painting itself before it is spoken (the
+              // draft tail). The thought that used to share this row
+              // moved inline (+97).
               shown,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: thought.isNotEmpty
-                    ? scheme.onSurfaceVariant
-                    : scheme.onSurface,
-                fontStyle: thought.isNotEmpty ? FontStyle.italic : null,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: scheme.onSurface),
             ),
           ),
       ],
