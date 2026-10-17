@@ -694,6 +694,7 @@ class VoiceAssistant extends ChangeNotifier {
       committed.add(text); // +114: audio-path commitment only — hidden
       // turns buffer their text on purpose and answer that accounting
       // with _speakResumedPending instead
+      _inFlight.add(text); // +115: not heard UNTIL it airs
       await _reply.speakBlock(
         text,
         alive: () => gen == _generation,
@@ -701,6 +702,7 @@ class VoiceAssistant extends ChangeNotifier {
         // mid-play: skip it whole — its chunks die here, no replay
         onAir: (sinceText) {
           aired.add(text); // +114: the ear has it, the ledger may keep it
+          _inFlight.remove(text); // +115: the ledger is the truth from here
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed: the first chunk of a
@@ -971,6 +973,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (!aired.contains(t)) _chat.removeBlock(turn, t);
         }
       }
+      _inFlight.removeAll(committed); // +115: this turn's flight is over
       if (!outcome.sawDone && gen != _generation) {
         // +110: a cut that never got to speak still leaves a bubble.
         // The interruption of a bare thinking run or a tool call used
@@ -1958,6 +1961,8 @@ class VoiceAssistant extends ChangeNotifier {
       _chat.addBlock(turn, text);
       _lastReplyText = text;
       rCommitted.add(text);
+      _inFlight.add(text); // +115: a replayed paragraph is equally
+      // unheard until its own audio starts
       await _reply.speakBlock(
         text,
         alive: () => gen == _generation,
@@ -1965,6 +1970,7 @@ class VoiceAssistant extends ChangeNotifier {
         // speak(): a paragraph the hide cut is never re-voiced here
         onAir: (sinceText) {
           rAired.add(text);
+          _inFlight.remove(text); // +115
           _dropAfterHide = null; // this block's air outranks the mark
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed
@@ -2010,9 +2016,11 @@ class VoiceAssistant extends ChangeNotifier {
               : '';
           if (sayText.isNotEmpty &&
               _transport.wireAgeMs(ev) > 120000 &&
-              // (unless it's also in the chat log — then the dedup
-              // branch below silently drops it instead of duplicating)
-              !_chat.containsBlock(sayText)) {
+              // (unless it's also in the chat log or in the speaker —
+              // then the dedup branch below silently drops it instead
+              // of duplicating)
+              !_chat.containsBlock(sayText) &&
+              !_inFlight.contains(sayText)) {
             // Archaeology, not news: the backlog replayed a line from
             // before the app went away (an APK update, a kill — the
             // frames are minutes or hours old). It belongs in the
@@ -2023,14 +2031,20 @@ class VoiceAssistant extends ChangeNotifier {
                 ? 'unstamped'
                 : '${_transport.wireAgeMs(ev) ~/ 1000}s old';
             _logDebug('replay $ageSec: logged silently, not spoken');
-          } else if (sayText.isNotEmpty && _chat.containsBlock(sayText)) {
-            // Already heard — the persisted chat log remembers the block
-            // (it joins the conversation the moment its audio is
-            // COMMITTED, +109 — before the first chunk and before any
-            // kill), so the replay bows out quietly. One
-            // trade: a paragraph cut off MID-audio by the kill counts as
-            // spoken and its tail is not repeated — never re-listening
-            // beats never not-listening, said every chat client ever.
+          } else if (sayText.isNotEmpty &&
+              (_chat.containsBlock(sayText) ||
+                  _inFlight.contains(sayText))) {
+            // Already heard — or already airborne in this process. The
+            // persisted chat log remembers the block (it joins the
+            // conversation the moment its audio is COMMITTED, +109),
+            // and _inFlight (+115) covers the gap between that commit
+            // and the first chunk: a commit that outlives its process
+            // (APK swap, kill) loses its in-flight claim, which is
+            // exactly what makes the relaunched app re-voice a tail
+            // that never actually spoke instead of gaslighting the
+            // ear. One trade kept from the old law: a paragraph cut off
+            // MID-audio counts as heard and its tail is not repeated —
+            // never re-listening beats never not-listening.
             _logDebug('replay dedup: paragraph already in chat — skipped');
           } else if (sayText.isNotEmpty) {
             _ticker.markSpoken();
@@ -2123,6 +2137,7 @@ class VoiceAssistant extends ChangeNotifier {
             if (!rAired.contains(t)) _chat.removeBlock(turn, t);
           }
         }
+        _inFlight.removeAll(rCommitted); // +115: replay flight over
         // Same stamp as the heard-stream teardown (+108): an attach
         // view closed under a newer press leaves its bubble marked.
         if (!outcome.sawDone && gen != _generation && !turn.isEmpty) {
@@ -2170,6 +2185,14 @@ class VoiceAssistant extends ChangeNotifier {
 
   bool _conversationWasLive = false;
   bool _backgrounded = false;
+  /// +115: paragraphs this process has committed to the ledger whose
+  /// audio has NOT started — mid-synth or queued. The replay dedup
+  /// consults this beside the log: after a process death (an APK swap
+  /// landing between commit and first chunk) the set is gone while the
+  /// on-disk commit survives, so the relaunched app re-voices the tail
+  /// the old process never got out of the speaker instead of skipping
+  /// it as heard — the field report of the plus-fourteen install.
+  final Set<String> _inFlight = {};
   String? _pausedWorking; // spinner working line snapshotted at hide time
   String? _resumeReplyText; // newest bridge reply buffered while hidden
   String? _dropAfterHide; // paragraph audible when the hide cut it: skip

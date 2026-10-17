@@ -659,6 +659,17 @@ void main() {
               'bridge copy stays replayable for a fresh view');
       expect(a.chat.first.blocks, contains('Heard, this one.'),
           reason: 'heard text is heard history');
+
+      // The retract must be RECOVERY, not deletion: the chain's attach
+      // view (health said turnOpen) meets the same paragraph on the
+      // replay stream and must VOICE it — no ledger entry, no flight
+      // claim, so dedup bows out of the way.
+      harness.emitAttach(BridgeEvent.forTest('say', text: 'Never aired.'));
+      await settle();
+      expect(engine.synthesized.any((t) => t.contains('Never aired')), isTrue,
+          reason: '+115: the tail the old process never said is said now');
+      expect(a.chat.first.blocks, isNot(contains('Never aired.')),
+          reason: 'it belongs to the NEW bubble, not the dead turn');
     });
 
     test('an old unheard paragraph is logged, never re-voiced', () async {
