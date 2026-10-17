@@ -84,7 +84,15 @@
 //                queued` out loud, and pulses a still-working heartbeat
 //                through silent steps only with the Narrate switch on
 //                the app's Bridge screen — off from the factory (see
-//                BridgePrefs.narrate).
+//                BridgePrefs.narrate). And a queued prompt never dies
+//                with its stream (+104): when the response socket closes
+//                while queued (quiet-wire watchdog, lifecycle HIDE,
+//                Android cutting it), the prompt converts to the poll
+//                transport and runs on the ring anyway — its turn lands
+//                in the /attach replay for the phone's return. The old
+//                abandon branch ate the utterance (field report: 'the
+//                queued message was lost'); after the `queued` notice
+//                the turn is owed, whatever the transport does.
 //   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
 //                PROCESS stays alive. No-op while idle.
@@ -1048,7 +1056,15 @@ function flushPending() {
   if (!pending) return;
   const p = pending;
   pending = null;
-  if (p.res.writableEnded && !p.poll) { endKeep(p); return; } // phone abandoned its queued prompt
+  // +104: an ended response is NOT an abandoned message. This branch
+  // used to eat the utterance silently — field report 'the queued
+  // message was lost': the phone's stream died in the queue (quiet-wire
+  // watchdog, lifecycle HIDE, Android cutting the socket) and flush
+  // dropped the prompt instead of honouring the promise its own
+  // 'queued' notice made. A dead stream only decides the TRANSPORT:
+  // the turn runs anyway, its frames ride the ring, and the phone's
+  // reattach replay catches them when it's back.
+  if (p.res.writableEnded && !p.poll) p.poll = true; // ring transport below
   if (p.poll) {
     // Queued POLL prompt: its POST response was closed at queue time, so
     // the turn starts against a mute socket — every frame simply rings —
@@ -1096,14 +1112,18 @@ function talk(text, res, interrupt = true, poll = false) {
   res.on('close', () => {
     if (curRes && curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
     else if (pending && pending.res === res && !pending.poll) {
-      // Only a live SSE stream's close means the phone abandoned its
-      // queued prompt. A POLL prompt closes its response AT QUEUE TIME
-      // by design (the ring carries its turn) — this close is our own
-      // res.end() landing, and dropping pending here silently ate the
-      // utterance: the pin froze at 'queued', no 'started' ever rode
-      // the ring, and flushPending's poll branch never got to run
-      // (field report 0.1.0+90, the message that queued and vanished).
-      endKeep(pending); pending = null;
+      // A POLL prompt closes its response AT QUEUE TIME by design (the
+      // ring carries its turn) — this close is our own res.end()
+      // landing, and dropping pending here silently ate the utterance:
+      // the pin froze at 'queued', no 'started' ever rode the ring, and
+      // flushPending's poll branch never got to run (field report
+      // 0.1.0+90, the message that queued and vanished). +104 reads the
+      // SAME event on a live SSE prompt as a dead TRANSPORT, not an
+      // abandoned message — the phone only ever discards BEFORE sending
+      // (slide-right), so after the 'queued' promise the turn is owed
+      // regardless: flip to the poll transport and let flushPending
+      // run it on the ring.
+      pending.poll = true;
     }
   });
   if (curRes || turnOpen) {

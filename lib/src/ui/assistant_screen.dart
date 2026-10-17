@@ -79,13 +79,21 @@ class _AssistantScreenState extends State<AssistantScreen>
     // new spoken section), pin the scroll to the bottom (post-frame: the
     // new height exists only after layout). A deliberate scroll-up to
     // re-read history stops the follow until the next stream event.
+    //
+    // The pin is unconditional. It used to skip when the position read
+    // as outOfRange — but out-of-range is precisely the case whose tail
+    // it owed: the viewport shrinking under a settled bubble (keyboard
+    // animating in, the status line or metrics row growing a line)
+    // lowers maxScrollExtent below the current offset, leaving the
+    // bottom of the newest message cut off with no further events left
+    // to re-pin it, and the user scrolling by hand. jumpTo on
+    // maxScrollExtent is always in range, and the chatVersion gate
+    // above is what honors a scroll-up to re-read: no event, no pin.
     if (a.chatVersion != _seenChatVersion) {
       _seenChatVersion = a.chatVersion;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
-        if (!_scroll.position.outOfRange) {
-          _scroll.jumpTo(_scroll.position.maxScrollExtent);
-        }
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
       });
     }
 
