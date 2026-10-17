@@ -33,6 +33,11 @@ class FakeSpeechEngine implements SpeechEngine {
   /// Script failures: the next transcribe/synth call throws.
   Object? failNext;
 
+  /// When set, synthesizeStream waits on this future before handing
+  /// over its first chunk — a paragraph committed to the speaker with
+  /// audio still unsent, the exact window the +109 ledger stamp closes.
+  Future<void>? holdChunks;
+
   int _turn = 0;
 
   /// Push a pipeline event (barge-in start, endpointed segment...).
@@ -79,6 +84,8 @@ class FakeSpeechEngine implements SpeechEngine {
     if (failNext != null) throw failNext!;
     synthesized.add(text);
     synthesizedSids.add(sid);
+    await holdChunks; // the synth-to-speaker gap the ledger must not
+    // have to survive
     final chunk = Float32List(2400); // 100 ms at 24 kHz
     onChunk?.call(chunk, 24000);
     return (chunk, 24000);

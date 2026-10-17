@@ -415,6 +415,39 @@ void main() {
       expect(a.phase, AssistantPhase.listening);
     });
 
+    test('a committed paragraph is in the ledger before its audio lands '
+        '(+109: no double voice after an interrupt)', () async {
+      // The window the field report lived in: a paragraph promised to
+      // the speaker but not yet audible looked unheard to a reattach
+      // replay, which then voiced it a second time. The stamp now rides
+      // the COMMIT, so the dedup ledger knows the promise immediately.
+      final gate = Completer<void>();
+      engine.holdChunks = gate.future; // synth frozen before its first
+      // chunk: nothing can have reached the player
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'Stuck in the synth.'));
+      await settle();
+
+      expect(out.played.where((c) => c.$1.length == 2400), isEmpty,
+          reason: 'the reply audio is still mid-synth (UI blips exempt)');
+      expect(a.phase, isNot(AssistantPhase.speaking));
+      expect(
+        a.chat.any((e) =>
+            !e.fromUser && e.blocks.contains('Stuck in the synth.')),
+        isTrue,
+        reason: 'committed text must be in the bubble AND the dedup '
+            'ledger before a single chunk plays',
+      );
+
+      gate.complete(); // the speaker gets it after all: once, and only once
+      await settle();
+      expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
+    });
+
     test('the tail of our own echo is rejected before it ever sends',
         () async {
       engine.transcripts = ['hello there', 'hello there again'];

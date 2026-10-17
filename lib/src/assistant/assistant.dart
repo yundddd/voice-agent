@@ -658,27 +658,30 @@ class VoiceAssistant extends ChangeNotifier {
     // text-follows-audio, history being exactly what the room heard.
     String latestWork =
         ''; // newest tool-step progress line, e.g. 'Edit foo.dart…'
-    // Speak one answer block end-to-end: synth streamed into the play
-    // queue, and the log entry lands the moment the FIRST audio chunk
-    // queues — voice and text enter the conversation together. Waiting
-    // for the whole sentence to synthesise (the old order) let the voice
-    // win the race on long answers: audible seconds before any text. The
-    // first-chunk stamp also can't lead the audio (the chunk still has to
-    // reach the player after this), while an interrupted turn keeps the
-    // sections whose audio actually started — tail chunks still drop on
-    // the gen guard, so the card never grows while the loop has already
-    // stopped feeding the player (the old "text with no audio").
+    // Speak one answer block end-to-end. +109: the ledger stamp moved
+    // from first-chunk-on-air to the moment the block is COMMITTED to
+    // the speaker — 'mark it when it starts speaking', the owner's
+    // call. The on-air stamp let a reattach replay re-voice paragraphs
+    // that were still synthesising or queued behind playing audio: the
+    // dedup ledger only knew blocks whose audio had already reached
+    // the player, and the same answer came out of the speaker twice
+    // (field report 20:09:58, 'you are repeating yourself twice after
+    // I interrupt'). The trade the old comment feared — text with no
+    // audio when a block dies before its first chunk — is the one
+    // accepted here: a committed paragraph whose turn is cut keeps its
+    // line in the bubble, honest words the voice got close to saying.
     Future<void> speak(String text) async {
       _narr.audioActivity(); // audio just became active: hush
+      // Committed: ledger first, audio next, in every mode.
+      spoken.write('$text ');
+      _chat.addBlock(turn, text); // persists + repaints; a replay from
+      // here on dedups against it, the speaker can still be silent
+      _lastReplyText = text;
       if (_backgrounded) {
         // App is hidden: keep drinking the harness's firehose but skip
-        // synth and audio entirely (the speaker is gone anyway). Every
-        // block still lands in the chat bubble — the text-follows-audio
-        // ordering only matters while audio is audible — and the most
+        // synth and audio entirely (the speaker is gone anyway). The
+        // block still lands above like everywhere else, and the most
         // recent one is what [_speakResumedPending] speaks on resume.
-        spoken.write('$text ');
-        _chat.addBlock(turn, text);
-        _lastReplyText = text;
         _resumeReplyText = text;
         return;
       }
@@ -702,12 +705,8 @@ class VoiceAssistant extends ChangeNotifier {
             _ttsFirstTimed = true;
             _ttsSeconds = sinceText.inMilliseconds / 1000.0;
           }
-          spoken.write('$text ');
-          _chat.addBlock(turn, text); // persists + repaints with the
-          // status flip above
         },
       );
-      _lastReplyText = text;
     }
 
     Future<void> narrateProgress(String line) async {
@@ -1886,9 +1885,16 @@ class VoiceAssistant extends ChangeNotifier {
     _startPump(gen);
     final spoken = StringBuffer();
 
-    // One replayed or live say, end-to-end — the same first-chunk block
-    // stamp as runQuickCommand's speak (the voice never leads the text).
+    // One replayed or live say, end-to-end — and like the main turn
+    // loop's speak (+109), the ledger stamp lands when the block is
+    // COMMITTED, before its audio queues: the whole point of the replay
+    // dedup is that nothing already promised to the speaker ever gets
+    // voiced twice, and an on-air stamp left the in-flight paragraphs
+    // invisible to it.
     Future<void> speak(String text) async {
+      spoken.write('$text ');
+      _chat.addBlock(turn, text);
+      _lastReplyText = text;
       await _reply.speakBlock(
         text,
         alive: () => gen == _generation,
@@ -1902,9 +1908,6 @@ class VoiceAssistant extends ChangeNotifier {
             _ttsFirstTimed = true;
             _ttsSeconds = sinceText.inMilliseconds / 1000.0;
           }
-          spoken.write('$text ');
-          _chat.addBlock(turn, text);
-          _lastReplyText = text;
         },
       );
     }
@@ -1958,8 +1961,9 @@ class VoiceAssistant extends ChangeNotifier {
             _logDebug('replay $ageSec: logged silently, not spoken');
           } else if (sayText.isNotEmpty && _chat.containsBlock(sayText)) {
             // Already heard — the persisted chat log remembers the block
-            // (it joins the conversation the moment its audio starts,
-            // before the kill), so the replay bows out quietly. One
+            // (it joins the conversation the moment its audio is
+            // COMMITTED, +109 — before the first chunk and before any
+            // kill), so the replay bows out quietly. One
             // trade: a paragraph cut off MID-audio by the kill counts as
             // spoken and its tail is not repeated — never re-listening
             // beats never not-listening, said every chat client ever.
