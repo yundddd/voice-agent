@@ -28,11 +28,32 @@ class FilePlayerAudioOutput implements AudioOutput {
   String? _file;
   bool _cutting = false;
 
+  // +117: the assistant audio context. The plugin default is plain MEDIA
+  // usage, and a media track does not ask Android for audio focus — so
+  // while another app owned the session (the field log: an APK install
+  // with Telegram in front), our chunks 'played' to a silent route and
+  // only the first blips reached the ear before something else stayed
+  // on top. ASSISTANT usage with transient-duck focus is what voice
+  // UIs get: it ducks music, yields to ringers, and never plays
+  // unheard behind a hog. Applied once, lazily, before the first play.
+  static final _voiceContext = AudioContext(
+    android: AudioContextAndroid(
+      contentType: AndroidContentType.speech,
+      usageType: AndroidUsageType.assistant,
+      audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+    ),
+  );
+  Future<void>? _ctx;
+
   @override
   Stream<void> get onNaturalEnd => _ended.stream;
 
   @override
   Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
+    _ctx ??= _player.setAudioContext(_voiceContext).catchError(
+      (_) {},
+    ); // one shot; failures stay silent, playback continues
+    await _ctx;
     final dir = await _tempDir();
     final file = File(
       p.join(
