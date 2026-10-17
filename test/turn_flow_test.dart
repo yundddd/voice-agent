@@ -456,6 +456,37 @@ void main() {
       );
     });
 
+    test('the ledger stamp waits for the PLAYER, not the queue (+121)',
+        () async {
+      // The afternoon's silent-tail killer, unit-caught: onAir used to
+      // fire when a synth chunk reached the QUEUE, so paragraphs
+      // parked there while the drain bumped the generation were
+      // stamped 'heard' and then cleared unheard — the audio stopped
+      // exactly when the spinner box dismissed.
+      await withBridge();
+      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'First, playing.'));
+      harness.emit(BridgeEvent.forTest('say', text: 'Second, queued.'));
+      await settle();
+      expect(out.playing, isTrue); // the player took the first…
+      final bubbles = () => a.chat
+          .where((e) => !e.fromUser)
+          .expand((e) => e.blocks)
+          .toList();
+      expect(bubbles(), contains('First, playing.'),
+          reason: 'its audio started: stamped');
+      expect(bubbles(), isNot(contains('Second, queued.')),
+          reason: 'it only sits in the queue — a stale-clear there '
+              'must never leave a fake heard mark (+121)');
+
+      out.complete(); // the first ends; the pump hands over the second
+      await settle();
+      expect(bubbles(), containsAll(['First, playing.', 'Second, queued.']),
+          reason: 'heard now, stamped now');
+    });
+
     test('the queue verdict gets its own bubble, not the turn\'s (+110)',
         () async {
       await withBridge();

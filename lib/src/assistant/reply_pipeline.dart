@@ -86,7 +86,10 @@ class ReplyPipeline {
   /// panel's headline number).
   final void Function()? onAudible;
 
-  final List<(Float32List, int)> _queue = [];
+  // (samples, rate, start-of-audio hook): the third slot carries the
+  // block's once-only onAir callback to the exact moment the pump hands
+  // the chunk to the player (+121) — queued is not heard.
+  final List<(Float32List, int, void Function()?)> _queue = [];
   bool _streamDone = true; // no stream in flight until startStream
   Completer<void>? _wake; // pokes the pump loop
   Completer<void>? _chunkDone; // resolves when the current chunk ends
@@ -170,8 +173,12 @@ class ReplyPipeline {
     closeStream();
   }
 
-  void enqueue(Float32List chunk, int sampleRate) {
-    _queue.add((chunk, sampleRate));
+  void enqueue(
+    Float32List chunk,
+    int sampleRate, {
+    void Function()? onStarted,
+  }) {
+    _queue.add((chunk, sampleRate, onStarted));
     _wakeNow();
   }
 
@@ -207,14 +214,24 @@ class ReplyPipeline {
       onChunk: (chunk, sampleRate) {
         if (!alive()) return;
         if (drop != null && drop()) return; // hide cut this paragraph
+        final ms = sw.elapsedMilliseconds;
         if (!onAirDone) {
           onAirDone = true;
-          onAir(
-            Duration(milliseconds: sw.elapsedMilliseconds),
-          ); // reply→audio hop crossed: the
-          // first chunk of a spoken block is on its way to the ear. The
-          // block's own stopwatch began the moment the text arrived, so
-          // this elapsed IS the dead air.
+          // +121: the reply→audio hop is crossed when the PLAYER
+          // takes the chunk, not when the queue does. Paragraphs
+          // dropped before their turn (the pump's stale-clear racing
+          // a reattach drain or a supersede) must not fossilise as
+          // 'heard' in the ledger, and the phase must not flip on a
+          // silent speaker — the afternoon-long signature of the cut
+          // at spinner dismissal was this stamp firing one paragraph
+          // too early. The stopwatch still began when the text
+          // arrived, so the reported elapsed IS the dead air.
+          enqueue(
+            chunk,
+            sampleRate,
+            onStarted: () => onAir(Duration(milliseconds: ms)),
+          );
+          return;
         }
         enqueue(chunk, sampleRate);
       },
@@ -248,11 +265,11 @@ class ReplyPipeline {
           return;
         }
         if (_queue.isEmpty) break; // stream drained and closed
-        final (chunk, sampleRate) = _queue.removeAt(0);
+        final (chunk, sampleRate, onStarted) = _queue.removeAt(0);
         firstChunk = false;
         final seam = Completer<void>();
         _chunkDone = seam;
-        await _playWav(chunk, sampleRate, isStale);
+        await _playWav(chunk, sampleRate, isStale, onStarted: onStarted);
         if (isStale()) return; // user resumed: drop the rest
         await seam.future; // ends on natural end... or a stop
         // Seam complete: the loop owns playback again. Clearing the flag
@@ -277,8 +294,9 @@ class ReplyPipeline {
   Future<void> _playWav(
     Float32List samples,
     int rate,
-    bool Function() isStale,
-  ) async {
+    bool Function() isStale, {
+    void Function()? onStarted,
+  }) async {
     _playing = true;
     // _startedAt marks only the FIRST chunk of an utterance: the 450 ms
     // AEC guard must not re-arm per chunk (a chunk boundary would
@@ -294,6 +312,9 @@ class ReplyPipeline {
     gatePin(true);
     _chunkLog(samples, rate);
     try {
+      onStarted?.call(); // +121: this is the player's hand-off — the
+      // block's onAir (ledger stamp, speaking phase, latency number)
+      // rides this instant, the last one before the speaker owns it
       onAudible?.call(); // the honest release→ear clock starts at the
       // player's hand-off, not the queue write
       await output.play(samples, rate);
