@@ -1,0 +1,154 @@
+// Regression tests for the queue at +104 ('the queued message was lost').
+// Both transports that park a prompt behind an in-flight turn must deliver
+// it when the floor frees — whether the phone is still listening on its
+// SSE stream or its socket died in the queue (Android watchdog, lifecycle
+// HIDE). The old flushPending ate the second flavour silently: the pin
+// froze at 'queued', no turn ever ran, the utterance was gone.
+//
+// Run: node --test tool/bridge_queue_test.mjs
+//
+// A real bridge process is spawned on a scratch port, driven over HTTP,
+// with bridge_stub_claude.mjs as the harness: every utterance that
+// reaches the harness is logged, so 'delivered' is a fact on disk, not a
+// frame the client happened to see.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import http from 'node:http';
+
+const HERE = new URL('.', import.meta.url).pathname;
+const TOKEN = 'testtok';
+// Wide window, pid-spread, one port per test (each spins its own bridge).
+const PORT1 = 18732 + (process.pid % 977);
+const PORT2 = PORT1 + 1;
+
+function startBridge(stubLog, port) {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
+  const proc = spawn(
+    process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--dir', dir, '--token', TOKEN,
+      '--port', String(port), '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, STUB_LOG: stubLog, STUB_RESULT_MS: '1500' } },
+  );
+  proc.stderr.resume(); // keep the pipe draining; the test speaks over HTTP
+  return proc;
+}
+
+// One HTTP exchange: resolves as soon as headers are in, then keeps
+// accumulating the body (SSE streams included). .text reads the current
+// stream contents, .kill() hangs up mid-stream like a dying phone.
+function call(port, pathname, { body = null, method = 'GET' } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`http://127.0.0.1:${port}` + pathname,
+      { method }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { text += c; });
+      resolve({
+        req,
+        get text() { return text; },
+        kill() { req.destroy(); },
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+const health = async (port) => JSON.parse((await call(port, '/health')).text);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(what, cond, ms = 6000) {
+  const t0 = Date.now();
+  for (;;) {
+    if (await cond()) return;
+    if (Date.now() - t0 > ms) throw new Error(`timeout waiting for ${what}`);
+    await sleep(25);
+  }
+}
+const seen = (stubLog) => {
+  try { return readFileSync(stubLog, 'utf8').split('\n').filter(Boolean); }
+  catch { return []; } // no file yet: nothing has reached the harness
+};
+async function stopBridge(proc) {
+  proc.kill();
+  if (!proc.exitCode) await new Promise((r) => proc.on('exit', r));
+}
+const up = (port) => until('bridge health', async () => {
+  try { return (await health(port)).ok === true; } catch { return false; }
+});
+
+test('a polite queue whose phone stream died still gets its turn (+104)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT1);
+  try {
+    await up(PORT1);
+
+    // Turn A, heard: the stub holds it open for 1.5 s.
+    const a = await call(PORT1, `/talk?token=${TOKEN}`,
+      { body: 'first turn', method: 'POST' });
+    await until('turn A open', async () => (await health(PORT1)).turnOpen === true);
+
+    // Turn B parks behind it politely and reads its notice…
+    const b = await call(PORT1, `/talk?token=${TOKEN}&interrupt=0`,
+      { body: 'second queued message', method: 'POST' });
+    await until('B queued notice', async () => b.text.includes('"name":"queued"'));
+    // B must NOT have reached the harness yet (the polite promise). Not
+    // an equality on the log: the stub process is still booting here,
+    // and 'first turn' may not have hit disk yet — its turn being OPEN
+    // (turnOpen, the queued notice) is the proof A runs first.
+    assert.ok(!seen(stubLog).includes('second queued message'),
+      'polite queue jumped the in-flight turn');
+
+    // …then the phone dies: socket gone BEFORE the flush. The old code
+    // flipped this to abandoned and the message vanished here.
+    b.kill();
+    await until('queue flushed', async () => (await health(PORT1)).queued === false);
+
+    // Delivered is a fact on disk: the harness received the prompt…
+    await until('B reaching the harness', async () =>
+      seen(stubLog).includes('second queued message'));
+    // …and the ring carries the +81 pickup marker for the phone's return.
+    const ring = JSON.parse((await call(PORT1, `/poll?token=${TOKEN}&since=0`)).text);
+    assert.ok(ring.events.some((e) =>
+      e.data?.name === 'started' && e.data?.detail === 'second queued message'),
+      'no started marker on the ring');
+    // B's own turn closed too (stub result #2): the machine is at rest.
+    await until('everything settled', async () => {
+      const h = await health(PORT1);
+      return h.turnOpen === false && h.queued === false;
+    });
+    assert.deepEqual(seen(stubLog), ['first turn', 'second queued message']);
+    assert.ok(a.text.includes('event: done'), 'turn A never got its own done');
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+test('a polite queue on a live stream flushes to its own socket', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT2);
+  try {
+    await up(PORT2);
+    const a = await call(PORT2, `/talk?token=${TOKEN}`,
+      { body: 'first turn', method: 'POST' });
+    await until('turn A open', async () => (await health(PORT2)).turnOpen === true);
+    const b = await call(PORT2, `/talk?token=${TOKEN}&interrupt=0`,
+      { body: 'second queued message', method: 'POST' });
+    await until('B queued notice', async () => b.text.includes('"name":"queued"'));
+
+    // The live path (beginTurn onto the waiting response): when A's result
+    // frees the floor, B becomes the heard view and its OWN turn's done
+    // arrives on B's stream — never diverted to A's.
+    await until('B done event', async () => b.text.includes('event: done'));
+    assert.ok(a.text.includes('event: done'), 'turn A never got its own done');
+    assert.ok(b.text.indexOf('event: done') > b.text.indexOf('"name":"queued"'),
+      'done preceded the queue notice');
+    assert.deepEqual(seen(stubLog), ['first turn', 'second queued message']);
+  } finally {
+    await stopBridge(proc);
+  }
+});
