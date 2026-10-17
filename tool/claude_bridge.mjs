@@ -1112,11 +1112,16 @@ function talk(text, res, interrupt = true, poll = false) {
     pending = { res, text, keep, poll, interrupt };
     sse(res, 'tool', {
       name: 'queued',
+      // +98: the notice names the OUTCOME the interrupt gesture caused
+      // — the phone shows this line verbatim and the field report
+      // asked to read exactly this: was my interrupt an abort or a
+      // backgrounding? A polite queue (interrupt=0) promises neither.
       detail: openTools.size
-        ? (curRes ? 'the current turn' : 'the background turn')
-          + ' is running a tool; your message goes next'
+        ? 'a tool call was put into background — it keeps working; '
+          + 'your message goes next'
         : interrupt
-          ? 'cutting the thinking turn short; your message goes next'
+          ? 'the thinking was interrupted and aborted; '
+            + 'your message goes next'
           : 'finishing the current turn; your message goes next',
     });
     // Poll client: the queue notice is its confirmation — the turn's own
