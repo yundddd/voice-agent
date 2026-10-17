@@ -162,8 +162,9 @@ void main() {
       expect(a.backgroundedWork, isEmpty, reason: 'the line dismisses itself');
     });
 
-    test('a queue pin behind an open tool keeps the line; the pickup ack '
-        'retires it (the bridge only flushes a closed turn)', () async {
+    test('a press behind an open DETACHED tool shows in the flow (the pin '
+        'protects only in-ear answers, +126); the line survives on the '
+        'badge and the pickup ack retires it', () async {
       await withBridge();
       unawaited(a.runQuickCommand('go'));
       await settle();
@@ -177,14 +178,17 @@ void main() {
       unawaited(a.runQuickCommand('polite follow-up',
           bubble: 'polite follow-up', interrupt: false));
       await settle();
-      expect(a.queuedBubble, isNotNull);
+      expect(a.queuedBubble, isNull,
+          reason: 'nothing audible to protect — the press shows right away');
+      expect(a.chat.where((e) => e.fromUser).last.queued, isFalse);
       expect(a.backgroundedWork, 'Bash npm test…',
-          reason: 'waiting behind the open tool is still background work');
+          reason: 'the badge still carries the wait: the tool IS still '
+              'running unheard until the ack proves it closed');
       harness.emit(BridgeEvent.forTest('tool',
           toolName: 'started', detail: 'polite follow-up'));
       await settle();
-      expect(a.queuedBubble, isNull);
       expect(a.backgroundedWork, isEmpty); // auto-dismiss at delivery
+      expect(a.harnessBackgrounded, isFalse);
     });
 
     test('tool steps update the label; plumbing steps are eyes-only',
