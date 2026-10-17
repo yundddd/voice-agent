@@ -26,11 +26,24 @@ process.stdin.on('data', (b) => {
     const c = m.message?.content;
     const text = typeof c === 'string' ? c : (c?.[0]?.text ?? '');
     appendFileSync(log, text + '\n');
-    setTimeout(() => out({
-      type: 'result', subtype: 'success', session_id: 'stub-session',
-      is_error: false, total_cost_usd: 0,
-      usage: { input_tokens: 100, output_tokens: 42 },
-    }), delay);
+    setTimeout(() => {
+      // STUB_SAYS (newline-separated): the turn answers with an
+      // assistant snapshot per line — the shape real snapshots take
+      // when the upstream sends no live partials, exercising the
+      // bridge's say relays deterministically.
+      for (const s of (process.env.STUB_SAYS ?? '').split('\n')
+          .map((x) => x.trim()).filter(Boolean)) {
+        out({
+          type: 'assistant', session_id: 'stub-session',
+          message: { role: 'assistant', content: [{ type: 'text', text: s }] },
+        });
+      }
+      out({
+        type: 'result', subtype: 'success', session_id: 'stub-session',
+        is_error: false, total_cost_usd: 0,
+        usage: { input_tokens: 100, output_tokens: 42 },
+      });
+    }, delay);
   }
 });
 // The real CLI re-emits init per message; the bridge only reads session_id

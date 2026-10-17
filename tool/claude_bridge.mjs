@@ -312,10 +312,9 @@ function relaySentences(blk, {force = false} = {}) {
     force,
     emit: (t) => {
       console.error(`  -> say(live) "${t.slice(0, 40)}"`);
-      spokenTexts.add(t); // +112: a sentence the streaming pass spoke (or
-      // tried to, view or no view) is accounted for — a later copy of it
-      // must never land in the unheard backlog a drain replays.
-      relay('say', {text: t});
+      relay('say', {text: t}); // +113: no pre-registration here — the
+      // first copy must reach the backlog when the view is down; the
+      // heard accounting happens INSIDE relay, on actual delivery.
     },
   });
 }
@@ -452,21 +451,29 @@ const relay = (ev, data) => {
   data._ts ??= Date.now();
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
-  if (curRes) { sse(curRes.res, ev, data); return; }
-  // +112 (the answered-interruption echo): a `say` whose text was
-  // already relayed this turn is a re-relay, not news — and this copy
-  // is heading for the UNHEARD backlog, which a drain replays verbatim.
-  // Retire any copy already parked there instead of stacking a second:
-  // two unheard entries of one sentence meant the phone spoke it twice
-  // after one interrupt (field report on the +111 drain's first flight).
-  if (ev === 'say' && data.text && spokenTexts.has(data.text)) {
+  if (curRes) {
+    if (ev === 'say' && data.text) heardTexts.add(data.text);
+    sse(curRes.res, ev, data);
+    return;
+  }
+  // +113 (the answered-interruption echo, second attempt): a `say`
+  // heading for the UNHEARD backlog is dropped when this sentence has
+  // ALREADY reached a listening view (heardTexts — recorded on actual
+  // delivery, never at emit time: +112 registered first and ate the
+  // never-heard first copy of an uninterrupted reply), or when an
+  // unheard copy is already parked down there (retire the duplicate
+  // instead of stacking a second the drain would voice twice).
+  if (ev === 'say' && data.text) {
+    if (heardTexts.has(data.text)) {
+      console.error('  [backlog] say already heard live: copy dropped');
+      return;
+    }
     for (let i = backlog.length - 1; i >= 0; i--) {
       if (backlog[i].ev === 'say' && backlog[i].data.text === data.text) {
         backlog.splice(i, 1);
         console.error('  [backlog] say re-relay: unheard copy retired');
       }
     }
-    return; // the first copy (or the heard original) already carries it
   }
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
@@ -1086,6 +1093,7 @@ function beginTurn(text, res, keep) {
   turnOpen = true;
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
+  heardTexts.clear(); // per-turn, same lifecycle (+113)
   census = newCensus(); // one wire-shape census per turn
   tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = tokMsgBase = 0; // fresh tally
   thinkBuf = ''; // no thought survives into the next turn
@@ -1247,6 +1255,10 @@ const spokenTools = new Set();
 // Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 const spokenTexts = new Set();
+// +113: exact say texts DELIVERED to a listening view this turn (the
+// only proof a sentence was ever heard — spokenTexts also covers
+// emitted-but-not-delivered ones). Cleared per turn like its sibling.
+const heardTexts = new Set();
 
 // ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
 // The app keeps a seq-numbered event journal of its OWN lifecycle story
