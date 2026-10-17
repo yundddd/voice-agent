@@ -18,13 +18,27 @@ class ChatStore {
     required this.persist,
     required this.repaint,
     this.cap = 80, // entries kept on screen and on disk
-  });
+    int Function()? nowMs,
+    this.trace,
+  }) : _nowMs = nowMs ?? _wallNowMs;
 
   /// Hand the whole (capped) log, encoded, to storage. Must never throw:
   /// chat history must never break a conversation.
   final Future<void> Function(String json) persist;
   final void Function() repaint;
   final int cap;
+
+  /// Wall clock in epoch ms — every lifecycle stamp runs through this so
+  /// tests can wind the world.
+  final int Function() _nowMs;
+  static int _wallNowMs() => DateTime.now().millisecondsSinceEpoch;
+
+  /// One journal line per bubble-lifecycle event: generated on the
+  /// phone, parked in the queue, taken by the harness, heard, cut. The
+  /// screen shows the words; this is the history a degraded-network
+  /// triage reads (the assistant wires it to its debug sink, which
+  /// HH:MM:SS-stamps and journals it).
+  final void Function(String line)? trace;
 
   final List<ChatEntry> _entries = <ChatEntry>[];
   int _version = 0; // bumped on every mutation: drives auto-scroll
@@ -67,9 +81,10 @@ class ChatStore {
     // One pin at a time: a newer queued press outranks the old one,
     // whose turn is by definition dead (superseded on the wire).
     if (queued) unpinQueued();
-    final entry = ChatEntry.user(text, queued: queued);
+    final entry = ChatEntry.user(text, queued: queued, createdMs: _nowMs());
     _entries.add(entry);
     if (queued) _queued = entry;
+    trace?.call('msg phone: user "${_abbrev(text)}" queued=${queued ? 1 : 0}');
     touch();
   }
 
@@ -79,6 +94,12 @@ class ChatStore {
   void markInterrupted(ChatEntry turn) {
     if (turn.interrupted) return;
     turn.interrupted = true;
+    turn.interruptedMs = _nowMs();
+    trace?.call(
+      'msg cut: turn shortened'
+      '${turn.createdMs == 0 ? '' : ' after ${formatWait(turn.interruptedMs - turn.createdMs)}'}'
+      ' with ${turn.blocks.length} heard block(s)',
+    );
     touch();
   }
 
@@ -94,7 +115,8 @@ class ChatStore {
   /// assistant turn happens to be open, so the story of a cut thinking
   /// run or backgrounded tool call outlives both turns.
   void addSystemNote(String text) {
-    _entries.add(ChatEntry.assistant()..blocks.add(text));
+    _entries.add(ChatEntry.assistant(createdMs: _nowMs())..blocks.add(text));
+    trace?.call('msg note: "${_abbrev(text)}"');
     touch();
   }
 
@@ -104,14 +126,22 @@ class ChatStore {
   /// what the conversation was. A turn that never spoke is removed at
   /// the end (see [removeEmptyTurn]).
   ChatEntry beginTurn() {
-    final turn = ChatEntry.assistant();
+    final turn = ChatEntry.assistant(createdMs: _nowMs());
     _entries.add(turn);
+    trace?.call('msg turn: assistant bubble open');
     touch();
     return turn;
   }
 
-  /// Append one spoken block to a turn's bubble.
+  /// Append one spoken block to a turn's bubble. The bubble's first
+  /// block is its DELIVERY: stamp it and journal the round trip from
+  /// the user bubble this turn answers — under delay or drops this is
+  /// the number that says where the seconds went.
   void addBlock(ChatEntry turn, String text) {
+    if (!turn.fromUser && turn.deliveredMs == 0) {
+      turn.deliveredMs = _nowMs();
+      trace?.call(_deliveredLine(turn, text));
+    }
     turn.blocks.add(text);
     touch();
   }
@@ -121,6 +151,10 @@ class ChatStore {
     _queued = null;
     if (q != null && q.queued) {
       q.queued = false;
+      q.pickedUpMs = _nowMs();
+      trace?.call(
+        'msg queue taken: ${q.createdMs == 0 ? 'waited ?' : 'waited ${formatWait(q.pickedUpMs - q.createdMs)}'}',
+      );
       touch();
     }
   }
@@ -159,5 +193,28 @@ class ChatStore {
     _version++;
     unawaited(persist(encodeChatLog(_entries)));
     repaint();
+  }
+
+  /// The first-heard line for a turn's bubble, with the round trip back
+  /// to the user prompt it answers (when that prompt's stamp is still
+  /// in the log): sent→heard, the phone's own end-to-end delay.
+  String _deliveredLine(ChatEntry turn, String text) {
+    final head = 'msg heard: assistant "${_abbrev(text)}"';
+    final i = _entries.indexOf(turn);
+    for (var k = i - 1; k >= 0; k--) {
+      final e = _entries[k];
+      if (e.fromUser && e.createdMs != 0) {
+        return '$head (sent→heard ${formatWait(turn.deliveredMs - e.createdMs)})';
+      }
+    }
+    return turn.createdMs == 0
+        ? head
+        : '$head (+${formatWait(turn.deliveredMs - turn.createdMs)} '
+              'since turn opened)';
+  }
+
+  static String _abbrev(String s) {
+    final flat = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return flat.length <= 48 ? flat : '${flat.substring(0, 48)}…';
   }
 }

@@ -120,6 +120,51 @@ void main() {
       store.load('[{"user":true,"blocks":["restored"]}]');
       expect(store.entries.single.blocks.single, 'restored');
     });
+
+    test('lifecycle stamps + trace lines tell the queue→heard→cut story',
+        () {
+      var t = 1000000;
+      final lines = <String>[];
+      final s = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        nowMs: () => t,
+        trace: lines.add,
+      );
+      // Generated on the phone, parked behind live work:
+      s.addUser('parked behind a build', queued: true);
+      expect(s.entries.first.createdMs, 1000000);
+      expect(lines,
+          contains('msg phone: user "parked behind a build" queued=1'));
+      // Harness takes it 47 s later — the queue wait is journaled:
+      t = 1047000;
+      s.unpinQueued();
+      expect(s.entries.first.pickedUpMs, 1047000);
+      expect(lines, contains(startsWith('msg queue taken: waited 47s')));
+      // The answer lands 1m43s after the prompt was sent:
+      final turn = s.beginTurn();
+      expect(lines, contains(startsWith('msg turn: assistant bubble open')));
+      t = 1103000;
+      s.addBlock(turn, 'Build finished, tests pass.');
+      expect(turn.deliveredMs, 1103000);
+      expect(
+        lines,
+        contains('msg heard: assistant "Build finished, tests pass." '
+            '(sent→heard 1m43s)'),
+      );
+      s.addBlock(turn, 'Second section.');
+      expect(lines.where((l) => l.startsWith('msg heard')).length, 1,
+          reason: 'the bubble is stamped DELIVERED once, at its first block');
+      // A cut turn stamps its death and says what survived:
+      final cut = s.beginTurn();
+      t = 1111000;
+      s.markInterrupted(cut);
+      expect(cut.interruptedMs, 1111000);
+      expect(
+        lines,
+        contains(startsWith('msg cut: turn shortened after 8s with 0')),
+      );
+    });
   });
 
   group('WireLease', () {

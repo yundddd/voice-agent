@@ -12,13 +12,18 @@ class ChatEntry {
     List<String>? blocks,
     this.queued = false,
     this.interrupted = false,
+    this.createdMs = 0,
   }) : blocks = blocks ?? <String>[];
 
-  ChatEntry.user(String text, {this.queued = false, this.interrupted = false})
-    : fromUser = true,
-      blocks = [text];
+  ChatEntry.user(
+    String text, {
+    this.queued = false,
+    this.interrupted = false,
+    this.createdMs = 0,
+  }) : fromUser = true,
+       blocks = [text];
 
-  ChatEntry.assistant()
+  ChatEntry.assistant({this.createdMs = 0})
     : fromUser = false,
       blocks = <String>[],
       queued = false,
@@ -26,6 +31,28 @@ class ChatEntry {
 
   final bool fromUser;
   final List<String> blocks;
+
+  // ── Lifecycle stamps (epoch ms, local wall clock; 0 = never / legacy) ──
+  // The bubble's own account of the story the journal triangulates:
+  // when the phone generated it, when a queued press was finally taken,
+  // when the answer first reached the ear, when a cut landed. Under a
+  // lossy link these are the numbers triage reads off disk after the
+  // fact — which hop swallowed the seconds.
+
+  /// When the bubble entered the log (user: utterance heard/typed;
+  /// assistant: turn opened).
+  final int createdMs;
+
+  /// User: the harness accepted this queued prompt (pin dissolved).
+  int pickedUpMs = 0;
+
+  /// Assistant: the first block appeared — text followed its audio, so
+  /// this is the delivered-to-the-screen (usually delivered-to-the-ear)
+  /// moment.
+  int deliveredMs = 0;
+
+  /// The turn was cut this instant.
+  int interruptedMs = 0;
 
   /// A politly-queued prompt (interrupt-off press over a live turn):
   /// the renderer parks it in the pinned-at-bottom card instead of the
@@ -46,20 +73,55 @@ class ChatEntry {
   Map<String, Object> toJson() => {
     'user': fromUser,
     'blocks': blocks,
+    if (createdMs != 0) 't': createdMs,
+    if (pickedUpMs != 0) 'pickedUp': pickedUpMs,
+    if (deliveredMs != 0) 'heard': deliveredMs,
+    if (interruptedMs != 0) 'cut': interruptedMs,
     if (queued) 'queued': true,
     if (interrupted) 'interrupted': true,
   };
 
-  static ChatEntry fromJson(Map<String, Object?> j) => ChatEntry(
-    // Pins deliberately do NOT survive a reload: the pin belongs to a
-    // turn this process was watching; after a restart nobody is holding
-    // it, and a stale pin would hang at the bottom forever. The message
-    // itself stays in the log.
-    fromUser: j['user'] == true,
-    blocks: [for (final b in (j['blocks'] as List? ?? const <Object>[])) '$b'],
-    interrupted: j['interrupted'] == true,
-  );
+  static ChatEntry fromJson(Map<String, Object?> j) {
+    int? ms(Object? v) => v is num && v.toInt() != 0 ? v.toInt() : null;
+    return ChatEntry(
+        // Pins deliberately do NOT survive a reload: the pin belongs to a
+        // turn this process was watching; after a restart nobody is holding
+        // it, and a stale pin would hang at the bottom forever. The message
+        // itself stays in the log.
+        fromUser: j['user'] == true,
+        blocks: [
+          for (final b in (j['blocks'] as List? ?? const <Object>[])) '$b',
+        ],
+        interrupted: j['interrupted'] == true,
+        createdMs: ms(j['t']) ?? 0,
+      )
+      ..pickedUpMs = ms(j['pickedUp']) ?? 0
+      ..deliveredMs = ms(j['heard']) ?? 0
+      ..interruptedMs = ms(j['cut']) ?? 0;
+  }
 }
+
+/// Compact bubble clock: local `HH:MM:SS` for a lifecycle stamp, or the
+/// empty string when the stamp is unknown (entries written before
+/// timestamps existed render without a caption rather than a fake one).
+String formatBubbleClock(int ms) {
+  if (ms <= 0) return '';
+  final t = DateTime.fromMillisecondsSinceEpoch(ms);
+  return '${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}';
+}
+
+/// Age of a delta in whole seconds, for one-line journal captions
+/// ('waited 47s'): the degraded-network numbers as compact as the
+/// clock strings on screen.
+String formatWait(int deltaMs) {
+  if (deltaMs < 0) deltaMs = 0;
+  final s = deltaMs ~/ 1000;
+  if (s < 60) return '${s}s';
+  if (s < 3600) return '${s ~/ 60}m${_two(s % 60)}s';
+  return '${s ~/ 3600}h${_two(s % 3600 ~/ 60)}m';
+}
+
+String _two(int v) => v.toString().padLeft(2, '0');
 
 /// Exact-block scan of the assistant side of a chat log, whitespace-
 /// normalized. The reattach replay consults this so paragraphs the

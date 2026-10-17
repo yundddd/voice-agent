@@ -266,8 +266,24 @@ class _AssistantScreenState extends State<AssistantScreen>
                                 ),
                                 child: QueuedBubbleCard(
                                   text: qtext,
+                                  createdMs: a.queuedBubble?.createdMs ?? 0,
                                   maxWidthFrac: 0.86,
                                 ),
+                              ),
+                            // A backgrounded tool call keeps a permanent
+                            // line at the channel's bottom while it works
+                            // unheard: the badge (detached turn) or a queue
+                            // pin naming the work is its proof-of-life, and
+                            // it dismisses itself the moment the turn is
+                            // heard again, stopped, or proven finished.
+                            if (a.harnessBackgrounded ||
+                                (a.queuedBubble != null &&
+                                    a.backgroundedWork.isNotEmpty))
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                ),
+                                child: BackgroundedWorkCard(assistant: a),
                               ),
                           ],
                         ),

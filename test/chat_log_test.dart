@@ -70,4 +70,40 @@ void main() {
     expect(json.contains('"user":true'), isTrue);
     expect(json.contains('"user":false'), isTrue);
   });
+
+  test('lifecycle stamps round-trip; legacy entries decode stamp-free', () {
+    final turn = ChatEntry.assistant(createdMs: 1000)..blocks.add('heard!');
+    turn.deliveredMs = 2500;
+    final cut = ChatEntry.user('queued press', createdMs: 10);
+    cut.pickedUpMs = 45000;
+    cut.interrupted = true;
+    cut.interruptedMs = 500;
+    final back = decodeChatLog(encodeChatLog([turn, cut]));
+    expect(back[0].createdMs, 1000);
+    expect(back[0].deliveredMs, 2500);
+    expect(back[0].pickedUpMs, 0);
+    expect(back[1].createdMs, 10);
+    expect(back[1].pickedUpMs, 45000);
+    expect(back[1].interruptedMs, 500);
+    // A zero stamp never lands in the JSON (keeps the file lean and the
+    // absent-vs-known distinction honest), and files from before the
+    // feature decode with 0s rather than throwing.
+    final raw = encodeChatLog([ChatEntry.assistant()..blocks.add('x')]);
+    expect(raw.contains('"t":'), isFalse);
+    expect(decodeChatLog(raw).single.createdMs, 0);
+    expect(
+      decodeChatLog('[{"user":true,"blocks":["a"],"t":"junk"}]').single,
+      isNotNull,
+    ); // tolerant
+  });
+
+  test('formatBubbleClock / formatWait render compactly', () {
+    final t = DateTime(2026, 10, 17, 9, 5, 3);
+    expect(formatBubbleClock(t.millisecondsSinceEpoch), '09:05:03');
+    expect(formatBubbleClock(0), ''); // unknown stamp renders no caption
+    expect(formatWait(999), '0s');
+    expect(formatWait(47_500), '47s');
+    expect(formatWait(125_000), '2m05s');
+    expect(formatWait(7_260_000), '2h01m');
+  });
 }

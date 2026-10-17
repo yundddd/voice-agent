@@ -118,7 +118,11 @@ class VoiceAssistant extends ChangeNotifier {
       clock: _clock,
       log: _logDebug,
     );
-    _chat = ChatStore(persist: _persistChat, repaint: notifyListeners);
+    _chat = ChatStore(
+      persist: _persistChat,
+      repaint: notifyListeners,
+      trace: _logDebug,
+    );
     _lease = WireLease(
       scheduler: _scheduler,
       clock: _clock,
@@ -309,6 +313,17 @@ class VoiceAssistant extends ChangeNotifier {
   // until a heard turn starts, /stop lands, or /new resets it.
   DateTime? _harnessSince; // wall clock the in-flight bridge turn started
   int _bridgeTurnSeq = 0; // busy-flag ownership token (turns bump it)
+  // ── The persistent backgrounded-work line ──────────────────────────
+  // What the harness is doing OUT OF EARSHOT — a turn the press
+  // detached, or a queued press parked behind it. The label is the last
+  // REAL tool step that work attested ('Bash npm test…'), snapshotted
+  // the moment it left the ear; the renderer shows it as a permanent
+  // bottom row that dismisses by itself when the badge goes out
+  // (heard again / /stop / retire / health) or the queue's 'started'
+  // ack proves the tool finished. Tally and verdict frames never label
+  // it: a counter is not a tool call.
+  String _lastToolStep = '';
+  String _bgWork = '';
   BridgeTurnPump? _pump; // live /talk listener — detached to BACKGROUND
   // ── Stream reattach: surviving a background→foreground blink ──────────
   // The quiet-wire lease lives in [WireLease]; the retry ladder exists
@@ -426,6 +441,21 @@ class VoiceAssistant extends ChangeNotifier {
   bool get bridgeConfigured => _gateway != null;
   bool get bridgeBusy => _bridgeBusy;
   bool get harnessBackgrounded => _harnessBackgrounded;
+
+  /// The persistent bottom line's label: the last real tool step the
+  /// out-of-earshot work attested to, and ONLY while a line is actually
+  /// warranted — the badge (detached turn still working) or the queue
+  /// pin (a press parked behind that work). Every completion path
+  /// clears one of those two, so the empty string IS the auto-dismiss:
+  /// /stop, an orphan retire, a health probe that finds nothing open,
+  /// or the 'started' pickup ack proving the tool finished.
+  String get backgroundedWork =>
+      _harnessBackgrounded || _chat.queuedBubble != null ? _bgWork : '';
+
+  /// Start of the backgrounded turn (epoch ms, 0 = unknown) for the
+  /// bottom line's 'since HH:MM:SS'; its live age is [harnessElapsed].
+  int get harnessSinceMs =>
+      _harnessSince == null ? 0 : _harnessSince!.millisecondsSinceEpoch;
 
   /// How long the in-flight bridge turn has been working (zero when idle):
   /// the elapsed readout on the chat window's Claude Code-style spinner.
@@ -754,7 +784,15 @@ class VoiceAssistant extends ChangeNotifier {
         if (ev.isSay && ev.text.trim().isNotEmpty) {
           _ticker.markSpoken(); // the answer closed and is being spoken;
           // nothing is generating to grow a counter over
-          await speak(cleanForSpeech(ev.text.trim()));
+          // Harness-generated text just crossed the wire: journal it
+          // with its skew-corrected delivery age, so a delayed or
+          // dropped paragraph shows up as a gap in this stamp trail.
+          final said = ev.text.trim();
+          _logDebug(
+            'msg harness: say "${said.length > 48 ? '${said.substring(0, 48)}…' : said}"'
+            '${_transport.wireTag(ev)}',
+          );
+          await speak(cleanForSpeech(said));
         } else if (ev.kind == 'context') {
           // message_start also moves the ticker's `in` number (the
           // context frame and the tally frame ride the same field).
@@ -771,9 +809,16 @@ class VoiceAssistant extends ChangeNotifier {
         } else if (ev.kind == 'tool') {
           if (ev.toolName == 'started') {
             // The queue's pickup ack (bridge +81): Claude Code has the
-            // prompt NOW. Dissolve the pin, journal the hand-off.
+            // prompt NOW. Dissolve the pin, journal the hand-off — and
+            // retire the backgrounded-work line: the tool it named is
+            // done by definition (the bridge flushes only a closed
+            // turn), so the bottom row has nothing left to promise.
             _chat.unpinQueued();
-            _logDebug('queue picked up: "${ev.detail}"');
+            _lastToolStep = '';
+            _bgWork = '';
+            _logDebug(
+              'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
+            );
             return;
           }
           final tally = ev.toolName == 'tokens';
@@ -809,6 +854,13 @@ class VoiceAssistant extends ChangeNotifier {
                 : '${ev.toolName}'
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = stepLine;
+            if (ev.toolName != 'queued') {
+              _lastToolStep = stepLine; // the newest REAL step: this is
+              // what the bottom line names if this turn leaves the ear
+              // now. Steps landing behind a queue pin belong to the
+              // backgrounded work they wait on — keep that line current.
+              if (_chat.queuedBubble != null) _bgWork = stepLine;
+            }
             // Pure-plumbing steps get label-only treatment: the eyes see
             // 'Read bridge.dart…', the ears get nothing — no immediate
             // narration AND no heartbeat line (latestWork stays empty so
@@ -995,6 +1047,7 @@ class VoiceAssistant extends ChangeNotifier {
         // and a turn superseded by a barge-in successor must NOT close
         // the queue its successor's player loop is now feeding.
         _reply.closeStream();
+        _lastToolStep = ''; // the turn is over; its step labels are history
       }
       final said = spoken.toString().trim();
       if (said.isNotEmpty) _lastSpoken = said;
@@ -1120,6 +1173,16 @@ class VoiceAssistant extends ChangeNotifier {
     // view right off the queued /talk stream the next prompt rides. (The
     // zombie-hop watchdog re-kicks its own chain after calling us.)
     _cancelReattachChain();
+    // Snapshot what this turn was doing as it leaves the ear: the
+    // channel's bottom line will name it until the turn proves itself
+    // done (see _bgWork).
+    _bgWork = _lastToolStep;
+    if (_harnessBackgrounded) {
+      _logDebug(
+        'msg bg: ${_bgWork.isEmpty ? 'the turn keeps' : '"$_bgWork" keeps'} '
+        'working unheard',
+      );
+    }
     _logDebug(
       'bridge view detached on purpose (hardStop=$hardStop): reattach '
       'chain silenced, sub cancelled, loop parked — turn keeps working '
@@ -2079,6 +2142,10 @@ class VoiceAssistant extends ChangeNotifier {
             _logDebug('replay dedup: paragraph already in chat — skipped');
           } else if (sayText.isNotEmpty) {
             _ticker.markSpoken();
+            _logDebug(
+              'msg harness: say (replay) "${sayText.length > 48 ? '${sayText.substring(0, 48)}…' : sayText}"'
+              '${_transport.wireTag(ev)}',
+            );
             await speak(sayText);
           } else if (ev.kind == 'context') {
             if (ev.inputTokens != _ticker.rawInputTokens) {
@@ -2090,7 +2157,11 @@ class VoiceAssistant extends ChangeNotifier {
           } else if (ev.kind == 'tool') {
             if (ev.toolName == 'started') {
               _chat.unpinQueued();
-              _logDebug('queue picked up: "${ev.detail}"');
+              _lastToolStep = ''; // the named background tool finished
+              _bgWork = ''; // — the bottom line dismisses with the pin
+              _logDebug(
+                'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
+              );
               return;
             }
             final tally = ev.toolName == 'tokens';
@@ -2102,10 +2173,20 @@ class VoiceAssistant extends ChangeNotifier {
               _ticker.onFrame(ev);
             } else {
               _ticker.markToolStep();
-              _status = ev.toolName == 'Bash'
+              final stepLine = ev.toolName == 'Bash'
                   ? 'Bash ${ev.detail}…' // real command, see /talk loop
                   : '${ev.toolName}'
                         '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
+              _status = stepLine;
+              if (ev.toolName != 'queued') {
+                // A replayed backlog re-names the work the phone missed
+                // while it was away — the bottom line stays honest
+                // about what the backgrounded turn is actually on.
+                _lastToolStep = stepLine;
+                if (_chat.queuedBubble != null || _harnessBackgrounded) {
+                  _bgWork = stepLine;
+                }
+              }
               // No step line in the bubble here either — same policy as
               // the /talk loop: the strip labels the step, the journal
               // remembers it, the chat log is for words.

@@ -136,6 +136,57 @@ void main() {
           reason: 'a spoken takeover is a detach, never a /stop');
     });
 
+    test('a backgrounded tool call keeps a persistent bottom line that '
+        'dismisses when the work is proven done', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      expect(a.backgroundedWork, isEmpty); // heard: just a live turn
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'Bash', detail: 'flutter test'));
+      await settle();
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(Offset.zero); // the press over live work detaches it
+      await settle();
+      expect(a.harnessBackgrounded, isTrue);
+      expect(a.backgroundedWork, 'Bash flutter test…',
+          reason: 'the bottom line names the work left out of earshot');
+      expect(
+        a.debugLog.any((l) => l.contains('msg bg: "Bash flutter test…"')),
+        isTrue,
+        reason: 'the detach journals what it backgrounded, with its clock',
+      );
+      a.bridgeStop(); // /stop: the turn is over, proven
+      await settle();
+      expect(a.harnessBackgrounded, isFalse);
+      expect(a.backgroundedWork, isEmpty, reason: 'the line dismisses itself');
+    });
+
+    test('a queue pin behind an open tool keeps the line; the pickup ack '
+        'retires it (the bridge only flushes a closed turn)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'Bash', detail: 'npm test'));
+      await settle();
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(Offset.zero);
+      await settle();
+      expect(a.backgroundedWork, 'Bash npm test…');
+      unawaited(a.runQuickCommand('polite follow-up',
+          bubble: 'polite follow-up', interrupt: false));
+      await settle();
+      expect(a.queuedBubble, isNotNull);
+      expect(a.backgroundedWork, 'Bash npm test…',
+          reason: 'waiting behind the open tool is still background work');
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'started', detail: 'polite follow-up'));
+      await settle();
+      expect(a.queuedBubble, isNull);
+      expect(a.backgroundedWork, isEmpty); // auto-dismiss at delivery
+    });
+
     test('tool steps update the label; plumbing steps are eyes-only',
         () async {
       await withBridge();
