@@ -1011,8 +1011,36 @@ class VoiceAssistant extends ChangeNotifier {
         _reattachGen = gen;
         _reattachSeq = mySeq;
         _startReattachChain();
+      } else {
+        unawaited(_drainStrandedBacklog(gen, mySeq));
       }
     }
+  }
+
+  /// +111: the answered interruption. The user's press silenced the
+  /// reattach chain, the bridge went on answering into the void, and
+  /// the finished reply is stranded in the unheard backlog — the field
+  /// report's "my message doesn't look like it's being processed", and
+  /// the same frames that later burst back as yesterday's answer. At
+  /// every turn's teardown, ask the bridge if it still holds frames;
+  /// if it does, arm one reattach pass NOW: the replay path files
+  /// archaeology silently by age and dedups against the commit-time
+  /// ledger (+109), so draining can neither drown the user in old
+  /// audio nor re-voice a paragraph already heard. Skipped under a
+  /// live PTT hold (the mic owns the moment), while hidden (the resume
+  /// probes cover it), and once a newer turn owns the wire (its own
+  /// teardown drains then).
+  Future<void> _drainStrandedBacklog(int gen, int mySeq) async {
+    if (pttHoldActive || _backgrounded) return;
+    final h = await _gateway?.healthInfo();
+    if (h == null) return;
+    final missed = (h['missed'] as num?)?.toInt() ?? 0;
+    if (missed < 1) return;
+    if (gen != _generation || _bridgeTurnSeq != mySeq) return;
+    _logDebug('stranded backlog: missed=$missed — draining via reattach');
+    _reattachGen = gen;
+    _reattachSeq = mySeq;
+    _startReattachChain(retire: true, firstProbe: Duration.zero);
   }
 
   void _startPump(int gen) =>

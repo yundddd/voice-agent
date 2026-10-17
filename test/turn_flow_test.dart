@@ -499,6 +499,37 @@ void main() {
           reason: 'stamped, so the bubble also carries the +108 mark');
     });
 
+    test('the answered interruption drains its stranded backlog (+111)',
+        () async {
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle(); // turn 1 in flight, unheard frames accumulating
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'backgrounded': false,
+        'queued': false,
+        'missed': 3,
+      };
+      // turn 1 closes clean on the (single) view — its teardown is the
+      // moment the app learns the bridge still owes it frames.
+      harness.emit(BridgeEvent.forTest('done'));
+      await settle();
+      time.advance(Duration.zero); // the armed first probe
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('stranded backlog')),
+        isTrue,
+        reason: 'teardown found missed>0 and armed the drain',
+      );
+      expect(harness.attachCount, greaterThan(0),
+          reason: 'the drain reattaches; the replay path decides what '
+              'is heard again and what files silently');
+    });
+
     test('the tail of our own echo is rejected before it ever sends',
         () async {
       engine.transcripts = ['hello there', 'hello there again'];
