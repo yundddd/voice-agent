@@ -381,7 +381,7 @@ void main() {
 
     test('the queue receipt unpins, retires the badge and re-anchors the '
         'spinner clock', () async {
-      mkTurn();
+      mkTurn(utterance: 'parked'); // +155: markers match their prompt
       chat.addUser('parked', queued: true);
       turn.beginHeardTurn();
       turn.becomeHeard();

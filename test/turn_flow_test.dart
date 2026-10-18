@@ -923,6 +923,82 @@ void main() {
       },
     );
 
+    test('+155: past MY started marker the ledger retires — a reused '
+        'paragraph IS the answer (field: the row said audio, the chat '
+        'stayed silent)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'All done — one copy.'));
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': time.now.millisecondsSinceEpoch,
+        'poll': {'ring': 10},
+      };
+      await a.debugProbeTransport();
+      unawaited(a.runQuickCommand('again', interrupt: false));
+      await settle();
+      int copies() =>
+          a.chat.where((e) => e.blocks.contains('All done — one copy.')).length;
+
+      // A stale marker — the ring is a tape, it remembers other
+      // prompts’ pickups — must not fake this view's boundary.
+      harness.pollPages.add(
+        FakeHarness.page(11, [
+          const BridgeEvent.forTest('tool', toolName: 'started', detail: 'go'),
+        ], first: 11),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('stale pickup marker')),
+        isTrue,
+        reason: 'the marker named another prompt — ignored',
+      );
+      expect(
+        copies(),
+        1,
+        reason: 'and the ledger still owns the floor at that point',
+      );
+
+      // MY marker draws the line.
+      harness.pollPages.add(
+        FakeHarness.page(12, [
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'started',
+            detail: 'again',
+          ),
+        ], first: 12),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+
+      // The agent reused a paragraph from minutes ago. Before +155
+      // the poll view's replay rules swallowed the live answer whole
+      // — an idle bridge emitted no marker, so no boundary existed.
+      harness.pollPages.add(
+        FakeHarness.page(13, [
+          BridgeEvent.forTest('say', text: 'All done — one copy.'),
+        ], first: 13),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        copies(),
+        2,
+        reason: '+155: past the pickup, every say is news again',
+      );
+      expect(
+        engine.synthesized.where((t) => t == 'All done — one copy.').length,
+        2,
+        reason: 'and it is spoken, not silently “already in chat”',
+      );
+    });
+
     test('poll view: the prior turn’s DONE cannot end the queue pump — the '
         'pin dissolves at the started marker BEHIND it (field report: a '
         'queue press over a live bash sleep left the pin frozen)', () async {

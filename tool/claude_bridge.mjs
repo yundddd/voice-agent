@@ -1277,7 +1277,7 @@ function interruptTurn() {
 // Attach `res` as the heard view of a brand-new turn and release the
 // prompt to claude. The keep-pinger/heartbeat belongs to the turn object
 // now: a backgrounded turn and whatever replaces it each carry their own.
-function beginTurn(text, res, keep) {
+function beginTurn(text, res, keep, markerKind) {
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
   turnStartAt = Date.now() - 5000; // slack: clock skew
   turnBeganAt = Date.now(); // the receipt's honest duration clock
@@ -1297,6 +1297,19 @@ function beginTurn(text, res, keep) {
   // upstream that never shows partials at all, it stays the honest
   // description of the black-box interval, heartbeat frames included.
   tokKind = 'thinking';
+  // +155: every turn start announces its pickup — not just the queued
+  // flush. The poll transport's replay ledger needs the boundary to
+  // retire at, and an idle bridge has no flushPending to give it one:
+  // without a marker the phone deduped a live answer that reused a
+  // paragraph from minutes ago (field: spinner said 'Rendering
+  // audio', the chat stayed silent). kind='background' rides only for
+  // a prompt that cut a tool (flushPending passes the tag; the cut's
+  // receipts follow below it on the ring).
+  relay('tool', {
+    name: 'started',
+    detail: String(text).slice(0, 60),
+    ...(markerKind ? {kind: markerKind} : {}),
+  });
   // Preview the coming call's size BEFORE the first message_start (which
   // only lands after the server finishes reading): last turn's exact
   // context + this utterance's own tokens, relayed as the turn's very
@@ -1358,25 +1371,26 @@ function flushPending() {
         ...(p.hadTools ? {kind: 'background'} : {}),
       });
     }
-    // +81: the pickup marker. 'queued' is filed at ENQUEUE time; the
-    // phone must dissolve its pin when the prompt is actually TAKEN —
-    // on a shared ring, any older turn's frames would otherwise fake
-    // the pickup. Rides the ring ahead of beginTurn's own frames.
-    // kind='background' (see above): THIS prompt cut a running tool —
-    // the phone's banner promise, delivered where it cannot be lost.
+    // +81/+155: the pickup marker now rides inside beginTurn (every
+    // turn start announces, so even an idle bridge draws the ledger
+    // boundary). The object is built HERE for the backlog re-file
+    // below; beginTurn pushes the identical shape to the ring as the
+    // turn's first frame. kind='background' below: THIS prompt cut a
+    // running tool — the phone's banner promise, delivered where a
+    // shared ring cursor cannot lose it.
     const marker = {
       name: 'started',
-      detail: p.text.slice(0, 60),
+      detail: String(p.text).slice(0, 60),
       ...(p.backgrounded ? {kind: 'background'} : {}),
     };
-    relay('tool', marker);
-    // The cut's receipts, relayed AFTER the disposition: the phone's
-    // chat reads 'put into background' first, then the tool's honest
+    const receipts = heldFinished.splice(0);
+    beginTurn(p.text, mute, 0, p.backgrounded ? 'background' : undefined);
+    // The cut's receipts, relayed AFTER the disposition AND after the
+    // marker (beginTurn's first frame): the phone's chat reads 'put
+    // into background', then the pickup, then the tool's honest
     // outcome (finished/cancelled) — never the outcome over its own
     // explanation (see heldFinished).
-    const receipts = heldFinished.splice(0);
     for (const f of receipts) relay('tool', f);
-    beginTurn(p.text, mute, 0);
     // beginTurn wipes the backlog — old frames are stale for a replay,
     // but the marker we just filed belongs to THIS turn and the wipe
     // ate its copy. Re-file it: the drain /attach (the +104 flip's
@@ -1393,7 +1407,8 @@ function flushPending() {
     endTurn();
     return;
   }
-  beginTurn(p.text, p.res, p.keep); // pinger rides on into the new turn
+  beginTurn(p.text, p.res, p.keep, // pinger rides on into the new turn
+    p.backgrounded ? 'background' : undefined);
   // Same ordering rule on the push transport: receipts follow their
   // explanation. The live view takes these directly; the ring copy is
   // the phone's deduped replay insurance.

@@ -28,6 +28,7 @@ const PORT3 = PORT1 + 2;
 const PORT4 = PORT1 + 3;
 const PORT5 = PORT1 + 4;
 const PORT8 = PORT1 + 7;
+const PORT9 = PORT1 + 8;
 
 function startBridge(stubLog, port, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -546,3 +547,33 @@ test('the harness backgrounding its own shell reports in unprompted (+133)',
       await stopBridge(proc);
     }
   });
+
+// +155: the poll transport's replay ledger needs a boundary to stop at:
+// past ITS OWN started marker, every say is the answer — news, never a
+// dedup candidate. An idle bridge used to start the turn without ever
+// announcing it, and a live reply reusing a paragraph from minutes ago
+// was swallowed whole (field: 'Rendering audio' with a silent chat).
+test('an idle bridge announces the pickup of the turn it starts now (+155)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT9);
+  try {
+    await up(PORT9);
+    await call(PORT9, `/talk?token=${TOKEN}&poll=1`,
+      { body: 'sleep again please', method: 'POST' });
+    await until('started marker on the ring', async () => {
+      const ring = JSON.parse((await call(PORT9, `/poll?token=${TOKEN}&since=0`)).text);
+      return ring.events.some((e) =>
+        e.ev === 'tool' && e.data?.name === 'started'
+        && e.data?.detail === 'sleep again please');
+    });
+    const ring = JSON.parse((await call(PORT9, `/poll?token=${TOKEN}&since=0`)).text);
+    const first = ring.events.findIndex((e) => e.data?.name === 'started');
+    assert.equal(first, 0,
+      'the marker is the turn\u2019s FIRST frame — the ledger boundary '
+      + 'must precede anything it could wrongly silence');
+    await until('the turn reached the harness', async () =>
+      seen(stubLog).includes('sleep again please'));
+  } finally {
+    await stopBridge(proc);
+  }
+});

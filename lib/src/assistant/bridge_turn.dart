@@ -369,6 +369,9 @@ class BridgeTurn {
   // the moment the first answer paragraph landed, so a tts-on phone
   // lost its banner for a tool that was still running.
   bool _pickupDone = false;
+  // +155: this view has seen ITS prompt's started marker — from here
+  // the stream is the answer, and the replay ledger retires.
+  bool _startedSeen = false;
 
   void _beforeEvent(BridgeEvent ev) {
     hops.reply(); // harness→reply hop crossed: bytes arrived
@@ -436,7 +439,16 @@ class BridgeTurn {
   }
 
   Future<void> _onSay(BridgeEvent ev) async {
-    if (isLive && !transport.turnViaPoll) {
+    // +155: past MY started marker, every say is this turn's own
+    // answer — news by construction, never the ledger's business. The
+    // field swallowed a 'sleep again' reply whole because the agent
+    // reused a paragraph heard minutes earlier and the poll view's
+    // replay rules had no boundary to stop them (the immediate-run
+    // bridge emitted no marker at all). Frames BEFORE the marker keep
+    // the ledger: they are the turn we queued behind, still talking.
+    // (A /attach view is a pure listener of replay — its frames are
+    // history by construction, marker or no: the ledger stays.)
+    if ((isLive && !transport.turnViaPoll) || (_startedSeen && !isAttach)) {
       // The answer closed and is being spoken: nothing is generating to
       // grow a counter over. Harness-generated text just crossed the
       // wire: journal it (RAW — the say line mirrors what arrived) with
@@ -499,6 +511,17 @@ class BridgeTurn {
 
   Future<void> _onTool(BridgeEvent ev) async {
     if (ev.toolName == 'started') {
+      // +155: the ring remembers markers for prompts long dead (it is
+      // a 2000-event tape) — a stale marker must not fake this view's
+      // pickup. Only the marker naming MY prompt crosses the line.
+      final mine = utterance.length > 60
+          ? utterance.substring(0, 60)
+          : utterance;
+      if (utterance.isNotEmpty && ev.detail.isNotEmpty && ev.detail != mine) {
+        env.log('stale pickup marker for "${_trunc(ev.detail, 30)}" — ignored');
+        return;
+      }
+      _startedSeen = true;
       // The queue's pickup ack (bridge +81): Claude Code has the prompt
       // NOW. Dissolve the pin and journal the hand-off. (Push view:
       // this frame claims the turn's one pickup — the beforeEvent gate
