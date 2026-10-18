@@ -214,7 +214,12 @@ final class AssistantView {
   bool get spinnerVisible =>
       !(phase == AssistantPhase.speaking && harnessElapsed == Duration.zero);
 
-  /// The backgrounded-work row's visibility (see [BgWork]).
-  bool get showBackgroundedRow =>
-      harnessBackgrounded || (queued != null && backgrounded.label.isNotEmpty);
+  /// The backgrounded-work row's visibility (see [BgWork]): THE
+  /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or
+  /// the agent's own backgrounded shell (+133). The screen renders
+  /// this, so a fourth warrant added to the machine must land HERE,
+  /// not in a duplicated rule (the port bug this law's single
+  /// definition exists to prevent: agent-initiated `backgrounded`
+  /// frames lit the coordinator but never the row).
+  bool get showBackgroundedRow => backgrounded.visible;
 }

@@ -175,6 +175,38 @@ void main() {
       expect(a.view.backgrounded.label, isEmpty);
     });
 
+    test("+133: the agent's OWN backgrounded shell lights the row — "
+        'no press was ever involved', () async {
+      // The warrant the screen law once forgot: a `backgrounded`
+      // frame sets coordinator state while the badge stays dark and
+      // no pin rides — the row must still appear on the bridge's own
+      // word, and go when the finished receipt pays it.
+      await withBridge();
+      unawaited(a.runQuickCommand('start a sleep'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      expect(a.view.harnessBackgrounded, isFalse);
+      expect(a.view.queued, isNull, reason: 'nobody queued anything');
+      expect(a.view.showBackgroundedRow, isTrue);
+      expect(a.view.backgrounded.label, 'Bash sleep 20');
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      expect(a.view.showBackgroundedRow, isFalse);
+    });
+
     test(
       'the live tally projects as numbers + settled + thought tail',
       () async {
