@@ -61,6 +61,7 @@ class BridgeTurnPump {
     required this.onEvent,
     required this.isStale,
     required this.beforeEvent,
+    this.keepOpenOnDone,
   });
 
   /// Handles one event. The pump breaks the loop after a `done` or
@@ -74,6 +75,15 @@ class BridgeTurnPump {
   /// — a hook so the two loops' different pre-dispatch policies stay
   /// theirs without duplicating the queue.
   final void Function(BridgeEvent) beforeEvent;
+
+  /// Consulted at a `done` frame: when it answers true, the `done` is
+  /// a past turn's farewell — already-swallowed history (+133: the
+  /// backlog replay of a proactive report carries the launch turn's
+  /// done ahead of the report's receipts, and the poll pump's armour
+  /// eats it too) — and breaking on it would strand everything that
+  /// rides behind it. The reattach loop passes the bridge's own
+  /// turnOpen verdict; the talk loop never does (its done is its own).
+  final Future<bool> Function()? keepOpenOnDone;
 
   final _q = <BridgeEvent>[];
   Completer<void>? _wake;
@@ -119,6 +129,9 @@ class BridgeTurnPump {
       beforeEvent(ev);
       await onEvent(ev);
       if (ev.isDone) {
+        if (keepOpenOnDone != null && await keepOpenOnDone!()) {
+          continue; // a history lesson, not a period
+        }
         _sawDone = true;
         break;
       }

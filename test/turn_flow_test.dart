@@ -1876,5 +1876,78 @@ void main() {
         reason: 'the probe woke the reattach chain for the report',
       );
     });
+
+    test(
+      'the replay lives through a history done to reach the receipt',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('start a sleep'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'backgrounded',
+            detail: 'Bash sleep 20',
+          ),
+        );
+        await settle();
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': true,
+          'backgrounded': true,
+          'detached': 1,
+        };
+        final attaches0 = harness.attachCount;
+        harness.emit(const BridgeEvent.forTest('done'));
+        await settle(); // the launch turn closes (its done precedes all
+        // of the report's frames — the state the phone wakes into)
+        time.advance(const Duration(seconds: 5));
+        await settle();
+        time.advance(const Duration(seconds: 1));
+        await settle();
+        // The backlog replays the launch turn's farewell FIRST — the
+        // report's receipts ride behind it (the device run that found
+        // this: the note stayed in the ring and the report went unheard
+        // while the banner glowed at nothing).
+        harness.emitAttach(const BridgeEvent.forTest('done'));
+        await settle();
+        harness.emitAttach(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'Bash sleep 20',
+          ),
+        );
+        harness.emitAttach(
+          const BridgeEvent.forTest('say', text: 'The sleep finished.'),
+        );
+        await settle();
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+          isTrue,
+          reason: 'a history done must not end the replay early',
+        );
+        expect(
+          a.chat.any((e) => e.blocks.contains('The sleep finished.')),
+          isTrue,
+          reason: 'the agent\'s report reaches the screen',
+        );
+        expect(a.backgroundedWork, isEmpty);
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'detached': 0,
+        };
+        harness.emitAttach(const BridgeEvent.forTest('done'));
+        await settle();
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+          isTrue,
+          reason: 'one receipt, one period — dedup holds',
+        );
+      },
+    );
   });
 }

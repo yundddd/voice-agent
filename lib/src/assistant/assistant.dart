@@ -2425,6 +2425,18 @@ class VoiceAssistant extends ChangeNotifier {
           // branch below) proves OUR queued prompt was taken.
         },
         isStale: () => gen != _generation,
+        // +133: the replay may carry a turn the phone already heard
+        // (or the poll armour swallowed) closing MID-STREAM — the
+        // launch turn's done sitting ahead of the proactive report's
+        // receipts. Breaking there would strand the very news the
+        // wake came for: ask the bridge, and only break when it says
+        // nothing is open any more. (The bridge flips turnOpen false
+        // BEFORE relaying each done, so a true read is never a race
+        // against the frame being processed.)
+        keepOpenOnDone: () async {
+          final h = await _gateway?.healthInfo();
+          return h != null && h['turnOpen'] == true;
+        },
         onEvent: (ev) async {
           // One cleaning up front, then every branch — dedup test, log
           // add, and speak — sees the SAME string the live path stored.
