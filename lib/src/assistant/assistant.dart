@@ -356,6 +356,11 @@ class VoiceAssistant extends ChangeNotifier {
   // here because waking phones wake their NETWORK late: one failed
   // probe must never drop a live turn.
   Timer? _reattachTimer; // next probe of the retry chain
+  Timer? _bgProbe; // +133: the 10-ask heartbeat of a lit bottom line —
+  // an idle phone has no channel, and the agent's own background work
+  // (see the bridge's run_in_background handling) reports UNPROMPTED.
+  // While the banner is warranted, this asks /health whether a report
+  // turn opened, and wakes the existing reattach chain when one did.
   int _reattachStep = 0; // ladder rungs spent on the current orphan
   bool _reattachRetire =
       false; // chain end = retire the spinner (zombie hop failed)
@@ -479,6 +484,7 @@ class VoiceAssistant extends ChangeNotifier {
   bool get showsBackgroundedWork =>
       _harnessBackgrounded ||
       _turn.detachedPromise ||
+      _turn.agentWork ||
       _chat.queuedBubble != null;
 
   /// The bottom line's label: the last real tool step the out-of-
@@ -574,6 +580,57 @@ class VoiceAssistant extends ChangeNotifier {
       _logDebug('bg line retired: health — nothing open, none detached');
       notifyListeners();
     }
+    // A turn end (or boot, or setBridge) that leaves the bottom line
+    // lit starts the heartbeat: +133's agent-backgrounded work reports
+    // UNPROMPTED, and an idle phone has no other channel to hear it.
+    if (showsBackgroundedWork) _scheduleBgProbe();
+  }
+
+  /// +133: arm the bottom line's ask-again heartbeat — while the line
+  /// is warranted, once is enough (the wake re-arms its own successor).
+  void _scheduleBgProbe({Duration every = const Duration(seconds: 10)}) {
+    if (_bgProbe != null || !showsBackgroundedWork || _gateway == null) {
+      return;
+    }
+    _bgProbe = _scheduler.after(every, () {
+      _bgProbe = null;
+      unawaited(_bgWake());
+    });
+  }
+
+  /// The heartbeat firing: consult /health. Nothing open and nothing
+  /// detached retires the line (same proof as [_refreshSession]'s
+  /// safety net — the counter now honestly includes the agent's own
+  /// tasks); work still owed wakes the EXISTING reattach chain, whose
+  /// probe decides ATTACH-vs-idle and whose age rules speak (or
+  /// silently file) the report when one is streaming.
+  Future<void> _bgWake() async {
+    if (!showsBackgroundedWork) return;
+    final h = await _gateway?.healthInfo();
+    if (h == null) return;
+    final det = h['detached'];
+    if (h['turnOpen'] != true &&
+        h['queued'] != true &&
+        (det is num ? det.toInt() : 0) == 0) {
+      _turn.retireBadgeAndWork();
+      _logDebug('bg line retired: idle probe — nothing open, none detached');
+      notifyListeners();
+      return;
+    }
+    // Wake the ear only for a report that is STREAMING — during the
+    // debt phase (shell still running, nothing said yet) the chain's
+    // probe would find 'nothing open, nothing unheard' and ORPHAN-
+    // retire the very line this heartbeat exists to keep honest.
+    if ((h['turnOpen'] == true || h['backgrounded'] == true) &&
+        !_bridgeBusy &&
+        !_turn.backgrounded &&
+        !_benchCapturing &&
+        !_benchBusy &&
+        _ptt.pointers == 0 &&
+        _reattachTimer == null) {
+      _startReattachChain(firstProbe: Duration.zero);
+    }
+    _scheduleBgProbe(); // ask again while the line stays lit
   }
 
   /// The proof-of-completion the background banner waits for (bridge
@@ -941,31 +998,40 @@ class VoiceAssistant extends ChangeNotifier {
       playing: _reply.playing,
     );
 
+    // The push view's first-frame pickup happens exactly once per turn
+    // (+133): re-running heardPickup on every frame used to blank the
+    // bottom line's snapshot — and the cut-tool promise riding on it —
+    // the moment the first answer paragraph landed, so a tts-on phone
+    // lost its banner for a tool that was still running.
+    var pickupDone = false;
     final pump = BridgeTurnPump(
       beforeEvent: (ev) {
         _hops.reply(); // harness→reply hop crossed: bytes arrived
-        // Push view: our stream is silent until the flush, so ANY
-        // frame is the pickup — EXCEPT the bridge's 'queued' notice,
-        // which is the OPPOSITE promise (behaviour 1: a busy bridge
-        // answers a queue POST with that frame the instant it parks,
-        // and the pin must keep watching the bottom of the channel
-        // until the turn actually starts), EXCEPT a 'started' tagged
-        // kind='background' — a pickup AND a promise: the tool branch
-        // below raises it with the abandoned step it must name, and a
-        // heardPickup here would blank that step first. Poll view: the
-        // ring also carries the turn we queued BEHIND — only the
-        // bridge's explicit 'started' marker may dissolve the pin
-        // there. Pickup also proves whatever left the ear is CLOSED
-        // (the bridge flushes only closed turns), so it retires the
+        // Push view: our stream is silent until the flush, so the
+        // FIRST frame is the pickup — EXCEPT the bridge's 'queued'
+        // notice, which is the OPPOSITE promise (behaviour 1: a busy
+        // bridge answers a queue POST with that frame the instant it
+        // parks, and the pin must keep watching the bottom of the
+        // channel until the turn actually starts), EXCEPT a 'started'
+        // tagged kind='background' — a pickup AND a promise: the tool
+        // branch below raises it with the abandoned step it must name,
+        // and a heardPickup here would blank that step first (the case
+        // marks this frame's pickup itself). Poll view: the ring also
+        // carries the turn we queued BEHIND — only the bridge's
+        // explicit 'started' marker may dissolve the pin there.
+        // Pickup also proves whatever left the ear is CLOSED (the
+        // bridge flushes only closed turns), so it retires the
         // backgrounded badge and re-anchors the age to our live turn.
-        if (!_transport.turnViaPoll &&
-            !(ev.kind == 'tool' &&
-                (ev.toolName == 'queued' ||
-                    (ev.toolName == 'started' &&
-                        ev.toolKind == 'background')))) {
-          _chat.unpinQueued();
-          _turn.heardPickup();
+        if (_transport.turnViaPoll) return;
+        final isTool = ev.kind == 'tool';
+        if (isTool && ev.toolName == 'queued') return;
+        _chat.unpinQueued();
+        if (pickupDone) return;
+        if (isTool && ev.toolName == 'started' && ev.toolKind == 'background') {
+          return; // the started case below claims the pickup
         }
+        pickupDone = true;
+        _turn.heardPickup();
       },
       isStale: () => gen != _generation,
       onEvent: (ev) async {
@@ -998,6 +1064,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (ev.toolName == 'started') {
             // The queue's pickup ack (bridge +81): Claude Code has the
             // prompt NOW. Dissolve the pin and journal the hand-off.
+            // (Push view: this frame claims the turn's one pickup —
+            // the beforeEvent gate lets the background-tagged marker
+            // through precisely so the abandoned step survives to be
+            // named by the promise just below.)
             // A marker tagged kind='background' says THIS prompt cut a
             // running tool: raise the banner promise (on the poll
             // transport this is the disposition's reliable delivery —
@@ -1013,6 +1083,11 @@ class VoiceAssistant extends ChangeNotifier {
               // until the detached tool's own 'finished' receipt
               // lands (behaviours 2/4, and the one delivery of that
               // promise that a shared ring cursor cannot lose).
+              if (!_transport.turnViaPoll) {
+                _turn.becomeHeard(); // heard now; the step snapshot
+                // belongs to the promise — the beforeEvent gate kept
+                // it alive to here
+              }
               _turn.promiseDetachedTool();
             } else {
               _turn.heardPickup(); // the turn we waited behind is
@@ -1033,6 +1108,22 @@ class VoiceAssistant extends ChangeNotifier {
             // spinner's clock is never touched — only the stale
             // snapshot and the promise go.
             _retireBgWork(ev.detail);
+            return;
+          }
+          if (ev.toolName == 'backgrounded') {
+            // +133: the harness backgrounded a shell on ITS OWN
+            // (Bash run_in_background) — nobody pressed anything, but
+            // the out-of-earshot work is real: light the bottom line
+            // with the bridge's own word for it. The `finished`
+            // receipt retires it, the idle probe keeps watching for
+            // the UNPROMPTED report turn meanwhile.
+            _turn.noteAgentWork(ev.detail);
+            _logDebug(
+              'agent backgrounded "${ev.detail}" — banner lit'
+              '${_transport.wireTag(ev)}',
+            );
+            _scheduleBgProbe(every: const Duration(seconds: 4));
+            notifyListeners();
             return;
           }
           if (ev.toolName == 'queued' &&
@@ -2414,6 +2505,19 @@ class VoiceAssistant extends ChangeNotifier {
               _retireBgWork(ev.detail);
               return;
             }
+            if (ev.toolName == 'backgrounded') {
+              // The replayed form of the bridge's own-word banner
+              // light (+133) — a phone that missed the live frame
+              // still learns the work exists.
+              _turn.noteAgentWork(ev.detail);
+              _logDebug(
+                'agent backgrounded "${ev.detail}" — banner lit'
+                '${_transport.wireTag(ev)}',
+              );
+              _scheduleBgProbe(every: const Duration(seconds: 4));
+              notifyListeners();
+              return;
+            }
             if (ev.toolName == 'queued' &&
                 ev.detail.toLowerCase().contains('background')) {
               // Same promise rule as the /talk loop: a replayed cut
@@ -3548,6 +3652,7 @@ class VoiceAssistant extends ChangeNotifier {
     _hops.dispose();
     _lease.cancel();
     _reattachTimer?.cancel();
+    _bgProbe?.cancel();
     _pttMaxTimer?.cancel();
     _ptt.cancel();
     unawaited(() async {

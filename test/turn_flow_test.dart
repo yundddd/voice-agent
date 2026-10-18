@@ -1775,4 +1775,106 @@ void main() {
       },
     );
   });
+
+  group("the agent's own background shell (0.1.0+133)", () {
+    // The harness may run_in_background a Bash of its own accord. No
+    // press is involved, yet the work leaves the ear: the bridge's
+    // `backgrounded` frame lights the bottom line, /health counts the
+    // debt, and when the CLI later speaks UNPROMPTED to report the
+    // task, an idle phone must wake and hear it.
+    test(
+      'a backgrounded frame lights the line; the receipt retires it',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('start a sleep'));
+        await settle();
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': true,
+          'detached': 1,
+        };
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'backgrounded',
+            detail: 'Bash sleep 20',
+          ),
+        );
+        await settle();
+        expect(a.backgroundedWork, 'Bash sleep 20');
+        expect(
+          a.harnessBackgrounded,
+          isFalse,
+          reason: 'no press, no badge — the bridge vouched, not a takeover',
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'Bash sleep 20',
+          ),
+        );
+        await settle();
+        expect(a.backgroundedWork, isEmpty);
+        harness.emit(const BridgeEvent.forTest('done'));
+        await settle();
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+          isTrue,
+          reason: 'the named receipt gives the shell its period',
+        );
+        expect(a.backgroundedWork, isEmpty);
+      },
+    );
+
+    test('the idle line wakes on the heartbeat when a report opens', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('start a sleep'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      // The launch turn closes; the debt stands. The safety net must
+      // KEEP the line lit — /health counts the agent task.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'detached': 1,
+      };
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      expect(
+        a.backgroundedWork,
+        'Bash sleep 20',
+        reason: 'detached 1: the line has work left to name',
+      );
+      // Ten seconds of idle: the heartbeat reads /health, finds the
+      // harness mid-report, and the reattach chain takes the ear.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': true,
+        'backgrounded': true,
+        'detached': 1,
+      };
+      final attaches = harness.attachCount;
+      time.advance(const Duration(seconds: 11));
+      await settle(); // the heartbeat fires; its chain arms a probe
+      time.advance(const Duration(seconds: 1));
+      await settle(); // the probe runs and takes the ear
+      expect(
+        harness.attachCount,
+        greaterThan(attaches),
+        reason: 'the probe woke the reattach chain for the report',
+      );
+    });
+  });
 }

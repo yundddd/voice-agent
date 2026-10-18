@@ -27,6 +27,7 @@ const PORT2 = PORT1 + 1;
 const PORT3 = PORT1 + 2;
 const PORT4 = PORT1 + 3;
 const PORT5 = PORT1 + 4;
+const PORT8 = PORT1 + 7;
 
 function startBridge(stubLog, port, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -394,6 +395,94 @@ test('a heard turn closes with its done alone — no finished marker',
         'a heard turn must not carry a finished marker — its done is the ' +
         'receipt, and a marker would let a replay retire a badge about ' +
         'work that never left the ear');
+    } finally {
+      await stopBridge(proc);
+    }
+  });
+
+// +133 (probe-verified against the real CLI 2.1.286): the AGENT may
+// background a shell itself — Bash run_in_background. The tool closes
+// instantly with a start receipt, the turn answers, and when the shell
+// finishes the CLI speaks UNPROMPTED: a report turn with no /talk
+// behind it. The bridge must (1) announce the debt while the shell
+// runs — /health counts it in `detached`, the banner's proof of life;
+// (2) open the report as a background turn, so a fresh /talk queues
+// politely behind the agent's own news; (3) relay the named `tool
+// finished` receipt at the moment the report reads the task output;
+// (4) deliver the model's answer as ordinary `say` frames.
+test('the harness backgrounding its own shell reports in unprompted (+133)',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT8, {
+      STUB_TOOL: 'sleep 10', STUB_TOOL_START_MS: '100',
+      STUB_TOOL_BG: '1', STUB_BG_DONE_MS: '1300', STUB_RESULT_MS: '400',
+      STUB_SAYS: 'started',
+    });
+    try {
+      await up(PORT8);
+      await call(PORT8, `/talk?token=${TOKEN}&poll=1`,
+        { body: 'run bash sleep', method: 'POST' });
+      // The poll transport closes its /talk response early: the launch
+      // frames are read where they actually ride — the ring.
+      await until('launch receipt frames on the ring', async () => {
+        const ring = JSON.parse(
+          (await call(PORT8, `/poll?token=${TOKEN}&since=0`)).text);
+        return ring.events.some((e) => e.data?.name === 'backgrounded' &&
+          e.data?.detail === 'Bash sleep 10') &&
+          ring.events.some((e) => e.data?.name === 'Bash');
+      });
+      await until('launch turn closed', async () =>
+        (await health(PORT8)).turnOpen === false);
+
+      // The debt window: the turn is over, the SHELL is not. /health
+      // owes the phone proof the work is alive. (Read once — the debt
+      // lands with the launch receipt's bookkeeping and holds through
+      // the report.)
+      let owed = false;
+      for (let i = 0; i < 10 && !owed; i++) {
+        owed = (await health(PORT8)).detached >= 1;
+        if (!owed) await sleep(100);
+      }
+      assert.ok(owed, 'the agent task is never counted in detached');
+
+      // The report turn opens on its own, and a polite prompt landing
+      // in it must QUEUE (the agent is mid-sentence about its news).
+      await until('report turn opens unprompted', async () =>
+        (await health(PORT8)).turnOpen === true);
+      const b = await call(PORT8, `/talk?token=${TOKEN}&poll=1&interrupt=0`,
+        { body: 'queued behind the report', method: 'POST' });
+      await until('queue notice', async () =>
+        b.text.includes('"name":"queued"'));
+      assert.ok(!seen(stubLog).includes('queued behind the report'),
+        'the queue jumped the agent\'s own report turn');
+
+      // The ring tells the whole story in order: the named receipt
+      // lands inside the report turn, the model's ANSWER rides as
+      // ordinary say frames, and the queue's pickup marker comes last
+      // (the report held the floor while its news was spoken).
+      let ring = [];
+      await until('the full report story on the ring', async () => {
+        ring = (JSON.parse(
+          (await call(PORT8, `/poll?token=${TOKEN}&since=0`)).text))
+          .events;
+        const evs = ring.map((e) => JSON.stringify(e.data ?? {}));
+        const fin = evs.findIndex((d) =>
+          d.includes('"name":"finished"') && d.includes('Bash sleep 10'));
+        const said = evs.findIndex((d) => d.includes('BGOUT-hello'));
+        const pick = evs.findIndex((d) =>
+          d.includes('"name":"started"') &&
+          d.includes('queued behind the report'));
+        return fin >= 0 && said > fin && pick > said;
+      });
+
+      await until('all settled', async () => {
+        const h = await health(PORT8);
+        return h.turnOpen === false && h.queued === false &&
+          h.detached === 0;
+      });
+      await until('the queue was delivered', async () =>
+        seen(stubLog).includes('queued behind the report'));
     } finally {
       await stopBridge(proc);
     }

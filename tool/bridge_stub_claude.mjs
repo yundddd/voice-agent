@@ -22,6 +22,19 @@
 //   STUB_THINK_MS      extra wait before the first snapshot (simulated
 //                      thinking; the bridge's own 0.8s tallies cover the
 //                      spinner meanwhile)
+//   STUB_TOOL_BG       1 = the Bash tool_use carries run_in_background
+//                      (the +133 story): the tool closes at once with a
+//                      'running in background with ID' start receipt,
+//                      and the answer is just STUB_SAYS ('started').
+//   STUB_BG_DONE_MS    the UNPROMPTED report turn this long after the
+//                      launch: Read of the task output, its content,
+//                      STUB_BG_SAYS, and a closing result — exactly the
+//                      shapes the real CLI (2.1.286, probe-verified)
+//                      emits when its own background shell finishes.
+//   STUB_BG_SAYS       the report turn's answer lines
+//   STUB_BG_BEAT_MS    pause inside the report turn (default 300) — the
+//                      window during which /health shows it open; raise
+//                      it to watch a phone wake mid-report
 import { appendFileSync } from 'node:fs';
 
 const log = process.env.STUB_LOG;
@@ -32,6 +45,12 @@ const toolStartMs = Number(process.env.STUB_TOOL_START_MS ?? 200);
 const toolDoneMs = Number(process.env.STUB_TOOL_DONE_MS ?? 0);
 const toolDoneText = process.env.STUB_TOOL_DONE_TEXT ??
   'Bash finished — its output is in the log.';
+const toolBg = process.env.STUB_TOOL_BG === '1';
+const bgDoneMs = Number(process.env.STUB_BG_DONE_MS ?? 0);
+const bgBeat = Number(process.env.STUB_BG_BEAT_MS ?? 300);
+const bgSays = (process.env.STUB_BG_SAYS ??
+  'The background command finished. It printed:\n\nBGOUT-hello\n\n(exit code 0)')
+  .split('\n').map((x) => x.trim()).filter(Boolean);
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
 let turnSeq = 0; // timers of a superseded/cut turn must not speak again
@@ -110,9 +129,71 @@ process.stdin.on('data', (b) => {
           type: 'assistant', session_id: 'stub-session',
           message: { role: 'assistant', content: [{
             type: 'tool_use', id: openToolId, name: 'Bash',
-            input: { command: toolCmd },
+            input: toolBg
+              ? { command: toolCmd, run_in_background: true }
+              : { command: toolCmd },
           }] },
         });
+        if (toolBg) {
+          // The start receipt the real CLI answers a backgrounded
+          // launch with — a tool_result, naming the task id and the
+          // output file. The tool CLOSES here; the work does not.
+          setTimeout(() => {
+            if (gen !== turnSeq) return;
+            out({
+              type: 'user', session_id: 'stub-session',
+              message: { role: 'user', content: [{
+                type: 'tool_result', tool_use_id: openToolId,
+                content: `Command running in background with ID: tbg${gen}. ` +
+                  `Output is being written to: ` +
+                  `/tmp/stub-tasks/tbg${gen}.output. You will be notified ` +
+                  `when it completes.`,
+              }] },
+            });
+          }, 80);
+          if (bgDoneMs) {
+            // The UNPROMPTED report turn (probe-verified shapes): Read
+            // of the output, its content, the model's answer, result.
+            setTimeout(() => {
+              if (gen !== turnSeq) return;
+              out({
+                type: 'assistant', session_id: 'stub-session',
+                message: { role: 'assistant', content: [{
+                  type: 'tool_use', id: `read-${gen}`, name: 'Read',
+                  input: { file_path: `/tmp/stub-tasks/tbg${gen}.output` },
+                }] },
+              });
+              out({
+                type: 'user', session_id: 'stub-session',
+                message: { role: 'user', content: [{
+                  type: 'tool_result', tool_use_id: `read-${gen}`,
+                  content: '1\tBGOUT-hello\n2\t\n3\t[exited with code 0]',
+                }] },
+              });
+              // The report takes a beat like any real answer (and a
+              // test an honest window to observe turnOpen through).
+              setTimeout(() => {
+                if (gen !== turnSeq) return;
+                for (const t of bgSays) {
+                  out({
+                    type: 'assistant', session_id: 'stub-session',
+                    message: { role: 'assistant',
+                      content: [{ type: 'text', text: t }] },
+                  });
+                }
+                setTimeout(() => {
+                  if (gen !== turnSeq) return;
+                  out({
+                    type: 'result', subtype: 'success',
+                    session_id: 'stub-session', is_error: false,
+                    total_cost_usd: 0,
+                    usage: { input_tokens: 100, output_tokens: 42 },
+                  });
+                }, bgBeat);
+              }, bgBeat);
+            }, toolStartMs + bgDoneMs);
+          }
+        }
       }, toolStartMs);
       setTimeout(() => finishTurn(gen), delay);
       return;

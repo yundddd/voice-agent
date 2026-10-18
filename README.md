@@ -363,6 +363,22 @@ a field report; the wire flags are `?interrupt=`, `?cuttool=1`, `?poll=1`):
   dead turn), its bubble keeps the ✋ `interrupted` stamp and whatever was
   heard, and the new prompt's flush carries the same `kind='background'`
   promise as a queued cut.
+- **The agent can background a shell itself** (+133): a Bash tool_use
+  carrying `run_in_background` closes its tool with a *start receipt*,
+  and the bridge tracks the debt — `/health.detached` counts it, so the
+  banner's safety net keeps the bottom line naming the step. When the
+  CLI later finishes the shell it speaks UNPROMPTED: a proactive report
+  turn the bridge opens as a background turn (a fresh `/talk` queues
+  politely behind it; `/stop` can cut it). The moment the report reads
+  the task's output file, the relayed `tool finished` receipt names the
+  step, the model's answer rides as ordinary `say` frames, and the turn
+  closes with `done` like anything else. A phone that is idle when this
+  happens hears it via the banner's heartbeat: while the line is lit,
+  `/health` is consulted (4 s first, then 10 s) and a live report wakes
+  the existing reattach chain — the same age rules decide whether the
+  replay is spoken or filed silently; an even later phone finds the
+  receipts on the ring at its next turn (the pre-marker window files
+  them into the conversation, not into the fresh bubble).
 - **Push-to-talk defers its verdict to the release** (+132): pressing
   over a live turn takes the EAR (the mic must open now) but stamps
   NOTHING — at press time the gesture has decided nothing. The release

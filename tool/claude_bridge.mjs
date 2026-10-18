@@ -114,7 +114,18 @@
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
-//                / detached (the cut-tool receipts still owed a `finished`)
+//                / detached (the cut-tool receipts still owed a
+//                `finished`, + the agent's own run_in_background shells).
+//                +133: a Bash tool_use with run_in_background is the
+//                AGENT backgrounding work itself — the phone gets a
+//                `tool backgrounded` frame (the bottom line names it,
+//                no press involved), and when the CLI later speaks
+//                UNPROMPTED to report that task, the bridge runs the
+//                report as a proactive background turn: a `tool
+//                finished` receipt at the moment it reads the output
+//                (or at its result), the model's answer as ordinary
+//                `say` frames, and the usual `done`. A /talk landing
+//                during such a turn queues; /stop can cut it.
 //                + context (last known tokens-in-context and the model's
 //                window, snapshotted at every result) + appLog (the
 //                phone-journal poller's peer / watermark / reachability)
@@ -251,6 +262,12 @@ let sessionId = null;   // for --resume after a bridge restart
 const sidFile = join(dir, '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
+let proactiveTurn = false; // +133: this turn is the harness speaking
+// UNPROMPTED — the completion report of a shell it backgrounded itself
+// (Bash run_in_background). Nobody pressed anything; its `result` closes
+// it like any other, and while it runs a fresh /talk queues politely.
+const bgTools = new Map();    // tool_use ids launched run_in_background
+const agentTasks = new Map(); // background task id -> {label, outPath}
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
 // Tool calls an interrupt (or a cuttool queue) orphaned: tool_use id →
 // the step label the phone put on its banner. Their late tool_results
@@ -661,6 +678,9 @@ function spawnClaude(resume) {
     detached.clear(); // a dead process retires no tool: no tool_result
                       // will ever land to say 'finished' — the receipts
                       // are gone, and /health honestly drops to 0
+    agentTasks.clear();
+    bgTools.clear();
+    proactiveTurn = false;
     if (curRes) endTurn();
     flushPending();
   });
@@ -799,9 +819,51 @@ function handleEvent(line) {
         // 'finished' frame must carry when its result lands late (or
         // in another turn's stream entirely).
         const step = summarize(c);
-        openTools.set(c.id, step ? `${c.name} ${step}` : String(c.name ?? 'tool'));
+        const label = step ? `${c.name} ${step}` : String(c.name ?? 'tool');
+        openTools.set(c.id, label);
+        // +133: the agent backgrounded a shell ITSELF. Its tool_use
+        // carries run_in_background; its tool_result returns at once
+        // (a start receipt, not a completion), so the tool closes here
+        // while the process keeps running. The phone learns NOW — the
+        // `tool backgrounded` frame lights the bottom line with no
+        // press involved — and the `finished` receipt lands when the
+        // harness reports the task in, whichever shape that takes.
+        if (c.input?.run_in_background === true) {
+          bgTools.set(c.id, label);
+          relay('tool', { name: 'backgrounded', detail: label });
+        }
+        // A Read/BashOutput/monitor of a tracked task's output file IS
+        // the completion moment: the model is one block away from
+        // speaking its outcome.
+        for (const [id, t] of agentTasks) {
+          const hay = JSON.stringify(c.input ?? {});
+          if ((t.outPath && hay.includes(t.outPath)) ||
+              hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
+            agentTasks.delete(id);
+            console.error(`  -> finished "${t.label}" ` +
+              `(agent's own background task)`);
+            relay('tool', { name: 'finished', detail: t.label });
+          }
+        }
       } else if (c.type === 'tool_result' && c.tool_use_id) {
         openTools.delete(c.tool_use_id);
+        // The start receipt of the agent's own background shell: the
+        // CLI names a task id and an output file — register the debt.
+        // This result is NOT a completion: the tool closed, the work
+        // did not, so the detached-tool 'finished' below must not
+        // fire for it.
+        if (bgTools.has(c.tool_use_id)) {
+          const bgLabel = bgTools.get(c.tool_use_id);
+          bgTools.delete(c.tool_use_id);
+          const txt = typeof c.content === 'string'
+            ? c.content : JSON.stringify(c.content ?? '');
+          const idm = txt.match(/background with ID: ([A-Za-z0-9_-]+)/);
+          const om = txt.match(/([^\s'"]+\.output)/);
+          agentTasks.set(idm?.[1] ?? c.tool_use_id,
+            { label: bgLabel, outPath: om?.[1] ?? null });
+          console.error(`  [bg] tracking agent task ` +
+            `"${bgLabel}" (id ${idm?.[1] ?? c.tool_use_id})`);
+        }
         // The result of a tool the interrupt put into background: the
         // phone's banner promise retires HERE, whatever turn holds the
         // view this lands in (the +99 contract behaviour 2 leans on).
@@ -829,6 +891,22 @@ function handleEvent(line) {
     }
   }
   if (m.type === 'result') {
+    // A report turn closing: whatever agent background tasks it did
+    // not name are paid off anyway — the model may answer straight
+    // from the notification without re-reading the output file. (The
+    // per-tool_use scan above is the precise trigger; this is the
+    // net.) Only on a PROACTIVE close: an unrelated /talk's result
+    // must not drain tasks whose shells are still sleeping. The
+    // app's receipt note dedups, so an over-eager payment is free.
+    if (proactiveTurn) {
+      for (const [, t] of agentTasks) {
+        console.error(`  -> finished "${t.label}" (drained at report)`);
+        relay('tool', { name: 'finished', detail: t.label });
+      }
+      agentTasks.clear();
+      proactiveTurn = false;
+    }
+    bgTools.clear(); // an unpaired launch receipt dies with its turn
     // The turn's last word — processed even when no one is listening, so
     // backgrounded turns end properly: free the state machine, persist the
     // session id, hand the attached client its done (if it stayed), and
@@ -943,6 +1021,19 @@ function handleEvent(line) {
   // working (that is the point); its output now lands in the backlog —
   // a reattaching phone replays it instead of finding nothing ever
   // happened — until the `result` above clears the way for a queued prompt.
+  // +133: the harness speaking unprompted (background work reporting
+  // in). The real CLI runs the completion response as a normal turn —
+  // with no /talk behind it. Open it as a background turn: a fresh
+  // /talk queues politely, /stop can cut it, and the result path's
+  // receipts and done all apply unchanged. Assistant messages only —
+  // a stray tool_result is bookkeeping, not a mouth.
+  if (!turnOpen && m.type === 'assistant') {
+    turnOpen = true;
+    proactiveTurn = true;
+    turnBeganAt = Date.now();
+    console.error('  [proactive] the harness speaks unprompted ' +
+      '(background work reporting in)');
+  }
   switch (m.type) {
     case 'assistant': {
       // Snapshot handling. The proxy re-emits the growing message but NOT
@@ -1575,10 +1666,11 @@ const server = http.createServer((req, res) => {
       turnOpen, queued: !!pending,
       backgrounded: turnOpen && !curRes,
       // Open tool_use ids an interrupt (or a cuttool queue) parked
-      // out-of-earshot (+detached): every one owes the phone a
+      // out-of-earshot, plus the agent's own run_in_background shells
+      // (+133) — (+detached): every one owes the phone a
       // `tool finished` frame, until its result lands or the process
       // retires it.
-      detached: detached.size,
+      detached: detached.size + agentTasks.size,
       // A turn (or its tail) ran with nobody listening: /attach replays
       // this many buffered events, even after the turn itself ended.
       missed: backlog.length,
@@ -1698,6 +1790,9 @@ const server = http.createServer((req, res) => {
       sessionId = null;
       turnOpen = false;
       openTools.clear();
+      agentTasks.clear();
+      bgTools.clear();
+      proactiveTurn = false;
       detached.clear(); // a fresh conversation inherits no banner promise
       // A reset conversation has nothing unheard: drop the replay backlog
       // or the next /attach (a later cold start, a respawned app) dutifully

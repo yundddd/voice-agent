@@ -137,6 +137,8 @@ TakeoverStop takeoverStop(TurnTrigger trigger) => switch (trigger) {
 ///    /stop.
 ///  * [releaseOwnership] / [releasePumpIf] — teardown, bowing out to a
 ///    successor that already claimed the slot.
+///  * [noteAgentWork] — the harness backgrounded a shell on its own:
+///  * the bottom line names it (0.1.0+133), receipts and /health clear.
 ///  * [retireBadge] / [retireBadgeAndWork] / [stopDetachedWork] — the
 ///    badge goes out because the work provably ended.
 final class TurnCoordinator {
@@ -198,6 +200,10 @@ final class TurnCoordinator {
   // murder it never committed. Read by the abandoned turn's finally;
   // describes the MOST RECENT takeover (each detach overwrites).
   bool _detachedPromise = false; // a tool THIS press cut into background
+  bool _agentWork = false; // +133: a shell the HARNESS backgrounded
+  // itself (the bridge's `tool backgrounded` frame) — the bottom line
+  // names it on the bridge's word, no press involved, until the
+  // report's `finished` receipt or /health proof pays.
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
   // own 'finished' receipt pays the promise (behaviours 2/4).
@@ -214,6 +220,10 @@ final class TurnCoordinator {
   /// The cut-tool promise: the bottom line is warranted even without the
   /// badge or a pin while a tool this phone cut is owed its receipt.
   bool get detachedPromise => _detachedPromise;
+
+  /// The agent's own background work: a run_in_background shell the
+  /// harness launched and has not reported in yet (0.1.0+133).
+  bool get agentWork => _agentWork;
 
   /// The most recent takeover's trigger (null before the first one).
   TurnTrigger? get lastTakeover => _lastTakeover;
@@ -282,6 +292,19 @@ final class TurnCoordinator {
     _detachedPromise = true;
   }
 
+  /// The harness backgrounded a shell itself (+133, the bridge's
+  /// `tool backgrounded` frame — live or replayed). The bottom line
+  /// names THAT step, not whatever the last snapshot held; the promise
+  /// is paid by the report's `finished` receipt or /health proof.
+  void noteAgentWork(String label) {
+    _agentWork = true;
+    if (label.isNotEmpty) {
+      _bgWork = label;
+    } else if (_bgWork.isEmpty) {
+      _bgWork = _lastToolStep;
+    }
+  }
+
   /// A press detached this very turn: the badge lights. The clock is
   /// deliberately NOT touched — it keeps counting the WORK the user was
   /// watching, not the press (+126: the press must not visually kill
@@ -315,6 +338,7 @@ final class TurnCoordinator {
   void clearBgWork() {
     _bgWork = '';
     _detachedPromise = false; // the receipt paid it
+    _agentWork = false; // …whichever shape the work took (+133)
   }
 
   /// The badge goes out and the clock stops, but the snapshot is KEPT:
@@ -332,6 +356,7 @@ final class TurnCoordinator {
   void retireBadgeAndWork() {
     retireBadge();
     _bgWork = '';
+    _agentWork = false;
   }
 
   /// The Stop chip over a DETACHED turn: /stop lands on invisible work

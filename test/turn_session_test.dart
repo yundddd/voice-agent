@@ -340,6 +340,30 @@ void main() {
       expect(turn.lastTakeoverPolite, isTrue);
     });
 
+    test('noteAgentWork names the agent\'s own task and survives a tap-stop '
+        '(+133)', () {
+      turn.claimSlot();
+      turn.noteToolStep('Bash make');
+      turn.noteAgentWork('Bash sleep 20');
+      expect(turn.agentWork, isTrue);
+      expect(
+        turn.bgWork,
+        'Bash sleep 20',
+        reason: 'the line names THE step, not the last snapshot',
+      );
+      turn.retireBadge();
+      expect(
+        turn.agentWork,
+        isTrue,
+        reason:
+            'stopping the VIEW says nothing about the agent\'s '
+            'task — the debt outlives the press',
+      );
+      turn.clearBgWork();
+      expect(turn.agentWork, isFalse, reason: 'the receipt paid it');
+      expect(turn.bgWork, isEmpty);
+    });
+
     test('markBackgrounded lights the badge WITHOUT touching the clock', () {
       turn.beginHeardTurn();
       turn.becomeHeard();
