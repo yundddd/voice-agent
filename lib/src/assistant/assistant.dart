@@ -1190,7 +1190,6 @@ class VoiceAssistant extends ChangeNotifier {
             utterance,
             interrupt,
             cutTool: cutTool && !interrupt,
-            awaitingPickup: bridgeHadLiveTurn,
             onActivity: _lease.markAlive,
           ),
     );

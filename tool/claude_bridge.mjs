@@ -521,6 +521,23 @@ const relay = (ev, data) => {
     if (!curRes) console.error(`  [backlog] say (n=${backlog.length})`);
     return;
   }
+  // +157: the started marker is PERMANENT, like a say. It is the
+  // phone's ledger boundary — a drain that replays the answer without
+  // it falls back to the replay rules and can swallow a reused
+  // paragraph whole (field: 'Hello?' answered nothing; the marker rode
+  // the POST body, died with the view and never reached the backlog).
+  // One copy per prompt: a re-relay replaces the parked one.
+  if (ev === 'tool' && data?.name === 'started') {
+    for (let i = backlog.length - 1; i >= 0; i--) {
+      if (backlog[i].ev === 'tool' && backlog[i].data?.name === 'started'
+          && backlog[i].data?.detail === data.detail) {
+        backlog.splice(i, 1);
+      }
+    }
+    backlog.push({ ev, data });
+    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    return;
+  }
   if (curRes) return; // transient frames stay live-only while heard
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
@@ -1378,11 +1395,6 @@ function flushPending() {
     // turn's first frame. kind='background' below: THIS prompt cut a
     // running tool — the phone's banner promise, delivered where a
     // shared ring cursor cannot lose it.
-    const marker = {
-      name: 'started',
-      detail: String(p.text).slice(0, 60),
-      ...(p.backgrounded ? {kind: 'background'} : {}),
-    };
     const receipts = heldFinished.splice(0);
     beginTurn(p.text, mute, 0, p.backgrounded ? 'background' : undefined);
     // The cut's receipts, relayed AFTER the disposition AND after the
@@ -1391,12 +1403,8 @@ function flushPending() {
     // outcome (finished/cancelled) — never the outcome over its own
     // explanation (see heldFinished).
     for (const f of receipts) relay('tool', f);
-    // beginTurn wipes the backlog — old frames are stale for a replay,
-    // but the marker we just filed belongs to THIS turn and the wipe
-    // ate its copy. Re-file it: the drain /attach (the +104 flip's
-    // recovery) can retire the pin with it instead of fossilising it.
-    backlog.push({ ev: 'tool', data: marker });
-    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    // (+157: the marker's backlog copy now rides relay() itself —
+    // permanent like a say, no re-file needed here.)
     // …and the cut's receipts with it: the drain must be able to
     // retire the banner too, not just the pin (their live copies above
     // may die with a superseded loop the same way the notice's did).
