@@ -127,8 +127,9 @@ class TtsVoice {
 const _k2fsaTts =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
 
-/// Voices on offer, in display order. Kokoro is the default and downloads on
-/// first run.
+/// Voices on offer, in display order. The students (TITL) are the
+/// default and download on first run: 9 MB per style versus Kokoro's
+/// 334 MB, at a quality the A/B on the same int8 graph called close.
 const ttsVoices = <TtsVoice>[
   TtsVoice(
     id: 'titl',
@@ -193,14 +194,14 @@ class TtsPrefs {
   String voiceId;
   int sid;
 
-  TtsPrefs({this.voiceId = 'kokoro', this.sid = 0});
+  TtsPrefs({this.voiceId = 'titl', this.sid = 0});
 
   Map<String, Object> toJson() => {'voice': voiceId, 'sid': sid};
 
   static TtsPrefs fromJson(Map<String, Object?> j) => TtsPrefs(
     // 'titl-heart' was the lone af_heart voice before the roster grew.
     voiceId: switch (j['voice'] as String?) {
-      null => 'kokoro',
+      null => 'titl',
       'titl-heart' => 'titl',
       final v => v,
     },

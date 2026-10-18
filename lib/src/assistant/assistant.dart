@@ -380,7 +380,7 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Voice selection & cloning ───────────────────────────────────────────
   String _modelsDir = '';
   TtsPrefs _prefs = TtsPrefs();
-  String _activeVoiceId = 'kokoro';
+  String _activeVoiceId = 'titl';
   int _ttsNumSpeakers = 0; // engine roster size; 0 = none loaded yet
   String _voiceStatus = ''; // one-line feedback for the voice screen
   bool _voiceBusy = false; // download / engine swap in progress
@@ -841,7 +841,7 @@ class VoiceAssistant extends ChangeNotifier {
   Future<void> _ensureVoice() async {
     final w = _worker;
     if (w == null || w.ttsNumSpeakers > 0) return;
-    final voice = voiceById(_prefs.voiceId) ?? voiceById('kokoro')!;
+    final voice = voiceById(_prefs.voiceId) ?? voiceById('titl')!;
     await voice.ensureIn(
       _modelsDir,
       onProgress: _modelProgress,
@@ -1318,11 +1318,11 @@ class VoiceAssistant extends ChangeNotifier {
       _rebuildGateway();
       unawaited(_refreshSession()); // chat-screen top row knows the id
       // The saved voice must be fully on disk (pack present); otherwise
-      // fall back to the default, which downloads on first run just like
-      // before.
-      var voice = voiceById(_prefs.voiceId) ?? voiceById('kokoro')!;
+      // fall back to the default (the students), which downloads on
+      // first run just like before.
+      var voice = voiceById(_prefs.voiceId) ?? voiceById('titl')!;
       if (!await voice.installedIn(modelsDir)) {
-        voice = voiceById('kokoro')!;
+        voice = voiceById('titl')!;
       }
       _prefs.voiceId = voice.id;
       // Only the saved style's graph for student rosters — the rest

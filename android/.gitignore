@@ -12,3 +12,12 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# VENDORED EXCEPTION: app/debug.keystore is the cert every build ever
+# shipped under is signed with (the machine's original debug key, known
+# default passwords, no secret in it). Committed so release builds are
+# signature-STABLE across machines and reinstalls of ~/.android: an APK
+# signed with a different key cannot update an installed app — Android
+# refuses with INSTALL_FAILED_UPDATE_INCOMPATIBLE. Replacing this file
+# means every installed phone must UNINSTALL before it can take the
+# next build.
+!/app/debug.keystore

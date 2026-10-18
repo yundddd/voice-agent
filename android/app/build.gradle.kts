@@ -29,11 +29,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        // THE shipping identity, pinned to the vendored keystore (see
+        // android/.gitignore for why it is committed). This is the same
+        // certificate ~/.android/debug.keystore signed every installed
+        // build with — the cert SHA-256 is in the commit that vendored
+        // it — so any APK built here upgrades any app installed from
+        // here, forever, regardless of this machine regenerating its
+        // global debug key. Explicit credentials (not the "debug"
+        // preset): the preset reads ~/.android, which is per-machine
+        // and regenerable — that is exactly how a signature mismatch
+        // (and a forced uninstall) creeps back in.
+        create("release") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
