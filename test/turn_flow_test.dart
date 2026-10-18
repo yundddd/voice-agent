@@ -1888,86 +1888,84 @@ void main() {
       },
     );
 
-    test(
-      'a turn-closed receipt pays an agent debt with NOTHING',
-      () async {
-        // The three-sleep field report (+140): the launch turn ends
-        // unheard a breath after dispatching the shells, and its
-        // lifecycle receipt — which names no tool — must NOT be
-        // allowed to claim the process died. The line stays lit; the
-        // honest detached counter pays later.
-        await withBridge();
-        unawaited(a.runQuickCommand('start a sleep'));
-        await settle();
-        harness.healthState = {
-          'ok': true,
-          'claudeUp': true,
-          'turnOpen': false,
-          'queued': false,
-          'detached': 1,
-        };
-        harness.emit(
-          const BridgeEvent.forTest(
-            'tool',
-            toolName: 'backgrounded',
-            detail: 'Bash sleep 20',
-          ),
-        );
-        await settle();
-        expect(a.backgroundedWork, 'Bash sleep 20');
-        harness.emit(
-          const BridgeEvent.forTest(
-            'tool',
-            toolName: 'finished',
-            detail: 'ended after 31s unheard',
-          ),
-        );
-        await settle();
-        expect(
-          a.backgroundedWork,
-          'Bash sleep 20',
-          reason: 'the TURN closed unheard; the shell was never '
-              'mentioned — the debt keeps the line lit',
-        );
-        expect(
-          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
-          isFalse,
-          reason: 'no bubble while the process may still be running',
-        );
-        expect(
-          a.debugLog.any((l) => l.contains('probing the bridge instead')),
-          isTrue,
-          reason: 'the receipt urged /health NOW instead of paying',
-        );
-        // The shell ends with no receipt ever sent: /health now counts
-        // zero detached, and THAT pays — with the bubble.
-        harness.healthState = {...harness.healthState!, 'detached': 0};
-        time.advance(const Duration(seconds: 11));
-        await settle();
-        expect(a.backgroundedWork, isEmpty);
-        expect(
-          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
-          isTrue,
-        );
-        // The named receipt may still ride in late (backlog replay,
-        // proactive report): it cannot mint a second period.
-        harness.emit(
-          const BridgeEvent.forTest(
-            'tool',
-            toolName: 'finished',
-            detail: 'Bash sleep 20',
-          ),
-        );
-        await settle();
-        expect(
-          a.chat
-              .where((e) => e.blocks.contains('Bash sleep 20 finished.'))
-              .length,
-          1,
-          reason: 'one completion, one period',
-        );
-      },
-    );
+    test('a turn-closed receipt pays an agent debt with NOTHING', () async {
+      // The three-sleep field report (+140): the launch turn ends
+      // unheard a breath after dispatching the shells, and its
+      // lifecycle receipt — which names no tool — must NOT be
+      // allowed to claim the process died. The line stays lit; the
+      // honest detached counter pays later.
+      await withBridge();
+      unawaited(a.runQuickCommand('start a sleep'));
+      await settle();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'detached': 1,
+      };
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      expect(a.backgroundedWork, 'Bash sleep 20');
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'ended after 31s unheard',
+        ),
+      );
+      await settle();
+      expect(
+        a.backgroundedWork,
+        'Bash sleep 20',
+        reason:
+            'the TURN closed unheard; the shell was never '
+            'mentioned — the debt keeps the line lit',
+      );
+      expect(
+        a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+        isFalse,
+        reason: 'no bubble while the process may still be running',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('probing the bridge instead')),
+        isTrue,
+        reason: 'the receipt urged /health NOW instead of paying',
+      );
+      // The shell ends with no receipt ever sent: /health now counts
+      // zero detached, and THAT pays — with the bubble.
+      harness.healthState = {...harness.healthState!, 'detached': 0};
+      time.advance(const Duration(seconds: 11));
+      await settle();
+      expect(a.backgroundedWork, isEmpty);
+      expect(
+        a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+        isTrue,
+      );
+      // The named receipt may still ride in late (backlog replay,
+      // proactive report): it cannot mint a second period.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      expect(
+        a.chat
+            .where((e) => e.blocks.contains('Bash sleep 20 finished.'))
+            .length,
+        1,
+        reason: 'one completion, one period',
+      );
+    });
 
     test(
       'three owed shells are paid three bubbles when the counter clears',
@@ -2043,47 +2041,44 @@ void main() {
       },
     );
 
-    test(
-      'the /health proof of none-detached files the bubble too',
-      () async {
-        // A harness that killed the tool with the turn never sends
-        // 'finished' at all: the heartbeat's /health proof is then the
-        // ONLY completion moment the phone learns, and it owes the
-        // chat the same line (+139).
-        await withBridge();
-        unawaited(a.runQuickCommand('start a sleep'));
-        await settle();
-        harness.emit(
-          const BridgeEvent.forTest(
-            'tool',
-            toolName: 'backgrounded',
-            detail: 'Bash sleep 20',
-          ),
-        );
-        await settle();
-        harness.healthState = {
-          'ok': true,
-          'claudeUp': true,
-          'turnOpen': false,
-          'queued': false,
-          'detached': 1,
-        };
-        harness.emit(const BridgeEvent.forTest('done'));
-        await settle(); // the launch turn closes, the debt keeps the line
-        expect(a.backgroundedWork, 'Bash sleep 20');
-        // The process ends without ever sending its receipt: /health
-        // now honestly counts zero detached.
-        harness.healthState = {...harness.healthState!, 'detached': 0};
-        time.advance(const Duration(seconds: 11));
-        await settle(); // the heartbeat's proof pays it
-        expect(a.backgroundedWork, isEmpty);
-        expect(
-          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
-          isTrue,
-          reason: 'the lost receipt must not swallow the announcement',
-        );
-      },
-    );
+    test('the /health proof of none-detached files the bubble too', () async {
+      // A harness that killed the tool with the turn never sends
+      // 'finished' at all: the heartbeat's /health proof is then the
+      // ONLY completion moment the phone learns, and it owes the
+      // chat the same line (+139).
+      await withBridge();
+      unawaited(a.runQuickCommand('start a sleep'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'detached': 1,
+      };
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle(); // the launch turn closes, the debt keeps the line
+      expect(a.backgroundedWork, 'Bash sleep 20');
+      // The process ends without ever sending its receipt: /health
+      // now honestly counts zero detached.
+      harness.healthState = {...harness.healthState!, 'detached': 0};
+      time.advance(const Duration(seconds: 11));
+      await settle(); // the heartbeat's proof pays it
+      expect(a.backgroundedWork, isEmpty);
+      expect(
+        a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+        isTrue,
+        reason: 'the lost receipt must not swallow the announcement',
+      );
+    });
 
     test('the idle line wakes on the heartbeat when a report opens', () async {
       await withBridge();
@@ -2131,6 +2126,79 @@ void main() {
         harness.attachCount,
         greaterThan(attaches),
         reason: 'the probe woke the reattach chain for the report',
+      );
+    });
+
+    test('a report that opened and CLOSED between heartbeat beats is '
+        'drained, not retired over — the answer arrives now, not at the '
+        'next prompt (field report: no response unless I ask)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('start a sleep'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'detached': 1,
+        'missed': 0,
+      };
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle(); // the launch turn closes; the debt keeps the line
+      expect(a.backgroundedWork, 'Bash sleep 20');
+
+      // The report ran and finished BETWEEN beats: nothing open, none
+      // detached — but its words are unheard backlog. The proof that
+      // would retire the line must not outrank words it never heard.
+      harness.healthState = {
+        ...harness.healthState!,
+        'detached': 0,
+        'missed': 2,
+      };
+      final attaches = harness.attachCount;
+      time.advance(const Duration(seconds: 11));
+      await settle(); // the heartbeat fires on the missed backlog
+      time.advance(const Duration(seconds: 1));
+      await settle();
+      expect(
+        harness.attachCount,
+        greaterThan(attaches),
+        reason:
+            'unheard backlog outranks the retirement proof — drain '
+            'first, close the line only when the words have landed',
+      );
+      expect(a.backgroundedWork, isNotEmpty);
+
+      // The drain delivers the raced report; on the now-clean proof the
+      // line retires with its period, and the answer is in the chat.
+      harness.emitAttach(
+        const BridgeEvent.forTest('say', text: 'The sleep finished, exit 0.'),
+      );
+      harness.emitAttach(const BridgeEvent.forTest('done'));
+      harness.healthState = {...harness.healthState!, 'missed': 0};
+      await settle();
+      await settle();
+      expect(
+        a.chat.any((e) => e.blocks.contains('The sleep finished, exit 0.')),
+        isTrue,
+        reason:
+            'the report is HEARD, not left to burst out of a later '
+            'prompt\'s replay — out of sync',
+      );
+      time.advance(const Duration(seconds: 11));
+      await settle();
+      expect(
+        a.backgroundedWork,
+        isEmpty,
+        reason: 'only now — nothing open, none detached, NOTHING UNHEARD',
       );
     });
 

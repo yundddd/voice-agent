@@ -724,15 +724,18 @@ class VoiceAssistant extends ChangeNotifier {
     // with the turn never sends 'finished') — the backgrounded-work
     // line has no work left to name and retires on the proof.
     final det = h?['detached'];
+    final missedNow = (h?['missed'] as num?)?.toInt() ?? 0;
     if (h != null &&
         (_turn.detachedPromise || _harnessBackgrounded || _bgWork.isNotEmpty) &&
         h['turnOpen'] != true &&
         h['queued'] != true &&
-        (det is num ? det.toInt() : 0) == 0) {
-      // None-detached is proof for EVERY owed shell at once (+140):
-      // capture the ledger before the retirement clears it and file
-      // one period per name — the chat states what finished, not what
-      // the banner happened to be wearing.
+        (det is num ? det.toInt() : 0) == 0 &&
+        missedNow == 0) {
+      // None-detached AND nothing unheard is proof for EVERY owed
+      // shell at once (+140): capture the ledger before the
+      // retirement clears it and file one period per name — the chat
+      // states what finished, not what the banner happened to be
+      // wearing.
       final paid = _turn.agentDebts;
       _turn.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: health — nothing open, none detached');
@@ -740,6 +743,19 @@ class VoiceAssistant extends ChangeNotifier {
       for (final shell in paid) {
         _bgFinishedBubble(shell);
       }
+    } else if (h != null &&
+        showsBackgroundedWork &&
+        h['turnOpen'] != true &&
+        (det is num ? det.toInt() : 0) == 0 &&
+        missedNow > 0) {
+      // The report opened and CLOSED between beats: the debt is paid
+      // but its words still sit unheard in the bridge's backlog. A
+      // line retired over them strands the answer until the next
+      // prompt, where it bursts out of sync (field report: 'no
+      // response unless I ask'). Hold the line; ask the heartbeat NOW
+      // — _bgWake arms the drain that files or speaks them.
+      _logDebug('bg line holding for drain: missed=$missedNow');
+      _scheduleBgProbe(every: Duration.zero);
     }
     // A turn end (or boot, or setBridge) that leaves the bottom line
     // lit starts the heartbeat: +133's agent-backgrounded work reports
@@ -777,9 +793,11 @@ class VoiceAssistant extends ChangeNotifier {
     final h = await _gateway?.healthInfo();
     if (h == null) return;
     final det = h['detached'];
+    final missed = (h['missed'] as num?)?.toInt() ?? 0;
     if (h['turnOpen'] != true &&
         h['queued'] != true &&
-        (det is num ? det.toInt() : 0) == 0) {
+        (det is num ? det.toInt() : 0) == 0 &&
+        missed == 0) {
       final paid = _turn.agentDebts; // one period per owed shell (+140)
       _turn.retireBadgeAndWork();
       _logDebug('bg line retired: idle probe — nothing open, none detached');
@@ -789,11 +807,15 @@ class VoiceAssistant extends ChangeNotifier {
       }
       return;
     }
-    // Wake the ear only for a report that is STREAMING — during the
-    // debt phase (shell still running, nothing said yet) the chain's
-    // probe would find 'nothing open, nothing unheard' and ORPHAN-
-    // retire the very line this heartbeat exists to keep honest.
-    if ((h['turnOpen'] == true || h['backgrounded'] == true) &&
+    // Wake the ear for a report that is STREAMING, and — the case the
+    // 10 s beat could miss — for one that already OPENED AND CLOSED
+    // between two probes: then nothing is open and none is detached,
+    // but its words are the backlog (missed > 0), and a line retired
+    // over unheard words strands the answer until the next prompt
+    // delivers it out of sync (field report: 'no response unless I
+    // ask'). The chain's probe turns a missed>0 verdict into ATTACH;
+    // the replay dedups or ages whatever the beat raced.
+    if ((h['turnOpen'] == true || h['backgrounded'] == true || missed > 0) &&
         !_bridgeBusy &&
         !_turn.backgrounded &&
         !_benchCapturing &&

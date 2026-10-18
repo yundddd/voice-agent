@@ -363,7 +363,8 @@ void main() {
       expect(
         turn.agentWork,
         isTrue,
-        reason: '+140: dropping the SNAPSHOT says nothing about the '
+        reason:
+            '+140: dropping the SNAPSHOT says nothing about the '
             'PROCESS — the ledger outlives the line',
       );
       expect(
