@@ -76,7 +76,12 @@
 //                later — unless the queue came
 //                with ?interrupt=0 (the push-to-talk slide-right polite
 //                flavour): then the turn in flight is left to finish
-//                naturally and the queue flushes on its `result`. /stop hard-cuts an
+//                naturally and the queue flushes on its `result`.
+//                ?cuttool=1 (behaviour 2, the app's Queue button) is the
+//                middle flavour: polite while the agent merely thinks,
+//                but a RUNNING tool is backgrounded for this prompt —
+//                its late result relays a `tool finished` frame, the
+//                phone banner's retirement word. /stop hard-cuts an
 //                open turn either way, and flushes the queue on its
 //                result. Queuing goes quiet on the phone by default
 //                (status text only): the app speaks `tool` events as
@@ -109,6 +114,7 @@
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
+//                / detached (the cut-tool receipts still owed a `finished`)
 //                + context (last known tokens-in-context and the model's
 //                window, snapshotted at every result) + appLog (the
 //                phone-journal poller's peer / watermark / reachability)
@@ -246,6 +252,12 @@ const sidFile = join(dir, '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
+// Tool calls an interrupt (or a cuttool queue) orphaned: tool_use id →
+// the step label the phone put on its banner. Their late tool_results
+// relay a `tool finished` frame — the banner's retirement word — and
+// /health counts these as `detached` so the phone knows a promise is
+// still owed (and finds it honestly cleared when the process dies).
+const detached = new Map();
 // +106: the open turn was cut by interruptTurn to let a waiting prompt
 // through — its `result` is then the phone's own doing, and the `done`
 // relay skips it (see the result branch).
@@ -264,8 +276,9 @@ let turnStartAt = 0;    // when the open turn began (survives a detach: the
 // runs: an open tool means "genuinely working — queue mine behind it and
 // let the tool finish" (Claude Code backgrounding); none means "it is
 // only thinking — an in-band interrupt cuts that (the process survives),
-// my prompt starts in a heartbeat".
-const openTools = new Set();
+// my prompt starts in a heartbeat". Each id maps to its step label —
+// the banner line an interrupt leaves in its wake (see `detached`).
+const openTools = new Map();
 // ── Live token tally (the TUI's "thinking · N tokens" progress) ──
 // With --include-partial-messages the CLI streams `stream_event`
 // wrapper messages: message_start carries this call's input tokens
@@ -643,6 +656,9 @@ function spawnClaude(resume) {
                 : 'while idle (expected: /new kill or between-turns exit)'));
     turnOpen = false;
     openTools.clear();
+    detached.clear(); // a dead process retires no tool: no tool_result
+                      // will ever land to say 'finished' — the receipts
+                      // are gone, and /health honestly drops to 0
     if (curRes) endTurn();
     flushPending();
   });
@@ -775,8 +791,25 @@ function handleEvent(line) {
   if (m.type === 'assistant' || m.type === 'user') {
     const content = Array.isArray(m.message?.content) ? m.message.content : [];
     for (const c of content) {
-      if (c.type === 'tool_use' && c.id) openTools.add(c.id);
-      else if (c.type === 'tool_result' && c.tool_use_id) openTools.delete(c.tool_use_id);
+      if (c.type === 'tool_use' && c.id) {
+        // Map, not set: the value is the step label ('Bash npm test') —
+        // what the phone's banner names, and what a detached tool's
+        // 'finished' frame must carry when its result lands late (or
+        // in another turn's stream entirely).
+        const step = summarize(c);
+        openTools.set(c.id, step ? `${c.name} ${step}` : String(c.name ?? 'tool'));
+      } else if (c.type === 'tool_result' && c.tool_use_id) {
+        openTools.delete(c.tool_use_id);
+        // The result of a tool the interrupt put into background: the
+        // phone's banner promise retires HERE, whatever turn holds the
+        // view this lands in (the +99 contract behaviour 2 leans on).
+        const label = detached.get(c.tool_use_id);
+        if (label !== undefined) {
+          detached.delete(c.tool_use_id);
+          console.error(`  -> finished "${label}"`);
+          relay('tool', { name: 'finished', detail: label });
+        }
+      }
     }
     // A tool output is the next call's newest read: preview its weight
     // the moment it crosses the stream, so the bar grows WHILE the
@@ -1072,6 +1105,14 @@ function summarize(tool) {
 function interruptTurn() {
   if (!child || childDead) return;
   cutForPrompt = true; // this turn's result is a cut, not a close (+106)
+  // Whatever tool the cut turn was running becomes the phone's banner
+  // promise: its tool_result — whenever it arrives, in whichever turn
+  // holds the view then — relays the 'finished' frame that retires the
+  // banner. If the harness instead kills the tool with the turn, its
+  // error/absent result still clears the banner via /health (nothing
+  // open, nothing detached) — the app's dismissal paths admit every
+  // honest outcome.
+  for (const [id, label] of openTools) detached.set(id, label);
   if (dumpDir) {
     try {
       appendFileSync(join(dumpDir, 'MANIFEST'),
@@ -1145,12 +1186,41 @@ function flushPending() {
     // and one endTurn() detaches the view the same tick it appeared.
     const mute = { write: () => true, end: () => {}, on: () => {} };
     endKeep(p);
+    // The disposition, re-announced NOW (the enqueue-time notice may
+    // have been consumed-and-dropped by the superseded turn's dying
+    // poll loop — a shared ring cursor the phone cannot treat as
+    // reliable). A tagged started marker carries the background promise;
+    // the notice itself repeats verbatim so the phone's 'One moment'
+    // bubble survives the race on every transport.
+    if (p.interrupt || p.backgrounded) {
+      relay('tool', {
+        name: 'queued',
+        detail: p.hadTools
+          ? 'the running tool was put into background — the agent is '
+            + 'freed to answer you now'
+          : 'the thinking was interrupted and aborted; your message '
+            + 'goes next',
+      });
+    }
     // +81: the pickup marker. 'queued' is filed at ENQUEUE time; the
     // phone must dissolve its pin when the prompt is actually TAKEN —
     // on a shared ring, any older turn's frames would otherwise fake
     // the pickup. Rides the ring ahead of beginTurn's own frames.
-    relay('tool', { name: 'started', detail: p.text.slice(0, 60) });
+    // kind='background' (see above): THIS prompt cut a running tool —
+    // the phone's banner promise, delivered where it cannot be lost.
+    const marker = {
+      name: 'started',
+      detail: p.text.slice(0, 60),
+      ...(p.backgrounded ? {kind: 'background'} : {}),
+    };
+    relay('tool', marker);
     beginTurn(p.text, mute, 0);
+    // beginTurn wipes the backlog — old frames are stale for a replay,
+    // but the marker we just filed belongs to THIS turn and the wipe
+    // ate its copy. Re-file it: the drain /attach (the +104 flip's
+    // recovery) can retire the pin with it instead of fossilising it.
+    backlog.push({ ev: 'tool', data: marker });
+    if (backlog.length > BACKLOG_CAP) backlog.shift();
     endTurn();
     return;
   }
@@ -1158,21 +1228,26 @@ function flushPending() {
 }
 // [the phone's ear] is pressed to it) or only a BACKGROUNDED turn is
 // open. Either way a new prompt never waits on it — it is QUEUED at the
-// front (latest wins; the prior pending's response is ended). The
-// `interrupt` flag decides what happens to the turn in flight: true (the
-// default — typed text, conversation barge-in, PTT slide-UP) cuts the
-// turn with an in-band interrupt — thinking AND an in-flight tool call
-// alike (the +99 spec: the tool goes to background, the agent is freed
-// to answer the new message at once). Nothing but the model's WAITING
-// is aborted: the process never dies (no --resume, no cold prefill on
-// the next turn) — so its `result` flushes the queue in a heartbeat;
-// false (PTT slide-right, the polite queue) lets the in-flight turn
-// run to its natural end first. Whether the tool's own OS process
-// survives the abort is the harness's call — detached tool modes
-// survive, plain foreground waits may end with the turn; the phone's
-// notice words stay honest either way, and /stop remains the hard
-// flavour it always was.
-function talk(text, res, interrupt = true, poll = false) {
+// front (latest wins; the prior pending's response is ended). Two flags
+// decide what happens to the turn in flight: `interrupt` (the default —
+// typed text, conversation barge-in, PTT slide-UP) cuts the turn with an
+// in-band interrupt — thinking AND an in-flight tool call alike (the
+// +99 spec: the tool goes to background, the agent is freed to answer
+// the new message at once). Nothing but the model's WAITING is aborted:
+// the process never dies (no --resume, no cold prefill on the next
+// turn) — so its `result` flushes the queue in a heartbeat.
+// `cutTool` (behaviour 2, the Queue button) is the middle flavour:
+// polite as long as the agent is merely THINKING (the message goes next
+// when the turn settles), but the moment the agent is chewing on a TOOL
+// CALL it is backgrounded the same way — a queue press during a build
+// means "I need the agent now", and the tool's result lands whenever it
+// wants (the +99 detached-tool contract). false/false (PTT slide-right,
+// the pure polite queue) lets the in-flight turn run to its natural end
+// first. Whether the tool's own OS process survives the abort is the
+// harness's call — detached tool modes survive, plain foreground waits
+// may end with the turn; the phone's notice words stay honest either
+// way, and /stop remains the hard flavour it always was.
+function talk(text, res, interrupt = true, poll = false, cutTool = false) {
   // SSE comment pinger + quiet-token heartbeat (see startKeep): a
   // 3-minute gradle build emits nothing, and idle-detection on the link
   // (NAT, tailscale, Dart clients — including the app's 24 s quiet-wire
@@ -1207,23 +1282,46 @@ function talk(text, res, interrupt = true, poll = false) {
     // the queue; whichever event frees the floor (the attached turn's
     // `result` closes its stream, or the backgrounded one's) flushes it.
     if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); }
-    pending = { res, text, keep, poll, interrupt };
-    sse(res, 'tool', {
+    pending = {
+      res, text, keep, poll, interrupt,
+      // Remember what the cut decision saw, so the flush can re-announce
+      // both the notice wording and the background promise (see above).
+      hadTools: openTools.size > 0,
+      backgrounded:
+        (interrupt || (cutTool && openTools.size > 0)) && openTools.size > 0,
+    };
+    // The cut decision, once: an interrupt always cuts; a cutTool queue
+    // cuts ONLY a running tool (behaviour 2: polite towards thinking,
+    // the agent is freed the moment it is chewing on a command).
+    const cut = interrupt || (cutTool && openTools.size > 0);
+    const note = {
       name: 'queued',
       // +98: the notice names the OUTCOME the interrupt gesture caused
       // — the phone shows this line verbatim and the field report
       // asked to read exactly this: was my interrupt an abort or a
-      // backgrounding? A polite queue (interrupt=0) promises neither.
+      // backgrounding? A polite queue (interrupt=0, no cuttool)
+      // promises neither.
       detail: openTools.size
-        ? interrupt
+        ? cut
           ? 'the running tool was put into background — the agent is '
             + 'freed to answer you now'
           : 'a tool call is running; your message goes next when it settles'
-        : interrupt
+        : cut
           ? 'the thinking was interrupted and aborted; '
             + 'your message goes next'
           : 'finishing the current turn; your message goes next',
-    });
+      _ts: Date.now(),
+    };
+    sse(res, 'tool', note);
+    // The ring too (+behaviour 1): the poll client drains its POST
+    // response without reading it — without this frame on the ring it
+    // never learns WHAT KIND of queue it landed in, and the 'One
+    // moment' verdict — the answer to 'did the agent take my message?'
+    // — only ever showed on the push transport. Ring-only, never the
+    // /attach backlog: a queue notice belongs to the moment it was
+    // earned, not to a later replay.
+    ring.push({seq: ++ringSeq, ev: 'tool', data: note});
+    if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
     // Poll client: the queue notice is its confirmation — the turn's own
     // frames arrive through the ring when flushPending gives it the floor.
     if (poll) { try { res.end(); } catch {} }
@@ -1233,9 +1331,9 @@ function talk(text, res, interrupt = true, poll = false) {
     // next message.' The turn aborts within a heartbeat and
     // flushPending hands over the floor immediately; what the tool's
     // own process does next is the harness's business, probed and
-    // reported in the commit note. The polite queue (interrupt=0)
-    // still waits for the turn to settle on its own.
-    if (interrupt) interruptTurn();
+    // reported in the commit note. The polite queue (interrupt=0, no
+    // cuttool) still waits for the turn to settle on its own.
+    if (cut) interruptTurn();
     return;
   }
   if (poll) {
@@ -1451,6 +1549,11 @@ const server = http.createServer((req, res) => {
       now: Date.now(),
       turnOpen, queued: !!pending,
       backgrounded: turnOpen && !curRes,
+      // Open tool_use ids an interrupt (or a cuttool queue) parked
+      // out-of-earshot (+detached): every one owes the phone a
+      // `tool finished` frame, until its result lands or the process
+      // retires it.
+      detached: detached.size,
       // A turn (or its tail) ran with nobody listening: /attach replays
       // this many buffered events, even after the turn itself ended.
       missed: backlog.length,
@@ -1549,10 +1652,14 @@ const server = http.createServer((req, res) => {
         'cache-control': 'no-cache', connection: 'keep-alive' });
       // ?interrupt=0 = the polite queue (PTT slide-right): let the turn
       // in flight finish instead of interrupting a thinking-only one.
+      // ?cuttool=1 = the queue-with-backgrounding (behaviour 2, the
+      // app's Queue button): polite towards thinking, but a RUNNING
+      // tool is backgrounded so the agent is freed for this prompt.
       // ?poll=1 = pull transport: the response carries the first frames
       // and closes; the rest of the turn rides the ring to GET /poll.
       talk(body.trim(), res, url.searchParams.get('interrupt') !== '0',
-        url.searchParams.get('poll') === '1');
+        url.searchParams.get('poll') === '1',
+        url.searchParams.get('cuttool') === '1');
     } else if (url.pathname === '/stop') {
       // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
       // the phone is still listening to it or backgrounded it. Context
@@ -1566,6 +1673,7 @@ const server = http.createServer((req, res) => {
       sessionId = null;
       turnOpen = false;
       openTools.clear();
+      detached.clear(); // a fresh conversation inherits no banner promise
       // A reset conversation has nothing unheard: drop the replay backlog
       // or the next /attach (a later cold start, a respawned app) dutifully
       // re-speaks the dead conversation's tail as if it still mattered.

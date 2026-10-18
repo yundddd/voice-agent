@@ -121,19 +121,26 @@ class FakeHarness implements HarnessGateway {
   /// The interrupt flavour of the last talk()/talkPoll().
   bool lastInterrupt = true;
 
+  /// The queue-with-backgrounding flavour of the last send.
+  bool lastCutTool = false;
+
   /// Poll transport: pages GET /poll returns, in order (null answers
   /// stand in for an unreachable ring).
   final List<Map<String, Object>?> pollPages = [];
   int pollCount = 0;
+  int lastPollSince = -1;
 
   @override
   Stream<BridgeEvent> talk(
     String text, {
     bool interrupt = true,
+    bool cutTool = false,
     void Function()? onActivity,
   }) {
     talkCount++;
     lastInterrupt = interrupt;
+    lastCutTool = cutTool;
+    turnOpenOnServer = true; // the harness holds the floor until done
     final ctl = StreamController<BridgeEvent>();
     ctl.onCancel = () => viewDetached = true;
     view = ctl;
@@ -141,14 +148,20 @@ class FakeHarness implements HarnessGateway {
   }
 
   @override
-  Future<void> talkPoll(String text, {bool interrupt = true}) async {
+  Future<void> talkPoll(
+    String text, {
+    bool interrupt = true,
+    bool cutTool = false,
+  }) async {
     talkPollCount++;
     lastInterrupt = interrupt;
+    lastCutTool = cutTool;
   }
 
   @override
   Future<Map<String, Object>?> poll(int since) async {
     pollCount++;
+    lastPollSince = since;
     if (pollPages.isEmpty) {
       // Empty ring answer; head pinned high so no test can
       // mistake it for a young ring (the reset rewind).
@@ -175,15 +188,38 @@ class FakeHarness implements HarnessGateway {
   @override
   Future<String?> health() async => healthState == null ? 'unreachable' : null;
 
+  /// True while a talk()/talkPoll() turn runs and no finishView() landed:
+  /// healthInfo() reports it unless the test scripts `turnOpen` itself —
+  /// the phone's banner-retire rule reads this field and must not be
+  /// fooled by a default snapshot into clearing a line for live work.
+  bool turnOpenOnServer = false;
+
   @override
-  Future<Map<String, Object>?> healthInfo() async => healthState;
+  Future<Map<String, Object>?> healthInfo() async {
+    final h = healthState;
+    if (h == null) return null;
+    if (h.containsKey('turnOpen')) return h;
+    return {...h, 'turnOpen': turnOpenOnServer};
+  }
 
   @override
   Future<bool> pushJournal(Map<String, Object> envelope) async => true;
 
-  void emit(BridgeEvent ev) => view?.add(ev);
-  void emitAttach(BridgeEvent ev) => attachView?.add(ev);
-  void finishView() => view?.close();
+  void emit(BridgeEvent ev) {
+    if (ev.isDone) turnOpenOnServer = false; // the result closed the turn
+    view?.add(ev);
+  }
+
+  void emitAttach(BridgeEvent ev) {
+    if (ev.isDone) turnOpenOnServer = false;
+    attachView?.add(ev);
+  }
+
+  void finishView() {
+    turnOpenOnServer = false;
+    view?.close();
+  }
+
   void finishAttach() => attachView?.close();
 
   /// A ring page carrying events with seq numbers above [since].

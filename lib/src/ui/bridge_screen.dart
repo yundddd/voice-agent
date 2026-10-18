@@ -260,6 +260,20 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   'which are harness turns even in parrot mode.)',
                 ),
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: a.bridgeTts,
+                onChanged: (v) => a.setBridgeTts(v),
+                title: const Text('Speak replies (TTS)'),
+                subtitle: const Text(
+                  'On (factory): harness answers are spoken back. Off: '
+                  'replies land as chat text only — nothing synthesises '
+                  'or plays, the voice pack is not even required at '
+                  'boot, and typed sends work while models are still '
+                  'loading. The volume icon beside the composer flips '
+                  'the same switch.',
+                ),
+              ),
               Text(
                 'Session controls on the main screen',
                 style: Theme.of(context).textTheme.titleMedium,

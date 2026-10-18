@@ -324,6 +324,12 @@ class VoiceAssistant extends ChangeNotifier {
   // it: a counter is not a tool call.
   String _lastToolStep = '';
   String _bgWork = '';
+  // The cut-tool promise (behaviours 2/4): the bridge's 'queued' notice
+  // said a tool went to background; the banner stands on this third
+  // warrant even after the pin dissolved and the badge fell — until the
+  // tool's 'finished' frame or a /health proving nothing is (or waits
+  // to be) open retires it.
+  bool _bgDetached = false;
   BridgeTurnPump? _pump; // live /talk listener — detached to BACKGROUND
   // ── Stream reattach: surviving a background→foreground blink ──────────
   // The quiet-wire lease lives in [WireLease]; the retry ladder exists
@@ -442,15 +448,19 @@ class VoiceAssistant extends ChangeNotifier {
   bool get bridgeBusy => _bridgeBusy;
   bool get harnessBackgrounded => _harnessBackgrounded;
 
-  /// The persistent bottom line's label: the last real tool step the
-  /// out-of-earshot work attested to, and ONLY while a line is actually
-  /// warranted — the badge (detached turn still working) or the queue
-  /// pin (a press parked behind that work). Every completion path
-  /// clears one of those two, so the empty string IS the auto-dismiss:
-  /// /stop, an orphan retire, a health probe that finds nothing open,
-  /// or the 'started' pickup ack proving the tool finished.
-  String get backgroundedWork =>
-      _harnessBackgrounded || _chat.queuedBubble != null ? _bgWork : '';
+  /// Whether the channel's bottom line is warranted right now: the
+  /// badge (a detached turn still working), the queue pin (a press
+  /// parked behind that work), or [_bgDetached] — a tool THIS press cut
+  /// into background, which the bridge's 'finished' frame retires (or a
+  /// /health read that finds nothing open and nothing detached). Every
+  /// completion path clears one of the three, so a false here IS the
+  /// auto-dismiss.
+  bool get showsBackgroundedWork =>
+      _harnessBackgrounded || _bgDetached || _chat.queuedBubble != null;
+
+  /// The bottom line's label: the last real tool step the out-of-
+  /// earshot work attested to, and only while warranted ([showsBackgroundedWork]).
+  String get backgroundedWork => showsBackgroundedWork ? _bgWork : '';
 
   /// Start of the backgrounded turn (epoch ms, 0 = unknown) for the
   /// bottom line's 'since HH:MM:SS'; its live age is [harnessElapsed].
@@ -466,6 +476,11 @@ class VoiceAssistant extends ChangeNotifier {
   String get bridgeUrlText => _bridgePrefs.url;
   String get bridgeTokenText => _bridgePrefs.token;
   bool get bridgeNarrate => _bridgePrefs.narrate;
+  bool get bridgeTts => _bridgePrefs.tts;
+
+  /// Replies speak only when the TTS pref is on (see BridgePrefs.tts):
+  /// the text-only gate every audio path consults.
+  bool get _ttsOff => !_bridgePrefs.tts;
 
   /// The harness conversation's fingerprint (GET /health sessionId), kept
   /// current for the chat screen's top row: refreshed at boot and at the
@@ -518,6 +533,39 @@ class VoiceAssistant extends ChangeNotifier {
       final i = ctx['in'], w = ctx['window'];
       _mergeContext(i is num ? i.toInt() : 0, w is num ? w.toInt() : 0);
     }
+    // The banner's safety net: if the bridge reports NOTHING open — no
+    // turn, no queue, no detached tool (a harness that killed the tool
+    // with the turn never sends 'finished') — the backgrounded-work
+    // line has no work left to name and retires on the proof.
+    final det = h?['detached'];
+    if (h != null &&
+        (_bgDetached || _harnessBackgrounded || _bgWork.isNotEmpty) &&
+        h['turnOpen'] != true &&
+        h['queued'] != true &&
+        (det is num ? det.toInt() : 0) == 0) {
+      _bgDetached = false;
+      _harnessBackgrounded = false;
+      _bgWork = '';
+      _logDebug('bg line retired: health — nothing open, none detached');
+      notifyListeners();
+    }
+  }
+
+  /// The proof-of-completion the background banner waits for (bridge
+  /// `tool finished` frame): one stamped bubble records the moment, the
+  /// bottom line retires. (behaviours 2/4)
+  void _retireBgWork(String label) {
+    _bgDetached = false;
+    _bgWork = '';
+    final note = '${label.isEmpty ? 'The background tool' : label} finished.';
+    // Idempotent: a backlog replay may deliver the frame after the live
+    // view already retired on it — one completion, one period.
+    if (_chat.containsBlock(note)) {
+      _logDebug('msg bg done: "$label" already retired');
+      return;
+    }
+    _chat.addSystemNote(note);
+    _logDebug('msg bg done: "$label" retired the line');
   }
 
   // ── Live token ticker API (see TokenTicker) ────────────────────────────
@@ -548,6 +596,45 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgePrefs.narrate = on;
     await _saveBridgePrefs();
     notifyListeners();
+  }
+
+  /// 'Speak replies' switch (see [BridgePrefs.tts]). Off is the
+  /// eyes-only mode for testing and degraded links: harness answers
+  /// land as chat text, nothing synthesises or plays — and the send
+  /// gate stops demanding the audio worker, so a phone with the models
+  /// still downloading (or with no TTS pack at all) can still drive
+  /// the harness from the text box.
+  Future<void> setBridgeTts(bool on) async {
+    _bridgePrefs.tts = on;
+    await _saveBridgePrefs();
+    if (on) {
+      // Boot with the switch off skipped the voice pack entirely; back
+      // on, put the engine right back on the worker before any reply
+      // can want it.
+      try {
+        await _ensureVoice();
+      } catch (e) {
+        _fail('Voice could not be loaded: $e');
+      }
+    }
+    _logDebug('tts ${on ? 'on' : 'off'}');
+    notifyListeners();
+  }
+
+  /// The worker may carry no engine at all (TTS was off when boot
+  /// skipped the voice pack): load the saved voice NOW, before the
+  /// first spoken block, so the flip-to-on never drops a reply.
+  Future<void> _ensureVoice() async {
+    final w = _worker;
+    if (w == null || w.ttsNumSpeakers > 0) return;
+    final voice = voiceById(_prefs.voiceId) ?? voiceById('kokoro')!;
+    await voice.ensureIn(
+      _modelsDir,
+      onProgress: _modelProgress,
+      sid: _prefs.sid,
+    );
+    _ttsNumSpeakers = await w.useTts(await _spec(voice, sid: _prefs.sid));
+    _activeVoiceId = voice.id;
   }
 
   /// Prefs live in the models dir — a toggle flipped before init
@@ -620,6 +707,12 @@ class VoiceAssistant extends ChangeNotifier {
     String? ack,
     String? status,
     bool interrupt = true,
+    // Queue-with-backgrounding (behaviour 2): a POLITE queue that still
+    // cuts a running tool. The bridge decides from its own openTools
+    // bookkeeping — thinking turns keep being heard to their end, a
+    // tool call gets put into background and the agent is freed for
+    // this prompt at once. Only meaningful with interrupt: false.
+    bool cutTool = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
     final gateway = _gateway;
@@ -639,18 +732,36 @@ class VoiceAssistant extends ChangeNotifier {
     // A live turn (even a softly-detached one — detach keeps the busy
     // flag) means an interrupt-off prompt goes behind it on the bridge:
     // capture that before the abandon so the bubble knows to wear the
-    // pin until the harness actually starts on it.
-    final queuedBehindLiveTurn =
-        !interrupt && (_bridgeBusy || _harnessBackgrounded);
+    // pin until the harness actually starts on it. On the POLL ring the
+    // same fact arms the pump's pre-pickup armor: a parked POST must
+    // survive the busy turn's farewell done (see the transport).
+    final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
+    final queuedBehindLiveTurn = !interrupt && bridgeHadLiveTurn;
     _generation++;
     _abandonBridgeTurn();
-    if (_worker == null) {
+    if (_worker == null && !_ttsOff) {
+      // TTS off means this send needs no audio machinery at all: the
+      // text box answers even while the models are still loading.
       _fail('Models are still loading — try again in a moment.');
       return;
     }
     if (bubble != null && bubble.trim().isNotEmpty) {
       _chat.addUser(bubble.trim(), queued: queuedBehindLiveTurn);
     }
+    // The bubble this send may have pinned: remembered so a superseded
+    // queue-turn can retire the pin instead of fossilising it (the
+    // bridge's pending slot is latest-wins — a replaced prompt never
+    // gets its 'started'). A wire death of the SAME generation keeps
+    // the pin: the bridge still owes the prompt (+104) and the pickup
+    // marker will arrive through whatever view returns.
+    final ChatEntry? pinnedByMe = queuedBehindLiveTurn
+        ? _chat.queuedBubble
+        : null;
+    // A pin drops ONLY when a newer PROMPT supersedes this one (the
+    // bridge's one pending slot is latest-wins). Bumps from bridgeStop
+    // or a reattach do not void the promise — after a /stop the bridge
+    // still flushes the queued prompt, whose 'started' unpins then.
+    final myPromptBumps = ++_promptBumps;
     // One assistant bubble for the whole turn, sections appended as each
     // say's audio queues (text follows the voice, never leads it). An
     // interrupted turn keeps the sections actually spoken — that IS what
@@ -661,6 +772,10 @@ class VoiceAssistant extends ChangeNotifier {
     final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
     _bridgeBusy = true;
     _harnessBackgrounded = false; // this turn is heard, not invisible
+    _lastToolStep = ''; // the new turn's identity starts clean: the
+    // abandoned turn's label is snapshotted into _bgWork (see
+    // _abandonBridgeTurn); carrying it forward would let a later cut
+    // name a step this turn never took.
     _harnessSince = _clock(); // the chat spinner counts from here
     // This utterance supersedes whatever a reattach chain was about to
     // re-hear: its own stream is the ear now, and a chain attach landing
@@ -710,6 +825,16 @@ class VoiceAssistant extends ChangeNotifier {
     Future<void> speak(String text) async {
       _narr.audioActivity(); // audio just became active: hush
       _lastReplyText = text;
+      if (_ttsOff) {
+        // Eyes-only mode: the words land in the bubble NOW (screen is
+        // the ear), and the heard-ledger is written here exactly like
+        // the first-audio commit of the spoken path — so a later ring
+        // or backlog replay dedups against it and never duplicates the
+        // paragraph into a second bubble.
+        spoken.write('$text ');
+        _chat.addBlock(turn, text);
+        return;
+      }
       if (_backgrounded) {
         // App is hidden: keep drinking the harness's firehose but skip
         // synth and audio entirely (the speaker is gone anyway). The
@@ -774,10 +899,18 @@ class VoiceAssistant extends ChangeNotifier {
       beforeEvent: (ev) {
         _hops.reply(); // harness→reply hop crossed: bytes arrived
         // Push view: our stream is silent until the flush, so ANY
-        // frame is the pickup. Poll view: the ring also carries the
-        // turn we queued BEHIND — only the bridge's explicit 'started'
-        // marker (tool branch below) may dissolve the pin there.
-        if (!_transport.turnViaPoll) _chat.unpinQueued();
+        // frame is the pickup — EXCEPT the bridge's 'queued' notice,
+        // which is the OPPOSITE promise (behaviour 1: a busy bridge
+        // answers a queue POST with this frame immediately, and the
+        // pin must keep watching the bottom of the channel until the
+        // turn actually starts). Poll view: the ring also carries the
+        // turn we queued BEHIND — only the bridge's explicit
+        // 'started' marker (tool branch below) may dissolve the pin
+        // there (+81).
+        if (!_transport.turnViaPoll &&
+            !(ev.kind == 'tool' && ev.toolName == 'queued')) {
+          _chat.unpinQueued();
+        }
       },
       isStale: () => gen != _generation,
       onEvent: (ev) async {
@@ -809,17 +942,39 @@ class VoiceAssistant extends ChangeNotifier {
         } else if (ev.kind == 'tool') {
           if (ev.toolName == 'started') {
             // The queue's pickup ack (bridge +81): Claude Code has the
-            // prompt NOW. Dissolve the pin, journal the hand-off — and
-            // retire the backgrounded-work line: the tool it named is
-            // done by definition (the bridge flushes only a closed
-            // turn), so the bottom row has nothing left to promise.
+            // prompt NOW. Dissolve the pin and journal the hand-off.
+            // A marker tagged kind='background' says THIS prompt cut a
+            // running tool: raise the banner promise (on the poll
+            // transport this is the disposition's reliable delivery —
+            // the enqueue notice rides a shared cursor the dying turn
+            // can consume and drop). Otherwise the prior turn settled
+            // before the flush: the tool that predates a polite pickup
+            // is closed by definition, so retire the line now.
             _chat.unpinQueued();
-            _lastToolStep = '';
-            _bgWork = '';
+            if (ev.toolKind == 'background') {
+              _bgDetached = true;
+              if (_bgWork.isEmpty) _bgWork = _lastToolStep;
+            } else if (!_bgDetached) {
+              _bgWork = '';
+              _lastToolStep = '';
+            }
             _logDebug(
               'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
             );
             return;
+          }
+          if (ev.toolName == 'finished') {
+            _retireBgWork(ev.detail);
+            return;
+          }
+          if (ev.toolName == 'queued' &&
+              ev.detail.toLowerCase().contains('background')) {
+            // The bridge's cut notice (+98 wording): the tool this turn
+            // was running is OUT OF EARSHOT now — the banner's third
+            // warrant, surviving the pin's dissolve and the badge's
+            // fall until the completion frame lands.
+            _bgDetached = true;
+            if (_bgWork.isEmpty) _bgWork = _lastToolStep;
           }
           final tally = ev.toolName == 'tokens';
           _logDebug(
@@ -879,7 +1034,9 @@ class VoiceAssistant extends ChangeNotifier {
               // its OWN bubble instead of a block inside whichever
               // turn happens to be open: the verdict is about the
               // interruption, not the answer, and it must not vanish
-              // with (or pollute) either turn. Eyes-only, as ever.
+              // with (or pollute) either turn. One event, one bubble:
+              // addSystemNote's adjacency guard absorbs the poll
+              // transport's double delivery. Eyes-only, as ever.
               _chat.addSystemNote(stepLine);
               latestWork = '';
             } else {
@@ -961,6 +1118,8 @@ class VoiceAssistant extends ChangeNotifier {
               gateway,
               utterance,
               interrupt,
+              cutTool: cutTool && !interrupt,
+              awaitingPickup: bridgeHadLiveTurn,
               onActivity: _lease.markAlive,
             ),
       );
@@ -1038,6 +1197,16 @@ class VoiceAssistant extends ChangeNotifier {
           _chat.addBlock(turn, 'Interrupted before answering.');
         }
         _chat.markInterrupted(turn);
+        // A queue press that never reached the harness before a NEWER
+        // PROMPT superseded it: its promise died with the bridge's
+        // single pending slot (latest wins), so retire the pin — an
+        // orphaned pin is the fossilised 'queued' bubble the field
+        // reports call redundancy. A supersede by /stop (no newer
+        // prompt) keeps it: the bridge still flushes, and the 'started'
+        // marker retires the pin then.
+        if (_promptBumps != myPromptBumps) {
+          _chat.dropPin(pinnedByMe);
+        }
       }
       if (turn.isEmpty) _chat.removeEmptyTurn(turn);
       if (gen == _generation) {
@@ -1209,6 +1378,14 @@ class VoiceAssistant extends ChangeNotifier {
   /// detach), and
   /// leave the conversation usable — a follow-up utterance goes straight
   /// out, the interrupted session context carries over.
+  // Queue-prompt bookkeeping: every runQuickCommand (a NEW USER PROMPT)
+  // bumps this alongside _generation. A queue turn's finally drops its
+  // pin on supersede only when a NEWER PROMPT caused the supersede —
+  // bridgeStop/reattach bumps also move _generation, but after a /stop
+  // the bridge FLUSHES the pinned prompt (its 'started' unpins then);
+  // dropping the pin there would lie about a promise being kept.
+  int _promptBumps = 0;
+
   void bridgeStop() {
     if (_harnessBackgrounded) {
       // A turn the phone detached is still working invisibly: /stop hits
@@ -1303,7 +1480,7 @@ class VoiceAssistant extends ChangeNotifier {
         flagsProvider: _journalFlags,
       );
       final carried = j.seq > 0
-          ? ' — carried over $j.seq events across the process gap'
+          ? ' — carried over ${j.seq} events across the process gap'
           : '';
       await j.log(
         'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
@@ -1332,15 +1509,24 @@ class VoiceAssistant extends ChangeNotifier {
       }
       _prefs.voiceId = voice.id;
       // Only the saved style's graph for student rosters — the rest
-      // download on pick, like every other pack here.
-      await voice.ensureIn(
-        modelsDir,
-        onProgress: _modelProgress,
-        sid: _prefs.sid,
+      // download on pick, like every other pack here. With TTS off the
+      // worker starts voice-less on purpose (the pack can be hundreds
+      // of MB): setBridgeTts(true) ensures and hot-swaps it later.
+      final ttsOn = _bridgePrefs.tts;
+      _logDebug(
+        'boot: voice pack ${ttsOn ? 'required' : 'skipped (TTS off — '
+                  'setBridgeTts(true) ensures it on demand)'}',
       );
+      if (ttsOn) {
+        await voice.ensureIn(
+          modelsDir,
+          onProgress: _modelProgress,
+          sid: _prefs.sid,
+        );
+      }
       _worker = await SpeechWorker.start(
         ModelPaths.fromModelsDir(modelsDir),
-        tts: await _spec(voice, sid: _prefs.sid),
+        tts: ttsOn ? await _spec(voice, sid: _prefs.sid) : null,
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
       );
@@ -2052,6 +2238,14 @@ class VoiceAssistant extends ChangeNotifier {
     final rAired = <String>{};
     Future<void> speak(String text) async {
       _lastReplyText = text;
+      if (_ttsOff) {
+        // Eyes-only mode (see the main loop's speak): the block lands
+        // on screen and the chat log — its containsBlock answer IS the
+        // dedup ledger, no audio debt to retract.
+        spoken.write('$text ');
+        _chat.addBlock(turn, text);
+        return;
+      }
       rCommitted.add(text);
       _inFlight.add(text); // +115: a replayed paragraph is equally
       // unheard until its own audio starts
@@ -2127,8 +2321,7 @@ class VoiceAssistant extends ChangeNotifier {
                 : '${_transport.wireAgeMs(ev) ~/ 1000}s old';
             _logDebug('replay $ageSec: logged silently, not spoken');
           } else if (sayText.isNotEmpty &&
-              (_chat.containsBlock(sayText) ||
-                  _inFlight.contains(sayText))) {
+              (_chat.containsBlock(sayText) || _inFlight.contains(sayText))) {
             // Already heard — or already airborne in this process.
             // +116 makes the first half TRUE: the persisted log only
             // ever carries blocks whose audio started, so containsBlock
@@ -2156,13 +2349,34 @@ class VoiceAssistant extends ChangeNotifier {
             _mergeContext(ev.inputTokens, ev.contextWindow);
           } else if (ev.kind == 'tool') {
             if (ev.toolName == 'started') {
+              // Pickup of the queued prompt — the pin goes. A marker
+              // tagged kind='background' means this prompt cut a tool:
+              // raise the banner for its 'finished' frame. Otherwise the
+              // prior turn settled first, so the line retires (see the
+              // /talk loop's identical branch).
               _chat.unpinQueued();
-              _lastToolStep = ''; // the named background tool finished
-              _bgWork = ''; // — the bottom line dismisses with the pin
+              if (ev.toolKind == 'background') {
+                _bgDetached = true;
+                if (_bgWork.isEmpty) _bgWork = _lastToolStep;
+              } else if (!_bgDetached) {
+                _bgWork = '';
+                _lastToolStep = '';
+              }
               _logDebug(
                 'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
               );
               return;
+            }
+            if (ev.toolName == 'finished') {
+              // Replayed from the backlog: the completion lands late,
+              // and the story still deserves its period.
+              _retireBgWork(ev.detail);
+              return;
+            }
+            if (ev.toolName == 'queued' &&
+                ev.detail.toLowerCase().contains('background')) {
+              _bgDetached = true;
+              if (_bgWork.isEmpty) _bgWork = _lastToolStep;
             }
             final tally = ev.toolName == 'tokens';
             _logDebug(
@@ -2297,6 +2511,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   bool _conversationWasLive = false;
   bool _backgrounded = false;
+
   /// +115: paragraphs this process has committed to the ledger whose
   /// audio has NOT started — mid-synth or queued. The replay dedup
   /// consults this beside the log: after a process death (an APK swap
@@ -2858,7 +3073,11 @@ class VoiceAssistant extends ChangeNotifier {
 
   // ── Turn processing (shared by both modes) ─────────────────────────────
 
-  Future<void> _startTurn(Float32List samples, {bool interrupt = true}) async {
+  Future<void> _startTurn(
+    Float32List samples, {
+    bool interrupt = true,
+    bool cutTool = false,
+  }) async {
     final gen = ++_generation; // any newer turn supersedes this one
     _ptt.bridgeHold = false; // the hold is over: the turn owns the choice now
     _phase = AssistantPhase.transcribing;
@@ -2936,9 +3155,12 @@ class VoiceAssistant extends ChangeNotifier {
         // thinking turn so the new prompt starts in a heartbeat.
         _abandonBridgeTurn();
         _logDebug(
-          '→ harness: bubble added, POSTing /talk (interrupt=$interrupt)',
+          '→ harness: bubble added, POSTing /talk (interrupt=$interrupt '
+          'cutTool=$cutTool)',
         );
-        unawaited(runQuickCommand(text, interrupt: interrupt));
+        unawaited(
+          runQuickCommand(text, interrupt: interrupt, cutTool: cutTool),
+        );
         return;
       }
 
@@ -3175,8 +3397,15 @@ class VoiceAssistant extends ChangeNotifier {
     // A slide-right release is the POLITE queue (interrupt: false): if
     // the bridge still has a turn in flight (the one this hold detached,
     // or an older one backgrounded unheard), this prompt waits for it to
-    // finish. Everything else keeps the established takeover flavour.
-    await _startTurn(cleaned, interrupt: interrupt || !bridgeHold);
+    // finish — THINKING at least. A running TOOL still goes to
+    // background (cutTool, behaviour 2): nobody press-and-holds the mic
+    // through a five-minute build just to keep waiting politely.
+    // Everything else keeps the established takeover flavour.
+    await _startTurn(
+      cleaned,
+      interrupt: interrupt || !bridgeHold,
+      cutTool: bridgeHold && !interrupt,
+    );
   }
 
   /// Word-overlap test: did the mic just pick up our own TTS output?

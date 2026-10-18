@@ -33,7 +33,27 @@ class _AssistantScreenState extends State<AssistantScreen>
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
+  final TextEditingController _composer = TextEditingController();
   int _seenChatVersion = 0; // drives auto-follow while chat grows
+
+  /// The composer's two flavours of send (the PTT gestures said as
+  /// buttons, for ASR-free testing and typing). Queue = the polite
+  /// queue that still backgrounds a RUNNING tool (cuttool at the
+  /// bridge — behaviour 2); Interrupt = cut whatever is in flight
+  /// (aborts thinking, backgrounds a tool — behaviours 3/4).
+  void _sendComposer({required bool interrupt}) {
+    final v = _composer.text.trim();
+    if (v.isEmpty) return;
+    _composer.clear();
+    unawaited(
+      _assistant.runQuickCommand(
+        v,
+        bubble: v,
+        interrupt: interrupt,
+        cutTool: !interrupt,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -48,6 +68,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scroll.dispose();
+    _composer.dispose();
     _assistant.dispose();
     super.dispose();
   }
@@ -272,13 +293,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                               ),
                             // A backgrounded tool call keeps a permanent
                             // line at the channel's bottom while it works
-                            // unheard: the badge (detached turn) or a queue
-                            // pin naming the work is its proof-of-life, and
-                            // it dismisses itself the moment the turn is
-                            // heard again, stopped, or proven finished.
-                            if (a.harnessBackgrounded ||
-                                (a.queuedBubble != null &&
-                                    a.backgroundedWork.isNotEmpty))
+                            // unheard: the badge (detached turn), a queue
+                            // pin, or a cut-tool promise all warrant it
+                            // (showsBackgroundedWork), and it dismisses
+                            // itself the moment the turn is heard again,
+                            // stopped, or the tool's 'finished' frame lands.
+                            if (a.showsBackgroundedWork)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 4,
@@ -328,11 +348,64 @@ class _AssistantScreenState extends State<AssistantScreen>
                     ],
                   ),
                 ),
+                // The text composer: the harness reachable without ever
+                // waking the mic (ASR-free by construction), and one
+                // switch that silences the speaker so a screenshot IS
+                // the receipt. [Queue] parks the prompt behind live
+                // work — and backgrounds a RUNNING tool (behaviour 2);
+                // [Interrupt] cuts what's in flight: thinking aborted,
+                // tool backgrounded, the new answer starts now
+                // (behaviours 3/4). The TTS icon flips
+                // BridgePrefs.tts — off means replies land as text
+                // only, nothing synthesises, and the voice pack is not
+                // even required.
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: const Key('composer'),
+                          controller: _composer,
+                          textInputAction: TextInputAction.send,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            hintText: 'Type to the harness…',
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) => _sendComposer(interrupt: true),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip:
+                            'Queue — polite behind the current turn'
+                            ' (a running tool is put into background)',
+                        icon: const Icon(Icons.playlist_add),
+                        onPressed: () => _sendComposer(interrupt: false),
+                      ),
+                      IconButton(
+                        tooltip:
+                            'Interrupt — cut the current turn and answer this',
+                        icon: const Icon(Icons.bolt),
+                        onPressed: () => _sendComposer(interrupt: true),
+                      ),
+                      IconButton(
+                        tooltip: a.bridgeTts
+                            ? 'TTS on — tap to silence replies'
+                            : 'TTS off — tap to speak replies',
+                        icon: Icon(
+                          a.bridgeTts ? Icons.volume_up : Icons.volume_off,
+                        ),
+                        onPressed: () =>
+                            unawaited(a.setBridgeTts(!a.bridgeTts)),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 16),
               ],
               LatencyStrip(assistant: a),
-              if (_debugMode &&
-                  (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
+              if (_debugMode && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Column(
@@ -478,20 +551,22 @@ String hintFor({
       switch (slide) {
         PttSlide.up => 'Release to interrupt',
         PttSlide.right => 'Release to discard',
-        PttSlide.none => holdOverTurn
-            ? 'Release to queue — up to interrupt — right to dismiss'
-            : 'Release to send — right to dismiss',
+        PttSlide.none =>
+          holdOverTurn
+              ? 'Release to queue — up to interrupt — right to dismiss'
+              : 'Release to send — right to dismiss',
       },
     AssistantPhase.transcribing || AssistantPhase.speaking =>
       // A press now records over the harness too: short tap = hard
       // stop, a hold queues (slide up cuts a thinking turn; an open
       // tool always finishes first — your message goes next).
       bridgeBusy
-      ? 'Working — press and hold to steer'
-      : 'Interrupt — press and talk',
-    _ => harnessBackgrounded
-        ? 'Hold to talk — the harness keeps working unheard'
-        : 'Hold to talk',
+          ? 'Working — press and hold to steer'
+          : 'Interrupt — press and talk',
+    _ =>
+      harnessBackgrounded
+          ? 'Hold to talk — the harness keeps working unheard'
+          : 'Hold to talk',
   },
   InteractionMode.conversation => switch (phase) {
     AssistantPhase.listening => 'End conversation',

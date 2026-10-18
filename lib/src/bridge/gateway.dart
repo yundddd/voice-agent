@@ -24,7 +24,11 @@ abstract class HarnessGateway {
   ///
   /// [interrupt] decides what a QUEUED prompt does to a turn already in
   /// flight: true interrupts a mere thinking turn in-band; false lets
-  /// the work finish first (the polite queue).
+  /// the work finish first (the polite queue). [cutTool] is the
+  /// middle flavour (queue-with-backgrounding): polite for thinking
+  /// turns, but a RUNNING TOOL is put into background so the agent is
+  /// freed for this prompt at once. The bridge owns the decision — it
+  /// alone knows whether a tool is open at the moment the prompt lands.
   ///
   /// [onActivity] fires for every raw chunk the connection delivers —
   /// event frames AND keep-alive pings — the liveness signal behind the
@@ -32,12 +36,17 @@ abstract class HarnessGateway {
   Stream<BridgeEvent> talk(
     String text, {
     bool interrupt = true,
+    bool cutTool = false,
     void Function()? onActivity,
   });
 
   /// Pull transport: start a turn whose events are read from the ring
   /// with [poll] instead of a pushed stream.
-  Future<void> talkPoll(String text, {bool interrupt = true});
+  Future<void> talkPoll(
+    String text, {
+    bool interrupt = true,
+    bool cutTool = false,
+  });
 
   /// One ring page: events with seq > [since]; null = unreachable.
   Future<Map<String, Object>?> poll(int since);

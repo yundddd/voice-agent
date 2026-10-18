@@ -52,9 +52,10 @@ class BridgeClient extends HarnessGateway {
         );
       }
       yield* bridgeEventsFromLines(
-        _tapped(res.transform(utf8.decoder), onActivity).transform(
-          const LineSplitter(),
-        ),
+        _tapped(
+          res.transform(utf8.decoder),
+          onActivity,
+        ).transform(const LineSplitter()),
       );
     } on BridgeException {
       rethrow;
@@ -81,29 +82,38 @@ class BridgeClient extends HarnessGateway {
   Stream<BridgeEvent> talk(
     String text, {
     bool interrupt = true,
+    bool cutTool = false,
     void Function()? onActivity,
-  }) => _sse(
-    (client) async {
-      final req = await client.postUrl(
-        _u('/talk', {'interrupt': interrupt ? '1' : '0'}),
-      );
-      req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
-      req.add(utf8.encode(text));
-      return req;
-    },
-    onActivity,
-  );
+  }) => _sse((client) async {
+    final req = await client.postUrl(
+      _u('/talk', {
+        'interrupt': interrupt ? '1' : '0',
+        if (cutTool && !interrupt) 'cuttool': '1',
+      }),
+    );
+    req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
+    req.add(utf8.encode(text));
+    return req;
+  }, onActivity);
 
   @override
   Stream<BridgeEvent> attach({void Function()? onActivity}) =>
       _sse((client) => client.getUrl(_u('/attach')), onActivity);
 
   @override
-  Future<void> talkPoll(String text, {bool interrupt = true}) async {
+  Future<void> talkPoll(
+    String text, {
+    bool interrupt = true,
+    bool cutTool = false,
+  }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
       final req = await client.postUrl(
-        _u('/talk', {'interrupt': interrupt ? '1' : '0', 'poll': '1'}),
+        _u('/talk', {
+          'interrupt': interrupt ? '1' : '0',
+          if (cutTool && !interrupt) 'cuttool': '1',
+          'poll': '1',
+        }),
       );
       req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
       req.add(utf8.encode(text));

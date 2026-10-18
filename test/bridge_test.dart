@@ -69,14 +69,7 @@ void main() {
     test('tokens tally frames carry the live thinking tail', () async {
       final evs = await parse([
         'event: tool',
-        'data: ${jsonEncode({
-                'name': 'tokens',
-                'detail': 'thinking · 40 out · 21k in',
-                'out': 40,
-                'in': 21000,
-                'kind': 'thinking',
-                'thought': 'checking the failing test first',
-              })}',
+        'data: ${jsonEncode({'name': 'tokens', 'detail': 'thinking · 40 out · 21k in', 'out': 40, 'in': 21000, 'kind': 'thinking', 'thought': 'checking the failing test first'})}',
         '',
       ]);
       final e = evs.single;
@@ -110,46 +103,44 @@ void main() {
       expect(evs[1].contextWindow, 0);
     });
 
-    test('context PREVIEW frame (extra preview key) decodes like exact',
-        () async {
-      // The bridge relays estimated in-token growth with a
-      // `preview: true` key; the parser must not care (exact frames
-      // simply lack it).
-      final evs = await parse([
-        'event: context',
-        'data: ${jsonEncode({'in': 90123, 'window': 467232, 'preview': true})}',
-        '',
-      ]);
-      expect(evs.single.kind, 'context');
-      expect(evs.single.inputTokens, 90123);
-      expect(evs.single.contextWindow, 467232);
-    });
+    test(
+      'context PREVIEW frame (extra preview key) decodes like exact',
+      () async {
+        // The bridge relays estimated in-token growth with a
+        // `preview: true` key; the parser must not care (exact frames
+        // simply lack it).
+        final evs = await parse([
+          'event: context',
+          'data: ${jsonEncode({'in': 90123, 'window': 467232, 'preview': true})}',
+          '',
+        ]);
+        expect(evs.single.kind, 'context');
+        expect(evs.single.inputTokens, 90123);
+        expect(evs.single.contextWindow, 467232);
+      },
+    );
 
-    test('tool tokens frame carries numeric tally; absent fields degrade',
-        () async {
-      final evs = await parse([
-        'event: tool',
-        'data: ${jsonEncode({
-              'name': 'tokens',
-              'detail': 'thinking · 1.2k out · 21k in',
-              'out': 1234,
-              'in': 21001,
-              'kind': 'thinking',
-            })}',
-        '',
-        'event: tool',
-        'data: {"name":"tokens","detail":"500 out · 0 in"}', // old wire
-        '',
-      ]);
-      expect(evs[0].toolName, 'tokens');
-      expect(evs[0].outTokens, 1234);
-      expect(evs[0].inputTokens, 21001);
-      expect(evs[0].toolKind, 'thinking');
-      // An old bridge (or a plain tool_use frame) leaves the numerics
-      // zeroed — the app still has the display string to show.
-      expect(evs[1].outTokens, 0);
-      expect(evs[1].toolKind, '');
-    });
+    test(
+      'tool tokens frame carries numeric tally; absent fields degrade',
+      () async {
+        final evs = await parse([
+          'event: tool',
+          'data: ${jsonEncode({'name': 'tokens', 'detail': 'thinking · 1.2k out · 21k in', 'out': 1234, 'in': 21001, 'kind': 'thinking'})}',
+          '',
+          'event: tool',
+          'data: {"name":"tokens","detail":"500 out · 0 in"}', // old wire
+          '',
+        ]);
+        expect(evs[0].toolName, 'tokens');
+        expect(evs[0].outTokens, 1234);
+        expect(evs[0].inputTokens, 21001);
+        expect(evs[0].toolKind, 'thinking');
+        // An old bridge (or a plain tool_use frame) leaves the numerics
+        // zeroed — the app still has the display string to show.
+        expect(evs[1].outTokens, 0);
+        expect(evs[1].toolKind, '');
+      },
+    );
   });
 
   group('ring frame parsing', () {
@@ -198,17 +189,11 @@ void main() {
     test('a turn that ended unheard replays its backlog', () {
       // Result already delivered server-side (turnOpen false) but the
       // phone never heard N events: /attach replays the tail, done included.
-      expect(
-        bridgeReattachNeeded({'turnOpen': false, 'missed': 3}),
-        isTrue,
-      );
+      expect(bridgeReattachNeeded({'turnOpen': false, 'missed': 3}), isTrue);
     });
 
     test('nothing open and nothing missed means go idle', () {
-      expect(
-        bridgeReattachNeeded({'turnOpen': false, 'missed': 0}),
-        isFalse,
-      );
+      expect(bridgeReattachNeeded({'turnOpen': false, 'missed': 0}), isFalse);
       // Junk/absent missed fields degrade to the same clean verdict:
       expect(bridgeReattachNeeded({'turnOpen': false}), isFalse);
       expect(bridgeReattachNeeded({'turnOpen': false, 'missed': 'x'}), isFalse);
@@ -281,6 +266,7 @@ void main() {
         url: 'http://100.1.2.3:8732/',
         token: 't',
         voice: false,
+        tts: false,
       );
       final q = BridgePrefs.fromJson(p.toJson());
       expect(q.configured, isTrue);
@@ -288,6 +274,11 @@ void main() {
         q.voice,
         isFalse,
       ); // an explicit off must not resurrect the default
+      expect(
+        q.tts,
+        isFalse,
+      ); // same law for the speaker (a dropped key here boots a
+      // 334 MB voice pack the user explicitly turned off)
       expect(q.url, 'http://100.1.2.3:8732/');
       // A saved empty token (user cleared it) must NOT resurrect the default:
       expect(

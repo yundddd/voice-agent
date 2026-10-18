@@ -32,7 +32,7 @@ void main() {
   late VoiceAssistant a;
 
   (FakeScheduler, FakeSpeechEngine, FakeHarness, FakeMic, FakeAudioOutput)
-      build() {
+  build() {
     final sched = FakeScheduler(DateTime(2026, 1, 1, 12));
     final eng = FakeSpeechEngine();
     final h = FakeHarness();
@@ -62,13 +62,15 @@ void main() {
   }
 
   group('vanished-message class (0.1.0+80, +95)', () {
-    test('PTT: a release with no press says so on the status line (+95)',
-        () async {
-      a.setMode(InteractionMode.pushToTalk);
-      a.pttUp(const Offset(10, 10)); // never went down
-      expect(a.status, contains("That press didn't land"));
-      expect(a.phase, AssistantPhase.idle); // never stomped a live phase
-    });
+    test(
+      'PTT: a release with no press says so on the status line (+95)',
+      () async {
+        a.setMode(InteractionMode.pushToTalk);
+        a.pttUp(const Offset(10, 10)); // never went down
+        expect(a.status, contains("That press didn't land"));
+        expect(a.phase, AssistantPhase.idle); // never stomped a live phase
+      },
+    );
 
     test('PTT: a stray release over working machinery does not claim the '
         'machinery failed (+95 idle-only rule)', () async {
@@ -81,8 +83,11 @@ void main() {
       a.pttUp(Offset.zero); // the real release -> transcribing/speaking
       await settle();
       a.pttUp(Offset.zero); // a stray twin over live work
-      expect(a.status, isNot(contains("That press didn't land")),
-          reason: 'only an idle phase may host the swallowed-press notice');
+      expect(
+        a.status,
+        isNot(contains("That press didn't land")),
+        reason: 'only an idle phase may host the swallowed-press notice',
+      );
     });
 
     test('conversation: a swallowed release dispatches the toggle itself '
@@ -91,50 +96,68 @@ void main() {
       await settle();
       expect(a.phase, AssistantPhase.listening);
       expect(mic.startCount, 1); // the tap started the conversation
-      expect(a.debugLog.any((l) => l.contains('fallback toggle dispatch')),
-          isTrue);
+      expect(
+        a.debugLog.any((l) => l.contains('fallback toggle dispatch')),
+        isTrue,
+      );
     });
 
     test('every big-button tap journals its dispatch (0.1.0+79)', () async {
       await a.toggle();
       await settle();
       expect(
-        a.debugLog.any((l) =>
-            l.contains('TOGGLE: mode=conversation phase=') &&
-            l.contains('busy=false')),
+        a.debugLog.any(
+          (l) =>
+              l.contains('TOGGLE: mode=conversation phase=') &&
+              l.contains('busy=false'),
+        ),
         isTrue,
       );
     });
   });
 
   group('harness turns (0.1.0+72, +76, +85, +89, +94)', () {
-    test('a press over a live turn detaches it and keeps the spinner',
-        () async {
-      await withBridge();
-      unawaited(a.runQuickCommand('what changed?'));
-      await settle();
-      expect(a.bridgeBusy, isTrue);
-      expect(harness.viewDetached, isFalse);
-      harness.emit(BridgeEvent.forTest('say', text: 'Running the tests.'));
-      await settle();
-      out.complete(); // the spoken block ends; the turn stays open
-      await settle();
+    test(
+      'a press over a live turn detaches it and keeps the spinner',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('what changed?'));
+        await settle();
+        expect(a.bridgeBusy, isTrue);
+        expect(harness.viewDetached, isFalse);
+        harness.emit(BridgeEvent.forTest('say', text: 'Running the tests.'));
+        await settle();
+        out.complete(); // the spoken block ends; the turn stays open
+        await settle();
 
-      a.setMode(InteractionMode.pushToTalk);
-      a.pttDown(Offset.zero); // the barge-in press
-      await settle();
+        a.setMode(InteractionMode.pushToTalk);
+        a.pttDown(Offset.zero); // the barge-in press
+        await settle();
 
-      // Detached (the bridge keeps working) — not stopped (+72 rule):
-      expect(a.bridgeBusy, isFalse);
-      expect(a.harnessBackgrounded, isTrue,
-          reason: 'the badge must stay lit while it works unheard');
-      expect(a.liveTurnBubble, isNotNull,
-          reason: 'the work bubble must survive the press (+91)');
-      expect(harness.viewDetached, isTrue,
-          reason: 'the phone must stop reading the old view');
-      expect(harness.stops, 0,
-          reason: 'a spoken takeover is a detach, never a /stop');
-    });
+        // Detached (the bridge keeps working) — not stopped (+72 rule):
+        expect(a.bridgeBusy, isFalse);
+        expect(
+          a.harnessBackgrounded,
+          isTrue,
+          reason: 'the badge must stay lit while it works unheard',
+        );
+        expect(
+          a.liveTurnBubble,
+          isNotNull,
+          reason: 'the work bubble must survive the press (+91)',
+        );
+        expect(
+          harness.viewDetached,
+          isTrue,
+          reason: 'the phone must stop reading the old view',
+        );
+        expect(
+          harness.stops,
+          0,
+          reason: 'a spoken takeover is a detach, never a /stop',
+        );
+      },
+    );
 
     test('a backgrounded tool call keeps a persistent bottom line that '
         'dismisses when the work is proven done', () async {
@@ -142,15 +165,19 @@ void main() {
       unawaited(a.runQuickCommand('go'));
       await settle();
       expect(a.backgroundedWork, isEmpty); // heard: just a live turn
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'Bash', detail: 'flutter test'));
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'flutter test'),
+      );
       await settle();
       a.setMode(InteractionMode.pushToTalk);
       a.pttDown(Offset.zero); // the press over live work detaches it
       await settle();
       expect(a.harnessBackgrounded, isTrue);
-      expect(a.backgroundedWork, 'Bash flutter test…',
-          reason: 'the bottom line names the work left out of earshot');
+      expect(
+        a.backgroundedWork,
+        'Bash flutter test…',
+        reason: 'the bottom line names the work left out of earshot',
+      );
       expect(
         a.debugLog.any((l) => l.contains('msg bg: "Bash flutter test…"')),
         isTrue,
@@ -167,49 +194,75 @@ void main() {
       await withBridge();
       unawaited(a.runQuickCommand('go'));
       await settle();
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'Bash', detail: 'npm test'));
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+      );
       await settle();
       a.setMode(InteractionMode.pushToTalk);
       a.pttDown(Offset.zero);
       await settle();
       expect(a.backgroundedWork, 'Bash npm test…');
-      unawaited(a.runQuickCommand('polite follow-up',
-          bubble: 'polite follow-up', interrupt: false));
+      unawaited(
+        a.runQuickCommand(
+          'polite follow-up',
+          bubble: 'polite follow-up',
+          interrupt: false,
+        ),
+      );
       await settle();
       expect(a.queuedBubble, isNotNull);
-      expect(a.backgroundedWork, 'Bash npm test…',
-          reason: 'waiting behind the open tool is still background work');
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'started', detail: 'polite follow-up'));
+      expect(
+        a.backgroundedWork,
+        'Bash npm test…',
+        reason: 'waiting behind the open tool is still background work',
+      );
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'polite follow-up',
+        ),
+      );
       await settle();
       expect(a.queuedBubble, isNull);
       expect(a.backgroundedWork, isEmpty); // auto-dismiss at delivery
     });
 
-    test('tool steps update the label; plumbing steps are eyes-only',
-        () async {
+    test('tool steps update the label; plumbing steps are eyes-only', () async {
       await withBridge();
       await a.setBridgeNarrate(true);
       unawaited(a.runQuickCommand('go'));
       await settle();
 
-      harness.emit(BridgeEvent.forTest('tool', toolName: 'Bash',
-          detail: 'flutter test', toolKind: 'calling Bash'));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'flutter test',
+          toolKind: 'calling Bash',
+        ),
+      );
       await settle();
       expect(a.status, 'Bash flutter test…'); // the command itself (+89)
       time.advance(const Duration(seconds: 16)); // a full heartbeat pulse
       await settle();
-      expect(engine.synthesized.where((t) => t.contains('Bash')), isEmpty,
-          reason: 'Bash is eyes-only (+73): no immediate line, no heartbeat');
+      expect(
+        engine.synthesized.where((t) => t.contains('Bash')),
+        isEmpty,
+        reason: 'Bash is eyes-only (+73): no immediate line, no heartbeat',
+      );
 
       // The first speakable step (nothing audible yet this turn):
-      harness.emit(BridgeEvent.forTest('tool', toolName: 'Deploy',
-          detail: 'eu-west-1'));
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Deploy', detail: 'eu-west-1'),
+      );
       await settle();
       expect(a.status, 'Deploy eu-west-1…');
-      expect(engine.synthesized.any((t) => t.contains('Deploy')), isTrue,
-          reason: 'a custom tool is news, not plumbing (+94)');
+      expect(
+        engine.synthesized.any((t) => t.contains('Deploy')),
+        isTrue,
+        reason: 'a custom tool is news, not plumbing (+94)',
+      );
 
       // ...and once that line is audible, the reply owns the speaker:
       // further steps go label-only until the turn's stream drains
@@ -228,8 +281,9 @@ void main() {
       // label-only (+94) — immediate AND on the heartbeat.
       unawaited(a.runQuickCommand('again'));
       await settle();
-      harness.emit(BridgeEvent.forTest('tool', toolName: 'Read',
-          detail: 'lib/foo.dart'));
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Read', detail: 'lib/foo.dart'),
+      );
       await settle();
       expect(a.status, 'Read foo.dart…');
       time.advance(const Duration(seconds: 16));
@@ -243,31 +297,39 @@ void main() {
       await settle();
     });
 
-    test('say frames speak cleaned text and enter the log with the audio',
-        () async {
-      await withBridge();
-      unawaited(a.runQuickCommand('summary?'));
-      await settle();
+    test(
+      'say frames speak cleaned text and enter the log with the audio',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('summary?'));
+        await settle();
 
-      harness.emit(BridgeEvent.forTest('say',
-          text: '**Done** — three files changed (see `pubspec.yaml`).'));
-      await settle();
-      expect(
-        engine.synthesized,
-        contains('Done — three files changed (see pubspec yaml).'),
-      );
-      // The chat bubble holds the cleaned block, not the raw markdown.
-      expect(a.chat.last.blocks.single,
-          'Done — three files changed (see pubspec yaml).');
-      expect(a.phase, AssistantPhase.speaking);
-      expect(a.hopTts, isTrue, reason: 'the reply→audio hop lit');
+        harness.emit(
+          BridgeEvent.forTest(
+            'say',
+            text: '**Done** — three files changed (see `pubspec.yaml`).',
+          ),
+        );
+        await settle();
+        expect(
+          engine.synthesized,
+          contains('Done — three files changed (see pubspec yaml).'),
+        );
+        // The chat bubble holds the cleaned block, not the raw markdown.
+        expect(
+          a.chat.last.blocks.single,
+          'Done — three files changed (see pubspec yaml).',
+        );
+        expect(a.phase, AssistantPhase.speaking);
+        expect(a.hopTts, isTrue, reason: 'the reply→audio hop lit');
 
-      out.complete(); // the chunk ran out: the conversation idles again
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      await settle();
-      expect(a.bridgeBusy, isFalse);
-    });
+        out.complete(); // the chunk ran out: the conversation idles again
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        await settle();
+        expect(a.bridgeBusy, isFalse);
+      },
+    );
 
     test('a turn that ran with nothing to say is not a bubble', () async {
       await withBridge();
@@ -275,69 +337,112 @@ void main() {
       await settle();
       harness.emit(BridgeEvent.forTest('done'));
       await settle();
-      expect(a.chat.where((e) => !e.fromUser), isEmpty,
-          reason: 'the blank bubble is taken back out of the log');
+      expect(
+        a.chat.where((e) => !e.fromUser),
+        isEmpty,
+        reason: 'the blank bubble is taken back out of the log',
+      );
       expect(a.status, contains('nothing to say'));
     });
   });
 
   group('the live token ticker (0.1.0+77, +84, +85, +93)', () {
-    test('the counter grows between relays and freezes on tool steps',
-        () async {
-      await withBridge();
-      unawaited(a.runQuickCommand('think hard'));
-      await settle();
+    test(
+      'the counter grows between relays and freezes on tool steps',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('think hard'));
+        await settle();
 
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'thinking',
-          outTokens: 100, inputTokens: 4000, wireMs: 1));
-      await settle();
-      expect(a.tokenTickerOn, isTrue);
-      expect(a.activityLabel, 'Thinking…'); // words only (+85)
-      expect(a.tokensOut, 100);
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            toolKind: 'thinking',
+            outTokens: 100,
+            inputTokens: 4000,
+            wireMs: 1,
+          ),
+        );
+        await settle();
+        expect(a.tokenTickerOn, isTrue);
+        expect(a.activityLabel, 'Thinking…'); // words only (+85)
+        expect(a.tokensOut, 100);
 
-      // The first relay can teach nothing (no previous point); a step-up
-      // a second later learns the rate — and then the estimate grows.
-      time.advance(const Duration(seconds: 1));
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'thinking',
-          outTokens: 200, inputTokens: 4200));
-      await settle();
-      expect(a.tokensOut, 200); // the bridge's figure is authoritative
-      time.advance(const Duration(milliseconds: 500));
-      expect(a.tokensOut, greaterThan(200),
-          reason: 'the ticker moves between relays');
+        // The first relay can teach nothing (no previous point); a step-up
+        // a second later learns the rate — and then the estimate grows.
+        time.advance(const Duration(seconds: 1));
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            toolKind: 'thinking',
+            outTokens: 200,
+            inputTokens: 4200,
+          ),
+        );
+        await settle();
+        expect(a.tokensOut, 200); // the bridge's figure is authoritative
+        time.advance(const Duration(milliseconds: 500));
+        expect(
+          a.tokensOut,
+          greaterThan(200),
+          reason: 'the ticker moves between relays',
+        );
 
-      // +93: `in` is the turn's delta (4200-4000), not the raw context.
-      expect(a.tokensIn, 200);
+        // +93: `in` is the turn's delta (4200-4000), not the raw context.
+        expect(a.tokensIn, 200);
 
-      // A real step freezes the ticker: nothing is generating.
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'Bash', detail: 'flutter analyze'));
-      await settle();
-      expect(a.tokenTickerOn, isFalse);
-      time.advance(const Duration(seconds: 30));
-      expect(a.tokensOut, 200, reason: 'no inflation while a tool runs');
-    });
+        // A real step freezes the ticker: nothing is generating.
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'flutter analyze',
+          ),
+        );
+        await settle();
+        expect(a.tokenTickerOn, isFalse);
+        time.advance(const Duration(seconds: 30));
+        expect(a.tokensOut, 200, reason: 'no inflation while a tool runs');
+      },
+    );
 
-    test('+93: a smaller in-figure re-anchors (compact mid-turn)',
-        () async {
+    test('+93: a smaller in-figure re-anchors (compact mid-turn)', () async {
       await withBridge();
       unawaited(a.runQuickCommand('x'));
       await settle();
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'thinking',
-          outTokens: 5, inputTokens: 9000));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'thinking',
+          outTokens: 5,
+          inputTokens: 9000,
+        ),
+      );
       await settle();
       expect(a.tokensIn, 0); // anchored at 9000: no delta yet
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'thinking',
-          outTokens: 10, inputTokens: 1500));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'thinking',
+          outTokens: 10,
+          inputTokens: 1500,
+        ),
+      );
       await settle();
       expect(a.tokensIn, 0); // re-anchored lower, not negative
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'thinking',
-          outTokens: 20, inputTokens: 1800));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'thinking',
+          outTokens: 20,
+          inputTokens: 1800,
+        ),
+      );
       await settle();
       expect(a.tokensIn, 300); // the turn's growth since the re-anchor
     });
@@ -346,125 +451,637 @@ void main() {
       await withBridge();
       unawaited(a.runQuickCommand('answer fast'));
       await settle();
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'tokens', toolKind: 'answering',
-          outTokens: 40, draft: 'Here you go:'));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'answering',
+          outTokens: 40,
+          draft: 'Here you go:',
+        ),
+      );
       await settle();
       expect(a.tokenDraft, 'Here you go:'); // painted before it is spoken
       expect(a.turnSettled, isFalse);
 
-      harness.emit(BridgeEvent.forTest('tool', toolName: 'tokens',
-          toolKind: 'settled', draft: 'Here you go:'));
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'settled',
+          draft: 'Here you go:',
+        ),
+      );
       await settle();
       expect(a.turnSettled, isTrue); // the wheel must stop (+84)
-      expect(a.tokenDraft, 'Here you go:',
-          reason: '+83: settled keeps the draft until the say claims it');
+      expect(
+        a.tokenDraft,
+        'Here you go:',
+        reason: '+83: settled keeps the draft until the say claims it',
+      );
 
       harness.emit(BridgeEvent.forTest('say', text: 'Here you go: done.'));
       await settle();
-      expect(a.tokenDraft, isEmpty,
-          reason: 'the say stops the ticker: the draft getter goes quiet');
-      expect(a.turnSettled, isTrue,
-          reason: 'settled is the turn’s state until resetForTurn');
+      expect(
+        a.tokenDraft,
+        isEmpty,
+        reason: 'the say stops the ticker: the draft getter goes quiet',
+      );
+      expect(
+        a.turnSettled,
+        isTrue,
+        reason: 'settled is the turn’s state until resetForTurn',
+      );
     });
   });
 
   group('the polite queue and its pin (0.1.0+81, +90)', () {
-    test('push view: any frame of our own stream dissolves the pin',
-        () async {
+    test('push view: any frame of our own stream dissolves the pin', () async {
       await withBridge();
       unawaited(a.runQuickCommand('busy turn'));
       await settle();
 
       // An interrupt-off press over the live turn parks (pins) instead.
-      unawaited(a.runQuickCommand('parked', interrupt: false,
-          bubble: 'parked'));
+      unawaited(
+        a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+      );
       await settle();
       expect(a.queuedText, 'parked');
 
       harness.emit(BridgeEvent.forTest('say', text: 'answer'));
       await settle();
-      expect(a.queuedText, isNull,
-          reason: 'a per-turn SSE view: the first frame IS the pickup');
+      expect(
+        a.queuedText,
+        isNull,
+        reason: 'a per-turn SSE view: the first frame IS the pickup',
+      );
     });
 
-    test('poll view: the pin waits for the bridge’s explicit started',
-        () async {
+    test(
+      'poll view: the pin waits for the bridge’s explicit started',
+      () async {
+        await withBridge();
+        // Turn 1 rides SSE (the ring is unknown yet — the first talk is
+        // push by design, like on a fresh install).
+        unawaited(a.runQuickCommand('busy turn'));
+        await settle();
+        expect(harness.talkCount, 1);
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'now': time.now.millisecondsSinceEpoch,
+          'poll': {'ring': 10},
+        };
+        await a.debugProbeTransport(); // the next turn learns the ring
+
+        // An interrupt-off press over the live turn parks (pins).
+        unawaited(
+          a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+        );
+        await settle();
+        expect(a.queuedText, 'parked');
+        expect(
+          harness.talkPollCount,
+          greaterThan(0),
+          reason:
+              'the ring is advertised: the prompt rides the pull '
+              'transport',
+        );
+
+        // A frame of the BUSY turn flows past on the shared ring — on the
+        // old push-only rule this dissolved the pin and the queue promise
+        // evaporated (+81).
+        harness.pollPages.add(
+          FakeHarness.page(11, [
+            BridgeEvent.forTest('say', text: 'unrelated turn chatter'),
+          ], first: 11),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(
+          a.queuedText,
+          'parked',
+          reason: 'poll frames are not our pickup — the pin stays',
+        );
+
+        // The bridge's explicit word that it has the prompt NOW:
+        harness.pollPages.add(
+          FakeHarness.page(12, [
+            BridgeEvent.forTest('tool', toolName: 'started', detail: 'parked'),
+          ], first: 12),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(a.queuedText, isNull);
+        expect(a.debugLog.any((l) => l.contains('queue picked up')), isTrue);
+      },
+    );
+
+    test(
+      'poll view: the prior turn’s DONE cannot end the queue pump — the '
+      'pin dissolves at the started marker BEHIND it (field report: a '
+      'queue press over a live bash sleep left the pin frozen)',
+      () async {
+        await withBridge();
+        // The busy turn opens BEFORE the ring is known — the classic
+        // session start, riding SSE.
+        harness.turnOpenOnServer = true;
+        unawaited(a.runQuickCommand('run bash sleep 10'));
+        await settle();
+
+        // Mid-turn, the bridge's /health reveals the ring: from here the
+        // phone pulls.
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'now': time.now.millisecondsSinceEpoch,
+          'poll': {'ring': 10},
+        };
+        await a.debugProbeTransport();
+
+        // The Queue button, pressed while the sleep runs: polite, cuts
+        // the tool into background. The POST parks; its pump inherits
+        // the ring cursor at the head of everything the SSE view already
+        // delivered (+81 catch-up) — and NOTHING else has rung since.
+        unawaited(
+          a.runQuickCommand(
+            'status please',
+            interrupt: false,
+            cutTool: true,
+            bubble: 'status please',
+          ),
+        );
+        await settle();
+        expect(a.queuedText, 'status please');
+        expect(harness.lastCutTool, isTrue);
+
+        // Ten seconds later the sleep settles, and the flush lands on
+        // the ring as one batch, in the bridge's own order: the busy
+        // turn's done FIRST, then the disposition notice, then the
+        // pickup marker. Handing that done to the pump ended the queue
+        // turn before its markers — the pin fossilised at 'queued' and
+        // the flushed answer strangled in the ring unheard, exactly as
+        // reported. The pump must eat the foreign done and keep waiting.
+        harness.pollPages.add(
+          FakeHarness.page(13, [
+            BridgeEvent.forTest('done'),
+            BridgeEvent.forTest(
+              'tool',
+              toolName: 'queued',
+              detail:
+                  'the running tool was put into background — the agent '
+                  'is freed to answer you now',
+            ),
+            BridgeEvent.forTest(
+              'tool',
+              toolName: 'started',
+              detail: 'status please',
+              toolKind: 'background',
+            ),
+          ], first: 11),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(a.queuedText, isNull, reason: 'the marker dissolved the pin');
+        expect(
+          a.debugLog.any((l) => l.contains('queue picked up')),
+          isTrue,
+        );
+
+        // And the surviving pump HEARS the flushed turn — the reply the
+        // frozen pump used to strand unheard behind the foreign done.
+        harness.pollPages.add(
+          FakeHarness.page(14, [
+            BridgeEvent.forTest('say', text: 'All green.'),
+          ], first: 14),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(
+          a.chat.any((e) => !e.fromUser && e.blocks.contains('All green.')),
+          isTrue,
+          reason: 'own-turn frames after the marker reach the pump alive',
+        );
+        harness.pollPages.add(
+          FakeHarness.page(15, [BridgeEvent.forTest('done')], first: 15),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(a.phase, isNot(AssistantPhase.transcribing));
+      },
+    );
+
+    test(
+      'push view: the bridge’s queued NOTICE is not a pickup — the pin '
+      'survives it and dies only when the turn opens (+behaviour 1)',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('busy turn'));
+        await settle();
+        unawaited(
+          a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+        );
+        await settle();
+        expect(a.queuedText, 'parked');
+
+        // A busy bridge answers a queue POST with the 'queued' notice the
+        // INSTANT it enqueues. Under the old "any frame is the pickup"
+        // rule this frame dissolved the pin and the message fell back
+        // into the flow while still waiting — the behaviour-1 complaint.
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'queued',
+            detail: 'finishing the current turn; your message goes next',
+          ),
+        );
+        await settle();
+        expect(
+          a.queuedText,
+          'parked',
+          reason: 'a queued ack is the OPPOSITE of a pickup',
+        );
+        expect(
+          a.chat.any(
+            (e) => e.blocks.contains(
+              'One moment — finishing the current turn; '
+              'your message goes next.',
+            ),
+          ),
+          isTrue,
+          reason: 'the notice itself is journaled as a system bubble',
+        );
+
+        // beginTurn's first real frame: NOW the floor is ours.
+        harness.emit(
+          BridgeEvent.forTest('tool', toolName: 'tokens', outTokens: 12),
+        );
+        await settle();
+        expect(
+          a.queuedText,
+          isNull,
+          reason: 'the turn opening for real dissolves the pin',
+        );
+      },
+    );
+
+    test('the Queue button rides the wire as polite-with-backgrounding '
+        '(+behaviour 2)', () async {
       await withBridge();
-      // Turn 1 rides SSE (the ring is unknown yet — the first talk is
-      // push by design, like on a fresh install).
       unawaited(a.runQuickCommand('busy turn'));
       await settle();
-      expect(harness.talkCount, 1);
+      unawaited(
+        a.runQuickCommand(
+          'queue me',
+          interrupt: false,
+          cutTool: true,
+          bubble: 'queue me',
+        ),
+      );
+      await settle();
+      expect(harness.lastInterrupt, isFalse);
+      expect(
+        harness.lastCutTool,
+        isTrue,
+        reason: 'the bridge decides tool-or-polite from its own openTools',
+      );
+      // And a plain interrupt send never flags it — it cuts regardless:
+      unawaited(
+        a.runQuickCommand('cut', interrupt: true, cutTool: true, bubble: 'cut'),
+      );
+      await settle();
+      expect(harness.lastInterrupt, isTrue);
+      expect(harness.lastCutTool, isFalse);
+    });
+
+    test('a queue press superseded by a newer send retires its pin '
+        '(+behaviour 5: no fossilised queued bubble)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('busy turn'));
+      await settle();
+      unawaited(
+        a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+      );
+      await settle();
+      expect(a.queuedText, 'parked');
+
+      // A third press arrives while the second still waits: the bridge
+      // keeps ONE pending slot (latest wins), so 'parked' will never
+      // get its 'started' — and its pin must retire with the promise,
+      // not fossilise at the bottom of the channel.
+      unawaited(a.runQuickCommand('newest', bubble: 'newest'));
+      await settle();
+      await settle();
+      expect(
+        a.queuedText,
+        isNull,
+        reason: 'the superseded queue pin retires with its promise',
+      );
+      expect(
+        a.chat.any((e) => e.fromUser && e.blocks.contains('parked')),
+        isTrue,
+        reason: 'the message itself stays in the log — it was said',
+      );
+      expect(a.debugLog.any((l) => l.contains('msg pin dropped')), isTrue);
+    });
+
+    test('a /stop keeps the queued pin — the bridge still owes it the '
+        'flush, and the started marker retires the pin', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('busy turn'));
+      await settle();
+      unawaited(
+        a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+      );
+      await settle();
+      expect(a.queuedText, 'parked');
+      // Stop chip over the live turn: the turn is cut, the QUEUED
+      // prompt survives at the bridge (flush on the cut's result).
+      // bridgeStop bumps the generation — that alone must not retire
+      // the pin: the promise is still owed.
+      a.bridgeStop();
+      await settle();
+      await settle();
+      expect(
+        a.queuedText,
+        'parked',
+        reason:
+            'a /stop cuts the TURN, not the queued prompt — the '
+            'bridge still owes it the flush and its '
+            'started marker retires the pin (unpin path +81)',
+      );
+    });
+
+    test('a cut tool keeps the banner past the pickup until the finished '
+        'frame; then a bubble records it (+behaviour 4)', () async {
+      await withBridge();
+      // The bridge is telling the truth: a turn is open (the build), and
+      // until the cut its tool is NOT yet detached.
       harness.healthState = {
         'ok': true,
         'claudeUp': true,
-        'now': time.now.millisecondsSinceEpoch,
-        'poll': {'ring': 10},
+        'turnOpen': true,
+        'detached': 0,
       };
-      await a.debugProbeTransport(); // the next turn learns the ring
-
-      // An interrupt-off press over the live turn parks (pins).
-      unawaited(a.runQuickCommand('parked',
-          interrupt: false, bubble: 'parked'));
+      unawaited(a.runQuickCommand('long build'));
       await settle();
-      expect(a.queuedText, 'parked');
-      expect(harness.talkPollCount, greaterThan(0),
-          reason: 'the ring is advertised: the prompt rides the pull '
-              'transport');
-
-      // A frame of the BUSY turn flows past on the shared ring — on the
-      // old push-only rule this dissolved the pin and the queue promise
-      // evaporated (+81).
-      harness.pollPages.add(FakeHarness.page(11, [
-        BridgeEvent.forTest('say', text: 'unrelated turn chatter'),
-      ], first: 11));
-      time.advance(const Duration(milliseconds: 300));
-      await settle();
-      expect(a.queuedText, 'parked',
-          reason: 'poll frames are not our pickup — the pin stays');
-
-      // The bridge's explicit word that it has the prompt NOW:
-      harness.pollPages.add(FakeHarness.page(12, [
-        BridgeEvent.forTest('tool', toolName: 'started', detail: 'parked'),
-      ], first: 12));
-      time.advance(const Duration(milliseconds: 300));
-      await settle();
-      expect(a.queuedText, isNull);
-      expect(
-        a.debugLog.any((l) => l.contains('queue picked up')),
-        isTrue,
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'flutter test'),
       );
+      await settle();
+      // The Queue press: supersede+detach (the abandon snapshots the
+      // step into the banner) and queue WITH backgrounding.
+      unawaited(
+        a.runQuickCommand(
+          'status?',
+          interrupt: false,
+          cutTool: true,
+          bubble: 'status?',
+        ),
+      );
+      await settle();
+      expect(a.queuedText, 'status?');
+      expect(
+        a.backgroundedWork,
+        'Bash flutter test…',
+        reason: 'waiting behind the cut tool is background work',
+      );
+      // The bridge's notice confirms the tool went to background — the
+      // banner now rides its own warrant, not just the pin:
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': true,
+        'detached': 1,
+      };
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'queued',
+          detail:
+              'the running tool was put into background — the agent '
+              'is freed to answer you now',
+        ),
+      );
+      await settle();
+      // Pick-up of the queued prompt must NOT retire the line: the
+      // cut tool is precisely what is still running.
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'started', detail: 'status?'),
+      );
+      await settle();
+      expect(a.queuedText, isNull, reason: 'the pin dissolved at pickup');
+      expect(
+        a.backgroundedWork,
+        'Bash flutter test…',
+        reason: 'a cut tool outlives the pickup that replaced its turn',
+      );
+      // The proof of completion: retire, and file a stamped bubble.
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash flutter test',
+        ),
+      );
+      await settle();
+      expect(
+        a.backgroundedWork,
+        isEmpty,
+        reason: 'the finished frame retires the banner',
+      );
+      expect(
+        a.chat.any(
+          (e) =>
+              !e.fromUser && e.blocks.contains('Bash flutter test finished.'),
+        ),
+        isTrue,
+        reason: 'the tool call gets its period',
+      );
+    });
+
+    test('a started marker tagged background raises the banner from the '
+        'pickup ack alone — no reliance on the enqueue notice', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('long build'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+      );
+      await settle();
+      unawaited(
+        a.runQuickCommand(
+          'build x',
+          interrupt: false,
+          cutTool: true,
+          bubble: 'build x',
+        ),
+      );
+      await settle();
+      expect(a.queuedText, 'build x'); // pinned while it waits
+      // The pickup marker carries the disposition (kind='background').
+      // NO 'queued' notice is delivered at all: on the pull transport
+      // that notice rides a shared ring cursor the dying turn can
+      // consume and drop — the started marker is the one delivery that
+      // cannot be lost, and this pins that it carries the banner.
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'build x',
+          toolKind: 'background',
+        ),
+      );
+      await settle();
+      expect(a.queuedText, isNull); // the pickup dissolved the pin
+      expect(a.debugLog.any((l) => l.contains('queue picked up')), isTrue);
+      expect(
+        a.showsBackgroundedWork,
+        isTrue,
+        reason:
+            'the started marker RAISED the banner: no ring notice '
+            'ever reached this pump, so only the pickup ack could',
+      );
+      expect(
+        a.backgroundedWork,
+        'Bash npm test…',
+        reason:
+            'the label is the abandoned turn\'s last real step, '
+            'snapshotted at the abandon and kept by the background kind',
+      );
+    });
+
+    test('a pull turn after a pushed one does not replay the heard past '
+        '(+behaviour 5: the duplicate-bubble killer)', () async {
+      await withBridge();
+      final now = time.now.millisecondsSinceEpoch;
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': now,
+        'poll': {'ring': 40},
+      };
+      await a.debugProbeTransport(); // cursor seeded at 40, ring known
+      // A flaky moment: the ring vanishes from /health → the next turn
+      // rides SSE, consuming NOTHING from the ring.
+      harness.healthState = {'ok': true, 'claudeUp': true, 'now': now};
+      await a.debugProbeTransport();
+      unawaited(a.runQuickCommand('pushed turn'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'Delivered live.'));
+      await settle();
+      // The ring is back and has grown (41..47 are exactly the frames
+      // the SSE view already spoke — re-delivering them as fresh is
+      // the field's “redundant bubbles after queue or interrupt”).
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': now,
+        'poll': {'ring': 47},
+      };
+      await a.debugProbeTransport();
+      unawaited(
+        a.runQuickCommand(
+          'queued after',
+          interrupt: false,
+          bubble: 'queued after',
+        ),
+      );
+      await settle(); // let the pull loop register its first _tick
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        harness.lastPollSince,
+        47,
+        reason:
+            'the cursor caught up to the head BEFORE the POST — '
+            'the pushed turn\'s ring copy is not replayed',
+      );
+      expect(a.queuedText, 'queued after');
+    });
+  });
+
+  group('eyes-only mode (TTS off)', () {
+    test('replies land as chat text; the speaker stays cold', () async {
+      await withBridge();
+      await a.setBridgeTts(false);
+      expect(a.bridgeTts, isFalse);
+      unawaited(a.runQuickCommand('quiet turn', bubble: 'quiet turn'));
+      await settle();
+      final playedBefore = out.played.length; // the warm-up click is fine
+      harness.emit(BridgeEvent.forTest('say', text: 'Silent answer.'));
+      await settle();
+      expect(
+        out.played.length,
+        playedBefore,
+        reason: 'the reply itself never reaches the player',
+      );
+      expect(engine.synthesized, isEmpty, reason: 'nothing synthesises');
+      expect(
+        a.chat.any((e) => !e.fromUser && e.blocks.contains('Silent answer.')),
+        isTrue,
+        reason:
+            'the screen is the ear: the block lands the moment it is '
+            'heard on the wire',
+      );
+    });
+
+    test('a typed send needs no audio worker while TTS is off', () async {
+      final sched = FakeScheduler(DateTime(2026, 1, 1, 12));
+      final noModels = VoiceAssistant(
+        micSource: FakeMic(),
+        audioOutput: out,
+        gatewayFactory: (_, _) => harness,
+        scheduler: sched,
+        clock: () => sched.now,
+        // worker omitted: models "still loading" — the classic
+        // cold-start state a text-first user should not be gated on.
+      );
+      addTearDown(noModels.dispose);
+      await noModels.setBridge(url: 'http://harness.test', token: 'tok');
+      await noModels.setBridgeTts(false);
+      await settle();
+      unawaited(
+        noModels.runQuickCommand(
+          'typing with no models',
+          bubble: 'typing with no models',
+        ),
+      );
+      await settle();
+      expect(noModels.error, isEmpty, reason: 'no "Models are still loading"');
+      expect(harness.talkCount + harness.talkPollCount, 1);
     });
   });
 
   group('barge-in and the AEC trust window', () {
-    test('speech in the first 450 ms is our own leak; later is a cut',
-        () async {
-      // Local echo mode (no bridge): the reply repeats what was heard.
-      await a.toggle(); // conversation, mic on
-      await settle();
-      expect(a.phase, AssistantPhase.listening);
+    test(
+      'speech in the first 450 ms is our own leak; later is a cut',
+      () async {
+        // Local echo mode (no bridge): the reply repeats what was heard.
+        await a.toggle(); // conversation, mic on
+        await settle();
+        expect(a.phase, AssistantPhase.listening);
 
-      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
-      await settle(); // transcribe -> synthesizeStream -> first chunk plays
-      expect(a.phase, AssistantPhase.speaking);
-      expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
+        engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+        await settle(); // transcribe -> synthesizeStream -> first chunk plays
+        expect(a.phase, AssistantPhase.speaking);
+        expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
 
-      // Instant "speech": AEC has not locked — this is the reply leaking
-      // back into the mic, not the user. The reply must NOT be killed.
-      engine.deliver(const SpeechEvent.started());
-      await settle();
-      expect(out.stopCount, 0, reason: '450 ms guard: too young to trust');
+        // Instant "speech": AEC has not locked — this is the reply leaking
+        // back into the mic, not the user. The reply must NOT be killed.
+        engine.deliver(const SpeechEvent.started());
+        await settle();
+        expect(out.stopCount, 0, reason: '450 ms guard: too young to trust');
 
-      // 500 ms of reply later, the same event is a real interruption.
-      time.advance(const Duration(milliseconds: 500));
-      engine.deliver(const SpeechEvent.started());
-      await settle();
-      expect(out.stopCount, greaterThan(0));
-      expect(a.status, 'Interrupted — go ahead.');
-      expect(a.phase, AssistantPhase.listening);
-    });
+        // 500 ms of reply later, the same event is a real interruption.
+        time.advance(const Duration(milliseconds: 500));
+        engine.deliver(const SpeechEvent.started());
+        await settle();
+        expect(out.stopCount, greaterThan(0));
+        expect(a.status, 'Interrupted — go ahead.');
+        expect(a.phase, AssistantPhase.listening);
+      },
+    );
 
     test('a committed paragraph is in the ledger before its audio lands '
         '(+109: no double voice after an interrupt)', () async {
@@ -483,14 +1100,19 @@ void main() {
       harness.emit(BridgeEvent.forTest('say', text: 'Stuck in the synth.'));
       await settle();
 
-      expect(out.played.where((c) => c.$1.length == 2400), isEmpty,
-          reason: 'the reply audio is still mid-synth (UI blips exempt)');
+      expect(
+        out.played.where((c) => c.$1.length == 2400),
+        isEmpty,
+        reason: 'the reply audio is still mid-synth (UI blips exempt)',
+      );
       expect(a.phase, isNot(AssistantPhase.speaking));
       expect(
-        a.chat.any((e) =>
-            !e.fromUser && e.blocks.contains('Stuck in the synth.')),
+        a.chat.any(
+          (e) => !e.fromUser && e.blocks.contains('Stuck in the synth.'),
+        ),
         isFalse,
-        reason: '+116: the ledger waits for the FIRST SOUND — an '
+        reason:
+            '+116: the ledger waits for the FIRST SOUND — an '
             'unspoken commit must never fossilise into fake history '
             '(the in-flight set, not the log, guards the queueing gap)',
       );
@@ -500,71 +1122,98 @@ void main() {
       await settle();
       expect(out.played.where((c) => c.$1.length == 2400), hasLength(1));
       expect(
-        a.chat.any((e) =>
-            !e.fromUser && e.blocks.contains('Stuck in the synth.')),
+        a.chat.any(
+          (e) => !e.fromUser && e.blocks.contains('Stuck in the synth.'),
+        ),
         isTrue,
         reason: 'air is the stamp (+116)',
       );
     });
 
-    test('the ledger stamp waits for the PLAYER, not the queue (+121)',
-        () async {
-      // The afternoon's silent-tail killer, unit-caught: onAir used to
-      // fire when a synth chunk reached the QUEUE, so paragraphs
-      // parked there while the drain bumped the generation were
-      // stamped 'heard' and then cleared unheard — the audio stopped
-      // exactly when the spinner box dismissed.
-      await withBridge();
-      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
-      unawaited(a.runQuickCommand('go'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('say', text: 'First, playing.'));
-      harness.emit(BridgeEvent.forTest('say', text: 'Second, queued.'));
-      await settle();
-      expect(out.playing, isTrue); // the player took the first…
-      final bubbles = () => a.chat
-          .where((e) => !e.fromUser)
-          .expand((e) => e.blocks)
-          .toList();
-      expect(bubbles(), contains('First, playing.'),
-          reason: 'its audio started: stamped');
-      expect(bubbles(), isNot(contains('Second, queued.')),
-          reason: 'it only sits in the queue — a stale-clear there '
-              'must never leave a fake heard mark (+121)');
+    test(
+      'the ledger stamp waits for the PLAYER, not the queue (+121)',
+      () async {
+        // The afternoon's silent-tail killer, unit-caught: onAir used to
+        // fire when a synth chunk reached the QUEUE, so paragraphs
+        // parked there while the drain bumped the generation were
+        // stamped 'heard' and then cleared unheard — the audio stopped
+        // exactly when the spinner box dismissed.
+        await withBridge();
+        harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+        unawaited(a.runQuickCommand('go'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('say', text: 'First, playing.'));
+        harness.emit(BridgeEvent.forTest('say', text: 'Second, queued.'));
+        await settle();
+        expect(out.playing, isTrue); // the player took the first…
+        final bubbles = () =>
+            a.chat.where((e) => !e.fromUser).expand((e) => e.blocks).toList();
+        expect(
+          bubbles(),
+          contains('First, playing.'),
+          reason: 'its audio started: stamped',
+        );
+        expect(
+          bubbles(),
+          isNot(contains('Second, queued.')),
+          reason:
+              'it only sits in the queue — a stale-clear there '
+              'must never leave a fake heard mark (+121)',
+        );
 
-      out.complete(); // the first ends; the pump hands over the second
-      await settle();
-      expect(bubbles(), containsAll(['First, playing.', 'Second, queued.']),
-          reason: 'heard now, stamped now');
-    });
+        out.complete(); // the first ends; the pump hands over the second
+        await settle();
+        expect(
+          bubbles(),
+          containsAll(['First, playing.', 'Second, queued.']),
+          reason: 'heard now, stamped now',
+        );
+      },
+    );
 
-    test('the queue verdict gets its own bubble, not the turn\'s (+110)',
-        () async {
-      await withBridge();
-      await a.toggle();
-      await settle();
-      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
-      await settle(); // harness turn opens (empty assistant bubble)
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'queued',
-          detail: 'the thinking was interrupted and aborted; '
-              'your message goes next'));
-      await settle();
+    test(
+      'the queue verdict gets its own bubble, not the turn\'s (+110)',
+      () async {
+        await withBridge();
+        await a.toggle();
+        await settle();
+        engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+        await settle(); // harness turn opens (empty assistant bubble)
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'queued',
+            detail:
+                'the thinking was interrupted and aborted; '
+                'your message goes next',
+          ),
+        );
+        await settle();
 
-      final verdicts = a.chat
-          .where((e) => !e.fromUser && e.blocks.any(
-              (b) => b.startsWith('One moment — the thinking')))
-          .toList();
-      expect(verdicts, hasLength(1));
-      expect(verdicts.single.blocks, hasLength(1),
-          reason: 'a note all by itself: nothing of the answer, nothing '
-              'of the cut turn — its own card in the channel');
-      // The answer's own bubble (the empty assistant entry the turn
-      // opened) sits BEFORE the note and holds none of it.
-      final cutTurn = a.chat[a.chat.indexOf(verdicts.single) - 1];
-      expect(cutTurn.fromUser, isFalse);
-      expect(cutTurn.blocks, isEmpty);
-    });
+        final verdicts = a.chat
+            .where(
+              (e) =>
+                  !e.fromUser &&
+                  e.blocks.any(
+                    (b) => b.startsWith('One moment — the thinking'),
+                  ),
+            )
+            .toList();
+        expect(verdicts, hasLength(1));
+        expect(
+          verdicts.single.blocks,
+          hasLength(1),
+          reason:
+              'a note all by itself: nothing of the answer, nothing '
+              'of the cut turn — its own card in the channel',
+        );
+        // The answer's own bubble (the empty assistant entry the turn
+        // opened) sits BEFORE the note and holds none of it.
+        final cutTurn = a.chat[a.chat.indexOf(verdicts.single) - 1];
+        expect(cutTurn.fromUser, isFalse);
+        expect(cutTurn.blocks, isEmpty);
+      },
+    );
 
     test('a cut silent turn still leaves its trace (+110)', () async {
       await withBridge();
@@ -572,8 +1221,9 @@ void main() {
       await settle();
       engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
       await settle(); // turn 1 runs, speaks nothing (a tool works)
-      harness.emit(BridgeEvent.forTest('tool',
-          toolName: 'Bash', detail: 'sleep 60'));
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'sleep 60'),
+      );
       await settle();
 
       time.advance(const Duration(milliseconds: 500));
@@ -581,47 +1231,57 @@ void main() {
       await settle(); // turn 2 supersedes turn 1 before its first word
 
       final cut = a.chat
-          .where((e) =>
-              !e.fromUser &&
-              e.blocks.contains('Interrupted before answering.'))
+          .where(
+            (e) =>
+                !e.fromUser &&
+                e.blocks.contains('Interrupted before answering.'),
+          )
           .single;
-      expect(cut.interrupted, isTrue,
-          reason: 'stamped, so the bubble also carries the +108 mark');
-    });
-
-    test('the answered interruption drains its stranded backlog (+111)',
-        () async {
-      await withBridge();
-      await a.toggle();
-      await settle();
-      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
-      await settle(); // turn 1 in flight, unheard frames accumulating
-      harness.healthState = {
-        'ok': true,
-        'claudeUp': true,
-        'turnOpen': false,
-        'backgrounded': false,
-        'queued': false,
-        'missed': 3,
-      };
-      // turn 1 closes clean on the (single) view — its teardown is the
-      // moment the app learns the bridge still owes it frames.
-      harness.emit(BridgeEvent.forTest('done'));
-      await settle();
-      time.advance(Duration.zero); // the armed first probe
-      await settle();
       expect(
-        a.debugLog.any((l) => l.contains('stranded backlog')),
+        cut.interrupted,
         isTrue,
-        reason: 'teardown found missed>0 and armed the drain',
+        reason: 'stamped, so the bubble also carries the +108 mark',
       );
-      expect(harness.attachCount, greaterThan(0),
-          reason: 'the drain reattaches; the replay path decides what '
-              'is heard again and what files silently');
     });
 
-    test('the drain parks behind the paragraph still on air (+124)',
-        () async {
+    test(
+      'the answered interruption drains its stranded backlog (+111)',
+      () async {
+        await withBridge();
+        await a.toggle();
+        await settle();
+        engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+        await settle(); // turn 1 in flight, unheard frames accumulating
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'backgrounded': false,
+          'queued': false,
+          'missed': 3,
+        };
+        // turn 1 closes clean on the (single) view — its teardown is the
+        // moment the app learns the bridge still owes it frames.
+        harness.emit(BridgeEvent.forTest('done'));
+        await settle();
+        time.advance(Duration.zero); // the armed first probe
+        await settle();
+        expect(
+          a.debugLog.any((l) => l.contains('stranded backlog')),
+          isTrue,
+          reason: 'teardown found missed>0 and armed the drain',
+        );
+        expect(
+          harness.attachCount,
+          greaterThan(0),
+          reason:
+              'the drain reattaches; the replay path decides what '
+              'is heard again and what files silently',
+        );
+      },
+    );
+
+    test('the drain parks behind the paragraph still on air (+124)', () async {
       // The field's last mid-word cut, unit-caught: `missed` is the
       // backlog's LENGTH, so the teardown verdict fires while the
       // reply's final paragraph is still on the speaker — and the
@@ -652,9 +1312,13 @@ void main() {
         isTrue,
         reason: 'the verdict refused to cut audio that had the air',
       );
-      expect(harness.attachCount, 0,
-          reason: 'no reattach means no stopPlayback means no trampled '
-              'tail — the paragraph gets its own last syllable');
+      expect(
+        harness.attachCount,
+        0,
+        reason:
+            'no reattach means no stopPlayback means no trampled '
+            'tail — the paragraph gets its own last syllable',
+      );
 
       out.complete(); // the paragraph ends on its own terms
       await settle();
@@ -667,15 +1331,16 @@ void main() {
       );
     });
 
-    test('the tail of our own echo is rejected before it ever sends',
-        () async {
+    test('the tail of our own echo is rejected before it ever sends', () async {
       engine.transcripts = ['hello there', 'hello there again'];
       await a.toggle();
       await settle();
       engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
       await settle();
-      expect(a.chat.any((e) => e.fromUser && e.blocks.first == 'hello there'),
-          isTrue);
+      expect(
+        a.chat.any((e) => e.fromUser && e.blocks.first == 'hello there'),
+        isTrue,
+      );
 
       // While audible, talk over us (first the started edge, then the
       // endpointed segment — it is our own voice coming back).
@@ -700,24 +1365,22 @@ void main() {
       await settle();
       expect(mic.startCount, 2, reason: 'capture reopened automatically');
       expect(a.phase, AssistantPhase.listening);
-      expect(
-        a.debugLog.any((l) => l.contains('reopening')),
-        isTrue,
-      );
+      expect(a.debugLog.any((l) => l.contains('reopening')), isTrue);
     });
 
-    test('a stalled (silent, never-closed) stream trips the watchdog',
-        () async {
-      await a.toggle();
-      await settle();
-      time.advance(const Duration(milliseconds: 1300)); // no bytes at all
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      await settle();
-      expect(mic.startCount, 2);
-    });
+    test(
+      'a stalled (silent, never-closed) stream trips the watchdog',
+      () async {
+        await a.toggle();
+        await settle();
+        time.advance(const Duration(milliseconds: 1300)); // no bytes at all
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        await settle();
+        expect(mic.startCount, 2);
+      },
+    );
 
-    test('a reopen that ducks mid-reply waits for the audio to end',
-        () async {
+    test('a reopen that ducks mid-reply waits for the audio to end', () async {
       await a.toggle();
       await settle();
       // Make audio "busy": start a local echo reply and hold it playing.
@@ -734,81 +1397,108 @@ void main() {
       await settle();
       await Future<void>.delayed(const Duration(milliseconds: 250));
       await settle();
-      expect(mic.startCount, 2,
-          reason: '…and the deferred reopen fires immediately');
+      expect(
+        mic.startCount,
+        2,
+        reason: '…and the deferred reopen fires immediately',
+      );
     });
   });
 
   group('zombie wire and reattach (the background→foreground fix)', () {
-    test('24 s of silence on a live turn hops to a fresh /attach view',
-        () async {
-      await withBridge();
-      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
-      unawaited(a.runQuickCommand('long build'));
-      await settle();
+    test(
+      '24 s of silence on a live turn hops to a fresh /attach view',
+      () async {
+        await withBridge();
+        harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+        unawaited(a.runQuickCommand('long build'));
+        await settle();
 
-      // The bridge pings every 15 s; a full quiet window with NOTHING
-      // crossing means the route died quietly. 25 s of silence:
-      time.advance(const Duration(seconds: 25));
-      await settle();
+        // The bridge pings every 15 s; a full quiet window with NOTHING
+        // crossing means the route died quietly. 25 s of silence:
+        time.advance(const Duration(seconds: 25));
+        await settle();
 
-      expect(a.harnessBackgrounded || a.bridgeBusy, isTrue,
-          reason: 'the turn is still alive on the bridge');
-      expect(harness.attachCount, 1, reason: 'the chain stole a fresh view');
-      expect(a.status, contains('Reattached'));
+        expect(
+          a.harnessBackgrounded || a.bridgeBusy,
+          isTrue,
+          reason: 'the turn is still alive on the bridge',
+        );
+        expect(harness.attachCount, 1, reason: 'the chain stole a fresh view');
+        expect(a.status, contains('Reattached'));
 
-      // The reattached view speaks the story that went unheard:
-      harness.emitAttach(BridgeEvent.forTest('say', text: 'Build done.'));
-      await settle();
-      expect(engine.synthesized.any((t) => t.contains('Build done')), isTrue);
-      expect(a.chat.last.blocks, contains('Build done.'));
-    });
+        // The reattached view speaks the story that went unheard:
+        harness.emitAttach(BridgeEvent.forTest('say', text: 'Build done.'));
+        await settle();
+        expect(engine.synthesized.any((t) => t.contains('Build done')), isTrue);
+        expect(a.chat.last.blocks, contains('Build done.'));
+      },
+    );
 
-    test('a wire death withdraws unheard commits from the bubble (+114)',
-        () async {
-      await withBridge();
-      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
-      unawaited(a.runQuickCommand('go'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('say', text: 'Heard, this one.'));
-      await settle(); // fake synth plays at once: this one AIRED
-      expect(a.chat.last.blocks, contains('Heard, this one.'));
+    test(
+      'a wire death withdraws unheard commits from the bubble (+114)',
+      () async {
+        await withBridge();
+        harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+        unawaited(a.runQuickCommand('go'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('say', text: 'Heard, this one.'));
+        await settle(); // fake synth plays at once: this one AIRED
+        expect(a.chat.last.blocks, contains('Heard, this one.'));
 
-      final gate = Completer<void>();
-      engine.holdChunks = gate.future; // next paragraph enters the
-      // speaker's flight but its audio is frozen before the first chunk
-      harness.emit(BridgeEvent.forTest('say', text: 'Never aired.'));
-      await settle();
-      expect(a.chat.last.blocks, isNot(contains('Never aired.')),
-          reason: '+116: no block without sound — and nothing to '
-              'retract later either, the lie was never written');
+        final gate = Completer<void>();
+        engine.holdChunks = gate.future; // next paragraph enters the
+        // speaker's flight but its audio is frozen before the first chunk
+        harness.emit(BridgeEvent.forTest('say', text: 'Never aired.'));
+        await settle();
+        expect(
+          a.chat.last.blocks,
+          isNot(contains('Never aired.')),
+          reason:
+              '+116: no block without sound — and nothing to '
+              'retract later either, the lie was never written',
+        );
 
-      harness.finishView(); // the wire dies mid-synth: no done frame
-      await settle();
-      // A newer turn takes the ear (the field shape: the user's next
-      // press arrives while the unheard paragraph is still frozen in
-      // synth): the dead turn's chunks drop on its alive-guard, and its
-      // teardown retracts what never aired.
-      unawaited(a.runQuickCommand('next'));
-      gate.complete();
-      await settle();
-      expect(a.chat.first.blocks, isNot(contains('Never aired.')),
-          reason: 'never heard, so never owed: withdrawn, and the '
-              'bridge copy stays replayable for a fresh view');
-      expect(a.chat.first.blocks, contains('Heard, this one.'),
-          reason: 'heard text is heard history');
+        harness.finishView(); // the wire dies mid-synth: no done frame
+        await settle();
+        // A newer turn takes the ear (the field shape: the user's next
+        // press arrives while the unheard paragraph is still frozen in
+        // synth): the dead turn's chunks drop on its alive-guard, and its
+        // teardown retracts what never aired.
+        unawaited(a.runQuickCommand('next'));
+        gate.complete();
+        await settle();
+        expect(
+          a.chat.first.blocks,
+          isNot(contains('Never aired.')),
+          reason:
+              'never heard, so never owed: withdrawn, and the '
+              'bridge copy stays replayable for a fresh view',
+        );
+        expect(
+          a.chat.first.blocks,
+          contains('Heard, this one.'),
+          reason: 'heard text is heard history',
+        );
 
-      // The retract must be RECOVERY, not deletion: the chain's attach
-      // view (health said turnOpen) meets the same paragraph on the
-      // replay stream and must VOICE it — no ledger entry, no flight
-      // claim, so dedup bows out of the way.
-      harness.emitAttach(BridgeEvent.forTest('say', text: 'Never aired.'));
-      await settle();
-      expect(engine.synthesized.any((t) => t.contains('Never aired')), isTrue,
-          reason: '+115: the tail the old process never said is said now');
-      expect(a.chat.first.blocks, isNot(contains('Never aired.')),
-          reason: 'it belongs to the NEW bubble, not the dead turn');
-    });
+        // The retract must be RECOVERY, not deletion: the chain's attach
+        // view (health said turnOpen) meets the same paragraph on the
+        // replay stream and must VOICE it — no ledger entry, no flight
+        // claim, so dedup bows out of the way.
+        harness.emitAttach(BridgeEvent.forTest('say', text: 'Never aired.'));
+        await settle();
+        expect(
+          engine.synthesized.any((t) => t.contains('Never aired')),
+          isTrue,
+          reason: '+115: the tail the old process never said is said now',
+        );
+        expect(
+          a.chat.first.blocks,
+          isNot(contains('Never aired.')),
+          reason: 'it belongs to the NEW bubble, not the dead turn',
+        );
+      },
+    );
 
     test('an old unheard paragraph is logged, never re-voiced', () async {
       await withBridge();
@@ -820,24 +1510,32 @@ void main() {
       expect(harness.attachCount, greaterThan(0));
 
       // An archaeology frame: 5 minutes old and not in the chat log.
-      final ancient = time.now
-              .subtract(const Duration(minutes: 5))
-              .millisecondsSinceEpoch -
+      final ancient =
+          time.now.subtract(const Duration(minutes: 5)).millisecondsSinceEpoch -
           1; // ~300 s wire age after skew ~0
-      harness.emitAttach(BridgeEvent.forTest(
-          'say', text: 'Something from before', wireMs: ancient));
+      harness.emitAttach(
+        BridgeEvent.forTest(
+          'say',
+          text: 'Something from before',
+          wireMs: ancient,
+        ),
+      );
       await settle();
-      expect(a.chat.last.blocks, contains('Something from before.'),
-          reason: 'it belongs to the history… (cleaned, as stored)');
-      expect(engine.synthesized.any((t) => t.contains('Something from before')),
-          isFalse,
-          reason: '…but the user already heard it; never re-voice');
+      expect(
+        a.chat.last.blocks,
+        contains('Something from before.'),
+        reason: 'it belongs to the history… (cleaned, as stored)',
+      );
+      expect(
+        engine.synthesized.any((t) => t.contains('Something from before')),
+        isFalse,
+        reason: '…but the user already heard it; never re-voice',
+      );
     });
   });
 
   group('latency bench', () {
-    test('a bench run transcribes the capture and echoes it, timed',
-        () async {
+    test('a bench run transcribes the capture and echoes it, timed', () async {
       a.setMode(InteractionMode.pushToTalk);
       await a.benchDown();
       await settle();
@@ -858,8 +1556,11 @@ void main() {
       expect(run.heard, 'repeat that');
       expect(run.audioSeconds, closeTo(0.1, 0.01));
       expect(a.benchNote, contains('release→text'));
-      expect(out.played.where((c) => c.$1.length == 2400), hasLength(1),
-          reason: 'the echo reached the player (warm-up aside)');
+      expect(
+        out.played.where((c) => c.$1.length == 2400),
+        hasLength(1),
+        reason: 'the echo reached the player (warm-up aside)',
+      );
       expect(a.benchBusy, isFalse);
     });
   });

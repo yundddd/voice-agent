@@ -113,8 +113,21 @@ class ChatStore {
   /// +110: a standalone system bubble — the interruption verdict gets
   /// its own card in the channel instead of riding inside whichever
   /// assistant turn happens to be open, so the story of a cut thinking
-  /// run or backgrounded tool call outlives both turns.
+  /// run or backgrounded tool call outlives both turns. Idempotent by
+  /// ADJACENCY: the poll transport can deliver the same disposition
+  /// notice twice (enqueue ring copy + flush re-announce), and one
+  /// event is one bubble — but a legitimately repeated verdict much
+  /// later still gets its own fresh card (containsBlock would swallow
+  /// every second tool-cut with the same wording).
   void addSystemNote(String text) {
+    if (_entries.isNotEmpty) {
+      final last = _entries.last;
+      if (!last.fromUser &&
+          last.blocks.length == 1 &&
+          last.blocks.single == text) {
+        return;
+      }
+    }
     _entries.add(ChatEntry.assistant(createdMs: _nowMs())..blocks.add(text));
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
@@ -155,6 +168,23 @@ class ChatStore {
       trace?.call(
         'msg queue taken: ${q.createdMs == 0 ? 'waited ?' : 'waited ${formatWait(q.pickedUpMs - q.createdMs)}'}',
       );
+      touch();
+    }
+  }
+
+  /// Drop the pin only if it is still THIS entry's (a newer press may
+  /// own it now). A superseded queue-turn calls this: the bridge's one
+  /// pending slot is latest-wins, so a prompt replaced by a newer press
+  /// is never taken — without this its pin would fossilise at the
+  /// bottom of the channel forever (the 'queue or interrupt leaves
+  /// stale bubbles' field complaint). The message itself stays in the
+  /// log, exactly like a taken pin's — it simply returns to the flow.
+  void dropPin(ChatEntry? e) {
+    if (e == null) return;
+    if (identical(_queued, e)) _queued = null;
+    if (e.queued) {
+      e.queued = false;
+      trace?.call('msg pin dropped: superseded before pickup');
       touch();
     }
   }

@@ -235,3 +235,105 @@ test('every relayed sentence keeps one replayable copy, never two (+114)',
       await stopBridge(proc);
     }
   });
+
+// Behaviour 2 (the phone's Queue button, cuttool=1): a polite queue that
+// lands over a RUNNING TOOL still backgrounds it — the agent is freed for
+// the new prompt at once — and the tool's completion reports later, into
+// the new turn's stream. Politeness governs THINKING only; nobody waits
+// out a build they just interrupted the listening for.
+const PORT5 = PORT1 + 4;
+test('a queue press over a running tool backgrounds it and frees the agent ' +
+    '(behaviour 2)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT5, {
+    STUB_TOOL: 'npm test', STUB_TOOL_START_MS: '100',
+    STUB_RESULT_MS: '30000', // the build never settles on its own here
+    STUB_TOOL_DONE_MS: '700', STUB_TOOL_DONE_TEXT: 'Background build finished.',
+  });
+  try {
+    await up(PORT5);
+    // Turn A: a long build, heard live — the tool step proves it is open.
+    const a = await call(PORT5, `/talk?token=${TOKEN}`,
+      { body: 'run the suite', method: 'POST' });
+    await until('Bash step relayed', async () => a.text.includes('"name":"Bash"'));
+
+    // Queue politely-with-backgrounding over the open tool:
+    const b = await call(PORT5, `/talk?token=${TOKEN}&interrupt=0&cuttool=1`,
+      { body: 'status please', method: 'POST' });
+    await until('notice names the backgrounding', async () =>
+      b.text.includes('"name":"queued"') &&
+      b.text.includes('put into background'));
+
+    // The queue did NOT wait for the 30 s build: the cut flushed the
+    // floor within a heartbeat, in order, with no stray done (+106).
+    await until('B reached the harness', async () =>
+      seen(stubLog).includes('status please'));
+    const lines = seen(stubLog);
+    assert.ok(lines.indexOf('run the suite') < lines.indexOf('status please'),
+      'the queue jumped the turn instead of cutting it');
+    assert.ok(!a.text.includes('event: done'),
+      'the cut turn got its funeral done anyway');
+
+    // The ring carried the queue notice too — the pull transport gets
+    // its 'One moment — the running tool was put into background' note.
+    await until('queued notice on the ring', async () => {
+      const r = JSON.parse((await call(PORT5, `/poll?token=${TOKEN}&since=0`)).text);
+      return r.events.some((e) => e.ev === 'tool' && e.data?.name === 'queued');
+    });
+
+    // And the SURVIVING tool reports itself finished inside the new
+    // turn — a structured 'finished' frame (what the phone's banner
+    // retires on) plus its completion say for the conversation.
+    await until('background completion lands', async () =>
+      b.text.includes('Background build finished.'));
+    assert.ok(b.text.includes('"name":"finished"'),
+      'the tool_result of a cut tool must relay its finished frame');
+    assert.ok(b.text.includes('Bash npm test'),
+      'the finished frame names the command the banner showed');
+    a.kill();
+    b.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// The phone's pump died mid-handoff (the +104 flip: Android cut the SSE
+// stream while the prompt sat queued). Its recovery is a drain /attach —
+// and the ONLY thing that retires a fossilised 'queued' pin there is the
+// pickup marker riding the backlog replay. beginTurn wipes the backlog
+// the moment the flushed turn opens, which used to eat the marker it had
+// just relayed: the drain came back complete, the answer got voiced, and
+// the pin stayed on screen forever (the bash-sleep field report's twin).
+const PORT6 = PORT1 + 5;
+test('the pickup marker survives the flush’s backlog wipe — /attach ' +
+    'replays it (drain path retires the pin)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT6);
+  try {
+    await up(PORT6);
+    const a = await call(PORT6, `/talk?token=${TOKEN}`,
+      { body: 'first turn', method: 'POST' });
+    await until('turn A open', async () => (await health(PORT6)).turnOpen === true);
+
+    // A POLL-transport queue press: parked, notice on the ring, socket
+    // closed at enqueue exactly like the phone does it.
+    await call(PORT6, `/talk?token=${TOKEN}&interrupt=0&poll=1`,
+      { body: 'polled queue', method: 'POST' });
+    await until('queue flushed', async () => (await health(PORT6)).queued === false);
+
+    // Now the drained phone arrives: /attach replays the unheard backlog,
+    // and the started marker must ride that replay (ring or nothing —
+    // /attach does not read the ring).
+    const at = await call(PORT6, `/attach?token=${TOKEN}`);
+    await until('marker in the replay', async () =>
+      at.text.includes('"name":"started"'));
+    assert.ok(at.text.includes('"detail":"polled queue"'),
+      'the replayed marker must name the prompt it picked up');
+    await until('B reaching the harness', async () =>
+      seen(stubLog).includes('polled queue'));
+    a.kill();
+    at.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});

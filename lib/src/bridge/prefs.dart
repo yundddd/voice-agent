@@ -24,9 +24,16 @@ class BridgePrefs {
     this.token = defaultToken,
     this.voice = true,
     this.narrate = false,
+    this.tts = true,
   });
   String url, token;
   bool voice;
+
+  /// Master switch for the voice. Off (a test/degraded-network mode):
+  /// replies land as text in the chat bubbles only — no synthesis, no
+  /// audio, and the worker never demands a TTS model pack. The harness
+  /// turn itself is unaffected; this gates exactly the speaker.
+  bool tts;
 
   /// 'Narrate progress' (off from the factory: tool-call chatter is
   /// messy — the silent status text and the answer alone carry a turn).
@@ -44,12 +51,14 @@ class BridgePrefs {
     'token': token,
     'voice': voice,
     'narrate': narrate,
+    'tts': tts,
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
     token: j['token'] as String? ?? BridgePrefs.defaultToken,
     voice: j['voice'] as bool? ?? true,
     narrate: j['narrate'] as bool? ?? false,
+    tts: j['tts'] as bool? ?? true,
   );
 }
 
