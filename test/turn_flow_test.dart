@@ -587,6 +587,67 @@ void main() {
       },
     );
 
+    test(
+      'poll view: a paragraph the ledger already owns does NOT resurface '
+      'as a second bubble (queue/interrupt duplicate-bubble field report)',
+      () async {
+        await withBridge();
+        // Turn 1 rides the PUSH view: heard, spoken, in the ledger.
+        unawaited(a.runQuickCommand('go'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('say', text: 'All done — one copy.'));
+        harness.emit(const BridgeEvent.forTest('done'));
+        await settle();
+        int copies() => a.chat
+            .where((e) => e.blocks.contains('All done — one copy.'))
+            .length;
+        expect(copies(), 1);
+        expect(
+          engine.synthesized.where((t) => t == 'All done — one copy.').length,
+          1,
+        );
+
+        // The ring gets advertised; the NEXT press (queue or interrupt —
+        // both ride the same /talk) chooses the poll transport. The ring
+        // now hands the SAME paragraph again: a superseded polling view
+        // left the cursor behind it, or the flush re-announced it. The
+        // view says "mine"; only the ledger may say "heard".
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'now': time.now.millisecondsSinceEpoch,
+          'poll': {'ring': 10},
+        };
+        await a.debugProbeTransport();
+        unawaited(a.runQuickCommand('steer', interrupt: false, cutTool: true));
+        await settle();
+        harness.pollPages.add(
+          FakeHarness.page(11, [
+            BridgeEvent.forTest('say', text: 'All done — one copy.'),
+          ], first: 11),
+        );
+        time.advance(const Duration(milliseconds: 300));
+        await settle();
+        expect(
+          copies(),
+          1,
+          reason:
+              'the ring is shared history: dedup is the ledger, not '
+              'the view — a heard paragraph must never re-bubble',
+        );
+        expect(
+          engine.synthesized.where((t) => t == 'All done — one copy.').length,
+          1,
+          reason: 'and it must never re-speak',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('ring dedup')),
+          isTrue,
+          reason: 'the skip is journalled under the ring-delivery law',
+        );
+      },
+    );
+
     test('poll view: the prior turn’s DONE cannot end the queue pump — the '
         'pin dissolves at the started marker BEHIND it (field report: a '
         'queue press over a live bash sleep left the pin frozen)', () async {

@@ -408,24 +408,36 @@ class BridgeTurn {
   }
 
   Future<void> _onSay(BridgeEvent ev) async {
-    if (isLive) {
+    if (isLive && !transport.turnViaPoll) {
       // The answer closed and is being spoken: nothing is generating to
       // grow a counter over. Harness-generated text just crossed the
       // wire: journal it (RAW — the say line mirrors what arrived) with
       // its skew-corrected delivery age, so a delayed or dropped
-      // paragraph shows up as a gap in this stamp trail.
+      // paragraph shows up as a gap in this stamp trail. On the PUSH
+      // view this stream is OUR conversation: every frame is news by
+      // construction, and it speaks.
       ticker.markSpoken();
       final said = ev.text.trim();
       env.log('msg harness: say "${_trunc(said, 48)}"${transport.wireTag(ev)}');
       await speak(cleanForSpeech(said));
       return;
     }
-    // Replay: ONE cleaning up front, then every branch — dedup test,
-    // log add, and speak — sees the SAME string the live path stored.
-    // The bug this kills: the chat log keeps the cleaner's OUTPUT while
-    // dedup compared its INPUT — any paragraph the cleaner touched
-    // missed, and a heard paragraph rode the replay back out of the
-    // speaker. Match like you store.
+    // Everything else may carry HISTORY: the /attach replay, and — the
+    // case this branch lost bubbles over (field report: "when I queue
+    // or interrupt, messages show up AGAIN") — a live /talk view riding
+    // the POLL ring. On the ring, the frames ahead of our POST are the
+    // PREVIOUS turn's, and the previous turn may well have been heard
+    // already through a push view (the cursor catches up before the
+    // POST, but a press that supersedes a polling view mid-drain leaves
+    // it behind, and the flush re-announces). "My view = my news" is
+    // push-only law; on a shared ring the LEDGER decides, so these
+    // frames get the replay rules: ONE cleaning up front, then every
+    // branch — dedup test, log add, and speak — sees the SAME string
+    // the live path stored. The bug this kills: the chat log keeps the
+    // cleaner's OUTPUT while dedup compared its INPUT — any paragraph
+    // the cleaner touched missed, and a heard paragraph rode the ring
+    // back out of the speaker. Match like you store.
+    final via = isAttach ? 'replay' : 'ring';
     final sayText = cleanForSpeech(ev.text.trim());
     final age = transport.wireAgeMs(ev);
     if (age > 120000 &&
@@ -437,7 +449,7 @@ class BridgeTurn {
       // this exchange.
       chat.addBlock(turnBubble, sayText);
       final ageSec = ev.wireMs == 0 ? 'unstamped' : '${age ~/ 1000}s old';
-      env.log('replay $ageSec: logged silently, not spoken');
+      env.log('$via $ageSec: logged silently, not spoken');
     } else if (chat.containsBlock(sayText) || inFlight.contains(sayText)) {
       // Already heard — or already airborne in this process. +116 makes
       // the first half TRUE: the persisted log only ever carries blocks
@@ -446,11 +458,11 @@ class BridgeTurn {
       // chunk. One trade kept from the old law: a paragraph cut off
       // MID-audio counts as heard and its tail is not repeated — never
       // re-listening beats never not-listening.
-      env.log('replay dedup: paragraph already in chat — skipped');
+      env.log('$via dedup: paragraph already in chat — skipped');
     } else {
       ticker.markSpoken();
       env.log(
-        'msg harness: say (replay) "${_trunc(sayText, 48)}"'
+        'msg harness: say ($via) "${_trunc(sayText, 48)}"'
         '${transport.wireTag(ev)}',
       );
       await speak(sayText);
