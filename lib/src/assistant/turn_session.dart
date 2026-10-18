@@ -272,6 +272,7 @@ final class TurnCoordinator {
   /// clock re-anchors to NOW (the chat spinner counts the live turn,
   /// not the press that preceded it — +126).
   void becomeHeard() {
+    _pttPressPending = false; // heard is decided: nothing pending
     _backgrounded = false;
     _since = _clock();
   }
@@ -333,9 +334,31 @@ final class TurnCoordinator {
   /// deliberately NOT touched — it keeps counting the WORK the user was
   /// watching, not the press (+126: the press must not visually kill
   /// the spinner).
-  void markBackgrounded() {
+  /// A push-to-talk PRESS over a heard turn detaches it so the mic can
+  /// open — but the BANNER must not blink on the press: the release
+  /// gesture decides whether the turn is actually out of the ear
+  /// (queue → the successor pump hears the tail; cut → the promise and
+  /// its receipt tell; discard / no-words → genuinely unheard). While
+  /// the verdict is pending the badge is real but silent (+146): the
+  /// spinner law and /stop bookkeeping read the raw flag, the bottom
+  /// line reads [backgroundUnheard].
+  void markBackgrounded({bool verdictPending = false}) {
     _backgrounded = true;
+    _pttPressPending = verdictPending;
   }
+
+  /// The press's release happened: the banner shows the badge if it is
+  /// still lit (discard, no-words), or nothing (queue retired it, cut
+  /// rides the promise from the wire).
+  void resolveBackgroundVerdict() {
+    _pttPressPending = false;
+  }
+
+  bool _pttPressPending = false;
+
+  /// Badge lit AND the release verdict settled: work the phone is not
+  /// hearing — the ONLY banner shape a press may produce (+146).
+  bool get backgroundUnheard => _backgrounded && !_pttPressPending;
 
   /// A real tool step arrived on the live turn: it is what the bottom
   /// line names if this turn leaves the ear NOW. Steps landing behind a
@@ -371,6 +394,7 @@ final class TurnCoordinator {
   /// post-detach sweep must not blank a snapshot another flow owns.
   void retireBadge() {
     _backgrounded = false;
+    _pttPressPending = false; // the badge is gone; the verdict is moot
     _since = null;
     _detachedPromise = false; // no badge, no promise: work proven over
   }
@@ -426,6 +450,9 @@ final class TurnCoordinator {
     final hardStop = takeoverStop(trigger) == TakeoverStop.hardStop;
     _lastTakeover = trigger;
     _lastTakeoverPolite = polite && !hardStop;
+    // +146: a press's verdict stays pending across the detach — the
+    // zero-delay steal-back probe (or the release, whichever lands
+    // first) is what decides the banner.
     _beforeDetach();
     _bgWork = _lastToolStep;
     if (_backgrounded) {

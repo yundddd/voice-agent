@@ -251,9 +251,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                             ],
                             const SizedBox(height: 16),
                             for (final e in v.chat)
-                              if (identical(e, liveTurn) ||
-                                  (e.blocks.isNotEmpty &&
-                                      !(e.fromUser && e.queued)))
+                              if (identical(e, liveTurn) || e.blocks.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
@@ -265,17 +263,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     source: () => a.view,
                                   ),
                                 ),
-                            if (v.queued case final QueuedPin pin)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 4,
-                                ),
-                                child: QueuedBubbleCard(
-                                  text: pin.text,
-                                  createdMs: pin.createdMs,
-                                  maxWidthFrac: 0.86,
-                                ),
-                              ),
+
                             // A backgrounded tool call keeps a permanent
                             // line at the channel's bottom while it works
                             // unheard: the badge (detached turn) or a queue

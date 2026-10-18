@@ -438,8 +438,9 @@ void main() {
       expect(since, isNotNull);
     });
 
-    test('+110: a queued verdict is conversation — its own bubble, a '
-        'human line, and never the bottom-line step', () async {
+    test('+110/+146: a queued verdict paints the status line, journals — '
+        'and injects NO bubble (the greyed message is the wait '
+        'indicator)', () async {
       mkTurn();
       final r = turnLoop.run(wire.stream);
       await settle();
@@ -468,9 +469,20 @@ void main() {
         'message goes next.',
       );
       expect(
-        chat.last.blocks.single,
-        startsWith('One moment —'),
-        reason: 'its own card, not a block inside the open turn',
+        chat.containsBlock(
+          'One moment — the thinking was interrupted and aborted; your '
+          'message goes next.',
+        ),
+        isFalse,
+        reason:
+            '+146: no injected system card — the queued message '
+            'greys in place instead; the verdict lives in the status '
+            'line and the journal',
+      );
+      expect(
+        probe.logs,
+        contains(contains('queue verdict')),
+        reason: 'the decision is still journalled with its wire stamp',
       );
       expect(
         turn.lastToolStep,

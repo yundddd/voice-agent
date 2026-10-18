@@ -159,6 +159,48 @@ void main() {
       },
     );
 
+    test(
+      '+146: the banner answers the RELEASE, never the press — and a '
+      'silent release over an open turn RE-EARS instead of blinking',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('go'));
+        await settle();
+        harness.emit(
+          BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+        );
+        await settle();
+        a.setMode(InteractionMode.pushToTalk);
+
+        // Press: detached (spinner law intact) but the banner holds.
+        a.pttDown(Offset.zero);
+        await settle();
+        expect(a.view.harnessBackgrounded, isTrue);
+        expect(
+          a.view.showBackgroundedRow,
+          isFalse,
+          reason: 'no blink on press-down',
+        );
+
+        // Plain release, no words, turn still open: the app takes the
+        // ear back (probe ATTACH) — the unheard claim expires by proof,
+        // never by a banner blink.
+        time.advance(const Duration(milliseconds: 600));
+        a.pttUp(Offset.zero);
+        await settle();
+        expect(
+          harness.attachCount,
+          greaterThan(0),
+          reason: 'silent release over an open turn re-attaches',
+        );
+        expect(
+          a.view.showBackgroundedRow,
+          isFalse,
+          reason: 'heard again: never lit at all',
+        );
+      },
+    );
+
     test('a backgrounded tool call keeps a persistent bottom line that '
         'dismisses when the work is proven done', () async {
       await withBridge();
@@ -169,9 +211,8 @@ void main() {
         BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'flutter test'),
       );
       await settle();
-      a.setMode(InteractionMode.pushToTalk);
-      a.pttDown(Offset.zero); // the press over live work detaches it
-      await settle();
+      a.debugDetachUnheard(); // +146 seam: detached unheard — the press
+      await settle(); // path itself is pinned by the banner-law test
       expect(a.harnessBackgrounded, isTrue);
       expect(
         a.backgroundedWork,
@@ -199,8 +240,7 @@ void main() {
         BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
       );
       await settle();
-      a.setMode(InteractionMode.pushToTalk);
-      a.pttDown(Offset.zero);
+      a.debugDetachUnheard(); // +146 seam: detached unheard
       await settle();
       expect(a.backgroundedWork, 'Bash npm test…');
       unawaited(
@@ -770,13 +810,21 @@ void main() {
         );
         expect(
           a.chat.any(
-            (e) => e.blocks.contains(
-              'One moment — finishing the current turn; '
-              'your message goes next.',
-            ),
+            (e) => e.fromUser && e.queued && e.blocks.contains('parked'),
           ),
           isTrue,
-          reason: 'the notice itself is journaled as a system bubble',
+          reason:
+              'the parked message sits IN the flow, greyed by its '
+              'pin flag — the +146 wait indicator',
+        );
+        expect(
+          a.chat.any((e) => e.blocks.any((b) => b.startsWith('One moment'))),
+          isFalse,
+          reason:
+              '+146: the notice injects NO bubble — the parked '
+              'message itself greys in the flow until the started '
+              'marker un-greys it; the verdict only paints the status '
+              'line above the orb',
         );
 
         // beginTurn's first real frame: NOW the floor is ours.
@@ -1248,49 +1296,42 @@ void main() {
       },
     );
 
-    test(
-      'the queue verdict gets its own bubble, not the turn\'s (+110)',
-      () async {
-        await withBridge();
-        await a.toggle();
-        await settle();
-        engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
-        await settle(); // harness turn opens (empty assistant bubble)
-        harness.emit(
-          BridgeEvent.forTest(
-            'tool',
-            toolName: 'queued',
-            detail:
-                'the thinking was interrupted and aborted; '
-                'your message goes next',
-          ),
-        );
-        await settle();
+    test('the queue verdict injects no bubble (+146)', () async {
+      await withBridge();
+      await a.toggle();
+      await settle();
+      engine.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle(); // harness turn opens (empty assistant bubble)
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'queued',
+          detail:
+              'the thinking was interrupted and aborted; '
+              'your message goes next',
+        ),
+      );
+      await settle();
 
-        final verdicts = a.chat
-            .where(
-              (e) =>
-                  !e.fromUser &&
-                  e.blocks.any(
-                    (b) => b.startsWith('One moment — the thinking'),
-                  ),
-            )
-            .toList();
-        expect(verdicts, hasLength(1));
-        expect(
-          verdicts.single.blocks,
-          hasLength(1),
-          reason:
-              'a note all by itself: nothing of the answer, nothing '
-              'of the cut turn — its own card in the channel',
-        );
-        // The answer's own bubble (the empty assistant entry the turn
-        // opened) sits BEFORE the note and holds none of it.
-        final cutTurn = a.chat[a.chat.indexOf(verdicts.single) - 1];
-        expect(cutTurn.fromUser, isFalse);
-        expect(cutTurn.blocks, isEmpty);
-      },
-    );
+      // No 'One moment' card anywhere in the channel (+146): the
+      // verdict paints only the transient status line and the journal.
+      expect(
+        a.chat.where(
+          (e) => !e.fromUser && e.blocks.any((b) => b.startsWith('One moment')),
+        ),
+        isEmpty,
+        reason:
+            'the injected system card is retired — the wait is '
+            'shown by the greyed queued message itself',
+      );
+      final cutTurn = a.chat.last;
+      expect(cutTurn.fromUser, isFalse);
+      expect(
+        cutTurn.blocks,
+        isEmpty,
+        reason: 'the open turn stays clean of the verdict',
+      );
+    });
 
     test('a cut silent turn still leaves its trace (+110)', () async {
       await withBridge();
@@ -1621,10 +1662,12 @@ void main() {
         BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
       );
       await settle();
-      // The press detaches the turn: badge lit, the line names the work.
-      a.setMode(InteractionMode.pushToTalk);
-      a.pttDown(Offset.zero);
+      // The turn leaves the ear unheard (+146 seam — the state a press
+      // reaches when its steal-back probe fails): the line names it.
+      // The tail waits on the ring, drained by the queued view below.
+      a.debugDetachUnheard();
       await settle();
+
       expect(a.harnessBackgrounded, isTrue);
       expect(a.backgroundedWork, 'Bash npm test…');
 

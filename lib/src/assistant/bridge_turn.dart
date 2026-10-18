@@ -564,6 +564,8 @@ class BridgeTurn {
     if (queued &&
         (ev.toolKind == 'background' ||
             ev.detail.toLowerCase().contains('background'))) {
+      // (In the /talk loop this frame arrives mid-poll-view: the prior
+      // turn's farewell is behind us; the promise stands on its own.)
       // The bridge's cut notice (+98 wording): the tool this press was
       // waiting behind is OUT OF EARSHOT now — the banner's warrant
       // lights on the bridge's own word (or, replayed: the bridge is
@@ -588,7 +590,18 @@ class BridgeTurn {
     }
     if (!isAttach) {
       if (queued) {
-        chat.addSystemNote(stepLine);
+        // +146: NO bubble. The queue verdict used to inject 'One
+        // moment — …' as a system card between the pinned message and
+        // the answer — narration of a state the channel already
+        // shows: the queued message sits GREYED in the flow until the
+        // agent takes it, and that IS the wait indicator. The verdict
+        // still paints the transient status line above the orb and
+        // journals with its wire stamp (the adjacency guard keeps
+        // absorbing the poll transport's double delivery for anything
+        // that still files).
+        env.log(
+          'queue verdict: "${_trunc(ev.detail, 48)}"${transport.wireTag(ev)}',
+        );
         _latestWork = '';
       } else {
         // No step line in the conversation any more: the spinner's

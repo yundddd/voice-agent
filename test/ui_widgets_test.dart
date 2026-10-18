@@ -185,19 +185,60 @@ void main() {
     });
   });
 
-  group('QueuedBubbleCard', () {
-    testWidgets('the pin names itself and carries the press', (tester) async {
+  group('the queued message in the flow', () {
+    testWidgets('+146: greys while pinned, full color once taken', (
+      tester,
+    ) async {
+      final parked = ChatEntry.user('polite follow-up')..queued = true;
       await tester.pumpWidget(
         _host(
-          const QueuedBubbleCard(
-            text: 'polite follow-up',
-            createdMs: 0,
+          ChatBubble(
+            entry: parked,
+            isLiveTurn: false,
             maxWidthFrac: 0.86,
+            source: () => _view(),
           ),
         ),
       );
-      expect(find.textContaining('Queued — waiting'), findsOne);
-      expect(find.text('polite follow-up'), findsOne);
+      expect(
+        find.text('polite follow-up'),
+        findsOne,
+        reason: 'the message stays IN the flow — no pin card',
+      );
+      expect(
+        tester
+            .widget<Opacity>(
+              find.ancestor(
+                of: find.text('polite follow-up'),
+                matching: find.byType(Opacity),
+              ),
+            )
+            .opacity,
+        0.42,
+      );
+      parked.queued = false; // the started marker cleared the pin
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: parked,
+            isLiveTurn: false,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<Opacity>(
+              find.ancestor(
+                of: find.text('polite follow-up'),
+                matching: find.byType(Opacity),
+              ),
+            )
+            .opacity,
+        1.0,
+        reason: 'taken by the harness — back to full color in place',
+      );
     });
   });
 

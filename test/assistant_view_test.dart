@@ -128,9 +128,18 @@ void main() {
       await settle();
       final v = a.view;
       expect(v.harnessBackgrounded, isTrue);
-      expect(v.showBackgroundedRow, isTrue);
-      expect(v.backgrounded.label, 'Bash npm test…');
-      expect(v.backgrounded.sinceMs, greaterThan(0));
+      expect(
+        v.showBackgroundedRow,
+        isFalse,
+        reason:
+            '+146: the press alone never lights the banner — no '
+            'blink; the probe verdict decides',
+      );
+      expect(
+        v.backgrounded.label,
+        isEmpty,
+        reason: 'the label rides the row: dark while pending',
+      );
       expect(
         v.liveTurnBubble,
         isNotNull,
@@ -146,8 +155,30 @@ void main() {
         Duration.zero,
         reason: 'the press re-anchored nothing — age still counts the WORK',
       );
+      // The whole hold stays honest: the probe's steal-back defers
+      // under the finger (+52), the verdict stays pending, the banner
+      // never blinks — while the spinner's clock keeps counting the
+      // WORK from the detach (+91). What the release decides (discard
+      // lights, queue re-ears, cut rides the wire promise) is pinned
+      // by the banner-law tests in turn_flow.
       time.advance(const Duration(seconds: 30));
-      expect(a.view.harnessElapsed, const Duration(seconds: 30));
+      await settle();
+      expect(
+        harness.attachCount,
+        0,
+        reason: 'no steal-back stomps a live hold',
+      );
+      expect(a.view.harnessBackgrounded, isTrue);
+      expect(
+        a.view.showBackgroundedRow,
+        isFalse,
+        reason: 'still pending: dark through the whole hold',
+      );
+      expect(
+        a.view.harnessElapsed,
+        const Duration(seconds: 30),
+        reason: 'the age counts the work, not the press',
+      );
     });
 
     test('a detached turn behind a new prompt: the pickup ack dismisses '
@@ -162,7 +193,22 @@ void main() {
       a.setMode(InteractionMode.pushToTalk);
       a.pttDown(const Offset(0, 0)); // detaches into the background
       await settle();
-      expect(a.view.showBackgroundedRow, isTrue);
+      expect(
+        a.view.showBackgroundedRow,
+        isFalse,
+        reason: '+146: the press alone never lights the banner',
+      );
+      // The probe's steal-back defers under the finger (the +52
+      // no-stomp rule): nothing is decided while the mic is open.
+      time.advance(const Duration(milliseconds: 600));
+      await settle();
+      a.pttUp(const Offset(300, 0)); // SLIDE-RIGHT discard resolves the
+      await settle(); // verdict: genuinely out of the ear now
+      expect(
+        a.view.showBackgroundedRow,
+        isTrue,
+        reason: 'the banner lights on the DISCARD — not the press',
+      );
       // The next prompt rides a fresh view; the bridge's receipt of the
       // detached work lands on it, and the row dismisses itself.
       unawaited(a.runQuickCommand('follow-up', bubble: 'follow-up'));

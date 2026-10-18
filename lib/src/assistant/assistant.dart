@@ -644,7 +644,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// finds nothing open, or the tool's 'finished' receipt paying the
   /// promise.
   bool get showsBackgroundedWork =>
-      _harnessBackgrounded || _turn.detachedPromise || _turn.agentWork;
+      _turn.backgroundUnheard || _turn.detachedPromise || _turn.agentWork;
 
   String get backgroundedWork => showsBackgroundedWork ? _bgWork : '';
 
@@ -1981,6 +1981,18 @@ class VoiceAssistant extends ChangeNotifier {
   /// [firstProbe] delays the first probe — used when the chain is born
   /// from a REATTACHED stream dying again, so a flaky link pays backoff
   /// between attach attempts instead of request-looping at RTT pace.
+  /// Test seam: the DETACHED-UNHEARD state directly — badge lit, verdict
+  /// settled, no steal-back armed. Since +146 a real press reaches this
+  /// state only when the immediate probe fails to take the ear back;
+  /// the press itself is pinned by the banner-law tests instead of every
+  /// receipt/pin test re-enacting a finger.
+  @visibleForTesting
+  void debugDetachUnheard() {
+    _turn.supersede();
+    _turn.markBackgrounded();
+    _turn.detach(TurnTrigger.zombieWire);
+  }
+
   void _armReattach({
     required int gen,
     required int seq,
@@ -2314,12 +2326,19 @@ class VoiceAssistant extends ChangeNotifier {
       // until then. Same supersede semantics as a
       // spoken barge-in in conversation mode — here, per spec, PTT's.
       _ptt.bridgeHold = _bridgeBusy;
-      if (_ptt.bridgeHold) _turn.markBackgrounded();
+      // The press detaches (the mic must open now) but the banner
+      // HOLDS: the release gesture decides whether this turn is
+      // genuinely out of the ear (+146 — a banner that blinked on
+      // every press-down and died on release told the user the press
+      // itself had backgrounded their turn). The spinner law and /stop
+      // bookkeeping still see the raw badge; only the row waits.
+      if (_ptt.bridgeHold) _turn.markBackgrounded(verdictPending: true);
       _turn.supersede();
       if (_ptt.bridgeHold) {
         _logDebug(
           'ptt DOWN over a live turn: detached it — the open tool '
-          'keeps working (badge lit), release gesture routes the prompt',
+          'keeps working (banner held for the release verdict), the '
+          'gesture routes the prompt',
         );
       }
       _reply.stopDebug();
@@ -2906,7 +2925,10 @@ class VoiceAssistant extends ChangeNotifier {
       // mode switch, the watchdog closed the stream, a duplicate call).
       // The hold did END though: a trace deferred at press resolves as
       // nothing-was-cut — the detached turn keeps working unheard.
-      if (_ptt.bridgeHold) _dropPttCutTrace();
+      if (_ptt.bridgeHold) {
+        _dropPttCutTrace();
+        _turn.resolveBackgroundVerdict();
+      }
       _logDebug(
         'release dropped: phase=${_phase.name} not listening '
         '(discard=$discard interrupt=$interrupt)',
@@ -2943,8 +2965,11 @@ class VoiceAssistant extends ChangeNotifier {
             : 'Dismissed — nothing sent.',
       );
       // Nothing was cut and nothing was sent: the deferred trace dies
-      // with the recording (+132's 'as if nothing happened').
+      // with the recording (+132's 'as if nothing happened'), and the
+      // banner resolves WITH the badge still lit — there is no
+      // successor view, the turn really is out of the ear now.
       _dropPttCutTrace();
+      _turn.resolveBackgroundVerdict();
       _logDebug('release: slide-right DISCARD — ${total}B dropped unsent');
       notifyListeners();
       return;
@@ -2956,6 +2981,7 @@ class VoiceAssistant extends ChangeNotifier {
         ' interrupt=$interrupt)',
       );
       if (bridgeHold) {
+        _turn.resolveBackgroundVerdict();
         // The hold opened over a harness turn but nothing speakable came
         // out. A MOTIONLESS quick tap is the hard stop the button
         // always was mid-turn: /stop cuts the (already detached, still
@@ -3030,16 +3056,20 @@ class VoiceAssistant extends ChangeNotifier {
     final willCut = interrupt || !bridgeHold;
     if (willCut) {
       _applyPttCutTrace();
+      // The cut's banner comes from the WIRE (the tagged disposition
+      // and the receipt behind it), not from the press's badge.
+      _turn.resolveBackgroundVerdict();
     } else {
       _dropPttCutTrace();
       // +145: the press detached the heard turn and lit the badge —
       // honest while the mic owned the moment. A QUEUE release hands
       // the ear straight back: the successor's pump rides the ring
       // and hears the settling turn's tail (armored, deduped), so
-      // 'working unheard' has expired — the pin card and the spinner
-      // carry the wait from here. (Discard deliberately keeps the
-      // badge: no successor view exists, the work really is out of
+      // 'working unheard' has expired — the greyed message and the
+      // spinner carry the wait from here. (Discard deliberately keeps
+      // the badge: no successor view exists, the work really is out of
       // earshot until a drain brings it back.)
+      _turn.resolveBackgroundVerdict();
       _turn.retireBadge();
     }
     await _startTurn(cleaned, interrupt: willCut);

@@ -3,9 +3,12 @@
 /// of the speaker). Persistent — turns no longer replace each other, and
 /// the log reloads with the app. The in-flight harness turn renders even
 /// while still block-free: its bubble carries the live working line
-/// ([HarnessSpinner]). A queued press is EXCLUDED from the flow — it
-/// rides the pinned card below instead, until the harness starts its
-/// turn and the entry dissolves back in at its place.
+/// ([HarnessSpinner]). A queued press sits IN the flow where it was
+/// said, DIMMED (+146: it used to be pulled out of the channel into a
+/// pin card and have 'One moment — …' injected as a second
+/// notification of the same fact; the grey bubble is the wait
+/// indicator, and it returns to full color the moment the agent takes
+/// the turn — one message, one place, one state).
 ///
 /// Every widget here renders [AssistantView] data — no live assistant
 /// getters, no derived state in the render path. A behavior change
@@ -62,82 +65,92 @@ class ChatBubble extends StatelessWidget {
                 constraints: BoxConstraints(
                   maxWidth: constraints.maxWidth * maxWidthFrac,
                 ),
-                child: Card(
-                  color: entry.fromUser
-                      ? scheme.primaryContainer
-                      : scheme.secondaryContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    child: entry.fromUser
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              SelectableText(
-                                entry.blocks.join(' '),
-                                style: Theme.of(context).textTheme.bodyLarge
-                                    ?.copyWith(
-                                      color: scheme.onPrimaryContainer,
-                                    ),
-                              ),
-                              _BubbleStamp(
-                                text: stamp,
-                                color: scheme.onPrimaryContainer.withValues(
-                                  alpha: 0.7,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (final (i, s) in entry.blocks.indexed) ...[
-                                if (i > 0) const Divider(height: 24),
+                child: Opacity(
+                  // +146: the queued wait, shown where the message
+                  // lives: a polite-queue press is greyed until the
+                  // bridge's started marker clears the pin. No card,
+                  // no injected 'One moment' — the message itself
+                  // waits in plain sight.
+                  opacity: entry.fromUser && entry.queued ? 0.42 : 1.0,
+                  child: Card(
+                    color: entry.fromUser
+                        ? scheme.primaryContainer
+                        : scheme.secondaryContainer,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: entry.fromUser
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
                                 SelectableText(
-                                  s,
-                                  style: Theme.of(context).textTheme.bodyLarge,
+                                  entry.blocks.join(' '),
+                                  style: Theme.of(context).textTheme.bodyLarge
+                                      ?.copyWith(
+                                        color: scheme.onPrimaryContainer,
+                                      ),
+                                ),
+                                _BubbleStamp(
+                                  text: stamp,
+                                  color: scheme.onPrimaryContainer.withValues(
+                                    alpha: 0.7,
+                                  ),
                                 ),
                               ],
-                              if (entry.interrupted && !isLiveTurn) ...[
-                                // +108: a cut turn says so — the
-                                // sections above it are what the speaker
-                                // got before the newer press took over.
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.pan_tool_outlined,
-                                      size: 14,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'interrupted'
-                                      '${formatBubbleClock(entry.interruptedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.interruptedMs)}'}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(
-                                            fontStyle: FontStyle.italic,
-                                            color: scheme.onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final (i, s) in entry.blocks.indexed) ...[
+                                  if (i > 0) const Divider(height: 24),
+                                  SelectableText(
+                                    s,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyLarge,
+                                  ),
+                                ],
+                                if (entry.interrupted && !isLiveTurn) ...[
+                                  // +108: a cut turn says so — the
+                                  // sections above it are what the speaker
+                                  // got before the newer press took over.
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.pan_tool_outlined,
+                                        size: 14,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'interrupted'
+                                        '${formatBubbleClock(entry.interruptedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.interruptedMs)}'}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              fontStyle: FontStyle.italic,
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (isLiveTurn) ...[
+                                  const SizedBox(height: 12),
+                                  HarnessSpinner(source: source),
+                                ],
+                                _BubbleStamp(
+                                  text: stamp,
+                                  color: scheme.onSurfaceVariant,
+                                  topGap: true,
                                 ),
                               ],
-                              if (isLiveTurn) ...[
-                                const SizedBox(height: 12),
-                                HarnessSpinner(source: source),
-                              ],
-                              _BubbleStamp(
-                                text: stamp,
-                                color: scheme.onSurfaceVariant,
-                                topGap: true,
-                              ),
-                            ],
-                          ),
+                            ),
+                    ),
                   ),
                 ),
               ),
@@ -263,92 +276,6 @@ class _BackgroundedWorkCardState extends State<BackgroundedWorkCard> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The polite-queue pin: a slide-up-off press that the bridge parked
-/// behind the live turn. It stays at the very bottom of the channel —
-/// under whatever the current work keeps printing — until Claude Code
-/// takes it, at which point the flag clears and the message re-renders
-/// in the flow above.
-class QueuedBubbleCard extends StatelessWidget {
-  const QueuedBubbleCard({
-    super.key,
-    required this.text,
-    required this.maxWidthFrac,
-    this.createdMs = 0,
-  });
-
-  final String text;
-  final double maxWidthFrac;
-
-  /// When the press happened (epoch ms): the pin card aging is exactly
-  /// the queue-delay symptom, so it wears its send-time stamp.
-  final int createdMs;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return LayoutBuilder(
-      builder: (context, constraints) => Row(
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth * maxWidthFrac,
-                ),
-                child: Card(
-                  color: scheme.primaryContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.schedule_outlined,
-                              size: 14,
-                              color: scheme.onPrimaryContainer.withValues(
-                                alpha: 0.7,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Queued — waiting for the current work'
-                              '${formatBubbleClock(createdMs).isEmpty ? '' : ' · ${formatBubbleClock(createdMs)}'}',
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: scheme.onPrimaryContainer.withValues(
-                                      alpha: 0.7,
-                                    ),
-                                  ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        SelectableText(
-                          text,
-                          textAlign: TextAlign.end,
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(color: scheme.onPrimaryContainer),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
