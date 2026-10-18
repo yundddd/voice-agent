@@ -38,6 +38,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui'
     show Offset; // PTT release-gesture geometry (Listener positions)
 
@@ -176,7 +177,10 @@ class VoiceAssistant extends ChangeNotifier {
       paused: () => _backgrounded,
       audioBusy: () => _reply.playing || _reply.queuedCount > 0,
       onRaw: _onPcm,
-      onVadWindow: (w) => _worker?.sendAudio(w),
+      onVadWindow: (w) {
+        _noteAudioLevel(w); // the ripple meter breathes in both modes
+        _worker?.sendAudio(w);
+      },
       gatePin: (on) => _worker?.setPlaying(on),
       resetVad: () => _worker?.resetVad(),
       userSpeaking: () => _userSpeaking,
@@ -260,6 +264,32 @@ class VoiceAssistant extends ChangeNotifier {
   bool _segEchoRisk = false; // current utterance started while we were talking
   bool _segGotAudio = false; // current utterance produced a VAD segment
   bool _disposed = false;
+
+  // ── Input level (the talk surface's ripple breath) ────────────────────
+  /// Recent mic energy, 0..1: per-chunk RMS (scaled), fast attack
+  /// (speech jumps), per-chunk decay (~0.9 @ 16–32 ms windows ⇒ half
+  /// life ~half a second). Fed from EVERY capture route (raw PTT/bench
+  /// chunks and conversation VAD windows alike), zeroed whenever the mic
+  /// closes so a new press starts from still water. The talk surface
+  /// reads it through the view (AssistantView.ptt.micLevel) and turns
+  /// it into ripple spawn-rate and size — the waveform you can see.
+  double _micLevel = 0;
+  double get micLevel => _micLevel;
+
+  void _noteAudioLevel(Float32List samples) {
+    if (samples.isEmpty) return;
+    var sq = 0.0;
+    for (final v in samples) {
+      sq += v * v;
+    }
+    final rms = math.sqrt(sq / samples.length);
+    // Speech RMS sits ~0.02–0.25 of full scale through the PCM16 gate;
+    // x4 and clamp maps normal talk into a usable 0..1 spread.
+    final v = (rms * 4.0).clamp(0.0, 1.0);
+    _micLevel = v > _micLevel ? v : _micLevel * 0.90;
+  }
+
+  void _resetMicLevel() => _micLevel = 0;
 
   /// The cold-start model download/pack step FAILED (typically: the app
   /// was backgrounded and Android ate the transfer). Not fatal — the
@@ -378,6 +408,7 @@ class VoiceAssistant extends ChangeNotifier {
       slide: _ptt.slide,
       drag: _ptt.drag,
       holdOverTurn: _ptt.holdOverTurn,
+      micLevel: _micLevel,
     ),
     sessionId: _sessionId,
     harnessElapsed: harnessElapsed,
@@ -2368,6 +2399,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// phase exactly like the original inline router: a PTT buffer only
   /// fills while listening; bench hard-caps at 20 s.
   void _onPcm(Float32List c) {
+    _noteAudioLevel(c); // the ripple meter rides every raw chunk too
     if (_benchCapturing) {
       // Latency bench: mic hand-off feeding the timed echo turn in
       // finishBenchCapture instead of a sample file.
@@ -2464,6 +2496,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   Future<void> _beginConversation() async {
     _reply.stopDebug();
+    _resetMicLevel(); // a new listen starts from still water
     try {
       await _mic.open();
       _phase = AssistantPhase.listening;
@@ -2758,6 +2791,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// depend on whether a chunk happened to be audible at tap time.
   void _shutdownMic() {
     unawaited(_mic.close());
+    _resetMicLevel(); // no stream, no level — never a frozen wave
     _worker?.resetVad();
     _chunks.clear();
     if (_benchCapturing || _benchBusy) {
@@ -2777,6 +2811,7 @@ class VoiceAssistant extends ChangeNotifier {
   Future<void> _startListening() async {
     if (_phase == AssistantPhase.listening || _worker == null) return;
     _reply.stopDebug();
+    _resetMicLevel();
     try {
       _reply.stopPlayback();
       await _mic.open();
@@ -2816,6 +2851,7 @@ class VoiceAssistant extends ChangeNotifier {
     final heldMs = _ptt.heldMs;
     _reply.stopDebug();
     await _mic.close();
+    _resetMicLevel(); // the hold is over; the ripples came from this mic
     _recordSeconds = 0;
     for (final c in _chunks) {
       _recordSeconds += c.length / 16000.0;

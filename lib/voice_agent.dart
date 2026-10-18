@@ -19,7 +19,10 @@
 ///   src/chat/            — the conversation log model
 ///   src/journal/         — the app event journal (phone-side forensics)
 ///   src/models/          — model pack download/unpack
-///   src/ui/              — screens, widgets, theme (render AssistantView only)
+///   src/ui/              — screens, widgets, theme (render AssistantView only:
+///                          talk_surface.dart is the bottom-area button with
+///                          amplitude-driven ripples, prompt_bar.dart the typed
+///                          queue/interrupt sends)
 library;
 
 export 'src/assistant/activity.dart';

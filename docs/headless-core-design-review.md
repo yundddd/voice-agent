@@ -5,9 +5,10 @@
 > `hide_resume.dart`, `reattach_chain.dart`, `activity.dart`,
 > `view.dart` + `AssistantView` projection. The conversation widgets
 > (`ChatBubble`, `HarnessSpinner`, `BackgroundedWorkCard`,
-> `QueuedBubbleCard`, `ContextBar`, `LatencyStrip`, `PttHoldGuide`)
+> `QueuedBubbleCard`, `ContextBar`, `LatencyStrip` — and since +135 the
+> full-area `TalkSurface`, which replaced the FAB hold guide)
 > render the view, not the machine; `assistant_screen` builds one
-> snapshot per frame. The full suite (baseline 210 + 58 new) runs on the
+> snapshot per frame. The full suite (now 280) runs on the
 > VM in ~2 s: `turn_flow_test` (orchestrator regressions, unchanged —
 > the behavior-preservation proof), `bridge_turn_test` (the loop
 > without an orchestrator), `reattach_chain_test` (ladder on fake

@@ -4,6 +4,8 @@
 // activity wording) is asserted here as a data difference — no device,
 // no pumpWidget. The screen itself is smoke-tested in ui_widgets_test.
 
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/assistant.dart';
 import 'package:voice_agent/src/common/sinks.dart';
@@ -210,6 +212,42 @@ void main() {
         expect(a.view.context.label, contains('21.00k / 200.00k'));
       },
     );
+  });
+
+  group('the mic level the talk surface breathes with', () {
+    // PCM16 of a steady ±8192 wave: float ±0.25, RMS 0.25 → ×4 = 1.0.
+    Uint8List loudBytes(int samples) {
+      final b = Uint8List(samples * 2);
+      for (var i = 0; i < samples; i++) {
+        final v = i.isEven ? 0x2000 : 0xE000; // ±8192
+        b[i * 2] = v & 0xFF;
+        b[i * 2 + 1] = (v >> 8) & 0xFF;
+      }
+      return b;
+    }
+
+    test('raw PTT chunks meter into the view; the release zeroes it', () async {
+      a.setMode(InteractionMode.pushToTalk);
+      await a.toggle(); // opens the mic (PTT branch)
+      await settle();
+      expect(a.view.ptt.micLevel, 0, reason: 'still water at rest');
+
+      mic.emit(loudBytes(1600)); // 100 ms of solid tone
+      await settle();
+      expect(
+        a.view.ptt.micLevel,
+        greaterThan(0.5),
+        reason: 'fast attack: one chunk of tone lights the meter',
+      );
+
+      a.toggle(); // the second toggle closes the hold: mic down, level zeroed
+      await settle();
+      expect(
+        a.view.ptt.micLevel,
+        0,
+        reason: 'no stream, no level — never a frozen wave',
+      );
+    });
   });
 
   group('the spinner visibility law (moved out of the widget)', () {

@@ -13,7 +13,7 @@ import 'package:voice_agent/src/ui/chat_view.dart';
 import 'package:voice_agent/src/ui/context_bar.dart';
 import 'package:voice_agent/src/ui/latency_strip.dart';
 import 'package:voice_agent/src/ui/prompt_bar.dart';
-import 'package:voice_agent/src/ui/ptt_hold_guide.dart';
+import 'package:voice_agent/src/ui/talk_surface.dart';
 
 AssistantView _view({
   AssistantPhase phase = AssistantPhase.idle,
@@ -78,6 +78,20 @@ AssistantView _view({
 Widget _host(Widget child) => MaterialApp(
   home: Scaffold(body: SingleChildScrollView(child: child)),
 );
+
+/// The fade TARGET of a slide band — 0 at rest, 1 while a hold is
+/// down. The animation value converges to this; asserting the target is
+/// asserting what the projection ordered.
+double _bandOpacity(WidgetTester tester, String label) => tester
+    .widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.text(label),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    )
+    .opacity;
 
 void main() {
   group('ChatBubble', () {
@@ -273,29 +287,6 @@ void main() {
       expect(find.text('0.05s'), findsOne); // tts
     });
 
-    testWidgets('the hold guide lights the armed slide from the view', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        _host(
-          PttHoldGuide(
-            guide: const PttGuide(
-              holdActive: true,
-              slide: PttSlide.up,
-              drag: Offset(0, -52),
-              holdOverTurn: true,
-            ),
-            icon: Icons.mic,
-            color: Colors.red,
-            onPrimary: Colors.white,
-            onPressed: () {},
-          ),
-        ),
-      );
-      expect(find.text('Interrupt'), findsOne);
-      expect(find.text('Cancel'), findsOne);
-    });
-
     testWidgets('the view renders its status line through the activity', (
       tester,
     ) async {
@@ -375,6 +366,118 @@ void main() {
         'hello',
         true,
       ), reason: 'the keyboard send is the right-hand flavour');
+    });
+  });
+
+  group('TalkSurface', () {
+    Widget surface(
+      WidgetTester tester, {
+      required List<String> edges,
+      required bool Function() holding,
+      PttSlide slide = PttSlide.none,
+    }) => _host(
+      TalkSurface(
+        source: () => _view(
+          ptt: PttGuide(
+            holdActive: holding(),
+            slide: holding() ? slide : PttSlide.none,
+            drag: Offset.zero,
+            holdOverTurn: false,
+            micLevel: 0.5,
+          ),
+        ),
+        icon: Icons.mic,
+        color: Colors.blue,
+        onPointerDown: (p) => edges.add('down $p'),
+        onPointerMove: (p) => edges.add('move $p'),
+        onPointerUp: (p) => edges.add('up $p'),
+        onPointerCancel: () => edges.add('cancel'),
+        onTap: () => edges.add('tap'),
+        height: 200,
+      ),
+    );
+
+    testWidgets('press, drag, release: edges forward GLOBAL positions', (
+      tester,
+    ) async {
+      final edges = <String>[];
+      await tester.pumpWidget(
+        surface(tester, edges: edges, holding: () => false),
+      );
+      final center = tester.getCenter(find.byType(TalkSurface));
+
+      final g = await tester.startGesture(center);
+      await tester.pump();
+      expect(
+        edges.first,
+        'down $center',
+        reason: 'the hold geometry needs the global finger point',
+      );
+      await g.moveBy(const Offset(0, -60)); // past the tap slop
+      await tester.pump();
+      expect(edges[1], 'move ${center + const Offset(0, -60)}');
+      await g.up();
+      await tester.pump();
+      expect(edges[2], 'up ${center + const Offset(0, -60)}');
+      // A dragged release is not a tap.
+      expect(edges, isNot(contains('tap')));
+      await tester.pump(const Duration(seconds: 2)); // age the ripples
+      await tester.pump();
+    });
+
+    testWidgets('a tap in place also lands as a tap', (tester) async {
+      final edges = <String>[];
+      await tester.pumpWidget(
+        surface(tester, edges: edges, holding: () => false),
+      );
+      await tester.tap(find.byType(TalkSurface));
+      await tester.pump();
+      final center = tester.getCenter(find.byType(TalkSurface));
+      expect(
+        edges,
+        containsAllInOrder(['down $center', 'up $center', 'tap']),
+        reason: 'conversation mode needs the classic tap to survive',
+      );
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets('the wide slide bands appear ONLY while a hold is down', (
+      tester,
+    ) async {
+      final edges = <String>[];
+      var holding = false;
+      await tester.pumpWidget(
+        surface(tester, edges: edges, holding: () => holding),
+      );
+      expect(
+        _bandOpacity(tester, 'Release to interrupt'),
+        0,
+        reason: 'the gestures only exist mid-hold',
+      );
+      expect(_bandOpacity(tester, 'Release to discard'), 0);
+
+      // Press FOR REAL first: the down edge is what wakes the surface
+      // ticker (in the app the hold truth arrives from the assistant;
+      // the fake source here flips with the finger).
+      final g = await tester.startGesture(
+        tester.getCenter(find.byType(TalkSurface)),
+      );
+      holding = true;
+      await tester.pump(); // start the fade
+      await tester.pump(const Duration(milliseconds: 200)); // complete it
+      expect(
+        _bandOpacity(tester, 'Release to interrupt'),
+        1,
+        reason: 'UP = interrupt, full-width band on the top edge',
+      );
+      expect(
+        _bandOpacity(tester, 'Release to discard'),
+        1,
+        reason: 'RIGHT = discard, full-height band on the right edge',
+      );
+      await g.up();
+      holding = false;
+      await tester.pump(const Duration(seconds: 2));
     });
   });
 }

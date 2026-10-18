@@ -131,19 +131,25 @@ final class LatencyView {
   final bool hopAsr, hopSent, hopReply, hopTts;
 }
 
-/// The hold-guide state the button mirrors (never independently derived:
-/// the same PttHold classifies the release, so the picture is exactly
-/// "what letting go now would do").
+/// The hold-guide state the talk surface mirrors (never independently
+/// derived: the same PttHold classifies the release, so the picture is
+/// exactly "what letting go now would do"; micLevel is the same law for
+/// the ripples — straight from the capture meter, never a guess).
 final class PttGuide {
   const PttGuide({
     required this.holdActive,
     required this.slide,
     required this.drag,
     required this.holdOverTurn,
+    this.micLevel = 0,
   });
   final bool holdActive, holdOverTurn;
   final PttSlide slide;
   final Offset drag;
+
+  /// Recent mic energy, 0..1 (fast attack, slow decay) — drives the
+  /// talk surface's ripple spawn rate and size while a hold is down.
+  final double micLevel;
 }
 
 /// One consistent snapshot of everything the conversation screens

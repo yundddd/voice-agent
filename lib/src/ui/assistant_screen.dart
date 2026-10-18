@@ -14,7 +14,7 @@ import 'chat_view.dart';
 import 'context_bar.dart';
 import 'latency_strip.dart';
 import 'prompt_bar.dart';
-import 'ptt_hold_guide.dart';
+import 'talk_surface.dart';
 import 'voice_screen.dart';
 
 class AssistantScreen extends StatefulWidget {
@@ -417,39 +417,35 @@ class _AssistantScreenState extends State<AssistantScreen>
                     if (v.bridgeConfigured &&
                         (v.context.tokensIn > 0 || v.bridgeBusy))
                       ContextBar(view: v.context, busy: v.bridgeBusy),
-                    // In push-to-talk the mic is driven by press/release
-                    // edges, observed as raw pointer events so the
-                    // button's own tap (and its ripple) stay untouched;
-                    // conversation mode keeps the plain tap-to-toggle.
-                    // Move edges only feed the hold guide's live lean —
-                    // the release gesture itself is classified against
-                    // the press point inside the assistant's PTT hold.
-                    Listener(
-                      onPointerDown: (e) => _assistant.pttDown(e.position),
-                      onPointerMove: (e) => _assistant.pttMove(e.position),
-                      onPointerUp: (e) => _assistant.pttUp(e.position),
-                      onPointerCancel: (_) => _assistant.pttCancel(),
-                      child: PttHoldGuide(
-                        guide: v.ptt,
-                        icon: icon,
-                        color: color,
-                        onPrimary: scheme.onPrimary,
-                        onPressed: () {
-                          // Press/release edges (pttDown/pttUp) now own
-                          // every hold over a harness turn: short-tap-to-
-                          // stop is handled inside the release path,
-                          // long-hold gestures queue or interrupt the
-                          // new prompt. This tap only still fires when
-                          // the hold could not open the mic (e.g. models
-                          // loading), where the classic hard stop
-                          // remains.
-                          if (v.mode == InteractionMode.pushToTalk) {
-                            if (v.bridgeBusy) a.bridgeStop();
-                          } else {
-                            unawaited(a.toggle());
-                          }
-                        },
-                      ),
+                    // The whole bottom panel IS the talk button (see
+                    // talk_surface.dart): press anywhere and the hold
+                    // records (same PttHold edges, same release
+                    // semantics), the touch seeds an expanding ripple,
+                    // mic amplitude storm-fires more waves, and the two
+                    // release slides appear as WIDE bands — top edge =
+                    // interrupt, right edge = discard. Conversation
+                    // mode: a tap anywhere toggles, exactly as the old
+                    // FAB, but without aiming.
+                    TalkSurface(
+                      source: () => a.view,
+                      icon: icon,
+                      color: color,
+                      onPointerDown: (p) => _assistant.pttDown(p),
+                      onPointerMove: (p) => _assistant.pttMove(p),
+                      onPointerUp: (p) => _assistant.pttUp(p),
+                      onPointerCancel: () => _assistant.pttCancel(),
+                      onTap: () {
+                        // Press/release edges own every hold over a
+                        // harness turn (tap-to-stop lives in the
+                        // release path); this tap remains for the
+                        // cases the hold could not open the mic —
+                        // where the classic hard stop / toggle apply.
+                        if (v.mode == InteractionMode.pushToTalk) {
+                          if (v.bridgeBusy) a.bridgeStop();
+                        } else {
+                          unawaited(a.toggle());
+                        }
+                      },
                     ),
                     const SizedBox(height: 8),
                     Text(hint, style: Theme.of(context).textTheme.labelLarge),

@@ -75,6 +75,11 @@ lib/
                         downloaded zips → app support dir (first run only)
   src/journal/          Phone-side event journal (desktop triage)
   src/ui/               Screens and widgets — pure render of AssistantView
+                        (talk_surface.dart: the whole bottom panel is the
+                        PTT button — press-anywhere, touch-seeded ripples
+                        scaled by mic amplitude, wide UP=interrupt and
+                        RIGHT=discard bands; prompt_bar.dart: typed sends
+                        with the queue/interrupt buttons)
 test/turn_flow_test.dart  The whole orchestrator on scripted fakes: every
                         field-report regression (interrupt, queue, detach,
                         reattach, ledger) pinned at VM speed, no simulator
