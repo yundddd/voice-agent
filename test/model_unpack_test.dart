@@ -70,43 +70,39 @@ void main() {
     }
   });
 
-  test(
-    'zipvoice clone pack unpacks + vocos single-file pack',
-    () async {
-      final file = File('$_tmp/zv.tar.bz2'); // the ZipVoice tarball
-      if (!file.existsSync()) {
-        // ignore: avoid_print
-        print('SKIPPED: no ${file.path} (download the ZipVoice tarball)');
-        return;
+  test('zipvoice clone pack unpacks + vocos single-file pack', () async {
+    final file = File('$_tmp/zv.tar.bz2'); // the ZipVoice tarball
+    if (!file.existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: no ${file.path} (download the ZipVoice tarball)');
+      return;
+    }
+    final dir = Directory.systemTemp.createTempSync('pack-zv');
+    try {
+      await unpackPackBytes(await file.readAsBytes(), zipvoicePack, dir);
+      for (final f in [
+        'encoder.int8.onnx',
+        'decoder.int8.onnx',
+        'tokens.txt',
+        'lexicon.txt',
+        'espeak-ng-data/phondata',
+      ]) {
+        expect(File('${dir.path}/$f').existsSync(), isTrue, reason: f);
       }
-      final dir = Directory.systemTemp.createTempSync('pack-zv');
-      try {
-        await unpackPackBytes(await file.readAsBytes(), zipvoicePack, dir);
-        for (final f in [
-          'encoder.int8.onnx',
-          'decoder.int8.onnx',
-          'tokens.txt',
-          'lexicon.txt',
-          'espeak-ng-data/phondata',
-        ]) {
-          expect(File('${dir.path}/$f').existsSync(), isTrue, reason: f);
-        }
-        // Vocoder downloads as a raw file next to the engine:
-        await unpackPackBytes(
-          File('$_tmp/vocos_24khz.onnx').readAsBytesSync(),
-          vocosPack,
-          dir,
-        );
-        expect(
-          File('${dir.path}/vocos_24khz.onnx').lengthSync(),
-          greaterThan(10000000),
-        );
-      } finally {
-        dir.deleteSync(recursive: true);
-      }
-    },
-    timeout: const Timeout(Duration(minutes: 4)),
-  );
+      // Vocoder downloads as a raw file next to the engine:
+      await unpackPackBytes(
+        File('$_tmp/vocos_24khz.onnx').readAsBytesSync(),
+        vocosPack,
+        dir,
+      );
+      expect(
+        File('${dir.path}/vocos_24khz.onnx').lengthSync(),
+        greaterThan(10000000),
+      );
+    } finally {
+      dir.deleteSync(recursive: true);
+    }
+  }, timeout: const Timeout(Duration(minutes: 4)));
 
   test('deletePack frees the space and re-download is expected', () async {
     final root = Directory.systemTemp.createTempSync('pack-del');

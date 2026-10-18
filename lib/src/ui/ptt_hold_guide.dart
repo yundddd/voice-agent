@@ -12,19 +12,23 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../assistant/assistant.dart';
+import '../assistant/state.dart';
+import '../assistant/view.dart';
 
 class PttHoldGuide extends StatelessWidget {
   const PttHoldGuide({
     super.key,
-    required this.assistant,
+    required this.guide,
     required this.icon,
     required this.color,
     required this.onPrimary,
     required this.onPressed,
   });
 
-  final VoiceAssistant assistant;
+  /// The hold state as projected (never independently derived: the same
+  /// PttHold classifies the release, so the picture is always exactly
+  /// "what letting go now would do").
+  final PttGuide guide;
   final IconData icon;
   final Color color;
   final Color onPrimary;
@@ -89,11 +93,11 @@ class PttHoldGuide extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final hold = assistant.pttHoldActive;
-    final slide = hold ? assistant.pttSlide : PttSlide.none;
+    final hold = guide.holdActive;
+    final slide = hold ? guide.slide : PttSlide.none;
     // The quantised drag, already clamped by pttMove: a flick beyond the
     // threshold leans no further than a just-past-the-line drag.
-    final drag = hold ? assistant.pttDrag : Offset.zero;
+    final drag = hold ? guide.drag : Offset.zero;
     // Drift a third of the way after the finger, then tip a further
     // 14 px once a slide is armed — springy rubber band, never dodging
     // out from under the thumb.

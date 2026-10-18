@@ -6,13 +6,18 @@
 /// ([HarnessSpinner]). A queued press is EXCLUDED from the flow — it
 /// rides the pinned card below instead, until the harness starts its
 /// turn and the entry dissolves back in at its place.
+///
+/// Every widget here renders [AssistantView] data — no live assistant
+/// getters, no derived state in the render path. A behavior change
+/// arrives as a view difference (assertable in a VM test); a widget
+/// change is testable against a hand-built view.
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../assistant/assistant.dart';
+import '../assistant/view.dart';
 import '../chat/chat_log.dart';
 import 'harness_spinner.dart';
 
@@ -22,13 +27,16 @@ class ChatBubble extends StatelessWidget {
     required this.entry,
     required this.isLiveTurn,
     required this.maxWidthFrac,
-    required this.assistant,
+    required this.source,
   });
 
   final ChatEntry entry;
   final bool isLiveTurn;
   final double maxWidthFrac;
-  final VoiceAssistant assistant;
+
+  /// Live re-projection for the in-flight spinner (its token estimate
+  /// moves on the widget's own tick, not on notifications).
+  final ViewSource source;
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +129,7 @@ class ChatBubble extends StatelessWidget {
                               ],
                               if (isLiveTurn) ...[
                                 const SizedBox(height: 12),
-                                HarnessSpinner(assistant: assistant),
+                                HarnessSpinner(source: source),
                               ],
                               _BubbleStamp(
                                 text: stamp,
@@ -173,8 +181,8 @@ class _BubbleStamp extends StatelessWidget {
 /// turn attested to, with a ticking age and its start clock — so a
 /// minute-long build stays visibly in flight even while the phone is
 /// hearing something else (or nothing). Auto-dismisses by construction:
-/// the row rides the assistant's proof-of-work signals (the
-/// [VoiceAssistant.harnessBackgrounded] badge or the queue pin), and
+/// the row rides the projection's proof-of-work signals (the
+/// [BgWork.visible] badge or the queue pin), and
 /// every completion path clears one — the 'started' pickup ack (the
 /// bridge flushes only a closed turn), /stop, an orphan retire, or a
 /// /health that finds nothing open. Owns its 1 s tick for the same
@@ -183,11 +191,11 @@ class _BubbleStamp extends StatelessWidget {
 class BackgroundedWorkCard extends StatefulWidget {
   const BackgroundedWorkCard({
     super.key,
-    required this.assistant,
+    required this.source,
     this.maxWidthFrac = 0.86,
   });
 
-  final VoiceAssistant assistant;
+  final ViewSource source;
   final double maxWidthFrac;
 
   @override
@@ -214,12 +222,12 @@ class _BackgroundedWorkCardState extends State<BackgroundedWorkCard> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final a = widget.assistant;
-    final work = a.backgroundedWork;
-    final since = formatBubbleClock(a.harnessSinceMs);
+    final bg = widget.source().backgrounded;
+    final work = bg.label;
+    final since = formatBubbleClock(bg.sinceMs);
     final caption =
         '${work.isEmpty ? 'The harness keeps working unheard' : 'Background: $work'}'
-        ' · ${formatWait(a.harnessElapsed.inMilliseconds)}'
+        ' · ${formatWait(bg.elapsed.inMilliseconds)}'
         '${since.isEmpty ? '' : ' · since $since'}';
     return LayoutBuilder(
       builder: (context, constraints) => Align(

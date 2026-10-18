@@ -45,39 +45,44 @@ gateway later is a two-line change. Only the 0.6 MB VAD model is bundled.
 
 ```
 lib/
-  main.dart                     entry point
-  voice_agent.dart              package export
-  src/
-    assistant/    assistant.dart — the state machine (endpointing, barge-in,
-                  queue/interrupt/turn lifecycle, background pause / foreground
-                  resume); turn_session.dart (the coordinator: single writer of
-                  turn flags), chat_store.dart (log + pin + system notes),
-                  ptt_hold.dart (slide geometry), token_ticker.dart,
-                  narration_gate.dart, hop_tracker.dart, mic_pipeline.dart,
-                  reply_pipeline.dart, state.dart
-    bridge/       transport.dart (talk/poll/attach, pre-pickup armour),
-                  turn_pump.dart (shared event loop + keepOpenOnDone hook),
-                  gateway.dart / client.dart / bridge_event.dart / prefs.dart,
-                  text_rules.dart (cleanForSpeech), wire_lease.dart
-    ui/           assistant_screen.dart (mode switch, orb, composer, latency
-                  strip), chat_view.dart, harness_spinner.dart, context_bar.dart,
-                  bridge_screen.dart, voice_screen.dart, ptt_hold_guide.dart,
-                  theme.dart
-    speech/       speech_worker.dart (isolate owning both models — FFI calls
-                  never touch the UI isolate), tts_voices.dart, kokoro_voices.dart,
-                  titl_engine.dart, tts_split.dart, speech_engine.dart
-    audio/        audio_dsp.dart (high-pass, noise floor, speech gate, PTT
-                  denoise), audio_io.dart (PCM16↔float32, WAV)
-    models/       model_paths.dart (injected → testable), model_packs.dart
-                  (downloaded zips → app support dir), model_unpack.dart
-    journal/      app_events.dart (the phone's seq-numbered lifecycle journal)
-    platform/     mic_source.dart / audio_output.dart (per-platform plumbing)
-    chat/ · common/  chat_log codec, clock, sinks
-test/                         one test per field report — e.g. turn_flow_test
-                              (queue/pin/banner/receipt flows), turn_session_test
-                              (coordinator matrix), guards_test, ptt_pump_test,
-                              roundtrip_test (headless ASR→TTS on wav fixtures),
-                              gate_test (DSP unit tests), support/fakes.dart
+  main.dart             Entry point: bindings, theme, home screen
+  src/assistant/        The conversation state machine and its parts:
+    assistant.dart        The orchestrator — wiring, intents, lifecycle folding
+    turn_session.dart     The bridge-turn truth: busy slot, badge, snapshots,
+                          generation/seq ownership, the interrupt policy table
+    bridge_turn.dart      THE harness event loop (/talk, control, /attach
+                          replay are origins of it): ledger, receipts, teardown
+    hide_resume.dart      Background→foreground: double-hide guard, cut-
+                          paragraph skip, unheard-say resume promise
+    reattach_chain.dart   The retry ladder for a view that died mid-turn
+    activity.dart         The status line as DATA (prose rendered at the edge)
+    view.dart             AssistantView: the screen as one immutable snapshot —
+                          the UI layer renders THIS, never the live machine
+    chat_store.dart       The conversation log, its pins, persistence
+    token_ticker.dart     Rate-learned live counter (spinner line)
+    narration_gate.dart   Step-narration quiet/heartbeat rules
+    hop_tracker.dart      The latency strip's flow pulses
+    ptt_hold.dart         Push-to-talk pointer/slide geometry
+    mic_pipeline.dart     Capture, watchdog, reopens (behind MicSource)
+    reply_pipeline.dart   Streamed chunk playback (behind AudioOutput)
+  src/bridge/           Harness gateway, SSE protocol, push/poll transport,
+                        the quiet-wire lease, wording rules
+  src/speech/           The worker isolate owning both models (FFI calls
+                        never touch the UI isolate)
+  src/audio/            Mic front end (high-pass, noise floor, speech gate,
+                        denoise) + PCM16↔float32 and WAV encode/decode
+  src/models/           Model file locations (injected → testable);
+                        downloaded zips → app support dir (first run only)
+  src/journal/          Phone-side event journal (desktop triage)
+  src/ui/               Screens and widgets — pure render of AssistantView
+test/turn_flow_test.dart  The whole orchestrator on scripted fakes: every
+                        field-report regression (interrupt, queue, detach,
+                        reattach, ledger) pinned at VM speed, no simulator
+test/bridge_turn_test.dart  The turn loop itself, driven with no orchestrator
+test/reattach_chain_test.dart  The retry ladder on a fake clock
+test/hide_resume_test.dart     The pause/resume transitions
+test/assistant_view_test.dart  Behavior observed as VIEW DIFFERENCES
+test/ui_widgets_test.dart      Widgets rendered from hand-built views
 tool/                         claude_bridge.mjs + bridge_stub_claude.mjs +
                               bridge_queue_test.mjs (the wire suite, node --test)
 ```

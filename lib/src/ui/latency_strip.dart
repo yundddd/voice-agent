@@ -1,16 +1,16 @@
 /// The round-trip metrics strip under the chat: heard / asr / reply /
 /// tts numbers plus the flow arrows the HopTracker lights while data is
-/// crossing each stage.
+/// crossing each stage. Pure render of a [LatencyView].
 library;
 
 import 'package:flutter/material.dart';
 
-import '../assistant/assistant.dart';
+import '../assistant/view.dart';
 
 class LatencyStrip extends StatelessWidget {
-  const LatencyStrip({super.key, required this.assistant});
+  const LatencyStrip({super.key, required this.latency});
 
-  final VoiceAssistant assistant;
+  final LatencyView latency;
 
   @override
   Widget build(BuildContext context) {
@@ -38,25 +38,24 @@ class LatencyStrip extends StatelessWidget {
         color: done ? Colors.green : Theme.of(context).disabledColor,
       ),
     );
-    final lit =
-        assistant.hopReply; // the PC wakes when the first byte back lands
+    final lit = latency.hopReply; // the PC wakes when the first byte back lands
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        cell('heard', assistant.recordSeconds, 1),
-        arrow(assistant.hopAsr),
-        cell('asr', assistant.asrSeconds, 2),
-        arrow(assistant.hopSent),
+        cell('heard', latency.recordSeconds, 1),
+        arrow(latency.hopAsr),
+        cell('asr', latency.asrSeconds, 2),
+        arrow(latency.hopSent),
         Icon(
           Icons.computer,
           size: 18,
           color: lit ? Colors.green : Theme.of(context).disabledColor,
         ),
-        arrow(assistant.hopReply),
-        cell('reply', assistant.playSeconds, 1),
-        arrow(assistant.hopTts),
-        cell('tts', assistant.ttsSeconds, 2),
+        arrow(latency.hopReply),
+        cell('reply', latency.playSeconds, 1),
+        arrow(latency.hopTts),
+        cell('tts', latency.ttsSeconds, 2),
       ],
     );
   }

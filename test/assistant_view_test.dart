@@ -1,0 +1,254 @@
+// Guards for the projection: AssistantView is the ONLY thing the
+// conversation screens render, so every rule that used to live in a
+// widget (spinner visibility, pin card, background row dismissal,
+// activity wording) is asserted here as a data difference — no device,
+// no pumpWidget. The screen itself is smoke-tested in ui_widgets_test.
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_agent/src/assistant/assistant.dart';
+import 'package:voice_agent/src/common/sinks.dart';
+import 'package:voice_agent/src/platform/audio_output.dart';
+
+import 'support/fakes.dart';
+
+Future<void> settle({int rounds = 12}) async {
+  for (var i = 0; i < rounds; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+void main() {
+  late FakeScheduler time;
+  late FakeSpeechEngine engine;
+  late FakeHarness harness;
+  late FakeMic mic;
+  late FakeAudioOutput out;
+  late VoiceAssistant a;
+
+  setUp(() {
+    time = FakeScheduler(DateTime(2026, 1, 1, 12));
+    engine = FakeSpeechEngine();
+    harness = FakeHarness();
+    mic = FakeMic();
+    out = FakeAudioOutput();
+    a = VoiceAssistant(
+      worker: engine,
+      micSource: mic,
+      audioOutput: out,
+      gatewayFactory: (_, _) => harness,
+      scheduler: time,
+      clock: () => time.now,
+    );
+    engine.onEvent = a.debugSpeechEvents;
+  });
+
+  tearDown(() => a.dispose());
+
+  Future<void> withBridge() async {
+    await a.setBridge(url: 'http://harness.test', token: 'tok');
+    await settle();
+  }
+
+  group('idle truths', () {
+    test('the at-rest line is the idle HINT, derived from mode — the '
+        'same snapshot renders differently for each mode', () async {
+      // Models not loaded yet: cold start has its own line.
+      expect(a.view.status, 'Loading models…');
+      expect(a.view.phase, AssistantPhase.idle);
+      expect(a.view.error, isEmpty);
+      expect(a.view.chat, isEmpty);
+      expect(a.view.queued, isNull);
+      expect(a.view.backgrounded.visible, isFalse);
+      expect(a.view.showBackgroundedRow, isFalse);
+      expect(a.view.sessionId, isNull);
+      expect(a.view.context.label, 'context · measuring…');
+      expect(a.view.token.meter(7), '7s');
+    });
+
+    test('the status line speaks activity, not prose: flipping the mode '
+        'flips the hint through the projection', () async {
+      a.setMode(InteractionMode.pushToTalk);
+      // setMode funnels through the idle transition (a worker exists in
+      // this fixture), and the idle HINT re-renders per mode: the same
+      // Activity, a different line. Tests assert on the Activity;
+      // rewording is no longer a behavior change.
+      expect(a.view.activity, isA<IdleHint>());
+      expect(a.view.status, 'Ready. Hold the button, speak, release to send.');
+    });
+  });
+
+  group('a running bridge turn, seen as data', () {
+    test(
+      'a polite-queue press surfaces as the pin card with its stamp',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('busy turn'));
+        await settle();
+        unawaited(
+          a.runQuickCommand('parked', bubble: 'parked', interrupt: false),
+        );
+        await settle();
+        final v = a.view;
+        expect(v.queued?.text, 'parked');
+        expect(v.queued!.createdMs, greaterThan(0));
+        expect(v.chat.where((e) => e.queued), hasLength(1));
+      },
+    );
+
+    test('a Bash step is a StepLine on the view — the COMMAND itself, '
+        'formatted at the projection edge', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'flutter test --plain-output',
+        ),
+      );
+      await settle();
+      expect(a.view.activity, isA<StepLine>());
+      expect(a.view.status, 'Bash flutter test --plain-output…');
+    });
+
+    test('a detached turn lights the badge, names the work, and keeps '
+        'the spinner through the press (+91/+126 as view data)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+      );
+      await settle();
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(const Offset(0, 0)); // the press that detaches
+      await settle();
+      final v = a.view;
+      expect(v.harnessBackgrounded, isTrue);
+      expect(v.showBackgroundedRow, isTrue);
+      expect(v.backgrounded.label, 'Bash npm test…');
+      expect(v.backgrounded.sinceMs, greaterThan(0));
+      expect(
+        v.liveTurnBubble,
+        isNotNull,
+        reason: 'the press must not hide the spinner it proved wrong',
+      );
+      expect(
+        v.spinnerVisible,
+        isTrue,
+        reason: 'the work IS open: elapsed > 0 while it runs unheard',
+      );
+      expect(
+        v.harnessElapsed,
+        Duration.zero,
+        reason: 'the press re-anchored nothing — age still counts the WORK',
+      );
+      time.advance(const Duration(seconds: 30));
+      expect(a.view.harnessElapsed, const Duration(seconds: 30));
+    });
+
+    test('a detached turn behind a new prompt: the pickup ack dismisses '
+        'the row and re-anchors the clock', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+      );
+      await settle();
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(const Offset(0, 0)); // detaches into the background
+      await settle();
+      expect(a.view.showBackgroundedRow, isTrue);
+      // The next prompt rides a fresh view; the bridge's receipt of the
+      // detached work lands on it, and the row dismisses itself.
+      unawaited(a.runQuickCommand('follow-up', bubble: 'follow-up'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'started', detail: 'follow-up'),
+      );
+      await settle();
+      expect(a.view.showBackgroundedRow, isFalse);
+      expect(a.view.backgrounded.label, isEmpty);
+    });
+
+    test(
+      'the live tally projects as numbers + settled + thought tail',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('think'));
+        await settle();
+        harness.emit(
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            toolKind: 'thinking',
+            outTokens: 1200,
+            inputTokens: 21000,
+            thought: 'weighing the two splits',
+          ),
+        );
+        await settle();
+        final t = a.view.token;
+        expect(t.on, isTrue);
+        expect(t.out, greaterThanOrEqualTo(1200));
+        expect(t.thought, 'weighing the two splits');
+        expect(t.activityLabel, 'Thinking…');
+        expect(t.meter(12), contains('1.20k out'));
+        // The context BAR is fed by context frames (and /health), not by
+        // tally relays — the tally's `in` only anchors the meter delta.
+        harness.emit(
+          BridgeEvent.forTest(
+            'context',
+            inputTokens: 21000,
+            contextWindow: 200000,
+          ),
+        );
+        await settle();
+        expect(a.view.context.tokensIn, 21000);
+        expect(a.view.context.label, contains('21.00k / 200.00k'));
+      },
+    );
+  });
+
+  group('the spinner visibility law (moved out of the widget)', () {
+    test('pure playback hides the wheel; an open turn keeps it through '
+        'its own voice', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'Spoken answer.'));
+      await settle();
+      // First word just landed on the speaker and the age clock is
+      // anchored at this instant: elapsed zero, so the wheel holds —
+      // one second later (the agent DOES keep working while talking)
+      // it spins.
+      expect(a.view.phase, AssistantPhase.speaking);
+      expect(a.view.spinnerVisible, isFalse);
+      time.advance(const Duration(seconds: 1));
+      expect(a.view.spinnerVisible, isTrue);
+      harness.emit(BridgeEvent.forTest('done')); // the wire closes MID-VOICE
+      await settle(); // (the +124 shape: the answer's tail is still on air)
+      expect(
+        a.view.phase,
+        AssistantPhase.speaking,
+        reason: 'a spoken answer keeps the bubble speaking',
+      );
+      expect(
+        a.view.harnessElapsed,
+        Duration.zero,
+        reason: 'the done released the clock',
+      );
+      expect(
+        a.view.spinnerVisible,
+        isFalse,
+        reason: 'pure playback IS the status: voice is the readout',
+      );
+      out.complete(); // the tail gets its honest end
+      await settle();
+    });
+  });
+}
+
+void unawaited(Future<void> f) {}

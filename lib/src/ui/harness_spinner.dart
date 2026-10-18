@@ -8,18 +8,24 @@
 /// strip. Owns its 120 ms tick: the assistant only notifies when a say
 /// lands or a tool event fires, so a harness thinking for minutes would
 /// otherwise freeze the glyph mid-frame.
+///
+/// Reads [AssistantView] through a [ViewSource] — every state decision
+/// (visibility, settle, label, meter) is already projected; the widget
+/// owns only the wheel frame and the paint.
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../assistant/assistant.dart';
+import '../assistant/view.dart';
 
 class HarnessSpinner extends StatefulWidget {
-  const HarnessSpinner({super.key, required this.assistant});
+  const HarnessSpinner({super.key, required this.source});
 
-  final VoiceAssistant assistant;
+  /// Re-projects the live view on every tick — the token estimate moves
+  /// on this widget's clock, not on notifications.
+  final ViewSource source;
 
   @override
   State<HarnessSpinner> createState() => _HarnessSpinnerState();
@@ -42,20 +48,19 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
       // keeps working WHILE speaking (later sentences synthesise, more
       // tools run after the first chunk is already playing), and a
       // phase-based freeze silenced the wheel mid-task — which read as
-      // 'it stopped working' when it hadn't. So: freeze only when the
-      // harness is PURELY talking — speaking phase with no open bridge
-      // turn (harnessElapsed goes to zero the instant `done` closes
-      // it). A live turn keeps the wheel turning through its own voice.
-      final a = widget.assistant;
-      if (a.phase == AssistantPhase.speaking &&
-          a.harnessElapsed == Duration.zero) {
-        return;
-      }
+      // 'it stopped working' when it hadn't. So the visibility law is
+      // the projection's (AssistantView.spinnerVisible): freeze only
+      // when the harness is PURELY talking — speaking phase with no
+      // open bridge turn (harnessElapsed goes to zero the instant
+      // `done` closes it). A live turn keeps the wheel turning through
+      // its own voice.
+      final v = widget.source();
+      if (!v.spinnerVisible) return;
       // +84: the bridge says the TEXT is done and only audio rendering
       // remains ('settled'): nothing left to compute, so the wheel
       // stops even though the socket hasn't closed yet. (The old
       // dozen-seconds of honest-socket dishonest-spinner this kills.)
-      if (a.turnSettled) return;
+      if (v.token.settled) return;
       setState(() => _frame = (_frame + 1) % _wheel.length);
     });
   }
@@ -69,8 +74,8 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final a = widget.assistant;
-    final secs = a.harnessElapsed.inSeconds;
+    final v = widget.source();
+    final secs = v.harnessElapsed.inSeconds;
     // While the harness is GENERATING, the live token tally owns this
     // line — and it grows on the spinner's own 120 ms tick, not on the
     // bridge's ~0.8 s relays: the assistant extrapolates the count
@@ -84,22 +89,13 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
     // is the meter: tokens out, tokens in, seconds working. The old
     // one-liner crammed label, counts and the 'tap Stop to interrupt'
     // litany into a single wrapping string.
-    final out = a.tokensOut;
-    // +93: `in` is the TURN'S DELTA (growth since this turn anchored),
-    // not the raw context — the whole-conversation figure belongs to
-    // the context bar alone; billing it to the meter made every turn
-    // look like it consumed the entire conversation.
-    final inTok = a.tokensIn;
-    final meter =
-        '${(out > 0 || inTok > 0) ? '${_fmtTok(out)} out · ${_fmtTok(inTok)} in · ' : ''}${secs}s';
+    final meter = v.token.meter(secs);
     // The frozen frame is also dimmed: motion OR color, never neither,
     // is the honest way to say "the agent is not churning right now".
     // Same rule as the tick guard and the pure-playback hide: a still-
     // open bridge turn means it works WHILE speaking — keep the wheel
     // live through its own voice.
-    final talking =
-        a.phase == AssistantPhase.speaking && a.harnessElapsed == Duration.zero;
-    if (talking) {
+    if (!v.spinnerVisible) {
       return const SizedBox.shrink();
     } // pure playback: voice is the status
     // +97: the thought moved UP onto line one, right behind its label —
@@ -108,8 +104,8 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
     // every growth shoved the whole conversation around (the height
     // wobble this kills). The answer draft keeps the third row: it is
     // the reply painting itself, and watching it appear is the point.
-    final thought = a.tokenThought;
-    final shown = a.tokenDraft;
+    final thought = v.token.thought;
+    final shown = v.token.draft;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -121,7 +117,7 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
                 // settled = frozen AND dimmed: motion or color, never
                 // neither (the +57 honesty rule, extended to the new
                 // resting state).
-                color: a.turnSettled ? scheme.outline : scheme.primary,
+                color: v.token.settled ? scheme.outline : scheme.primary,
               ),
             ),
             const SizedBox(width: 10),
@@ -135,7 +131,7 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
                 // minute of actual thinking (+85).
                 TextSpan(
                   children: [
-                    TextSpan(text: a.activityLabel),
+                    TextSpan(text: v.token.activityLabel),
                     if (thought.isNotEmpty)
                       TextSpan(
                         text: ' · $thought',
@@ -166,9 +162,9 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
           Padding(
             padding: const EdgeInsets.only(left: 34, top: 2),
             child: Text(
-              // The answer painting itself before it is spoken (the
-              // draft tail). The thought that used to share this row
-              // moved inline (+97).
+              // The answer painting itself before it is spoken (the draft
+              // tail). The thought that used to share this row moved
+              // inline (+97).
               shown,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -181,7 +177,3 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
     );
   }
 }
-
-/// 12400 -> '12.4k', 467232 -> '467k', 1_250_000 -> '1.3M' (the bridge
-/// library owns the shared shape — see fmtTokenCount).
-String _fmtTok(int n) => fmtTokenCount(n);

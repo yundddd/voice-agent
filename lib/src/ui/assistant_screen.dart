@@ -33,27 +33,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
-  final TextEditingController _composer = TextEditingController();
   int _seenChatVersion = 0; // drives auto-follow while chat grows
-
-  /// The composer's two flavours of send (the PTT gestures said as
-  /// buttons, for ASR-free testing and typing). Queue = the polite
-  /// queue that still backgrounds a RUNNING tool (cuttool at the
-  /// bridge — behaviour 2); Interrupt = cut whatever is in flight
-  /// (aborts thinking, backgrounds a tool — behaviours 3/4).
-  void _sendComposer({required bool interrupt}) {
-    final v = _composer.text.trim();
-    if (v.isEmpty) return;
-    _composer.clear();
-    unawaited(
-      _assistant.runQuickCommand(
-        v,
-        bubble: v,
-        interrupt: interrupt,
-        cutTool: !interrupt,
-      ),
-    );
-  }
 
   @override
   void initState() {
@@ -68,7 +48,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scroll.dispose();
-    _composer.dispose();
     _assistant.dispose();
     super.dispose();
   }
@@ -94,6 +73,11 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   Widget build(BuildContext context) {
     final a = _assistant;
+    // The whole screen renders from ONE snapshot (see view.dart): the
+    // machine below can move mid-build, but every pixel on this frame
+    // agrees with every other. Intents still go straight to the
+    // assistant; state comes only through the projection.
+    final v = a.view;
     final scheme = Theme.of(context).colorScheme;
 
     // Auto-follow the conversation: when the log grows (new bubble or a
@@ -110,8 +94,8 @@ class _AssistantScreenState extends State<AssistantScreen>
     // to re-pin it, and the user scrolling by hand. jumpTo on
     // maxScrollExtent is always in range, and the chatVersion gate
     // above is what honors a scroll-up to re-read: no event, no pin.
-    if (a.chatVersion != _seenChatVersion) {
-      _seenChatVersion = a.chatVersion;
+    if (v.chatVersion != _seenChatVersion) {
+      _seenChatVersion = v.chatVersion;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
@@ -130,9 +114,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     // as a pinned card (out of the flow until pickup), so the work
     // bubble is the last ASSISTANT entry, not the literal last entry —
     // pressing the mic must not hide the spinner the hold proved wrong.
-    final liveTurn = a.liveTurnBubble;
+    final liveTurn = v.liveTurnBubble;
 
-    final (icon, color) = switch ((a.phase, a.userSpeaking)) {
+    final (icon, color) = switch ((v.phase, v.userSpeaking)) {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
       (AssistantPhase.listening, true) => (Icons.graphic_eq, scheme.tertiary),
       (AssistantPhase.listening, false) => (Icons.mic, scheme.error),
@@ -145,12 +129,12 @@ class _AssistantScreenState extends State<AssistantScreen>
     };
 
     final hint = hintFor(
-      mode: a.mode,
-      phase: a.phase,
-      slide: a.pttSlide,
-      holdOverTurn: a.pttHoldOverTurn,
-      bridgeBusy: a.bridgeBusy,
-      harnessBackgrounded: a.harnessBackgrounded,
+      mode: v.mode,
+      phase: v.phase,
+      slide: v.ptt.slide,
+      holdOverTurn: v.ptt.holdOverTurn,
+      bridgeBusy: v.bridgeBusy,
+      harnessBackgrounded: v.harnessBackgrounded,
     );
 
     return Scaffold(
@@ -166,12 +150,12 @@ class _AssistantScreenState extends State<AssistantScreen>
             // means /new or a respawn moved it. The Bridge screen shows
             // the same value with its claudeUp/turn detail.
             Text(
-              a.sessionId == null || a.sessionId!.isEmpty
+              v.sessionId == null || v.sessionId!.isEmpty
                   ? 'no session yet'
-                  : 'session ${a.sessionId}',
+                  : 'session ${v.sessionId}',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 fontFamily: 'monospace',
-                color: a.bridgeBusy ? scheme.primary : scheme.onSurfaceVariant,
+                color: v.bridgeBusy ? scheme.primary : scheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -187,7 +171,7 @@ class _AssistantScreenState extends State<AssistantScreen>
               // a detached turn keeps working unheard: the badge is the
               // only sign of invisible background work (plus the hint
               // text under the button).
-              isLabelVisible: a.bridgeBusy || a.harnessBackgrounded,
+              isLabelVisible: v.bridgeBusy || v.harnessBackgrounded,
               child: const Icon(Icons.terminal),
             ),
           ),
@@ -223,7 +207,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                     label: Text('Push to talk'),
                   ),
                 ],
-                selected: {a.mode},
+                selected: {v.mode},
                 onSelectionChanged: (s) => _assistant.setMode(s.first),
               ),
             ),
@@ -252,20 +236,20 @@ class _AssistantScreenState extends State<AssistantScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              a.status,
+                              v.status,
                               textAlign: TextAlign.center,
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
-                            if (a.error.isNotEmpty) ...[
+                            if (v.error.isNotEmpty) ...[
                               const SizedBox(height: 12),
                               Text(
-                                a.error,
+                                v.error,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(color: scheme.error),
                               ),
                             ],
                             const SizedBox(height: 16),
-                            for (final e in a.chat)
+                            for (final e in v.chat)
                               if (identical(e, liveTurn) ||
                                   (e.blocks.isNotEmpty &&
                                       !(e.fromUser && e.queued)))
@@ -277,33 +261,34 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     entry: e,
                                     isLiveTurn: identical(e, liveTurn),
                                     maxWidthFrac: 0.86,
-                                    assistant: a,
+                                    source: () => a.view,
                                   ),
                                 ),
-                            if (a.queuedText case final String qtext)
+                            if (v.queued case final QueuedPin pin)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 4,
                                 ),
                                 child: QueuedBubbleCard(
-                                  text: qtext,
-                                  createdMs: a.queuedBubble?.createdMs ?? 0,
+                                  text: pin.text,
+                                  createdMs: pin.createdMs,
                                   maxWidthFrac: 0.86,
                                 ),
                               ),
                             // A backgrounded tool call keeps a permanent
                             // line at the channel's bottom while it works
-                            // unheard: the badge (detached turn), a queue
-                            // pin, or a cut-tool promise all warrant it
-                            // (showsBackgroundedWork), and it dismisses
-                            // itself the moment the turn is heard again,
-                            // stopped, or the tool's 'finished' frame lands.
-                            if (a.showsBackgroundedWork)
+                            // unheard: the badge (detached turn) or a queue
+                            // pin naming the work is its proof-of-life, and
+                            // it dismisses itself the moment the turn is
+                            // heard again, stopped, or proven finished.
+                            if (v.showBackgroundedRow)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 4,
                                 ),
-                                child: BackgroundedWorkCard(assistant: a),
+                                child: BackgroundedWorkCard(
+                                  source: () => a.view,
+                                ),
                               ),
                           ],
                         ),
@@ -312,7 +297,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                   ),
                 ),
               ),
-              if (a.bridgeConfigured) ...[
+              if (v.bridgeConfigured) ...[
                 // Session housekeeping: /new and /compact (see
                 // VoiceAssistant.bridgeControl for what each does on the
                 // wire). Taps deliberately interrupt any voice reply
@@ -331,12 +316,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                           child: ActionChip(
                             avatar: Icon(_chipIcons[chip], size: 18),
                             label: Text(chip),
-                            onPressed: a.bridgeBusy
+                            onPressed: v.bridgeBusy
                                 ? null
                                 : () => a.bridgeControl(chip),
                           ),
                         ),
-                      if (a.bridgeBusy)
+                      if (v.bridgeBusy)
                         ActionChip(
                           avatar: const Icon(
                             Icons.stop_circle_outlined,
@@ -348,63 +333,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                     ],
                   ),
                 ),
-                // The text composer: the harness reachable without ever
-                // waking the mic (ASR-free by construction), and one
-                // switch that silences the speaker so a screenshot IS
-                // the receipt. [Queue] parks the prompt behind live
-                // work — and backgrounds a RUNNING tool (behaviour 2);
-                // [Interrupt] cuts what's in flight: thinking aborted,
-                // tool backgrounded, the new answer starts now
-                // (behaviours 3/4). The TTS icon flips
-                // BridgePrefs.tts — off means replies land as text
-                // only, nothing synthesises, and the voice pack is not
-                // even required.
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const Key('composer'),
-                          controller: _composer,
-                          textInputAction: TextInputAction.send,
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            hintText: 'Type to the harness…',
-                            border: OutlineInputBorder(),
-                          ),
-                          onSubmitted: (_) => _sendComposer(interrupt: true),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip:
-                            'Queue — polite behind the current turn'
-                            ' (a running tool is put into background)',
-                        icon: const Icon(Icons.playlist_add),
-                        onPressed: () => _sendComposer(interrupt: false),
-                      ),
-                      IconButton(
-                        tooltip:
-                            'Interrupt — cut the current turn and answer this',
-                        icon: const Icon(Icons.bolt),
-                        onPressed: () => _sendComposer(interrupt: true),
-                      ),
-                      IconButton(
-                        tooltip: a.bridgeTts
-                            ? 'TTS on — tap to silence replies'
-                            : 'TTS off — tap to speak replies',
-                        icon: Icon(
-                          a.bridgeTts ? Icons.volume_up : Icons.volume_off,
-                        ),
-                        onPressed: () =>
-                            unawaited(a.setBridgeTts(!a.bridgeTts)),
-                      ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 16),
               ],
-              LatencyStrip(assistant: a),
+              LatencyStrip(latency: v.latency),
               if (_debugMode && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -461,8 +392,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // above the talk button where eyes already sit
                     // mid-turn. Fed by live `context` events (and the
                     // post-turn /health merge).
-                    if (a.bridgeConfigured && (a.contextIn > 0 || a.bridgeBusy))
-                      ContextBar(assistant: a),
+                    if (v.bridgeConfigured &&
+                        (v.context.tokensIn > 0 || v.bridgeBusy))
+                      ContextBar(view: v.context, busy: v.bridgeBusy),
                     // In push-to-talk the mic is driven by press/release
                     // edges, observed as raw pointer events so the
                     // button's own tap (and its ripple) stay untouched;
@@ -476,7 +408,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                       onPointerUp: (e) => _assistant.pttUp(e.position),
                       onPointerCancel: (_) => _assistant.pttCancel(),
                       child: PttHoldGuide(
-                        assistant: a,
+                        guide: v.ptt,
                         icon: icon,
                         color: color,
                         onPrimary: scheme.onPrimary,
@@ -489,8 +421,8 @@ class _AssistantScreenState extends State<AssistantScreen>
                           // the hold could not open the mic (e.g. models
                           // loading), where the classic hard stop
                           // remains.
-                          if (a.mode == InteractionMode.pushToTalk) {
-                            if (a.bridgeBusy) a.bridgeStop();
+                          if (v.mode == InteractionMode.pushToTalk) {
+                            if (v.bridgeBusy) a.bridgeStop();
                           } else {
                             unawaited(a.toggle());
                           }
