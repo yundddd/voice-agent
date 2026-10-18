@@ -69,9 +69,12 @@ class ChatStore {
   ChatEntry? liveTurn({required bool turnRunning, bool parkedBehind = false}) {
     final t = liveTurnFor(_entries, turnRunning: turnRunning);
     if (t == null || !parkedBehind) return t;
-    // Only a fresh, silent bubble can be the parked prompt's own — a
-    // bubble that already speaks is the running work, box and all.
-    if (t.blocks.isNotEmpty || t.deliveredMs != 0) return t;
+    // While parked, EVERY block the placeholder carries is the waited
+    // turn relaying through this view (+149: the journal's tail say
+    // 3 s after the release) — not an answer to the parked prompt,
+    // which by definition begins at the started marker. So the skip
+    // is unconditional: the spinner stays with the work's own bubble
+    // until the marker says the placeholder earned it.
     for (final e in _entries.reversed) {
       if (identical(e, t)) continue; // the parked prompt's placeholder
       if (e.fromUser) continue; // the pin itself

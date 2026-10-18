@@ -546,7 +546,8 @@ void main() {
   });
 
   group('the polite queue and its pin (0.1.0+81, +90)', () {
-    test('push view: any frame of our own stream dissolves the pin', () async {
+    test('push view: a parked pin dies at the started marker, not the '
+        'first frame (+149)', () async {
       await withBridge();
       unawaited(a.runQuickCommand('busy turn'));
       await settle();
@@ -562,8 +563,23 @@ void main() {
       await settle();
       expect(
         a.queuedText,
+        'parked',
+        reason:
+            '+149: on a PARKED prompt the first frame is the waited '
+            'turn speaking, not the pickup — the marker is the arbiter',
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'parked',
+        ),
+      );
+      await settle();
+      expect(
+        a.queuedText,
         isNull,
-        reason: 'a per-turn SSE view: the first frame IS the pickup',
+        reason: 'the started marker: this view is now our own',
       );
     });
 
@@ -617,6 +633,40 @@ void main() {
           a.view.token.activityLabel,
           contains('sleep 10'),
           reason: 'the line keeps naming the running tool',
+        );
+        // +149: the release re-added the spoken prompt — it wears the
+        // grey (the queue verdict retired the badge and the press
+        // zeroed busy; only the PARKED decision carries the wait now).
+        expect(
+          a.queuedText,
+          'steer please',
+          reason: 'a voice queue greys in place like a typed one',
+        );
+
+        // The waited turn keeps relaying THROUGH the parked view: its
+        // step, its tail say. None of it may dissolve the grey or move
+        // the box (+149 — the journal's Bash-step frame 300 ms after
+        // the release).
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'sleep 10',
+          ),
+        );
+        harness.emit(BridgeEvent.forTest('say', text: 'Done — clean finish.'));
+        await settle();
+        expect(
+          a.queuedText,
+          'steer please',
+          reason: '+149: behind frames are not the pickup',
+        );
+        expect(
+          a.view.liveTurnBubble,
+          same(running),
+          reason:
+              '+149: a relayed tail into the placeholder does not '
+              'steal the box either — the marker is the arbiter',
         );
 
         // A queued NOTICE is still not a pickup; the started marker is —
@@ -934,67 +984,86 @@ void main() {
       expect(a.phase, isNot(AssistantPhase.transcribing));
     });
 
-    test(
-      'push view: the bridge’s queued NOTICE is not a pickup — the pin '
-      'survives it and dies only when the turn opens (+behaviour 1)',
-      () async {
-        await withBridge();
-        unawaited(a.runQuickCommand('busy turn'));
-        await settle();
-        unawaited(
-          a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
-        );
-        await settle();
-        expect(a.queuedText, 'parked');
+    test('push view: the bridge’s queued NOTICE is not a pickup — nor are '
+        'the waited turn’s frames; only the started marker dissolves the '
+        'pin (+behaviour 1, +149)', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('busy turn'));
+      await settle();
+      unawaited(
+        a.runQuickCommand('parked', interrupt: false, bubble: 'parked'),
+      );
+      await settle();
+      expect(a.queuedText, 'parked');
 
-        // A busy bridge answers a queue POST with the 'queued' notice the
-        // INSTANT it enqueues. Under the old "any frame is the pickup"
-        // rule this frame dissolved the pin and the message fell back
-        // into the flow while still waiting — the behaviour-1 complaint.
-        harness.emit(
-          BridgeEvent.forTest(
-            'tool',
-            toolName: 'queued',
-            detail: 'finishing the current turn; your message goes next',
-          ),
-        );
-        await settle();
-        expect(
-          a.queuedText,
-          'parked',
-          reason: 'a queued ack is the OPPOSITE of a pickup',
-        );
-        expect(
-          a.chat.any(
-            (e) => e.fromUser && e.queued && e.blocks.contains('parked'),
-          ),
-          isTrue,
-          reason:
-              'the parked message sits IN the flow, greyed by its '
-              'pin flag — the +146 wait indicator',
-        );
-        expect(
-          a.chat.any((e) => e.blocks.any((b) => b.startsWith('One moment'))),
-          isFalse,
-          reason:
-              '+146: the notice injects NO bubble — the parked '
-              'message itself greys in the flow until the started '
-              'marker un-greys it; the verdict only paints the status '
-              'line above the orb',
-        );
+      // A busy bridge answers a queue POST with the 'queued' notice the
+      // INSTANT it enqueues. Under the old "any frame is the pickup"
+      // rule this frame dissolved the pin and the message fell back
+      // into the flow while still waiting — the behaviour-1 complaint.
+      harness.emit(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'queued',
+          detail: 'finishing the current turn; your message goes next',
+        ),
+      );
+      await settle();
+      expect(
+        a.queuedText,
+        'parked',
+        reason: 'a queued ack is the OPPOSITE of a pickup',
+      );
+      expect(
+        a.chat.any(
+          (e) => e.fromUser && e.queued && e.blocks.contains('parked'),
+        ),
+        isTrue,
+        reason:
+            'the parked message sits IN the flow, greyed by its '
+            'pin flag — the +146 wait indicator',
+      );
+      expect(
+        a.chat.any((e) => e.blocks.any((b) => b.startsWith('One moment'))),
+        isFalse,
+        reason:
+            '+146: the notice injects NO bubble — the parked '
+            'message itself greys in the flow until the started '
+            'marker un-greys it; the verdict only paints the status '
+            'line above the orb',
+      );
 
-        // beginTurn's first real frame: NOW the floor is ours.
-        harness.emit(
-          BridgeEvent.forTest('tool', toolName: 'tokens', outTokens: 12),
-        );
-        await settle();
-        expect(
-          a.queuedText,
-          isNull,
-          reason: 'the turn opening for real dissolves the pin',
-        );
-      },
-    );
+      // +149: even the OLD turn's frames are not a pickup — the
+      // push view of a PARKED prompt relays the turn it waits
+      // behind; field journal 22:50 showed its Bash-step frame 300
+      // ms after the release dissolving the pin under the old
+      // 'first frame' law.
+      harness.emit(
+        const BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'sleep 10'),
+      );
+      await settle();
+      expect(
+        a.queuedText,
+        'parked',
+        reason: '+149: behind-the-wait frames do not take the floor',
+      );
+      // The started marker: NOW the floor is ours.
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'tokens', outTokens: 12),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'parked',
+        ),
+      );
+      await settle();
+      expect(
+        a.queuedText,
+        isNull,
+        reason: 'the started marker dissolves the pin',
+      );
+    });
 
     test('the Queue button rides the wire as polite-with-backgrounding '
         '(+behaviour 2)', () async {

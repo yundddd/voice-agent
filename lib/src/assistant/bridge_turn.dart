@@ -99,6 +99,7 @@ final class BridgeTurnEnv {
     required this.armBgProbe,
     required this.turnOpenOnWire,
     required this.notePickup,
+    required this.awaitingPickup,
   });
 
   final InteractionMode Function() mode;
@@ -196,6 +197,11 @@ final class BridgeTurnEnv {
   /// (+133: an answered turn must not strand the news the wake came
   /// for).
   final Future<bool> Function() turnOpenOnWire;
+
+  /// Is a prompt currently PARKED (awaiting the bridge's pickup)? Its
+  /// frames belong to the turn queued behind until the started marker
+  /// says otherwise (+149, see [_beforeEvent]).
+  final bool Function() awaitingPickup;
 
   /// The parked prompt was TAKEN (push view's first live frame, or the
   /// bridge's started marker): the wait is over, the answer's bubble
@@ -382,6 +388,19 @@ class BridgeTurn {
     if (!isLive || transport.turnViaPoll) return;
     final isTool = ev.kind == 'tool';
     if (isTool && ev.toolName == 'queued') return;
+    if (env.awaitingPickup() && !(isTool && ev.toolName == 'started')) {
+      // +149: while the prompt is PARKED its push view is NOT silent —
+      // it relays the turn queued BEHIND: that turn's step frames, its
+      // tail say, the done the armor eats. Field journal 22:50: the
+      // old turn's Bash-step frame 300 ms after a queue release was
+      // read as 'my answer began', dissolved the pin (grey gone) and
+      // migrated the spinner into the placeholder — before the answer
+      // it now seemed to be waiting for had even finished speaking.
+      // Only the started marker takes the pickup; these frames merely
+      // prove the ear is back, so the unheard badge retires on them.
+      turn.becomeHeard();
+      return;
+    }
     chat.unpinQueued();
     if (_pickupDone) return;
     if (isTool && ev.toolName == 'started' && ev.toolKind == 'background') {

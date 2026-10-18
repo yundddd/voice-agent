@@ -121,6 +121,7 @@ class EnvProbe {
     armBgProbe: ({Duration every = const Duration(seconds: 10)}) => bgProbes++,
     turnOpenOnWire: () async => turnOpen,
     notePickup: () => pickups++,
+    awaitingPickup: () => false,
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);

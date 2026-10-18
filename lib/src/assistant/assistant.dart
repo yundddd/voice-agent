@@ -1083,6 +1083,14 @@ class VoiceAssistant extends ChangeNotifier {
     // The transport's pre-pickup armor is armed off this same
     // before-abandon snapshot.
     final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
+    // +149: two parked truths, computed once. PARKED (broad): work is
+    // live and this prompt waits behind it — the spinner box and its
+    // line must survive the send, whichever transport later reports
+    // the pickup. GREYED (narrow): the wait will be HEARD (a busy
+    // turn, or a queue release whose successor pump re-ears the tail)
+    // — only that wait wears the grey, per +126's badge-alone rule.
+    final parkedHere = !interrupt && (parkBehind || bridgeHadLiveTurn);
+    final greyedHere = !interrupt && (parkBehind || queuedBehindLiveTurn);
     _turn.supersede();
     _turn.detach(TurnTrigger.newUtterance, polite: !interrupt);
     if (_worker == null && !_ttsOff) {
@@ -1092,7 +1100,7 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     if (bubble != null && bubble.trim().isNotEmpty) {
-      _chat.addUser(bubble.trim(), queued: queuedBehindLiveTurn);
+      _chat.addUser(bubble.trim(), queued: greyedHere);
     }
     // The bubble this send may have pinned: remembered so a superseded
     // queue-turn can retire the pin instead of fossilising it (the
@@ -1100,9 +1108,7 @@ class VoiceAssistant extends ChangeNotifier {
     // gets its 'started'). A wire death of the SAME generation keeps
     // the pin: the bridge still owes the prompt (+104) and the pickup
     // marker will arrive through whatever view returns.
-    final ChatEntry? pinnedByMe = queuedBehindLiveTurn
-        ? _chat.queuedBubble
-        : null;
+    final ChatEntry? pinnedByMe = greyedHere ? _chat.queuedBubble : null;
     // A pin drops ONLY when a newer PROMPT supersedes this one (the
     // bridge's one pending slot is latest-wins). Bumps from bridgeStop
     // or a reattach do not void the promise — after a /stop the bridge
@@ -1132,7 +1138,7 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _transcript = utterance;
     _phase = AssistantPhase.transcribing;
-    if (!interrupt && (parkBehind || bridgeHadLiveTurn)) {
+    if (parkedHere) {
       // +147/148: a PARKED prompt leaves the spinner's text box exactly as
       // it found it. The box currently names the work the agent is
       // chewing — 'Bash sleep 10…', its tokens ticking — and
@@ -1237,6 +1243,7 @@ class VoiceAssistant extends ChangeNotifier {
     phase: () => _phase,
     armBgProbe: _scheduleBgProbe,
     notePickup: () => _awaitPickup = false,
+    awaitingPickup: () => _awaitPickup,
     turnOpenOnWire: () async {
       final h = await _gateway?.healthInfo();
       return h != null && h['turnOpen'] == true;
@@ -2817,7 +2824,11 @@ class VoiceAssistant extends ChangeNotifier {
         // _bridgeBusy alone lies here: the DOWN-time detach cleared it
         // while the bridge turn lives on (badge = _harnessBackgrounded)
         // — behind THAT is what a polite release queues.
-        queued: !interrupt && (_bridgeBusy || _harnessBackgrounded),
+        // +149: the press's detach zeroed _bridgeBusy and the queue
+        // release retired the badge BEFORE this re-add — reading only
+        // those two made every voice queue silently grey (journal
+        // 22:50: queued=0). The release already decided: parkBehind.
+        queued: !interrupt && (parkBehind || _bridgeBusy),
       );
 
       if (_gateway != null && _bridgePrefs.voice) {
