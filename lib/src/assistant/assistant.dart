@@ -1125,8 +1125,25 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _transcript = utterance;
     _phase = AssistantPhase.transcribing;
-    _activity = TurnWaiting(status ?? 'Asking the bridge…');
-    _ticker.resetForTurn();
+    if (queuedBehindLiveTurn) {
+      // +147: a PARKED prompt leaves the spinner's text box exactly as
+      // it found it. The box currently names the work the agent is
+      // chewing — 'Bash sleep 10…', its tokens ticking — and
+      // overwriting it with 'Asking the bridge…' hid the very wait the
+      // greyed pin is telling: the prompt is not asking, it is
+      // waiting. New steps of the running turn arrive on this very
+      // loop and refresh the line as they land; when the started
+      // marker dissolves the pin (un-grey), the answer takes the line
+      // over like any heard turn.
+      //
+      // The ticker keeps counting too: the numbers belong to the
+      // conversation, not to the POST — the parked view relays the
+      // same turn's tallies.
+      _logDebug('parked: spinner line left to the running work');
+    } else {
+      _activity = TurnWaiting(status ?? 'Asking the bridge…');
+      _ticker.resetForTurn();
+    }
     notifyListeners();
     _reply.warmUpRoute(); // hold the output route while the harness thinks
     _reply.startStream();

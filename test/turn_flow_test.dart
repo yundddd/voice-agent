@@ -568,6 +568,81 @@ void main() {
     });
 
     test(
+      '+147: a parked prompt leaves the spinner text box on the '
+      'running work — and the greyed message un-greys at the pickup',
+      () async {
+        await withBridge();
+        unawaited(a.runQuickCommand('sleep please'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'sleep 10',
+          ),
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            outTokens: 4200,
+          ),
+        );
+        await settle();
+        expect(
+          a.view.token.out,
+          4200,
+          reason: 'the running turn taught the ticker its number',
+        );
+
+        // The Queue press parks.
+        unawaited(
+          a.runQuickCommand('status?', interrupt: false, bubble: 'status?'),
+        );
+        await settle();
+        expect(a.queuedText, 'status?', reason: 'the pin (and its grey)');
+        expect(
+          a.view.activity,
+          isNot(isA<TurnWaiting>()),
+          reason:
+              '+147: no “Asking the bridge…” over a '
+              'wait that is not asking',
+        );
+        expect(
+          a.view.token.activityLabel,
+          contains('sleep 10'),
+          reason: 'the spinner line survives the POST unchanged',
+        );
+        expect(
+          a.view.token.out,
+          4200,
+          reason:
+              'the counter is the CONVERSATION’s — a parked '
+              'POST does not zero it',
+        );
+
+        // The pickup: the pin (grey) clears; the line stays honest until
+        // the answer itself takes it over.
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'started',
+            detail: 'status?',
+          ),
+        );
+        await settle();
+        expect(a.queuedText, isNull);
+        expect(
+          a.chat.any(
+            (e) => e.fromUser && e.queued && e.blocks.contains('status?'),
+          ),
+          isFalse,
+          reason: 'un-greyed in place — taken by the agent',
+        );
+      },
+    );
+
+    test(
       'poll view: the pin waits for the bridge’s explicit started',
       () async {
         await withBridge();
