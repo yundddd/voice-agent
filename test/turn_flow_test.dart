@@ -2132,6 +2132,29 @@ void main() {
       );
     });
 
+    test('+144: a queued prompt does NOT arm the bridge cut — the tool '
+        'outlives the Queue press', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('sleep please'));
+      await settle();
+      expect(harness.lastCutTool, isFalse);
+      unawaited(
+        a.runQuickCommand('queued', interrupt: false, bubble: 'queued'),
+      );
+      await settle();
+      expect(harness.lastInterrupt, isFalse);
+      expect(
+        harness.lastCutTool,
+        isFalse,
+        reason:
+            'the phone stopped asking for cuttool: the CLI aborts '
+            'the running call rather than backgrounding it, so Queue '
+            'means WAIT, politely and completely',
+      );
+      expect(a.queuedText, 'queued', reason: 'parked behind the live turn');
+      expect(a.view.showBackgroundedRow, isTrue);
+    });
+
     test('+142: a cut tool’s cancelled receipt files “cancelled.” — and '
         'one more replay never files a second period', () async {
       await withBridge();

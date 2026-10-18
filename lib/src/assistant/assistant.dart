@@ -1035,11 +1035,13 @@ class VoiceAssistant extends ChangeNotifier {
     String? ack,
     String? status,
     bool interrupt = true,
-    // Queue-with-backgrounding (behaviour 2): a POLITE queue that still
-    // cuts a running tool. The bridge decides from its own openTools
-    // bookkeeping — thinking turns keep being heard to their end, a
-    // tool call gets put into background and the agent is freed for
-    // this prompt at once. Only meaningful with interrupt: false.
+    // Queue-with-backgrounding (behaviour 2): a POLITE queue that also
+    // cuts a running tool. The phone stopped sending it at +144 — the
+    // field's sleep repro proved the CLI's interrupt KILLS the running
+    // call (exit 143) instead of backgrounding it, so 'queue around a
+    // build' means WAIT for the build, not destroy it. The wire flag
+    // remains for a harness that can genuinely detach a tool; the
+    // phone's Queue button is polite full stop.
     bool cutTool = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
@@ -3017,10 +3019,12 @@ class VoiceAssistant extends ChangeNotifier {
     // Words made it through: the release gesture's meaning is final.
     // A plain release over the detached turn POLITELY QUEUES (interrupt
     // false — slide-right never reaches here, it discarded the
-    // recording): the turn finishes THINKING first, and only a running
-    // TOOL goes to background (cutTool, behaviour 2 — nobody holds the
-    // mic through a five-minute build just to keep waiting politely).
-    // Slide-up (or any prompt with no turn behind it) keeps the
+    // recording): the turn (and any tool inside it) settles on its own
+    // and this prompt goes next. +144 retired the release's cutTool:
+    // the CLI cannot background a running tool when interrupted — it
+    // kills it — so 'queue politely but free the agent from the build'
+    // was really 'queue and murder the build'; waiting IS the promise
+    // now. Slide-up (or any prompt with no turn behind it) keeps the
     // established cutting flavour — and only a cut owes the abandoned
     // bubble its +110 trace.
     final willCut = interrupt || !bridgeHold;
@@ -3029,11 +3033,7 @@ class VoiceAssistant extends ChangeNotifier {
     } else {
       _dropPttCutTrace();
     }
-    await _startTurn(
-      cleaned,
-      interrupt: willCut,
-      cutTool: bridgeHold && !interrupt,
-    );
+    await _startTurn(cleaned, interrupt: willCut);
   }
 
   /// Word-overlap test: did the mic just pick up our own TTS output?

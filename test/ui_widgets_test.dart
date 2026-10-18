@@ -315,7 +315,7 @@ void main() {
         tester.widget<IconButton>(find.widgetWithIcon(IconButton, icon));
     const queueTip =
         'Queue \u2014 polite behind the current turn '
-        '(a running tool is put into background)';
+        '(a running tool finishes first)';
     const cutTip = 'Interrupt \u2014 cut the thinking turn, this goes now';
 
     setUp(() => sent = []);

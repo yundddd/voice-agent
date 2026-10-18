@@ -304,19 +304,21 @@ class _AssistantScreenState extends State<AssistantScreen>
               // same supersede/pin/detach discipline every prompt uses,
               // so a typed Queue pins exactly like a polite PTT release
               // and a typed Interrupt rides the /talk interrupt flag.
-              // Queue cuts the TOOL, not the thinking (cutTool): the
-              // bridge backgrounds a running call so the agent is freed
-              // for this prompt as soon as it stops thinking.
+              // Queue is POLITE, full stop (+144): the field's sleep
+              // repro proved the CLI cannot background a running tool
+              // on interrupt — it kills it (exit 143) — so a Queue
+              // press that cut the tool ('cuttool' at the bridge)
+              // destroyed the very work you queued around. Now the
+              // tool settles on its own, the pin and the bottom line
+              // carry the wait, and the answer flushes when the turn
+              // does. The bridge still honours cuttool=1 for a harness
+              // that can genuinely detach; the phone just stops asking
+              // for a magic trick.
               PromptBar(
                 ttsOn: v.ttsOn,
                 onToggleTts: () => unawaited(a.setBridgeTts(!a.bridgeTts)),
                 onSend: (text, {required bool interrupt}) => unawaited(
-                  a.runQuickCommand(
-                    text,
-                    bubble: text,
-                    interrupt: interrupt,
-                    cutTool: !interrupt,
-                  ),
+                  a.runQuickCommand(text, bubble: text, interrupt: interrupt),
                 ),
               ),
               if (v.bridgeConfigured) ...[

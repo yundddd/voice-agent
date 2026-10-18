@@ -3,11 +3,10 @@
 /// interrupt-vs-queue with the release gesture (slide up / plain
 /// release — see PttHold); typing has no gesture, so the flavour is
 /// literal: **Queue** parks the prompt behind whatever is running
-/// (it wears the pin until the harness takes it) — and, as the phone's
-/// queue-with-backgrounding contract, a RUNNING TOOL is put into
-/// background so the agent is freed for this prompt as soon as the
-/// thinking ends (cuttool at the bridge; the bottom banner keeps
-/// naming the tool until its receipt lands). **Interrupt** supersedes
+/// (it wears the pin until the harness takes it, and a running tool
+/// FINISHES — +144: the phone stopped cutting tools on Queue after the
+/// field proved an interrupted tool is a KILLED tool; the wait is
+/// named by the pin and the bottom line). **Interrupt** supersedes
 /// the in-flight turn the way a typed prompt always has (a mere
 /// thinking turn is cut in-band, an open tool finishes and this goes
 /// next). Enter means Interrupt — the button on the right, the flavour
@@ -114,7 +113,7 @@ class _PromptBarState extends State<PromptBar> {
               IconButton.filledTonal(
                 tooltip:
                     'Queue — polite behind the current turn '
-                    '(a running tool is put into background)',
+                    '(a running tool finishes first)',
                 onPressed: hasText ? () => _send(false) : null,
                 icon: const Icon(Icons.schedule),
               ),
