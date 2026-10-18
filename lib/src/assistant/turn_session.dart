@@ -200,10 +200,16 @@ final class TurnCoordinator {
   // murder it never committed. Read by the abandoned turn's finally;
   // describes the MOST RECENT takeover (each detach overwrites).
   bool _detachedPromise = false; // a tool THIS press cut into background
-  bool _agentWork = false; // +133: a shell the HARNESS backgrounded
-  // itself (the bridge's `tool backgrounded` frame) — the bottom line
-  // names it on the bridge's word, no press involved, until the
-  // report's `finished` receipt or /health proof pays.
+  // +133: shells the HARNESS backgrounded ITSELF (the bridge's `tool
+  // backgrounded` frame); +140: the LEDGER of every such shell not yet
+  // proven over. The bottom line can name only one at a time (the
+  // newest), so the ledger keeps the rest until payment — a named
+  // `finished` receipt pays its own label, /health proof that nothing
+  // is detached pays all. A turn-closed receipt pays NOTHING: it
+  // proves the TURN went unheard, not that the process died (the
+  // three-sleep field report: the chat called 'Bash sleep 120'
+  // finished while all three shells were still running).
+  final List<String> _agentDebts = [];
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
   // own 'finished' receipt pays the promise (behaviours 2/4).
@@ -221,9 +227,14 @@ final class TurnCoordinator {
   /// badge or a pin while a tool this phone cut is owed its receipt.
   bool get detachedPromise => _detachedPromise;
 
-  /// The agent's own background work: a run_in_background shell the
-  /// harness launched and has not reported in yet (0.1.0+133).
-  bool get agentWork => _agentWork;
+  /// The agent's own background work: run_in_background shells the
+  /// harness launched and has not reported in yet (0.1.0+133, the
+  /// ledger of +140).
+  bool get agentWork => _agentDebts.isNotEmpty;
+
+  /// Every owed shell's label, in launch order (a copy — the caller
+  /// pays from it while the ledger drains).
+  List<String> get agentDebts => List.of(_agentDebts);
 
   /// The most recent takeover's trigger (null before the first one).
   TurnTrigger? get lastTakeover => _lastTakeover;
@@ -275,8 +286,11 @@ final class TurnCoordinator {
   void heardPickup() {
     becomeHeard();
     _lastToolStep = '';
-    _bgWork = '';
     _detachedPromise = false;
+    // A picked-up turn drops the snapshot, but a PROCESS still running
+    // is not unheard by the pickup (+140): the line re-labels to the
+    // newest owed shell instead of blanking on it.
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
   }
 
   /// The cut disposition: the bridge put a running tool into background
@@ -297,12 +311,22 @@ final class TurnCoordinator {
   /// names THAT step, not whatever the last snapshot held; the promise
   /// is paid by the report's `finished` receipt or /health proof.
   void noteAgentWork(String label) {
-    _agentWork = true;
-    if (label.isNotEmpty) {
-      _bgWork = label;
-    } else if (_bgWork.isEmpty) {
-      _bgWork = _lastToolStep;
-    }
+    final name = label.isNotEmpty
+        ? label
+        : (_lastToolStep.isNotEmpty ? _lastToolStep : 'Background shell');
+    if (!_agentDebts.contains(name)) _agentDebts.add(name);
+    _bgWork = name;
+  }
+
+  /// A named `finished` receipt pays ITS OWN shell and only its own
+  /// (+140): the label leaves the ledger and the line re-labels to the
+  /// newest still-owed shell, blanking only when the ledger runs dry.
+  /// Returns the label the line now names ('' when none). A cut tool's
+  /// label is not in the ledger: the call is then a no-op.
+  String payAgentDebt(String label) {
+    _agentDebts.remove(label);
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+    return _bgWork;
   }
 
   /// A press detached this very turn: the badge lights. The clock is
@@ -336,9 +360,10 @@ final class TurnCoordinator {
   /// replayed receipt for the work it queued behind), and its spinner's
   /// age must never be zeroed by a frame about OLDER work.
   void clearBgWork() {
-    _bgWork = '';
     _detachedPromise = false; // the receipt paid it
-    _agentWork = false; // …whichever shape the work took (+133)
+    // The SNAPSHOT goes; an owed process does not (+140) — the ledger
+    // re-labels the line, and only a real payment clears a debt.
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
   }
 
   /// The badge goes out and the clock stops, but the snapshot is KEPT:
@@ -356,7 +381,7 @@ final class TurnCoordinator {
   void retireBadgeAndWork() {
     retireBadge();
     _bgWork = '';
-    _agentWork = false;
+    _agentDebts.clear(); // retired work is not owed work any more
   }
 
   /// The Stop chip over a DETACHED turn: /stop lands on invisible work

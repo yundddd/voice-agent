@@ -729,14 +729,17 @@ class VoiceAssistant extends ChangeNotifier {
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0) {
-      // The snapshot goes with the retirement: name the finished
-      // shell from it BEFORE it goes, so the +133 debt still gets its
-      // chat period when the receipt was the thing that got lost.
-      final paid = _turn.agentWork ? _bgWork : '';
+      // None-detached is proof for EVERY owed shell at once (+140):
+      // capture the ledger before the retirement clears it and file
+      // one period per name — the chat states what finished, not what
+      // the banner happened to be wearing.
+      final paid = _turn.agentDebts;
       _turn.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: health — nothing open, none detached');
       notifyListeners();
-      _bgFinishedBubble(paid);
+      for (final shell in paid) {
+        _bgFinishedBubble(shell);
+      }
     }
     // A turn end (or boot, or setBridge) that leaves the bottom line
     // lit starts the heartbeat: +133's agent-backgrounded work reports
@@ -777,11 +780,13 @@ class VoiceAssistant extends ChangeNotifier {
     if (h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0) {
-      final paid = _turn.agentWork ? _bgWork : '';
+      final paid = _turn.agentDebts; // one period per owed shell (+140)
       _turn.retireBadgeAndWork();
       _logDebug('bg line retired: idle probe — nothing open, none detached');
       notifyListeners();
-      _bgFinishedBubble(paid);
+      for (final shell in paid) {
+        _bgFinishedBubble(shell);
+      }
       return;
     }
     // Wake the ear only for a report that is STREAMING — during the
@@ -807,39 +812,48 @@ class VoiceAssistant extends ChangeNotifier {
   /// The proof-of-completion the background banner waits for (bridge
   /// `tool finished` frame — the late tool_result of a cut tool naming
   /// its step, or the +128 lifecycle receipt of a turn that ended
-  /// unheard). The line retires on either. A NAMED tool gets its period
-  /// in the chat; a lifecycle receipt that pays the agent's OWN back-
-  /// grounded shell gets the same bubble, named from the snapshot the
-  /// banner lit with (+139 — the field case: the sleep ended, the
-  /// banner dimmed, and the chat said nothing). A lifecycle receipt
-  /// paying a turn this phone merely backgrounded stays journal-only
-  /// — no process finished, only an unheard turn closed. (behaviours
-  /// 2/4)
+  /// unheard). A NAMED receipt pays its own shell and files the chat
+  /// period for THAT label. A lifecycle receipt pays an AGENT debt
+  /// with NOTHING (+140): it proves only the TURN went unheard — the
+  /// three-sleep field report caught the short-lived +139 rule naming
+  /// the newest snapshot ('Bash sleep 120 finished.') seconds after
+  /// launch while all three shells were still running — so behind an
+  /// owed shell it urges the heartbeat to consult /health NOW, where
+  /// the honest detached counter pays the ledger with one bubble per
+  /// name. With no agent debt it retires the line journal-only,
+  /// exactly as before: no process finished, only an unheard turn
+  /// closed. (behaviours 2/4)
   void _retireBgWork(String detail) {
-    // Read the snapshot BEFORE the clear: the lifecycle receipt names
-    // no tool, and the paid work's label is the only witness to whether
-    // it was the agent's own shell.
-    final paid = _turn.agentWork ? _bgWork : '';
+    final unnamed = detail.isEmpty || detail.startsWith('ended after');
+    if (unnamed && _turn.agentWork) {
+      _logDebug(
+        'turn closed unheard with agent work owed — '
+        'probing the bridge instead of paying',
+      );
+      _scheduleBgProbe(every: Duration.zero);
+      notifyListeners();
+      return;
+    }
     _turn.clearBgWork(); // the promise is paid here (see turn_session)
     if (_harnessBackgrounded) _turn.retireBadgeAndWork();
-    if (detail.isEmpty || detail.startsWith('ended after')) {
+    if (unnamed) {
       _logDebug(
         'backgrounded work finished '
         '(${detail.isEmpty ? 'unnamed turn' : detail})',
       );
       notifyListeners();
-      _bgFinishedBubble(paid);
       return;
     }
+    _turn.payAgentDebt(detail); // no-op for a cut tool's label
     _bgFinishedBubble(detail);
   }
 
   /// The persistent bubble a finished background process earns — the
-  /// ONE writer of that law, so every payment path (named receipt,
-  /// +128 lifecycle receipt, /health proof) files the same period.
-  /// Idempotent: a backlog replay may deliver a second proof after the
-  /// live view already retired on the first — one completion, one
-  /// period.
+  /// ONE writer of that law, so every payment path (a named receipt,
+  /// or the /health proof draining the ledger) files the same period
+  /// per name. Idempotent: a backlog replay may deliver a second
+  /// proof after the live view already retired on the first — one
+  /// completion, one period.
   void _bgFinishedBubble(String who) {
     if (who.isEmpty) return;
     final note = '$who finished.';

@@ -360,7 +360,19 @@ void main() {
             'task — the debt outlives the press',
       );
       turn.clearBgWork();
-      expect(turn.agentWork, isFalse, reason: 'the receipt paid it');
+      expect(
+        turn.agentWork,
+        isTrue,
+        reason: '+140: dropping the SNAPSHOT says nothing about the '
+            'PROCESS — the ledger outlives the line',
+      );
+      expect(
+        turn.bgWork,
+        'Bash sleep 20',
+        reason: 'the line re-labels onto the owed shell',
+      );
+      expect(turn.payAgentDebt('Bash sleep 20'), isEmpty);
+      expect(turn.agentWork, isFalse, reason: 'the NAMED receipt paid it');
       expect(turn.bgWork, isEmpty);
     });
 

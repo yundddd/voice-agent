@@ -1889,16 +1889,23 @@ void main() {
     );
 
     test(
-      'a lifecycle receipt pays the agent shell with the same bubble',
+      'a turn-closed receipt pays an agent debt with NOTHING',
       () async {
-        // The field case (+139): the shell ends while the report turn
-        // goes out of earshot, and only the turn-lifecycle receipt —
-        // which names no tool — arrives. The banner still dimmed; the
-        // chat must still say WHAT finished, named from the snapshot
-        // the banner lit with.
+        // The three-sleep field report (+140): the launch turn ends
+        // unheard a breath after dispatching the shells, and its
+        // lifecycle receipt — which names no tool — must NOT be
+        // allowed to claim the process died. The line stays lit; the
+        // honest detached counter pays later.
         await withBridge();
         unawaited(a.runQuickCommand('start a sleep'));
         await settle();
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'queued': false,
+          'detached': 1,
+        };
         harness.emit(
           const BridgeEvent.forTest(
             'tool',
@@ -1918,18 +1925,32 @@ void main() {
         await settle();
         expect(
           a.backgroundedWork,
-          isEmpty,
-          reason: 'the receipt still dismisses the line',
+          'Bash sleep 20',
+          reason: 'the TURN closed unheard; the shell was never '
+              'mentioned — the debt keeps the line lit',
         );
         expect(
           a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
-          isTrue,
-          reason: 'the process finished — the chat says so, named from '
-              'the banner even though the receipt named nothing',
+          isFalse,
+          reason: 'no bubble while the process may still be running',
         );
-        // The tool's own named receipt may still ride in later (a
-        // backlog replay, the proactive report): it cannot mint a
-        // second period.
+        expect(
+          a.debugLog.any((l) => l.contains('probing the bridge instead')),
+          isTrue,
+          reason: 'the receipt urged /health NOW instead of paying',
+        );
+        // The shell ends with no receipt ever sent: /health now counts
+        // zero detached, and THAT pays — with the bubble.
+        harness.healthState = {...harness.healthState!, 'detached': 0};
+        time.advance(const Duration(seconds: 11));
+        await settle();
+        expect(a.backgroundedWork, isEmpty);
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 20 finished.')),
+          isTrue,
+        );
+        // The named receipt may still ride in late (backlog replay,
+        // proactive report): it cannot mint a second period.
         harness.emit(
           const BridgeEvent.forTest(
             'tool',
@@ -1944,6 +1965,80 @@ void main() {
               .length,
           1,
           reason: 'one completion, one period',
+        );
+      },
+    );
+
+    test(
+      'three owed shells are paid three bubbles when the counter clears',
+      () async {
+        // The banner names only the newest, but the LEDGER remembers
+        // them all (+140 — the field case: three sleeps, and the chat
+        // said one early nothing and would have said one late nothing
+        // too).
+        await withBridge();
+        unawaited(a.runQuickCommand('start three sleeps'));
+        await settle();
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'queued': false,
+          'detached': 3,
+        };
+        for (final label in ['Bash sleep 45', 'Bash sleep 90']) {
+          harness.emit(
+            BridgeEvent.forTest(
+              'tool',
+              toolName: 'backgrounded',
+              detail: label,
+            ),
+          );
+          await settle();
+        }
+        expect(
+          a.backgroundedWork,
+          'Bash sleep 90',
+          reason: 'the line names the newest shell',
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'ended after 3s unheard',
+          ),
+        );
+        await settle();
+        expect(a.chat.any((e) => e.blocks.contains('finished.')), isFalse);
+        // One shell reports in by name; the OTHER debt must keep the
+        // line lit and re-label onto it.
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'Bash sleep 45',
+          ),
+        );
+        await settle();
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 45 finished.')),
+          isTrue,
+          reason: 'the named receipt pays ITS OWN shell',
+        );
+        expect(
+          a.backgroundedWork,
+          'Bash sleep 90',
+          reason: 'the other debt still owns the line',
+        );
+        // The counter clears: the rest of the ledger is proven over.
+        harness.healthState = {...harness.healthState!, 'detached': 0};
+        time.advance(const Duration(seconds: 11));
+        await settle();
+        expect(a.backgroundedWork, isEmpty);
+        expect(
+          a.chat.any((e) => e.blocks.contains('Bash sleep 90 finished.')),
+          isTrue,
+          reason: 'the ledger pays one period per name, not one per banner',
         );
       },
     );
