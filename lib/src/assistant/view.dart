@@ -190,8 +190,9 @@ final class AssistantView {
   final BgWork backgrounded;
   final bool bridgeBusy, harnessBackgrounded, bridgeConfigured, userSpeaking;
 
-  /// The TTS kill switch (BridgePrefs.tts): what the composer's volume
-  /// icon paints, and why replies are (or are not) leaving the speaker.
+  /// The TTS kill switch (BridgePrefs.tts). +153 retired the composer
+  /// bar and with it the volume icon — the flag persists; the field
+  /// keeps projecting it so any later mute affordance reads the truth.
   final bool ttsOn;
   final TokenMeter token;
   final ContextBarView context;
