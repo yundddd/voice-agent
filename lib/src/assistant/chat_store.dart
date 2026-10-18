@@ -61,8 +61,27 @@ class ChatStore {
   String? get queuedText => queuedBubble?.blocks.join(' ');
 
   /// The bubble the in-flight working line rides — see [liveTurnFor].
-  ChatEntry? liveTurn({required bool turnRunning}) =>
-      liveTurnFor(_entries, turnRunning: turnRunning);
+  /// [parkedBehind]: a prompt is queued and has not STARTED (pin
+  /// riding) — the spinner belongs to the work still running, not to
+  /// the parked prompt's fresh, empty bubble. +148: a Queue press must
+  /// leave the tool-call box untouched; it migrates to the new bubble
+  /// at the started marker, when the prompt is actually taken.
+  ChatEntry? liveTurn({required bool turnRunning, bool parkedBehind = false}) {
+    final t = liveTurnFor(_entries, turnRunning: turnRunning);
+    if (t == null || !parkedBehind) return t;
+    // Only a fresh, silent bubble can be the parked prompt's own — a
+    // bubble that already speaks is the running work, box and all.
+    if (t.blocks.isNotEmpty || t.deliveredMs != 0) return t;
+    for (final e in _entries.reversed) {
+      if (identical(e, t)) continue; // the parked prompt's placeholder
+      if (e.fromUser) continue; // the pin itself
+      // The bubble the spinner sat on before the placeholder opened:
+      // the RUNNING work (+148). A delivered stamp does not close a
+      // turn — +91 lives on exactly that fact — so no further filter.
+      return e;
+    }
+    return t;
+  }
 
   /// Is this exact reply block already in the (disk-persisted) log?
   /// The reattach replay consults this so paragraphs the user heard

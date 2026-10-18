@@ -117,6 +117,24 @@ void main() {
       expect(store.liveTurn(turnRunning: false), isNull);
     });
 
+    test('liveTurn: parkedBehind keeps the spinner on the RUNNING work '
+        "(+148: a queued press's placeholder must not steal the box)", () {
+      final work = store.beginTurn();
+      store.addBlock(work, 'Bash still chewing');
+      store.addUser('press', queued: true);
+      final placeholder = store.beginTurn(); // the parked prompt's bubble
+      expect(
+        store.liveTurn(turnRunning: true),
+        same(placeholder),
+        reason: 'the plain rule still lands on the newest turn',
+      );
+      expect(
+        store.liveTurn(turnRunning: true, parkedBehind: true),
+        same(work),
+        reason: 'parked: the tool-call box stays where the work is',
+      );
+    });
+
     test('load is tolerant: garbage starts a fresh log', () {
       store.addUser('keep me until reload');
       store.load(']not json[');

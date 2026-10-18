@@ -120,6 +120,7 @@ class EnvProbe {
     phase: () => phase,
     armBgProbe: ({Duration every = const Duration(seconds: 10)}) => bgProbes++,
     turnOpenOnWire: () async => turnOpen,
+    notePickup: () => pickups++,
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);
@@ -130,7 +131,7 @@ class EnvProbe {
   // Ports of the +131..+133 rules the loop now consults; tests flip
   // these to drive the new branches.
   bool ttsOff = false, turnOpen = false;
-  int promptBumps = 0, bgProbes = 0;
+  int promptBumps = 0, bgProbes = 0, pickups = 0;
   final List<(String, bool)> retiredBg = [];
   ChatEntry? parked;
   TurnCoordinator? coord;

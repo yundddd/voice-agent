@@ -568,6 +568,87 @@ void main() {
     });
 
     test(
+      '+148: a PTT queue release leaves the tool-call box untouched '
+      '— spinner, text, place — and it migrates only at the pickup',
+      () async {
+        await withBridge();
+        a.setMode(InteractionMode.pushToTalk);
+        engine.transcripts = ['steer please'];
+        unawaited(a.runQuickCommand('sleep please'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'sleep 10',
+          ),
+        );
+        await settle();
+        final running = a.view.liveTurnBubble!;
+        expect(a.view.token.activityLabel, contains('sleep 10'));
+
+        // Press, record, plain release — the queue flavour.
+        a.pttDown(Offset.zero);
+        await settle();
+        expect(
+          a.view.liveTurnBubble,
+          same(running),
+          reason: 'the press alone moves nothing',
+        );
+        mic.emit(FakeMic.audio(10));
+        await settle();
+        time.advance(const Duration(milliseconds: 600));
+        a.pttUp(Offset.zero);
+        await settle();
+
+        expect(
+          a.view.activity,
+          isNot(isA<TurnWaiting>()),
+          reason: 'no “Asking the bridge…” over a queue release',
+        );
+        expect(
+          a.view.liveTurnBubble,
+          same(running),
+          reason:
+              '+148: the parked placeholder does NOT steal the '
+              'spinner — the tool-call box stands untouched',
+        );
+        expect(
+          a.view.token.activityLabel,
+          contains('sleep 10'),
+          reason: 'the line keeps naming the running tool',
+        );
+
+        // A queued NOTICE is still not a pickup; the started marker is —
+        // only then may the answer’s bubble take the box.
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'queued',
+            detail:
+                'a tool call is running; your message goes next '
+                'when it settles',
+          ),
+        );
+        await settle();
+        expect(a.view.liveTurnBubble, same(running));
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'started',
+            detail: 'steer please',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.liveTurnBubble,
+          isNot(same(running)),
+          reason: 'taken at last: the spinner migrates to the answer',
+        );
+      },
+    );
+
+    test(
       '+147: a parked prompt leaves the spinner text box on the '
       'running work — and the greyed message un-greys at the pickup',
       () async {

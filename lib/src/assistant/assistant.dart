@@ -607,8 +607,10 @@ class VoiceAssistant extends ChangeNotifier {
   /// [liveTurnFor] so the mapping is unit-guarded: a queued pin
   /// pressed over live work must not drop the spinner — the background
   /// turn keeps working, and (+91) now keeps showing.
-  ChatEntry? get liveTurnBubble =>
-      _chat.liveTurn(turnRunning: bridgeBusy || harnessBackgrounded);
+  ChatEntry? get liveTurnBubble => _chat.liveTurn(
+    turnRunning: bridgeBusy || harnessBackgrounded,
+    parkedBehind: _awaitPickup,
+  );
 
   String get _chatPath => p.join(_modelsDir, 'chat_log.json');
 
@@ -1043,6 +1045,11 @@ class VoiceAssistant extends ChangeNotifier {
     // remains for a harness that can genuinely detach a tool; the
     // phone's Queue button is polite full stop.
     bool cutTool = false,
+    // +148: this prompt POLITELY PARKS behind work still running even
+    // when no pin rides (the PTT queue release over a press-detached
+    // turn): the spinner box and its tool-call line stay untouched
+    // until the bridge's pickup, whichever transport carries it.
+    bool parkBehind = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
     final gateway = _gateway;
@@ -1125,8 +1132,8 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _transcript = utterance;
     _phase = AssistantPhase.transcribing;
-    if (queuedBehindLiveTurn) {
-      // +147: a PARKED prompt leaves the spinner's text box exactly as
+    if (!interrupt && (parkBehind || bridgeHadLiveTurn)) {
+      // +147/148: a PARKED prompt leaves the spinner's text box exactly as
       // it found it. The box currently names the work the agent is
       // chewing — 'Bash sleep 10…', its tokens ticking — and
       // overwriting it with 'Asking the bridge…' hid the very wait the
@@ -1139,10 +1146,12 @@ class VoiceAssistant extends ChangeNotifier {
       // The ticker keeps counting too: the numbers belong to the
       // conversation, not to the POST — the parked view relays the
       // same turn's tallies.
+      _awaitPickup = true;
       _logDebug('parked: spinner line left to the running work');
     } else {
       _activity = TurnWaiting(status ?? 'Asking the bridge…');
       _ticker.resetForTurn();
+      _awaitPickup = false;
     }
     notifyListeners();
     _reply.warmUpRoute(); // hold the output route while the harness thinks
@@ -1227,11 +1236,19 @@ class VoiceAssistant extends ChangeNotifier {
     promptBumps: () => _promptBumps,
     phase: () => _phase,
     armBgProbe: _scheduleBgProbe,
+    notePickup: () => _awaitPickup = false,
     turnOpenOnWire: () async {
       final h = await _gateway?.healthInfo();
       return h != null && h['turnOpen'] == true;
     },
   );
+
+  /// +148: a polite prompt PARKED behind work still running (pin or
+  /// badge — the PTT queue release has no pin). While set, the spinner
+  /// box stays on the RUNNING work's bubble and its text survives; the
+  /// bridge's pickup (whichever transport delivers it) clears the flag
+  /// and the answer's bubble takes the box.
+  bool _awaitPickup = false;
 
   // Queue-prompt bookkeeping: every runQuickCommand (a NEW USER PROMPT)
   // bumps this alongside _generation. A queue turn's finally drops its
@@ -1265,12 +1282,22 @@ class VoiceAssistant extends ChangeNotifier {
     _chat.markInterrupted(t);
   }
 
-  /// The release decided NOTHING was cut: no trace, and the empty
-  /// bubble that only existed to carry one is finally withdrawn.
+  /// The release decided NOTHING was cut AND the moment is over (slide
+  /// right): no trace, and the empty bubble that only existed to carry
+  /// one is finally withdrawn — 'as if nothing happened'.
   void _dropPttCutTrace() {
     final t = _pttCutTrace;
     _pttCutTrace = null;
     if (t != null && t.isEmpty) _chat.removeEmptyTurn(t);
+  }
+
+  /// The release QUEUED behind the turn (+148): no trace is owed — but
+  /// the bubble is NOT 'as if nothing happened': the work it names is
+  /// still running, and the bubble is its live view. Withdraw it and
+  /// the tool-call spinner box vanishes mid-flight (the very symptom
+  /// the queue must not cause); keep it, free the paperwork slot.
+  void _keepPttCutTrace() {
+    _pttCutTrace = null;
   }
 
   /// +111: the answered interruption. The user's press silenced the
@@ -2475,6 +2502,7 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   void _fail(String message) {
+    _awaitPickup = false; // a send that died is not 'parked'
     _phase = AssistantPhase.error;
     _error = message;
     _activity = const FailedHint();
@@ -2608,7 +2636,14 @@ class VoiceAssistant extends ChangeNotifier {
       await _mic.open();
       _phase = AssistantPhase.listening;
       _error = '';
-      _activity = const ListeningHint();
+      // +148: a press over LIVE work leaves the spinner box exactly as
+      // it is — the mic's own surface (orb, level) says 'recording';
+      // painting 'Listening…' over the running tool's line is the
+      // stomp the queue flow keeps inheriting. Idle presses keep the
+      // hint: nothing is running, the box has no work to name.
+      if (!(bridgeBusy || harnessBackgrounded)) {
+        _activity = const ListeningHint();
+      }
       notifyListeners();
     } catch (e) {
       _fail('$e');
@@ -2717,11 +2752,17 @@ class VoiceAssistant extends ChangeNotifier {
     Float32List samples, {
     bool interrupt = true,
     bool cutTool = false,
+    bool parkBehind = false,
   }) async {
     final gen = _turn.supersede(); // any newer turn supersedes this one
     _ptt.bridgeHold = false; // the hold is over: the turn owns the choice now
     _phase = AssistantPhase.transcribing;
-    _activity = const StatusText('Thinking…');
+    if (!parkBehind) {
+      // +148: the QUEUE flavour keeps the box: 'Thinking…' would be a
+      // lie about the parked prompt — it is not thinking yet, it is
+      // WAITING, and the truthful line is the one already there.
+      _activity = const StatusText('Thinking…');
+    }
     notifyListeners();
     try {
       final swAsr = Stopwatch()..start();
@@ -2799,7 +2840,12 @@ class VoiceAssistant extends ChangeNotifier {
           'cutTool=$cutTool)',
         );
         unawaited(
-          runQuickCommand(text, interrupt: interrupt, cutTool: cutTool),
+          runQuickCommand(
+            text,
+            interrupt: interrupt,
+            cutTool: cutTool,
+            parkBehind: parkBehind,
+          ),
         );
         return;
       }
@@ -2924,7 +2970,14 @@ class VoiceAssistant extends ChangeNotifier {
       await _mic.open();
       _phase = AssistantPhase.listening;
       _error = '';
-      _activity = const ListeningHint();
+      // +148: a press over LIVE work leaves the spinner box exactly as
+      // it is — the mic's own surface (orb, level) says 'recording';
+      // painting 'Listening…' over the running tool's line is the
+      // stomp the queue flow keeps inheriting. Idle presses keep the
+      // hint: nothing is running, the box has no work to name.
+      if (!(bridgeBusy || harnessBackgrounded)) {
+        _activity = const ListeningHint();
+      }
       notifyListeners();
     } catch (e) {
       _fail('$e');
@@ -2959,6 +3012,17 @@ class VoiceAssistant extends ChangeNotifier {
     final bridgeHold = _ptt.bridgeHold;
     _ptt.bridgeHold = false;
     final heldMs = _ptt.heldMs;
+    if (bridgeHold && !discard) {
+      // +148: the release itself owns this turn's fate from here on —
+      // a queue's /talk re-ears the tail in its own successor view, a
+      // no-words hold re-arms below, a tap-stop kills the work. None
+      // of them may be raced by the deferred steal-back probe climbing
+      // the ladder through an ASR-gap await and painting 'Reattached
+      // — working…' over the box the release is supposed to leave
+      // untouched. (Discard keeps the probe: the badge stays honest —
+      // unheard — until a drain clears it.)
+      _chainCancel();
+    }
     _reply.stopDebug();
     await _mic.close();
     _resetMicLevel(); // the hold is over; the ripples came from this mic
@@ -3015,7 +3079,10 @@ class VoiceAssistant extends ChangeNotifier {
           _applyPttCutTrace();
           _activity = const StatusText('Heard nothing — stopped the harness.');
         } else {
-          _dropPttCutTrace();
+          _keepPttCutTrace(); // +148: still running — the box stays
+          // No /talk successor exists to re-ear: hand the drain probe
+          // back (the release cancelled the press's one).
+          _armReattach(gen: _generation, seq: _bridgeTurnSeq, retire: true);
           _activity = const StatusText(
             'Heard nothing — the harness keeps working in the background.',
           );
@@ -3041,7 +3108,13 @@ class VoiceAssistant extends ChangeNotifier {
     // never clip utterance onsets, only quiet fill between words.
     final gen = _generation; // a press during cleanup interrupts this turn
     _phase = AssistantPhase.transcribing;
-    _activity = const StatusText('Cleaning up the recording…');
+    if (!(bridgeHold && !interrupt)) {
+      // +148: the QUEUE flavour leaves the box alone — even the
+      // denoise caption would paint over the running tool's line, and
+      // 'cleaning up the recording' is news about the FINGER, not
+      // about the work the user is queueing around.
+      _activity = const StatusText('Cleaning up the recording…');
+    }
     notifyListeners();
     Float32List cleaned = pcm;
     try {
@@ -3077,7 +3150,7 @@ class VoiceAssistant extends ChangeNotifier {
       // and the receipt behind it), not from the press's badge.
       _turn.resolveBackgroundVerdict();
     } else {
-      _dropPttCutTrace();
+      _keepPttCutTrace();
       // +145: the press detached the heard turn and lit the badge —
       // honest while the mic owned the moment. A QUEUE release hands
       // the ear straight back: the successor's pump rides the ring
@@ -3089,7 +3162,13 @@ class VoiceAssistant extends ChangeNotifier {
       _turn.resolveBackgroundVerdict();
       _turn.retireBadge();
     }
-    await _startTurn(cleaned, interrupt: willCut);
+    await _startTurn(
+      cleaned,
+      interrupt: willCut,
+      // The queue flavour parks: no pin may ride (the press detached
+      // first), so the placeholder-skipping law needs this word.
+      parkBehind: bridgeHold && !willCut,
+    );
   }
 
   /// Word-overlap test: did the mic just pick up our own TTS output?

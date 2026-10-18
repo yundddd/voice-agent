@@ -85,6 +85,15 @@ final class ReattachChain {
   int _gen = -1, _seq = -1, _step = 0;
   bool _retire = false; // chain end = retire the spinner (zombie hop failed)
   Timer? _timer; // next probe of the retry chain
+  // +148: cancel()/start() must veto a pump already sitting on its
+  // /health await, not just the next timer rung — a PTT queue release
+  // cancels the press's deferred steal-back, and the release's own
+  // /talk becomes the successor view. Without the epoch the in-flight
+  // probe resolved over that decision, painted 'Reattached — working…'
+  // over the running tool's spinner box, and its bubble was withdrawn
+  // a beat later by the supersede — a caption about a view that never
+  // was, left on the box the queue is required to leave untouched.
+  int _epoch = 0;
 
   /// Ladder rungs spent on the current orphan (journal flag).
   int get step => _step;
@@ -107,6 +116,7 @@ final class ReattachChain {
     Duration? firstProbe,
   }) {
     if (!env.canProbe()) return;
+    _epoch++; // a re-arm supersedes any pump still mid-probe (+148)
     if (resetStep) _step = 0;
     _gen = gen;
     _seq = seq;
@@ -123,6 +133,7 @@ final class ReattachChain {
   /// This superseded story is not to be re-heared (a new prompt owns
   /// the ear now).
   void cancel() {
+    _epoch++; // veto the pump parked on its probe await (+148)
     _timer?.cancel();
     _timer = null;
     _step = 0;
@@ -132,7 +143,9 @@ final class ReattachChain {
   Future<void> _pump() async {
     _timer = null;
     if (!env.canProbe() || env.busy()) return;
+    final myEpoch = _epoch;
     final probe = await env.probe();
+    if (_epoch != myEpoch) return; // cancelled or re-armed while probing
     if (env.busy()) return; // a resume or a chip attached while we probed
     final need = bridgeReattachNeeded(probe);
     final verdict = need == null

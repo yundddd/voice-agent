@@ -98,6 +98,7 @@ final class BridgeTurnEnv {
     required this.phase,
     required this.armBgProbe,
     required this.turnOpenOnWire,
+    required this.notePickup,
   });
 
   final InteractionMode Function() mode;
@@ -195,6 +196,11 @@ final class BridgeTurnEnv {
   /// (+133: an answered turn must not strand the news the wake came
   /// for).
   final Future<bool> Function() turnOpenOnWire;
+
+  /// The parked prompt was TAKEN (push view's first live frame, or the
+  /// bridge's started marker): the wait is over, the answer's bubble
+  /// may take the spinner box (+148).
+  final void Function() notePickup;
 
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
@@ -487,6 +493,7 @@ class BridgeTurn {
       // tool that predates a polite pickup is closed by definition, so
       // retire the line now.
       chat.unpinQueued();
+      env.notePickup();
       if (ev.toolKind == 'background') {
         // THIS prompt cut a running tool: the turn it waited behind
         // closed (that is what flushed the queue), but the tool did
