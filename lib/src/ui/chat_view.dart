@@ -201,6 +201,14 @@ class WorkingRowCard extends StatelessWidget {
     this.maxWidthFrac = 0.86,
   });
 
+  /// +154: the row's height is a CONSTANT and the screen reserves it
+  /// always — the slot never grows, shrinks, appears or disappears,
+  /// so no bubble ever slides under a appearing footer (the jitter
+  /// this kills; every professional chat app owns its composer/status
+  /// band the same way). Label + meter + the one-line draft preview
+  /// fit inside; ClipRect is the seatbelt.
+  static const reservedHeight = 84.0;
+
   final ViewSource source;
   final double maxWidthFrac;
 
@@ -214,11 +222,20 @@ class WorkingRowCard extends StatelessWidget {
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth * maxWidthFrac,
           ),
-          child: Card(
-            color: scheme.surfaceContainerHigh,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: HarnessSpinner(source: source),
+          child: ClipRect(
+            child: Card(
+              color: scheme.surfaceContainerHigh,
+              child: SizedBox(
+                // The card's own margins (4+4) eat the rest of the slot.
+                height: reservedHeight - 8,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  child: HarnessSpinner(source: source),
+                ),
+              ),
             ),
           ),
         ),

@@ -966,7 +966,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// canned-command set (which asked the harness to do things it does
   /// better when simply told): these two buttons manage the CONVERSATION
   /// itself. See [bridgeControl] for what each one does on the wire.
-  static const controlChips = <String>['/new', '/compact'];
+  /// +154: /new remains; the /compact chip retired (its slash still
+  /// works through the Bridge screen's typed input), and the Stop chip
+  /// is no longer in this list — it lives beside it, permanently, grey
+  /// or lit by [AssistantView.agentBusy].
+  static const controlChips = <String>['/new'];
 
   /// Saves bridge settings (empty url disables the feature entirely).
   Future<void> setBridge({required String url, required String token}) async {
@@ -1394,7 +1398,7 @@ class VoiceAssistant extends ChangeNotifier {
     _idleReady();
   }
 
-  /// The '/new' and '/compact' chips: conversation housekeeping with an
+  /// The chip (and any typed slash): conversation housekeeping with an
   /// audible outcome, run through [runQuickCommand]'s turn machinery
   /// (same bubble pairing, text-follows-audio ordering and busy rules).
   /// '/new' goes to the bridge's reset endpoint rather than a stdin

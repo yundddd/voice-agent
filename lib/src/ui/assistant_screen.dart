@@ -27,7 +27,6 @@ class _AssistantScreenState extends State<AssistantScreen>
     with WidgetsBindingObserver {
   static const _chipIcons = {
     '/new': Icons.restart_alt, // same glyph as the settings-page reset
-    '/compact': Icons.compress,
   };
 
   final VoiceAssistant _assistant = VoiceAssistant();
@@ -259,15 +258,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                             // activity, meter — permanently the
                             // channel's last word while any bridge
                             // turn runs, heard or unheard (+151).
-                            // Nothing in the flow can move it,
-                            // because it belongs to no bubble.
-                            if (v.showWorkingRow)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 4,
-                                ),
+                            // +154: the slot is RESERVED always — a
+                            // fixed-height band every professional
+                            // chat footer owns; the row fades in and
+                            // out inside it, and no bubble ever
+                            // slides as the state changes.
+                            SizedBox(
+                              height: WorkingRowCard.reservedHeight,
+                              child: AnimatedOpacity(
+                                duration: const Duration(milliseconds: 180),
+                                opacity: v.showWorkingRow ? 1.0 : 0.0,
                                 child: WorkingRowCard(source: () => a.view),
                               ),
+                            ),
 
                             // A backgrounded tool call keeps a permanent
                             // line at the channel's bottom while it works
@@ -292,13 +295,17 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ),
               ),
               if (v.bridgeConfigured) ...[
-                // Session housekeeping: /new and /compact (see
-                // VoiceAssistant.bridgeControl for what each does on the
+                // Session housekeeping: /new (see
+                // VoiceAssistant.bridgeControl for what it does on the
                 // wire). Taps deliberately interrupt any voice reply
                 // mid-flight (runQuickCommand supersedes), which is the
-                // right feel: a chip press means "do THIS now". The old
-                // canned-prompt chips are gone — a harness you can talk
-                // to outloud doesn't need buttons holding its hoof.
+                // right feel: a chip press means "do THIS now". +154:
+                // /compact retired from the row (its slash still works
+                // typed on the Bridge screen), and Stop is PERMANENT —
+                // greyed while the agent is idle, lit the moment any
+                // work is in flight, heard or backgrounded. A control
+                // that only exists when active teaches nothing; this
+                // one reads as the channel's brake at all times.
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -315,15 +322,20 @@ class _AssistantScreenState extends State<AssistantScreen>
                                 : () => a.bridgeControl(chip),
                           ),
                         ),
-                      if (v.bridgeBusy)
-                        ActionChip(
-                          avatar: const Icon(
-                            Icons.stop_circle_outlined,
-                            size: 18,
-                          ),
-                          label: const Text('Stop'),
-                          onPressed: a.bridgeStop,
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.stop_circle_outlined,
+                          size: 18,
+                          color: v.agentBusy ? null : scheme.outline,
                         ),
+                        label: Text(
+                          'Stop',
+                          style: TextStyle(
+                            color: v.agentBusy ? null : scheme.outline,
+                          ),
+                        ),
+                        onPressed: v.agentBusy ? a.bridgeStop : null,
+                      ),
                     ],
                   ),
                 ),

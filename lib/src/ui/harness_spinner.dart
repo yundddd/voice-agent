@@ -169,9 +169,13 @@ class _HarnessSpinnerState extends State<HarnessSpinner> {
             child: Text(
               // The answer painting itself before it is spoken (the draft
               // tail). The thought that used to share this row moved
-              // inline (+97).
+              // inline (+97). +154: ONE line, ellipsized — the draft
+              // that streamed three rows tall used to shove the whole
+              // conversation down as it grew; the working row now owns
+              // a reserved slot and nothing inside it may change that
+              // slot's height.
               shown,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
                 context,

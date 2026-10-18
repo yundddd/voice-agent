@@ -215,10 +215,12 @@ final class AssistantView {
   /// the elapsed-clock proxy went wrong at re-anchors (a pickup
   /// re-anchors the age, and for a tick the wheel went dark on work
   /// that was verifiably still open).
-  bool get spinnerVisible =>
-      !(phase == AssistantPhase.speaking &&
-          !bridgeBusy &&
-          !harnessBackgrounded);
+  bool get spinnerVisible => !(phase == AssistantPhase.speaking && !agentBusy);
+
+  /// Any bridge work in flight — heard or unheard. The Stop chip's
+  /// enablement and the working row's slot share this one signal:
+  /// grey when the agent is not busy, lit when it is (+154).
+  bool get agentBusy => bridgeBusy || harnessBackgrounded;
 
   /// +151: THE WORKING ROW — the spinner, its one-line activity and the
   /// meter — sits at the bottom of the channel, attached to NO bubble.
@@ -228,8 +230,7 @@ final class AssistantView {
   /// to move to); hidden over pure playback by the same [spinnerVisible]
   /// rule. A turn's own bubble appears in the flow the moment it has
   /// something to say.
-  bool get showWorkingRow =>
-      (bridgeBusy || harnessBackgrounded) && spinnerVisible;
+  bool get showWorkingRow => agentBusy && spinnerVisible;
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

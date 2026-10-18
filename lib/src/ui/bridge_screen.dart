@@ -256,8 +256,8 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   'queuing behind running work is acknowledged out loud, '
                   'so a turn is a stream of progress instead of dead air '
                   'then one block of speech. Reply audio always outranks '
-                  'the chatter. (Also narrates the /new and /compact chips, '
-                  'which are harness turns even in parrot mode.)',
+                  'the chatter. (Also narrates the /new chip, which is a '
+                  'harness turn even in parrot mode.)',
                 ),
               ),
               SwitchListTile(
@@ -270,8 +270,8 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   'replies land as chat text only — nothing synthesises '
                   'or plays, the voice pack is not even required at '
                   'boot, and typed sends work while models are still '
-                  'loading. The volume icon beside the composer flips '
-                  'the same switch.',
+                  'loading. This switch is the mute: the composer\u2019s '
+                  'volume icon retired with the bar (+153).',
                 ),
               ),
               Text(
@@ -285,12 +285,6 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   'Forget the conversation on both sides and start over — '
                       'the past no longer fills the context window, and the '
                       'app\'s chat bubbles clear to a blank screen.',
-                ),
-                (
-                  '/compact',
-                  'Have Claude Code condense the chat into a summary: keep '
-                      'the thread, free the window. Same as /compact at a '
-                      'desk terminal.',
                 ),
               ])
                 ListTile(

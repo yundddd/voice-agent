@@ -35,6 +35,7 @@ AssistantView _view({
     busy: false,
   ),
   Duration harnessElapsed = Duration.zero,
+  bool bridgeBusy = true,
   bool harnessBackgrounded = false,
   PttGuide ptt = const PttGuide(
     holdActive: false,
@@ -51,7 +52,7 @@ AssistantView _view({
   chatVersion: 1,
   queued: queued,
   backgrounded: backgrounded,
-  bridgeBusy: true,
+  bridgeBusy: bridgeBusy,
   harnessBackgrounded: harnessBackgrounded,
   bridgeConfigured: true,
   ttsOn: true,
@@ -341,6 +342,62 @@ void main() {
   // (+153): the PromptBar group retired with the composer — the
   // typed path lives on in BridgeScreen's input and every queue
   // discipline in runQuickCommand (turn_flow walks both flavours).
+
+  group('the reserved working-row slot (+154)', () {
+    test('ONE signal — agentBusy — drives the row and the Stop chip', () {
+      expect(_view().agentBusy, isTrue);
+      expect(_view().showWorkingRow, isTrue);
+      final idle = _view(bridgeBusy: false);
+      expect(idle.agentBusy, isFalse);
+      expect(
+        idle.showWorkingRow,
+        isFalse,
+        reason: 'nothing in flight: the slot rests empty (never removed)',
+      );
+      final unheard = _view(bridgeBusy: false, harnessBackgrounded: true);
+      expect(unheard.agentBusy, isTrue);
+      expect(
+        unheard.showWorkingRow,
+        isTrue,
+        reason: 'detached work keeps the row lit — Stop must light too',
+      );
+      final playback = _view(bridgeBusy: false, phase: AssistantPhase.speaking);
+      expect(
+        playback.showWorkingRow,
+        isFalse,
+        reason: 'pure playback: voice is the status',
+      );
+    });
+
+    testWidgets('the slot holds its height while the row fades', (
+      tester,
+    ) async {
+      const key = Key('slot');
+      Widget slot(bool lit) => _host(
+        SizedBox(
+          key: key,
+          height: WorkingRowCard.reservedHeight,
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: lit ? 1.0 : 0.0,
+            child: WorkingRowCard(source: () => _view()),
+          ),
+        ),
+      );
+      await tester.pumpWidget(slot(true));
+      final lit = tester.getSize(find.byKey(key));
+      await tester.pumpWidget(slot(false));
+      await tester.pump(const Duration(milliseconds: 200));
+      final dim = tester.getSize(find.byKey(key));
+      expect(
+        dim,
+        lit,
+        reason:
+            '+154: appearing, disappearing and fading never resize the '
+            'slot — no bubble ever slides under the footer',
+      );
+    });
+  });
 
   group('TalkSurface', () {
     Widget surface(
