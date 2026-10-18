@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
@@ -98,14 +100,19 @@ Future<void> _fetchAndUnpack(
     try {
       await dir.delete(recursive: true);
     } catch (_) {}
-    if (pack.fileName == null && !pack.url.endsWith('.tar.bz2')) {
-      // Zip: stream members straight off the downloaded file. Loading the
-      // whole archive into RAM (old behaviour) peaked at 1.5x the pack size
-      // with the inflated entry on top — on a phone that is an OOM kill
-      // mid-unpack, and the half-written pack then *looks* installed.
-      await unpackPackFromPath(tmp.path, pack, dir);
+    if (pack.fileName != null) {
+      // Raw single file (no archive): move the download into place —
+      // same filesystem, so no second copy through RAM or the UI thread.
+      await dir.create(recursive: true);
+      await tmp.rename(p.join(dir.path, pack.fileName!));
     } else {
-      await unpackPackBytes(await tmp.readAsBytes(), pack, dir);
+      // Zip AND tar.bz2 both decode on a worker isolate, streaming from
+      // the downloaded file. On the UI isolate a inflate pass is seconds
+      // of frozen screen per large member (field report: first-launch
+      // "Unpacking…" sat dead-faced through it), and the tar.bz2 branch
+      // peaked at full-archive-in-RAM on top. The isolate fixes both:
+      // peak is one member, and the label updates per file.
+      await _unpackOnIsolate(tmp.path, pack, dir.path, onProgress: onProgress);
     }
   } finally {
     try {
@@ -120,79 +127,151 @@ Future<void> _fetchAndUnpack(
 /// directory get that directory stripped, so contents land directly in
 /// [dir] — this is what the marker-file paths assume.
 ///
+/// Archives decode on a worker isolate ([_unpackOnIsolate]); a raw
+/// [ModelPack.fileName] pack is one file write and stays here.
+///
 Future<void> unpackPackBytes(
   Uint8List bytes,
   ModelPack pack,
-  Directory dir,
-) async {
+  Directory dir, {
+  ModelProgress? onProgress,
+}) async {
   if (pack.fileName != null) {
     // Raw single file (e.g. the vocoder): just write it into place.
     final out = File(p.join(dir.path, pack.fileName!));
     await out.create(recursive: true);
     await out.writeAsBytes(bytes);
-  } else if (pack.url.endsWith('.tar.bz2')) {
-    await _unpackArchive(
-      TarDecoder().decodeBytes(BZip2Decoder().decodeBytes(bytes)),
-      pack,
-      dir,
-    );
-  } else {
-    final tmp = File('${dir.path}.tmp.zip');
-    await tmp.create(recursive: true);
-    await tmp.writeAsBytes(bytes);
+    return;
+  }
+  final tmp = File('${dir.path}.tmp.bin');
+  await tmp.create(recursive: true);
+  await tmp.writeAsBytes(bytes);
+  try {
+    await _unpackOnIsolate(tmp.path, pack, dir.path, onProgress: onProgress);
+  } finally {
     try {
-      await unpackPackFromPath(tmp.path, pack, dir);
-    } finally {
-      try {
-        await tmp.delete();
-      } catch (_) {}
-    }
+      await tmp.delete();
+    } catch (_) {}
   }
 }
 
-/// Like [unpackPackBytes] but streams the zip from [zipPath] instead of a
-/// byte buffer: the 500 MB+ engine packs decode member-by-member, so peak
-/// RAM is one member (the ~420 MB decoder), not the whole archive.
+/// Like [unpackPackBytes] but streams the archive from [zipPath] instead of
+/// a byte buffer: the 500 MB+ engine packs decode member-by-member on the
+/// worker isolate, so peak RAM is one member (the ~420 MB decoder), not the
+/// whole archive, and the UI isolate never touches inflate.
 Future<void> unpackPackFromPath(
   String zipPath,
   ModelPack pack,
-  Directory dir,
-) => _unpackArchive(
-  ZipDecoder().decodeBuffer(InputFileStream(zipPath)),
-  pack,
-  dir,
-);
+  Directory dir, {
+  ModelProgress? onProgress,
+}) => _unpackOnIsolate(zipPath, pack, dir.path, onProgress: onProgress);
 
-Future<void> _unpackArchive(
-  Archive archive,
+Future<void> _unpackOnIsolate(
+  String archivePath,
   ModelPack pack,
-  Directory dir,
-) async {
-  final root = commonTopDir(archive);
-  Uint8List? marker;
-  for (final entry in archive) {
-    if (!entry.isFile) continue;
-    var name = entry.name;
-    if (root != null && name.startsWith(root)) {
-      name = name.substring(root.length);
+  String dirPath, {
+  ModelProgress? onProgress,
+}) async {
+  final done = Completer<void>();
+  final rp = ReceivePort();
+  // If the worker dies without sending 'err' (an OOM kill mid-inflate is
+  // the realistic one), the exit notice must still free the caller —
+  // otherwise the status line hangs on "Unpacking…" forever.
+  final exit = ReceivePort();
+  exit.listen((m) {
+    // Cross-port delivery order is undefined: a clean 'ok' can trail the
+    // exit notice, so give the verdict message its moment before blaming
+    // the death.
+    Timer(const Duration(milliseconds: 100), () {
+      if (!done.isCompleted) {
+        done.completeError(
+          StateError('unpack ${pack.label}: worker died ($m)'),
+        );
+      }
+    });
+  });
+  rp.listen((msg) {
+    if (msg is! List || msg.isEmpty) return;
+    switch (msg.first) {
+      case 'p':
+        onProgress?.call(msg[1] as String, msg[2] as int, msg[3] as int);
+      case 'ok':
+        done.complete();
+      case 'err':
+        // The worker's own error object, un-wrapped: callers (and the
+        // unpack tests) match on ArchiveException/FormatException/
+        // StateError types, exactly as when decode ran inline.
+        done.completeError(
+          msg[1] as Object,
+          msg[2] is StackTrace ? msg[2] as StackTrace : StackTrace.current,
+        );
     }
-    if (name.isEmpty) continue;
-    if (name == pack.markerFile) {
-      marker = (entry.content as List<int>) as Uint8List;
-      continue; // Written LAST: its existence alone means "fully unpacked".
+  });
+  await Isolate.spawn(
+    _unpackWorker,
+    [archivePath, pack, dirPath, rp.sendPort],
+    // The worker turns its own failures into an 'err' message; a hard
+    // crash (OOM kill) still must not leave the future hanging.
+    errorsAreFatal: false,
+  );
+  try {
+    await done.future;
+  } finally {
+    rp.close();
+    exit.close();
+  }
+}
+
+void _unpackWorker(List<Object?> args) {
+  final archivePath = args[0] as String;
+  final pack = args[1] as ModelPack;
+  final dirPath = args[2] as String;
+  final port = args[3] as SendPort;
+  InputFileStream? input;
+  try {
+    final Archive archive;
+    if (pack.url.endsWith('.tar.bz2')) {
+      // bzip2 wants the whole stream; the isolate keeps the peak off the
+      // UI either way, and the tar decodes lazily member-by-member.
+      archive = TarDecoder().decodeBytes(
+        BZip2Decoder().decodeBytes(File(archivePath).readAsBytesSync()),
+      );
+    } else {
+      input = InputFileStream(archivePath);
+      archive = ZipDecoder().decodeBuffer(input);
     }
-    final out = File(p.join(dir.path, name));
-    await out.create(recursive: true);
-    await out.writeAsBytes(entry.content as List<int>);
+    final root = commonTopDir(archive);
+    Uint8List? marker;
+    for (final entry in archive) {
+      if (!entry.isFile) continue;
+      var name = entry.name;
+      if (root != null && name.startsWith(root)) {
+        name = name.substring(root.length);
+      }
+      if (name.isEmpty) continue;
+      if (name == pack.markerFile) {
+        marker = (entry.content as List<int>) as Uint8List;
+        continue; // Written LAST: its existence alone means "fully unpacked".
+      }
+      final out = File(p.join(dirPath, name));
+      out.createSync(recursive: true);
+      out.writeAsBytesSync(entry.content as List<int>);
+      port.send(['p', 'Unpacking ${pack.label} — $name', 0, 0]);
+    }
+    if (marker == null) {
+      throw StateError(
+        'model pack ${pack.label} unpacked without ${pack.markerFile}',
+      );
+    }
+    final markerFile = File(p.join(dirPath, pack.markerFile));
+    markerFile.createSync(recursive: true);
+    markerFile.writeAsBytesSync(marker);
+    port.send(['ok']);
+  } catch (e, s) {
+    port.send(['err', e, s]);
+  } finally {
+    input?.closeSync();
   }
-  if (marker == null) {
-    throw StateError(
-      'model pack ${pack.label} unpacked without ${pack.markerFile}',
-    );
-  }
-  final markerFile = File(p.join(dir.path, pack.markerFile));
-  await markerFile.create(recursive: true);
-  await markerFile.writeAsBytes(marker);
 }
 
 /// If every entry sits under one common top-level directory, return "name/".
