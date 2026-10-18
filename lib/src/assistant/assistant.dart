@@ -729,9 +729,14 @@ class VoiceAssistant extends ChangeNotifier {
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0) {
+      // The snapshot goes with the retirement: name the finished
+      // shell from it BEFORE it goes, so the +133 debt still gets its
+      // chat period when the receipt was the thing that got lost.
+      final paid = _turn.agentWork ? _bgWork : '';
       _turn.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: health — nothing open, none detached');
       notifyListeners();
+      _bgFinishedBubble(paid);
     }
     // A turn end (or boot, or setBridge) that leaves the bottom line
     // lit starts the heartbeat: +133's agent-backgrounded work reports
@@ -772,9 +777,11 @@ class VoiceAssistant extends ChangeNotifier {
     if (h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0) {
+      final paid = _turn.agentWork ? _bgWork : '';
       _turn.retireBadgeAndWork();
       _logDebug('bg line retired: idle probe — nothing open, none detached');
       notifyListeners();
+      _bgFinishedBubble(paid);
       return;
     }
     // Wake the ear only for a report that is STREAMING — during the
@@ -800,10 +807,19 @@ class VoiceAssistant extends ChangeNotifier {
   /// The proof-of-completion the background banner waits for (bridge
   /// `tool finished` frame — the late tool_result of a cut tool naming
   /// its step, or the +128 lifecycle receipt of a turn that ended
-  /// unheard). The line retires on either; only a NAMED tool gets its
-  /// period in the chat — a lifecycle receipt journals its dismissal
-  /// without narrating prose at the screen. (behaviours 2/4)
+  /// unheard). The line retires on either. A NAMED tool gets its period
+  /// in the chat; a lifecycle receipt that pays the agent's OWN back-
+  /// grounded shell gets the same bubble, named from the snapshot the
+  /// banner lit with (+139 — the field case: the sleep ended, the
+  /// banner dimmed, and the chat said nothing). A lifecycle receipt
+  /// paying a turn this phone merely backgrounded stays journal-only
+  /// — no process finished, only an unheard turn closed. (behaviours
+  /// 2/4)
   void _retireBgWork(String detail) {
+    // Read the snapshot BEFORE the clear: the lifecycle receipt names
+    // no tool, and the paid work's label is the only witness to whether
+    // it was the agent's own shell.
+    final paid = _turn.agentWork ? _bgWork : '';
     _turn.clearBgWork(); // the promise is paid here (see turn_session)
     if (_harnessBackgrounded) _turn.retireBadgeAndWork();
     if (detail.isEmpty || detail.startsWith('ended after')) {
@@ -812,17 +828,27 @@ class VoiceAssistant extends ChangeNotifier {
         '(${detail.isEmpty ? 'unnamed turn' : detail})',
       );
       notifyListeners();
+      _bgFinishedBubble(paid);
       return;
     }
-    final note = '$detail finished.';
-    // Idempotent: a backlog replay may deliver the frame after the live
-    // view already retired on it — one completion, one period.
+    _bgFinishedBubble(detail);
+  }
+
+  /// The persistent bubble a finished background process earns — the
+  /// ONE writer of that law, so every payment path (named receipt,
+  /// +128 lifecycle receipt, /health proof) files the same period.
+  /// Idempotent: a backlog replay may deliver a second proof after the
+  /// live view already retired on the first — one completion, one
+  /// period.
+  void _bgFinishedBubble(String who) {
+    if (who.isEmpty) return;
+    final note = '$who finished.';
     if (_chat.containsBlock(note)) {
-      _logDebug('msg bg done: "$detail" already retired');
+      _logDebug('msg bg done: "$who" already retired');
       return;
     }
     _chat.addSystemNote(note);
-    _logDebug('msg bg done: "$detail" retired the line');
+    _logDebug('msg bg done: "$who" retired the line');
     notifyListeners();
   }
 
