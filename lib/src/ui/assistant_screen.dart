@@ -13,6 +13,7 @@ import 'bridge_screen.dart';
 import 'chat_view.dart';
 import 'context_bar.dart';
 import 'latency_strip.dart';
+import 'prompt_bar.dart';
 import 'ptt_hold_guide.dart';
 import 'voice_screen.dart';
 
@@ -294,6 +295,27 @@ class _AssistantScreenState extends State<AssistantScreen>
                         ),
                       ),
                     ),
+                  ),
+                ),
+              ),
+              // Typed prompts (see prompt_bar.dart): the two buttons
+              // ARE the two queue flavours the voice path carries as a
+              // release gesture. Both go through runQuickCommand — the
+              // same supersede/pin/detach discipline every prompt uses,
+              // so a typed Queue pins exactly like a polite PTT release
+              // and a typed Interrupt rides the /talk interrupt flag.
+              // Queue cuts the TOOL, not the thinking (cutTool): the
+              // bridge backgrounds a running call so the agent is freed
+              // for this prompt as soon as it stops thinking.
+              PromptBar(
+                ttsOn: v.ttsOn,
+                onToggleTts: () => unawaited(a.setBridgeTts(!a.bridgeTts)),
+                onSend: (text, {required bool interrupt}) => unawaited(
+                  a.runQuickCommand(
+                    text,
+                    bubble: text,
+                    interrupt: interrupt,
+                    cutTool: !interrupt,
                   ),
                 ),
               ),

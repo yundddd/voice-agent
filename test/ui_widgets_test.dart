@@ -12,6 +12,7 @@ import 'package:voice_agent/src/chat/chat_log.dart';
 import 'package:voice_agent/src/ui/chat_view.dart';
 import 'package:voice_agent/src/ui/context_bar.dart';
 import 'package:voice_agent/src/ui/latency_strip.dart';
+import 'package:voice_agent/src/ui/prompt_bar.dart';
 import 'package:voice_agent/src/ui/ptt_hold_guide.dart';
 
 AssistantView _view({
@@ -309,6 +310,71 @@ void main() {
         ).status,
         contains('Working in the background'),
       );
+    });
+  });
+
+  group('PromptBar', () {
+    late List<(String, bool)> sent;
+    Widget bar() => _host(
+      PromptBar(onSend: (t, {required interrupt}) => sent.add((t, interrupt))),
+    );
+    // Located by ICON, not tooltip: a disabled button's tooltip subtree
+    // is not a finder guarantee, the button's own icon is.
+    IconButton btn(WidgetTester tester, IconData icon) =>
+        tester.widget<IconButton>(find.widgetWithIcon(IconButton, icon));
+    const queueTip =
+        'Queue \u2014 polite behind the current turn '
+        '(a running tool is put into background)';
+    const cutTip = 'Interrupt \u2014 cut the thinking turn, this goes now';
+
+    setUp(() => sent = []);
+
+    testWidgets('the two buttons are the two queue flavours', (tester) async {
+      await tester.pumpWidget(bar());
+      await tester.enterText(find.byType(TextField), '  run the tests  ');
+      await tester.pump();
+
+      await tester.tap(find.byTooltip(queueTip));
+      await tester.pump();
+      expect(sent, [
+        ('run the tests', false),
+      ], reason: 'queue = interrupt:false: parks behind the running work');
+
+      await tester.enterText(find.byType(TextField), 'stop that');
+      await tester.pump();
+      await tester.tap(find.byTooltip(cutTip));
+      await tester.pump();
+      expect(sent[1], (
+        'stop that',
+        true,
+      ), reason: 'interrupt = the /talk interrupt flag');
+      expect(
+        find.widgetWithText(TextField, 'stop that'),
+        findsNothing,
+        reason: 'the field clears after a send (it already became a bubble)',
+      );
+    });
+
+    testWidgets('empty text cannot send; Enter means Interrupt', (
+      tester,
+    ) async {
+      await tester.pumpWidget(bar());
+      expect(
+        btn(tester, Icons.schedule).onPressed,
+        isNull,
+        reason: 'nothing typed: no send',
+      );
+
+      await tester.enterText(find.byType(TextField), 'hello');
+      await tester.pump();
+      expect(btn(tester, Icons.schedule).onPressed, isNotNull);
+
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      expect(sent.single, (
+        'hello',
+        true,
+      ), reason: 'the keyboard send is the right-hand flavour');
     });
   });
 }
