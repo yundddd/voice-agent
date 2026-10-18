@@ -997,6 +997,84 @@ void main() {
         2,
         reason: 'and it is spoken, not silently “already in chat”',
       );
+
+      // The journal's drain case (#791): the SAME paragraph arriving
+      // as a REPLAY behind a replayed marker. The boundary is the
+      // marker, not the transport — a drain must never swallow the
+      // answer it exists to deliver, duplicate wording or no.
+      out.complete(); // the first replay's audio commits (+115)
+      await settle();
+      harness.pollPages.add(
+        FakeHarness.page(14, [
+          BridgeEvent.forTest('say', text: 'All done — one copy.'),
+        ], first: 14),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        copies(),
+        2,
+        reason: 'committed + a second airborne copy: not stamped twice',
+      );
+      // The journal's exact wound (#791): a paragraph that duplicates
+      // something HEARD LONG AGO (in the ledger) and is not itself
+      // airborne — drained behind the replayed marker, it must speak.
+      harness.pollPages.add(
+        FakeHarness.page(15, [
+          BridgeEvent.forTest('say', text: 'And a second paragraph.'),
+        ], first: 15),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        engine.synthesized.where((t) => t == 'And a second paragraph.').length,
+        1,
+        reason:
+            '+156: past the boundary even a replayed duplicate is '
+            'the answer — spoken, not “already in chat”',
+      );
+      out.complete(); // and the airborne copies commit
+      await settle();
+      expect(
+        engine.synthesized.where((t) => t == 'All done — one copy.').length,
+        3,
+        reason:
+            'the page-14 re-delivery spoke too — its stamp rides the '
+            'same bubble as its twin (no twin lines in one bubble), '
+            'so the SPOKEN count is the proof',
+      );
+
+      // The archaeology guard survives the boundary: minutes later (an
+      // app restart's backlog burst replays this turn again), the
+      // paragraph was lived through once — text yes, speaker no.
+      // Stamped NOW, delivered after the clock moves five minutes: a
+      // replay of genuinely old news (the restart-drain shape).
+      final stamp = time.now.millisecondsSinceEpoch;
+      harness.pollPages.add(
+        FakeHarness.page(16, [
+          BridgeEvent.forTest(
+            'say',
+            text: 'All done — one copy.',
+            wireMs: stamp,
+          ),
+        ], first: 16),
+      );
+      time.advance(const Duration(minutes: 5));
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('already in chat — skipped')),
+        isTrue,
+        reason: 'old news stays silent, boundary or no',
+      );
+      expect(
+        engine.synthesized.where((t) => t == 'All done — one copy.').length,
+        3,
+        reason: 'the archaeology replay did not re-voice it',
+      );
+      expect(
+        engine.synthesized.where((t) => t == 'And a second paragraph.').length,
+        1,
+      );
     });
 
     test('poll view: the prior turn’s DONE cannot end the queue pump — the '

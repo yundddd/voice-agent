@@ -439,47 +439,50 @@ class BridgeTurn {
   }
 
   Future<void> _onSay(BridgeEvent ev) async {
-    // +155: past MY started marker, every say is this turn's own
-    // answer — news by construction, never the ledger's business. The
-    // field swallowed a 'sleep again' reply whole because the agent
-    // reused a paragraph heard minutes earlier and the poll view's
-    // replay rules had no boundary to stop them (the immediate-run
-    // bridge emitted no marker at all). Frames BEFORE the marker keep
-    // the ledger: they are the turn we queued behind, still talking.
-    // (A /attach view is a pure listener of replay — its frames are
-    // history by construction, marker or no: the ledger stays.)
-    if ((isLive && !transport.turnViaPoll) || (_startedSeen && !isAttach)) {
-      // The answer closed and is being spoken: nothing is generating to
-      // grow a counter over. Harness-generated text just crossed the
-      // wire: journal it (RAW — the say line mirrors what arrived) with
-      // its skew-corrected delivery age, so a delayed or dropped
-      // paragraph shows up as a gap in this stamp trail. On the PUSH
-      // view this stream is OUR conversation: every frame is news by
-      // construction, and it speaks.
-      ticker.markSpoken();
-      final said = ev.text.trim();
-      env.log('msg harness: say "${_trunc(said, 48)}"${transport.wireTag(ev)}');
-      await speak(cleanForSpeech(said));
-      return;
-    }
-    // Everything else may carry HISTORY: the /attach replay, and — the
-    // case this branch lost bubbles over (field report: "when I queue
-    // or interrupt, messages show up AGAIN") — a live /talk view riding
-    // the POLL ring. On the ring, the frames ahead of our POST are the
-    // PREVIOUS turn's, and the previous turn may well have been heard
-    // already through a push view (the cursor catches up before the
-    // POST, but a press that supersedes a polling view mid-drain leaves
-    // it behind, and the flush re-announces). "My view = my news" is
-    // push-only law; on a shared ring the LEDGER decides, so these
-    // frames get the replay rules: ONE cleaning up front, then every
-    // branch — dedup test, log add, and speak — sees the SAME string
-    // the live path stored. The bug this kills: the chat log keeps the
-    // cleaner's OUTPUT while dedup compared its INPUT — any paragraph
-    // the cleaner touched missed, and a heard paragraph rode the ring
-    // back out of the speaker. Match like you store.
-    final via = isAttach ? 'replay' : 'ring';
+    // +156: ONE law for every view. PAST MY pickup marker the stream is
+    // this prompt's answer — news by construction, even when the agent
+    // reused a paragraph word for word (the +155 field report that killed
+    // the ledger for live answers; the fresh journal caught the same
+    // swallow through the DRAIN: the marker replayed, the un-pin rode it,
+    // the answer behind it died to 'already in chat' anyway because the
+    // view was an /attach). The marker — replayed or live, transport
+    // whatever — is the boundary; what survives on the replay side is
+    // the ARCHAEOLOGY guard: a paragraph older than the two-minute window
+    // was lived through once and must not re-voice however freshly a
+    // drain just relayed it.
     final sayText = cleanForSpeech(ev.text.trim());
     final age = transport.wireAgeMs(ev);
+    final pastMarker = _startedSeen || (isLive && !transport.turnViaPoll);
+    if (pastMarker && age <= 120000) {
+      if (inFlight.contains(sayText)) {
+        // Already airborne in this process (+115's rule survives the
+        // boundary): a re-delivery of a paragraph whose audio is playing
+        // needs no second speaker.
+        env.log('say already airborne — skipped');
+        return;
+      }
+      // The answer closed and is being spoken: nothing is generating to
+      // grow a counter over. Harness-generated text just crossed the
+      // wire: journal it with its skew-corrected delivery age, so a
+      // delayed or dropped paragraph shows as a gap in the stamp trail.
+      ticker.markSpoken();
+      // The PUSH view's say line mirrors the RAW frame (what arrived);
+      // replay views log the cleaned text — match like you store.
+      final logged = (isLive && !transport.turnViaPoll)
+          ? ev.text.trim()
+          : sayText;
+      env.log(
+        'msg harness: say "${_trunc(logged, 48)}"${transport.wireTag(ev)}',
+      );
+      await speak(sayText);
+      return;
+    }
+    // Everything before the boundary may carry HISTORY: the /attach
+    // replay, and — the case that lost bubbles over a shared ring (field
+    // report: 'when I queue or interrupt, messages show up AGAIN') — the
+    // frames of the turn a parked prompt waits behind. 'My view = my
+    // news' holds only past the marker; before it, the LEDGER decides.
+    final via = isAttach ? 'replay' : 'ring';
     if (age > 120000 &&
         !chat.containsBlock(sayText) &&
         !inFlight.contains(sayText)) {
@@ -493,10 +496,9 @@ class BridgeTurn {
     } else if (chat.containsBlock(sayText) || inFlight.contains(sayText)) {
       // Already heard — or already airborne in this process. +116 makes
       // the first half TRUE: the persisted log only ever carries blocks
-      // whose audio started, so containsBlock means heard, full stop —
-      // and _inFlight (+115) covers the seconds before that first
-      // chunk. One trade kept from the old law: a paragraph cut off
-      // MID-audio counts as heard and its tail is not repeated — never
+      // whose audio started, so containsBlock means heard, full stop.
+      // One trade kept from the old law: a paragraph cut off MID-audio
+      // counts as heard and its tail is not repeated — never
       // re-listening beats never not-listening.
       env.log('$via dedup: paragraph already in chat — skipped');
     } else {
