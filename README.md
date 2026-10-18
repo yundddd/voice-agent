@@ -37,25 +37,49 @@ TTS: text → 5.1 s audio in 111 ms       (RTF ≈ 0.02)
 
 APK footprint: the two model packs (~60 MB ASR + ~64 MB TTS zips) are **not**
 in the APK — the app downloads them from the project's GitHub release on first
-run and unpacks them once into app-support storage (`lib/model_packs.dart`).
+run and unpacks them once into app-support storage
+(`lib/src/models/model_packs.dart`).
 That download path is already the CDN seam: pointing `modelPacks` at the
 gateway later is a two-line change. Only the 0.6 MB VAD model is bundled.
-
 ## App structure
 
 ```
 lib/
-  main.dart           UI: mode switch (Conversation / Push to talk), mic button,
-                    transcript, latency strip, app-lifecycle observer
-  assistant.dart    Conversation state machine: endpointing, barge-in, turns,
-                    background pause / foreground resume
-  speech_worker.dart  Isolate owning both models (FFI calls never touch UI isolate)
-  audio_dsp.dart    Mic front end: high-pass, noise floor, speech gate, PTT denoise
-  model_paths.dart  Model file locations (injected → testable)
-  model_packs.dart  Downloaded zips → app support dir (first run only)
-  audio_io.dart     PCM16↔float32, WAV encode/decode
-test/roundtrip_test.dart  Headless round trip + VAD endpointing on wav fixtures
-test/gate_test.dart       Noise floor / high-pass / gate / denoise unit tests
+  main.dart                     entry point
+  voice_agent.dart              package export
+  src/
+    assistant/    assistant.dart — the state machine (endpointing, barge-in,
+                  queue/interrupt/turn lifecycle, background pause / foreground
+                  resume); turn_session.dart (the coordinator: single writer of
+                  turn flags), chat_store.dart (log + pin + system notes),
+                  ptt_hold.dart (slide geometry), token_ticker.dart,
+                  narration_gate.dart, hop_tracker.dart, mic_pipeline.dart,
+                  reply_pipeline.dart, state.dart
+    bridge/       transport.dart (talk/poll/attach, pre-pickup armour),
+                  turn_pump.dart (shared event loop + keepOpenOnDone hook),
+                  gateway.dart / client.dart / bridge_event.dart / prefs.dart,
+                  text_rules.dart (cleanForSpeech), wire_lease.dart
+    ui/           assistant_screen.dart (mode switch, orb, composer, latency
+                  strip), chat_view.dart, harness_spinner.dart, context_bar.dart,
+                  bridge_screen.dart, voice_screen.dart, ptt_hold_guide.dart,
+                  theme.dart
+    speech/       speech_worker.dart (isolate owning both models — FFI calls
+                  never touch the UI isolate), tts_voices.dart, kokoro_voices.dart,
+                  titl_engine.dart, tts_split.dart, speech_engine.dart
+    audio/        audio_dsp.dart (high-pass, noise floor, speech gate, PTT
+                  denoise), audio_io.dart (PCM16↔float32, WAV)
+    models/       model_paths.dart (injected → testable), model_packs.dart
+                  (downloaded zips → app support dir), model_unpack.dart
+    journal/      app_events.dart (the phone's seq-numbered lifecycle journal)
+    platform/     mic_source.dart / audio_output.dart (per-platform plumbing)
+    chat/ · common/  chat_log codec, clock, sinks
+test/                         one test per field report — e.g. turn_flow_test
+                              (queue/pin/banner/receipt flows), turn_session_test
+                              (coordinator matrix), guards_test, ptt_pump_test,
+                              roundtrip_test (headless ASR→TTS on wav fixtures),
+                              gate_test (DSP unit tests), support/fakes.dart
+tool/                         claude_bridge.mjs + bridge_stub_claude.mjs +
+                              bridge_queue_test.mjs (the wire suite, node --test)
 ```
 
 ### Signal pre-processing (why it doesn't hear itself, and survives noise)
@@ -129,7 +153,7 @@ Silero ever sees it:
 
 ### Voices & voice cloning
 
-The voice icon (top right) opens the voice screen (`lib/voice_screen.dart`):
+The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart`):
 
 - **Standard voices.** Five Piper VITS voices — Lessac (default), Ryan,
   Amy, Alba, and LibriTTS-R (a slider picks any of its 60 reader styles),
@@ -417,7 +441,11 @@ adb shell run-as com.voiceagent.voice_agent \
   scenario clock-deterministic: `STUB_RESULT_MS` pins the turn length,
   `STUB_TOOL`/`STUB_TOOL_START_MS` open a Bash step mid-turn,
   `STUB_TOOL_DONE_MS` makes that tool SURVIVE a cut and report `finished`
-  N seconds later. The real bridge + real claude participate the same way
+  N seconds later. `STUB_TOOL_BG=1` adds the +133 story: the launch
+  answers with a start receipt, and `STUB_BG_DONE_MS` later an UNPROMPTED
+  report turn (Read of the task output, `STUB_BG_SAYS`, closing `result`)
+  walks in — `STUB_BG_BEAT_MS` stretches the window the phone must wake
+  inside. The real bridge + real claude participate the same way
   with `sleep 10` as the tool; the stub exists so the *timing*, not the
   model, is what the test controls.
 - Ground truth is the files, not the pixels: `prompts.log` (`STUB_LOG`)
@@ -493,16 +521,28 @@ switch (on from the factory, persisted in `bridge_prefs.json`) routes
 whatever you say in push-to-talk or conversation mode to the harness
 instead of repeating it back — say "what still has uncommitted changes?"
 and Claude Code runs the git commands and answers in your assistant
-voice. While a harness turn runs, push-to-talk steers by RELEASE
-GESTURE (0.1.0+25): the in-flight bubble carries a Claude Code-style
+voice. **Eyes-only mode** (0.1.0+131): the "Speak replies (TTS)"
+switch on the Bridge screen — and the mute chip at the end of the
+composer row (`TTS off — tap to speak replies`) — turns synthesis off
+entirely: harness answers land as chat text, nothing is spoken, and the
+send gate stops demanding the audio worker, so a phone with the speech
+models still downloading (or a seatbelt-demo with no earbuds) takes
+dictation and shows transcripts. In this mode the chat composer — the
+`Type to the harness…` field with its two send icons (Queue = polite,
+cuttool; Interrupt = cut) — is a full keyboard path into the harness:
+text in, text out, no microphone anywhere in the loop. While a harness
+turn runs, push-to-talk steers by RELEASE
+GESTURE (0.1.0+25, refined by +132): the in-flight bubble carries a Claude Code-style
 progress line — the braille spinner wheel (⠋⠙⠹⠸⠼…), the live status
-(tool activity included), an elapsed-seconds counter (`_HarnessSpinner`
-in `main.dart`) — and while the model generates, that status shows a
+(tool activity included), an elapsed-seconds counter (`HarnessSpinner`,
+`lib/src/ui/harness_spinner.dart`) — and while the model generates, that
+status shows a
 live token tally ("thinking · 1.2k out · 48k in", exact at every
 message boundary, ~4 chars/token in between; `--include-partial-messages`
 stream_event deltas in `claude_bridge.mjs`). A context bar above the
 button shows conversation consumption vs the model's window (`context`
-SSE events + the `/health` snapshot, `_ContextBar` in `main.dart`) —
+SSE events + the `/health` snapshot, `ContextBar` in
+`lib/src/ui/context_bar.dart`) —
 the same numbers Claude Code's /context prints. And since context that
 misses the prefix cache re-prefills at a measured ~7-8k tok/s — every
 byte over the cache boundary is ~1 ms of dead air even for "hello" —
@@ -520,12 +560,16 @@ so the bridge does not force `/compact` on you: watch the bar, and use
 the /new and /compact chips when *you* decide
 the conversation has grown heavy enough. A fresh hold *anytime* during that turn detaches
 it (the tool call goes to background and finishes its work unheard,
-output dropped) and opens the mic right there. Release in place or slide
-RIGHT and your words are QUEUED politely: the turn in flight finishes
-first, then yours goes next; slide UP and a mere thinking turn is cut
-short in-band so your prompt starts in a heartbeat (an open tool call is
-still never cut — it finishes, and your prompt goes next); a quick tap
-remains the hard stop: detach + `/stop`, the old "Stop the harness".
+output dropped) and opens the mic right there. Release in place and
+your words are QUEUED politely: the turn in flight finishes first,
+then yours goes next; slide UP cuts in-band so your prompt starts in a
+heartbeat (0.1.0+132: a running tool is cut into background with the
+turn and owes its `finished` receipt like any other); slide RIGHT
+throws the recording away unsent — the detached work is left completely
+alone; and a motionless quick tap remains the hard stop: detach +
+`/stop`, the old "Stop the harness". (A release that merely drifted —
+past touch slop but short of a slide — is a mind half-changed, not a
+tap, and stops nothing.)
 The terminal-icon badge stays lit while a detached turn keeps working
 unheard. In conversation mode the mic button likewise keeps working
 mid-turn. `say` events are
@@ -536,18 +580,22 @@ Backgrounding a turn does not cancel it: every answer streams into the
 chat log unseen and the newest one is spoken when you switch back.
 **Barge-in backgrounds too** (0.1.0+20): speaking over a running harness
 turn DETACHES the phone from it — the bridge turns it into a *background*
-turn (Claude Code style: the harness finishes its work, output is dropped)
+turn (the harness finishes its work in peace; its frames ride the ring,
+nothing is dropped, and the late `finished` receipts say so)
 — and your new words go out seconds later as a fresh turn, QUEUED behind
 an open tool call or ahead of a cut-short thinking turn (the bridge cuts
 pure-thinking turns at queue time with an in-band interrupt — the process
 never dies, so the warm prefix cache keeps working — when the takeover wants to be heard —
 `interrupt=1`, the default for spoken barge-in and PTT slide-up; PTT's
-slide-right passes `interrupt=0` and the queue waits politely; in either
+plain release passes `interrupt=0` and the queue waits politely, while
+slide-right sends nothing at all (+132); in either
 flavour a new prompt goes next even while a tool-free answer was
 mid-air). Tapping Stop is the hard
 flavour: same detach plus a `/stop` so the harness quits working too.
-Smoke-tested end-to-end against a stubbed `claude` child: detach-mid-tool
-queues and answers after the tool; detach-mid-thinking interrupts and
+Smoke-tested end-to-end against a stubbed `claude` child
+(`tool/bridge_queue_test.mjs`): queue-press-mid-tool backgrounds the tool
+and answers immediately (the receipt lands when the tool does);
+detach-mid-thinking interrupts and
 answers inside ~1.5 s.
 **Both sides of a turn are now on the record** (0.1.0+29): the app keeps a
 seq-numbered *event journal* of its lifecycle story — raw hide/resume
@@ -588,35 +636,47 @@ flutter run -d android        # phone attached; mic permission prompted
 
 On first launch the app downloads the ASR pack plus the selected voice
 pack (Lessac by default, ~124 MB total, see `modelPacks` + `ttsVoices` in
-`lib/model_packs.dart` / `lib/tts_voices.dart`) from GitHub releases and
+`lib/src/models/model_packs.dart` / `lib/src/speech/tts_voices.dart`) from GitHub releases and
 unpacks them once into the app-support dir; only the 0.6 MB Silero VAD
 ships inside the APK. Extra voices download on demand. The raw model
-tarballs sit in `models/` for the headless test; the zips live in
+tarballs (or their extracted directories) sit in `models/` for the
+headless tests — when that directory is absent those tests print
+`SKIPPED` and pass; the zips live in
 `assets/models/`.
 
 ### Building & shipping the Android APK (what to know so it just works)
 
 ```bash
 # from ~/voice-agent
-sed -i 's/^version: .*/version: 0.1.0+N/' pubspec.yaml   # bump the +N: Android
-                                                        # refuses to update-install
-                                                        # over a lower versionCode
+sed -i '' 's/^version: .*/version: 0.1.0+N/' pubspec.yaml   # macOS sed wants the
+                                                        # empty-arg; on Linux drop
+                                                        # the ''. Bump the +N:
+                                                        # Android refuses to
+                                                        # update-install over a lower
+                                                        # versionCode
 flutter build apk --release --split-per-abi
 # → build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  (the phone build, ~46 MB)
 ```
 
 Hard-won details:
 
-* **The JDK the Gradle daemon runs on** — this box's PATH `java` is a *bare*
-  OpenJDK 25 JRE (no javac). Gradle always considers the running JVM as a
-  toolchain candidate, so plugin `compileDebugJavaWithJavac` tasks (e.g.
-  audioplayers) die with *"does not provide the required capabilities:
-  [JAVA_COMPILER]"* unless the daemon is pinned to a full JDK —
-  `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk-amd64` in
-  `android/gradle.properties` does exactly that (plus
-  `installations.auto-detect=false` with explicit 17/21 paths). If a build
-  suddenly "fails at task-configuration in 10 s", look here first, not in
-  the Dart changes.
+* **The JDK the Gradle daemon runs on** — Gradle always considers the
+  *running* JVM as a toolchain candidate, so plugin `compileDebugJavaWithJavac`
+  tasks (e.g. audioplayers) die with *"does not provide the required
+  capabilities: [JAVA_COMPILER]"* unless the daemon is pinned to a full JDK.
+  `android/gradle.properties` (committed) pins the daemon + toolchain paths of
+  the original LINUX dev box (`/usr/lib/jvm/java-21-openjdk-amd64`) — on this
+  macOS box the user-level `~/.gradle/gradle.properties` overrides
+  `org.gradle.java.home` to a full JDK (currently jdk-25.jdk; a bare JRE is
+  not enough). If a build suddenly "fails at task-configuration in 10 s",
+  look here first, not in the Dart changes.
+* **Split versionCodes are +2000.** `--split-per-abi` encodes the ABI in
+  `versionCode / 1000`: an `0.1.0+N` arm64 split ships versionCode `2000+N`
+  (read it with `apkanalyzer manifest print …apk | grep versionCode`). The
+  fat APK is plain `N`. Verify before Telegram hand-off: a build shortly
+  after a version bump can be satisfied from cache and re-emit the PREVIOUS
+  manifest (observed at +132: pubspec said 132, the split said 2131); a
+  `flutter clean` (or `--no-... cache` equivalent rebuild) resets it.
 * **Signing**: the release build reuses the debug keystore
   (`android/app/build.gradle.kts`) — fine for sideloading to your own phone,
   not for Play.
@@ -630,7 +690,7 @@ Hard-won details:
   (needs `gh` auth for the release; NeuTTS additionally needs `HF_TOKEN`
   in `~/.env` + the NDK r25 Rust toolchain, see the script headers).
   If you change a pack's layout, bump its `pack-vN.ok` sentinel name in
-  both the script and `lib/tts_voices.dart` so installed apps re-download.
+  both the script and `lib/src/speech/tts_voices.dart` so installed apps re-download.
 * **Probes must stay flutter-import-free**: the `tool/*_probe.dart` scripts
   run under plain `dart run`, which cannot compile `package:flutter`
   (`dart:ui` lives in the engine). Import `speech_worker.dart`/`audio_io.dart`
@@ -644,6 +704,10 @@ Hard-won details:
   presets for its second check.
 
 ### Headless round-trip test (no mic, no speaker)
+
+The `LD_LIBRARY_PATH` below is the Linux plugin layout; on macOS the
+dylibs live under `sherpa_onnx_macos-1.13.8/macos` in the same pub-cache
+(and Flutter test hosts usually find them without help).
 
 ```bash
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
@@ -684,6 +748,8 @@ for audioplayers, PipeWire/Pulse for `record`.
 
 - Streaming partial ASR (Moonshine/streaming zipformer) for lower first-response latency.
 - Wake-word before the full recognizer (e.g. sherpa keyword spotter).
-- Gateway call between ASR and TTS; TTS sentence-streaming for lower first-audio latency.
 - Per-ABI splits (done) → consider an Android App Bundle for Play.
 - iOS: microphone entitlement done (Info.plist); verify pod on macOS.
+
+(The gateway between ASR and TTS and the sentence-streaming player — both
+listed here once — shipped with the Claude Code bridge.)

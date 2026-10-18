@@ -1729,7 +1729,6 @@ void main() {
         );
       },
     );
-
     test('a motionless quick tap still stops — and now stamps', () async {
       await busyWithTool();
       a.pttUp(const Offset(2, 0)); // under slop, under tapStopMs
@@ -1881,6 +1880,7 @@ void main() {
       'the replay lives through a history done to reach the receipt',
       () async {
         await withBridge();
+        await a.setBridgeTts(false); // eyes-only, like the field case
         unawaited(a.runQuickCommand('start a sleep'));
         await settle();
         harness.emit(
@@ -1898,7 +1898,6 @@ void main() {
           'backgrounded': true,
           'detached': 1,
         };
-        final attaches0 = harness.attachCount;
         harness.emit(const BridgeEvent.forTest('done'));
         await settle(); // the launch turn closes (its done precedes all
         // of the report's frames — the state the phone wakes into)
@@ -1947,7 +1946,37 @@ void main() {
           isTrue,
           reason: 'one receipt, one period — dedup holds',
         );
+        expect(
+          a.phase,
+          AssistantPhase.idle,
+          reason:
+              'a text-only answer has no audio to outlive — +133 caught '
+              'the orb stuck on Stop my reply through the whole life of '
+              'the next shell',
+        );
       },
     );
+
+    test('a text-only answer leaves no spinner (+133)', () async {
+      await withBridge();
+      await a.setBridgeTts(false);
+      unawaited(a.runQuickCommand('hello'));
+      await settle();
+      harness.emit(const BridgeEvent.forTest('say', text: 'All done.'));
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      expect(
+        a.chat.any((e) => e.blocks.contains('All done.')),
+        isTrue,
+        reason: 'the words landed — the spoken ledger is non-empty',
+      );
+      expect(
+        a.phase,
+        AssistantPhase.idle,
+        reason:
+            'no audio was ever queued, so nothing may keep the '
+            'spinner alive after the done',
+      );
+    });
   });
 }

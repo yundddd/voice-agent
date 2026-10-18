@@ -1413,6 +1413,17 @@ class VoiceAssistant extends ChangeNotifier {
         // hidden buffered text without ever synthesising audio)
         _status = 'The harness ran, but had nothing to say.';
         _phase = AssistantPhase.idle;
+      } else if (gen == _generation &&
+          !_reply.playing &&
+          _phase != AssistantPhase.idle) {
+        // +133: an answered turn owes the spinner no survival. A
+        // text-only answer (TTS off — or any path whose audio never
+        // made it to the speaker) has no natural-end event coming to
+        // clear the phase, and the field-truth of +133 proved it: the
+        // orb sat on 'Stop my reply' at a turn long closed. A reply
+        // STILL on air keeps the spinner until _handleNaturalEnd —
+        // the voice path is untouched.
+        _idleReady();
       }
       notifyListeners();
       _logDebug(
@@ -2628,7 +2639,12 @@ class VoiceAssistant extends ChangeNotifier {
         }
         final said = spoken.toString().trim();
         if (said.isNotEmpty) _lastSpoken = said;
-        if (gen == _generation && spoken.isEmpty && _error.isEmpty) {
+        if (gen == _generation &&
+            (spoken.isEmpty && _error.isEmpty ||
+                !_reply.playing && _phase != AssistantPhase.idle)) {
+          // +133: same rule as the /talk teardown — the replay's last
+          // paragraph is either heard text with no audio to outlive,
+          // or still on air (natural end will clear it).
           _idleReady();
         }
         notifyListeners();
