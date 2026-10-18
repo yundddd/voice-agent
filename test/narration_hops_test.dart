@@ -9,13 +9,12 @@ void main() {
   late FakeScheduler time;
   late NarrationGate gate;
 
-  bool narrationOn({bool speaking = false, bool playing = false}) =>
-      gate.quiet(
-        enabled: true,
-        backgrounded: false,
-        speaking: speaking,
-        playing: playing,
-      );
+  bool narrationOn({bool speaking = false, bool playing = false}) => gate.quiet(
+    enabled: true,
+    backgrounded: false,
+    speaking: speaking,
+    playing: playing,
+  );
 
   setUp(() {
     time = FakeScheduler(DateTime(2026, 1, 1, 12));
@@ -38,45 +37,69 @@ void main() {
       expect(narrationOn(playing: true), isFalse);
     });
 
-    test('narrating a line restarts both windows (+anti-machine-gun)',
-        () async {
-      time.advance(const Duration(seconds: 10));
-      expect(gate.wantStep('Edit a.dart…',
-          enabled: true, backgrounded: false, speaking: false,
-          playing: false), isTrue);
-      gate.narrated('Edit a.dart…');
-      gate.audioActivity(); // narration speaks through the reply path
-      expect(narrationOn(), isFalse,
-          reason: 'ten Edit calls in a row must not gun the speaker');
-      time.advance(const Duration(seconds: 9));
-      expect(narrationOn(), isTrue);
-    });
+    test(
+      'narrating a line restarts both windows (+anti-machine-gun)',
+      () async {
+        time.advance(const Duration(seconds: 10));
+        expect(
+          gate.wantStep(
+            'Edit a.dart…',
+            enabled: true,
+            backgrounded: false,
+            speaking: false,
+            playing: false,
+          ),
+          isTrue,
+        );
+        gate.narrated('Edit a.dart…');
+        gate.audioActivity(); // narration speaks through the reply path
+        expect(
+          narrationOn(),
+          isFalse,
+          reason: 'ten Edit calls in a row must not gun the speaker',
+        );
+        time.advance(const Duration(seconds: 9));
+        expect(narrationOn(), isTrue);
+      },
+    );
 
     test('the same step only repeats as a ~45 s heartbeat', () {
       time.advance(const Duration(seconds: 10));
       gate.narrated('Bash gradle build…');
       // A repeat right away: not yet (quiet() itself also blocks it).
       expect(
-        gate.wantHeartbeat('Bash gradle build…',
-            enabled: true, backgrounded: false, speaking: false,
-            playing: false),
+        gate.wantHeartbeat(
+          'Bash gradle build…',
+          enabled: true,
+          backgrounded: false,
+          speaking: false,
+          playing: false,
+        ),
         isFalse,
       );
       // A different line, once quiet, is news again immediately.
       gate.audioActivity();
       time.advance(const Duration(seconds: 9));
       expect(
-        gate.wantStep('Bash gradle test…',
-            enabled: true, backgrounded: false, speaking: false,
-            playing: false),
+        gate.wantStep(
+          'Bash gradle test…',
+          enabled: true,
+          backgrounded: false,
+          speaking: false,
+          playing: false,
+        ),
         isTrue,
       );
       // And the same long build: after 45 s of nothing but it, repeat.
       time.advance(const Duration(seconds: 40));
       expect(
-        gate.wantHeartbeat('Bash gradle build…',
-            enabled: true, backgrounded: false, speaking: false,
-            playing: false),
+        gate.wantHeartbeat(
+          'Bash gradle build…',
+          enabled: true,
+          backgrounded: false,
+          speaking: false,
+          playing: false,
+        ),
         isTrue,
         reason: 'one gradle build = a steady still-at-it cadence',
       );
@@ -85,15 +108,23 @@ void main() {
     test('the off switch off kills everything', () {
       time.advance(const Duration(minutes: 5));
       expect(
-        gate.wantStep('Deploy…',
-            enabled: false, backgrounded: false, speaking: false,
-            playing: false),
+        gate.wantStep(
+          'Deploy…',
+          enabled: false,
+          backgrounded: false,
+          speaking: false,
+          playing: false,
+        ),
         isFalse,
       );
       expect(
-        gate.wantHeartbeat('Deploy…',
-            enabled: false, backgrounded: true, speaking: false,
-            playing: false),
+        gate.wantHeartbeat(
+          'Deploy…',
+          enabled: false,
+          backgrounded: true,
+          speaking: false,
+          playing: false,
+        ),
         isFalse,
       );
     });

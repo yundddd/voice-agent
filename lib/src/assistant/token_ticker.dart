@@ -124,7 +124,9 @@ class TokenTicker {
     final now = clock();
     final out = ev.outTokens;
     if (out > 0) {
-      final dt = _at == null ? null : now.difference(_at!).inMilliseconds / 1000.0;
+      final dt = _at == null
+          ? null
+          : now.difference(_at!).inMilliseconds / 1000.0;
       // Only a real step UP while already ticking can teach the rate:
       // the first frame of a turn and down-settling corrections carry
       // no elapsed-generation information (the gap includes tool runs).

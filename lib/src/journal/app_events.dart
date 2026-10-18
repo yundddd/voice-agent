@@ -91,11 +91,13 @@ class AppEventJournal {
           final j = jsonDecode(l) as Map<String, Object?>;
           final s = j['seq'];
           final t = j['t'];
-          _ring.add(_Ev(
-            s is num ? s.toInt() : 0,
-            t is num ? t.toInt() : 0,
-            '${j['msg'] ?? ''}',
-          ));
+          _ring.add(
+            _Ev(
+              s is num ? s.toInt() : 0,
+              t is num ? t.toInt() : 0,
+              '${j['msg'] ?? ''}',
+            ),
+          );
           if (s is num && s.toInt() > _seq) _seq = s.toInt();
         } on FormatException {
           continue; // a half-written last line from the kill moment
@@ -154,8 +156,9 @@ class AppEventJournal {
     final wait = _pushFailSince == null
         ? const Duration(seconds: 3)
         : DateTime.now().difference(_pushFailSince!) <
-                  const Duration(seconds: 60)
-        ? const Duration(seconds: 60) - DateTime.now().difference(_pushFailSince!)
+              const Duration(seconds: 60)
+        ? const Duration(seconds: 60) -
+              DateTime.now().difference(_pushFailSince!)
         : const Duration(seconds: 3);
     _pushTimer = Timer(wait, () => unawaited(flushNow()));
   }
@@ -172,8 +175,7 @@ class AppEventJournal {
     _flushInFlight = true;
     var ok = false;
     try {
-      final env = envelope(_pushedThrough, _flagsProvider())
-        ..['src'] = 'push';
+      final env = envelope(_pushedThrough, _flagsProvider())..['src'] = 'push';
       final sentSeq = _seq; // EXACTLY what this envelope covers: events
       // appended while the POST is in flight stay above the watermark
       // (advancing to _seq would ack-what-was-never-sent when a log()
@@ -205,23 +207,23 @@ class AppEventJournal {
 
   /// Entries with seq > [since], oldest first.
   List<Map<String, Object>> eventsAfter(int since) => [
-        for (final e in _ring)
-          if (e.seq > since) {'seq': e.seq, 't': e.ms, 'msg': e.msg},
-      ];
+    for (final e in _ring)
+      if (e.seq > since) {'seq': e.seq, 't': e.ms, 'msg': e.msg},
+  ];
 
   Map<String, Object> envelope(int since, Map<String, Object> flags) => {
-        'ok': true,
-        'seq': _seq,
-        'floor': _ring.isEmpty ? _seq : _ring.first.seq,
-        'events': eventsAfter(since),
-        'flags': flags,
-        // Self-observability: what the push watermark covers, and since
-        // when pushes have been failing — visible from the desktop too
-        // (the bridge caches the last pushed envelope /health shows it).
-        'pushedThrough': _pushedThrough,
-        if (_pushFailSince != null)
-          'pushFailingSince': _pushFailSince!.toIso8601String(),
-      };
+    'ok': true,
+    'seq': _seq,
+    'floor': _ring.isEmpty ? _seq : _ring.first.seq,
+    'events': eventsAfter(since),
+    'flags': flags,
+    // Self-observability: what the push watermark covers, and since
+    // when pushes have been failing — visible from the desktop too
+    // (the bridge caches the last pushed envelope /health shows it).
+    'pushedThrough': _pushedThrough,
+    if (_pushFailSince != null)
+      'pushFailingSince': _pushFailSince!.toIso8601String(),
+  };
 
   /// Start the HTTP endpoint. Tries IPv6 dual-stack first (tailscale routes
   /// either family), falls back to IPv4, then loopback (tests). Walks the

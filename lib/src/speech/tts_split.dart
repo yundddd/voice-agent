@@ -97,4 +97,3 @@ List<String> splitForTts(String text) {
 
 final RegExp _ws = RegExp(r'\s+');
 bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
-

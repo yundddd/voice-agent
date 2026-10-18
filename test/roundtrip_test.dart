@@ -58,156 +58,174 @@ void main() {
     }
     if (!await nativeUsable()) {
       // ignore: avoid_print
-      print('SKIPPED $what: libonnxruntime not loadable '
-          '(set LD_LIBRARY_PATH to the sherpa_onnx_linux lib dir)');
+      print(
+        'SKIPPED $what: libonnxruntime not loadable '
+        '(set LD_LIBRARY_PATH to the sherpa_onnx_linux lib dir)',
+      );
       return false;
     }
     return true;
   }
 
-  test('ASR: wav fixture -> Whisper -> text', () async {
-    if (!await ready('ASR roundtrip')) return;
+  test(
+    'ASR: wav fixture -> Whisper -> text',
+    () async {
+      if (!await ready('ASR roundtrip')) return;
 
-    // Transcribe a real speech fixture (same wavs ship with the model).
-    final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
-    final (samples, sampleRate) = decodeWav(wav);
+      // Transcribe a real speech fixture (same wavs ship with the model).
+      final wav = File('$asrDir/test_wavs/0.wav').readAsBytesSync();
+      final (samples, sampleRate) = decodeWav(wav);
 
-    final worker = await SpeechWorker.start(paths);
-    try {
-      final swAsr = Stopwatch()..start();
-      final text = await worker.transcribe(samples, sampleRate);
-      swAsr.stop();
-      // ignore: avoid_print
-      print(
-        'ASR: "$text" (${samples.length / sampleRate}s of audio, '
-        '${swAsr.elapsedMilliseconds} ms)',
-      );
-      expect(text.trim(), isNotEmpty);
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 3)));
-
-  test('VAD endpointing: streamed speech + 1s silence -> segment', () async {
-    if (!await ready('VAD endpointing')) return;
-
-    final wav = File('$asrDir/test_wavs/1.wav').readAsBytesSync();
-    final (samples, sampleRate) = decodeWav(wav);
-    expect(sampleRate, 16000);
-
-    final segment = Completer<Float32List>();
-    final started = Completer<void>();
-    final worker = await SpeechWorker.start(
-      paths,
-      endpointSilence: 1.0,
-      onEvent: (e) {
-        // ignore: avoid_print
-        if (e.note != null) print('[note] ${e.note}');
-        if (e.speechStarted && !started.isCompleted) started.complete();
-        if (e.segment != null && !segment.isCompleted) {
-          segment.complete(e.segment!);
-        }
-      },
-    );
-    try {
-      // Stream the utterance in 512-sample windows, like the mic feed does,
-      // then 1.5 s of silence to trip the endpoint.
-      for (var i = 0; i + 512 <= samples.length; i += 512) {
-        worker.sendAudio(Float32List.sublistView(samples, i, i + 512));
-      }
-      final silence = Float32List(512);
-      final silenceWindows = (1.6 * sampleRate / 512).ceil(); // > 1 s endpoint
-      for (var i = 0; i < silenceWindows; i++) {
-        worker.sendAudio(silence);
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
-
-      await started.future.timeout(const Duration(seconds: 5));
-      final seg = await segment.future.timeout(const Duration(seconds: 10));
-      // ignore: avoid_print
-      print(
-        'VAD segment: ${(seg.length / 16000).toStringAsFixed(2)}s of '
-        '${(samples.length / 16000).toStringAsFixed(2)}s streamed',
-      );
-      expect(seg.length, greaterThan(16000)); // > 1 s of trimmed speech
-      // Segments may carry a little trailing pre-endpoint silence.
-      expect(seg.length, lessThan(samples.length + (1.5 * sampleRate).round()));
-
-      final text = await worker.transcribe(seg, 16000);
-      // ignore: avoid_print
-      print('Endpointed utterance transcribed: "$text"');
-      expect(text.trim(), isNotEmpty);
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 2)));
-
-  test('Kokoro v1_0 fp32 speaks preset styles', () async {
-    final dir =
-        Platform.environment['KOKORO_DIR'] ??
-        '/tmp/opencode/kokoro-ab/kokoro-multi-lang-v1_0';
-    TtsSpec spec(int sid) => TtsSpec.kokoro(
-      kokoroModel: '$dir/model.onnx',
-      kokoroVoices: '$dir/voices.bin',
-      kokoroTokens: '$dir/tokens.txt',
-      kokoroDataDir: '$dir/espeak-ng-data',
-      kokoroLexicon: '$dir/lexicon-us-en.txt,$dir/lexicon-gb-en.txt',
-      sid: sid,
-    );
-    if (!await ready('Kokoro TTS') ||
-        !File('$dir/model.onnx').existsSync() ||
-        !File('$dir/voices.bin').existsSync()) {
-      // ignore: avoid_print
-      print('SKIPPED Kokoro assets: not staged under $dir');
-      return;
-    }
-
-    final worker = await SpeechWorker.start(paths);
-    try {
-      final speakers = await worker.useTts(spec(0));
-      expect(speakers, greaterThan(10)); // 54-style roster drives the slider
-
-      const line =
-          'The quick brown fox jumped over the lazy dog, and the kids '
-          'laughed out loud at the old joke.';
-      for (final sid in [1, 8]) {
-        await worker.useTts(spec(sid));
-        final sw = Stopwatch()..start();
-        final (audio, sampleRate) = await worker.synthesize(line);
-        sw.stop();
-        final seconds = audio.length / sampleRate;
+      final worker = await SpeechWorker.start(paths);
+      try {
+        final swAsr = Stopwatch()..start();
+        final text = await worker.transcribe(samples, sampleRate);
+        swAsr.stop();
         // ignore: avoid_print
         print(
-          'kokoro TTS sid $sid: ${seconds.toStringAsFixed(1)}s generated in '
-          '${sw.elapsedMilliseconds} ms (RTF '
-          '${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+          'ASR: "$text" (${samples.length / sampleRate}s of audio, '
+          '${swAsr.elapsedMilliseconds} ms)',
         );
-        expect(audio.length, greaterThan(sampleRate));
-        expect(sampleRate, 24000);
-        final out = File('build/roundtrip_reply_sid$sid.wav')
-          ..createSync(recursive: true);
-        out.writeAsBytesSync(encodeWav(audio, sampleRate));
-        // ignore: avoid_print
-        print('Reply audio written to ${out.absolute.path}');
-        final heard = (await worker.transcribe(
-          audio,
-          sampleRate,
-        )).toLowerCase();
-        final hits = line
-            .split(' ')
-            .where((w) => w.length > 3)
-            .where((w) => heard.contains(w.toLowerCase()))
-            .length;
-        // ignore: avoid_print
-        print('kokoro ASR (sid $sid): "$heard" ($hits long words matched)');
-        // Kokoro has no cold-start damage (one forward pass, no codec):
-        // the FIRST long word ('quick') must be present — that is the
-        // whole point of this engine.
-        expect(hits, greaterThan(2));
-        expect(heard, contains('quick'));
+        expect(text.trim(), isNotEmpty);
+      } finally {
+        worker.dispose();
       }
-    } finally {
-      worker.dispose();
-    }
-  }, timeout: const Timeout(Duration(minutes: 8)));
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'VAD endpointing: streamed speech + 1s silence -> segment',
+    () async {
+      if (!await ready('VAD endpointing')) return;
+
+      final wav = File('$asrDir/test_wavs/1.wav').readAsBytesSync();
+      final (samples, sampleRate) = decodeWav(wav);
+      expect(sampleRate, 16000);
+
+      final segment = Completer<Float32List>();
+      final started = Completer<void>();
+      final worker = await SpeechWorker.start(
+        paths,
+        endpointSilence: 1.0,
+        onEvent: (e) {
+          // ignore: avoid_print
+          if (e.note != null) print('[note] ${e.note}');
+          if (e.speechStarted && !started.isCompleted) started.complete();
+          if (e.segment != null && !segment.isCompleted) {
+            segment.complete(e.segment!);
+          }
+        },
+      );
+      try {
+        // Stream the utterance in 512-sample windows, like the mic feed does,
+        // then 1.5 s of silence to trip the endpoint.
+        for (var i = 0; i + 512 <= samples.length; i += 512) {
+          worker.sendAudio(Float32List.sublistView(samples, i, i + 512));
+        }
+        final silence = Float32List(512);
+        final silenceWindows = (1.6 * sampleRate / 512)
+            .ceil(); // > 1 s endpoint
+        for (var i = 0; i < silenceWindows; i++) {
+          worker.sendAudio(silence);
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        await started.future.timeout(const Duration(seconds: 5));
+        final seg = await segment.future.timeout(const Duration(seconds: 10));
+        // ignore: avoid_print
+        print(
+          'VAD segment: ${(seg.length / 16000).toStringAsFixed(2)}s of '
+          '${(samples.length / 16000).toStringAsFixed(2)}s streamed',
+        );
+        expect(seg.length, greaterThan(16000)); // > 1 s of trimmed speech
+        // Segments may carry a little trailing pre-endpoint silence.
+        expect(
+          seg.length,
+          lessThan(samples.length + (1.5 * sampleRate).round()),
+        );
+
+        final text = await worker.transcribe(seg, 16000);
+        // ignore: avoid_print
+        print('Endpointed utterance transcribed: "$text"');
+        expect(text.trim(), isNotEmpty);
+      } finally {
+        worker.dispose();
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+
+  test(
+    'Kokoro v1_0 fp32 speaks preset styles',
+    () async {
+      final dir =
+          Platform.environment['KOKORO_DIR'] ??
+          '/tmp/opencode/kokoro-ab/kokoro-multi-lang-v1_0';
+      TtsSpec spec(int sid) => TtsSpec.kokoro(
+        kokoroModel: '$dir/model.onnx',
+        kokoroVoices: '$dir/voices.bin',
+        kokoroTokens: '$dir/tokens.txt',
+        kokoroDataDir: '$dir/espeak-ng-data',
+        kokoroLexicon: '$dir/lexicon-us-en.txt,$dir/lexicon-gb-en.txt',
+        sid: sid,
+      );
+      if (!await ready('Kokoro TTS') ||
+          !File('$dir/model.onnx').existsSync() ||
+          !File('$dir/voices.bin').existsSync()) {
+        // ignore: avoid_print
+        print('SKIPPED Kokoro assets: not staged under $dir');
+        return;
+      }
+
+      final worker = await SpeechWorker.start(paths);
+      try {
+        final speakers = await worker.useTts(spec(0));
+        expect(speakers, greaterThan(10)); // 54-style roster drives the slider
+
+        const line =
+            'The quick brown fox jumped over the lazy dog, and the kids '
+            'laughed out loud at the old joke.';
+        for (final sid in [1, 8]) {
+          await worker.useTts(spec(sid));
+          final sw = Stopwatch()..start();
+          final (audio, sampleRate) = await worker.synthesize(line);
+          sw.stop();
+          final seconds = audio.length / sampleRate;
+          // ignore: avoid_print
+          print(
+            'kokoro TTS sid $sid: ${seconds.toStringAsFixed(1)}s generated in '
+            '${sw.elapsedMilliseconds} ms (RTF '
+            '${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+          );
+          expect(audio.length, greaterThan(sampleRate));
+          expect(sampleRate, 24000);
+          final out = File('build/roundtrip_reply_sid$sid.wav')
+            ..createSync(recursive: true);
+          out.writeAsBytesSync(encodeWav(audio, sampleRate));
+          // ignore: avoid_print
+          print('Reply audio written to ${out.absolute.path}');
+          final heard = (await worker.transcribe(
+            audio,
+            sampleRate,
+          )).toLowerCase();
+          final hits = line
+              .split(' ')
+              .where((w) => w.length > 3)
+              .where((w) => heard.contains(w.toLowerCase()))
+              .length;
+          // ignore: avoid_print
+          print('kokoro ASR (sid $sid): "$heard" ($hits long words matched)');
+          // Kokoro has no cold-start damage (one forward pass, no codec):
+          // the FIRST long word ('quick') must be present — that is the
+          // whole point of this engine.
+          expect(hits, greaterThan(2));
+          expect(heard, contains('quick'));
+        }
+      } finally {
+        worker.dispose();
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 8)),
+  );
 }

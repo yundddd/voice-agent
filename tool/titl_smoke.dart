@@ -27,6 +27,7 @@ Future<void> main(List<String> argv) async {
   final phonemes = TitlEngine.phonemesFromWords(
     words,
     engine.vocab.keys.toSet(),
+    folds: TitlEngine.foldEspeakEn,
   );
   stdout.writeln('phonemes: $phonemes');
   final t0 = DateTime.now();

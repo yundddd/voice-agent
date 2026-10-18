@@ -49,11 +49,7 @@ class FakeAudioOutput implements AudioOutput {
   Stream<void> get onNaturalEnd => _ended.stream;
 
   @override
-  Future<void> play(
-    Float32List samples,
-    int sampleRate, {
-    String? tag,
-  }) async {
+  Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
     played.add((samples, sampleRate));
     tags.add(tag);
     playing = true;

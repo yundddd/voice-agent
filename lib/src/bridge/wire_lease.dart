@@ -25,7 +25,9 @@ class WireLease {
     required this.attached,
     required this.paused,
     required this.audioDraining,
-    this.quietWindow = const Duration(seconds: 24), // ping 15 s + retransmit slack
+    this.quietWindow = const Duration(
+      seconds: 24,
+    ), // ping 15 s + retransmit slack
   });
 
   final Scheduler scheduler;

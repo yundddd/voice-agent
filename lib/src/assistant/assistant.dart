@@ -45,6 +45,7 @@ import './ptt_hold.dart';
 import './reply_pipeline.dart';
 import './state.dart';
 import './token_ticker.dart';
+import './turn_session.dart';
 import '../bridge/bridge_event.dart';
 import '../bridge/client.dart';
 import '../bridge/gateway.dart';
@@ -66,6 +67,8 @@ import '../speech/speech_worker.dart';
 import '../speech/tts_voices.dart';
 
 export '../assistant/state.dart';
+export '../assistant/turn_session.dart'
+    show TakeoverStop, TurnCoordinator, TurnTrigger, takeoverStop;
 export '../bridge/bridge_event.dart' show BridgeEvent;
 export '../bridge/gateway.dart' show BridgeException, HarnessGateway;
 export '../bridge/text_rules.dart'
@@ -163,6 +166,22 @@ class VoiceAssistant extends ChangeNotifier {
       disposed: () => _disposed,
     );
     _reply.log = _logDebug;
+    // The bridge-turn truth (busy slot, backgrounded badge, the bottom
+    // line's snapshot, the generation/seq tokens) lives in the
+    // coordinator; this class reads it and fires its named transitions.
+    // The machine parts a transition orchestrates arrive as callbacks —
+    // the coordinator owns the truth and the ORDER, this class owns the
+    // reattach chain and the reply player those callbacks pull.
+    _turn = TurnCoordinator(
+      clock: _clock,
+      log: _logDebug,
+      hardStop: () async {
+        await _gateway?.stop();
+      },
+      beforeDetach: _cancelReattachChain,
+      afterDetach: _reply.clearAndClose,
+      queuedPin: () => _chat.queuedBubble != null,
+    );
   }
 
   // Silence duration that ends an utterance in conversation mode.
@@ -196,7 +215,6 @@ class VoiceAssistant extends ChangeNotifier {
   final List<Float32List> _chunks = []; // push-to-talk buffer
   Float32List? _asrAudio; // exact audio the last ASR call consumed
   int _asrAudioRate = 16000;
-  int _generation = 0; // cancels in-flight responses when bumped
   bool _userSpeaking = false; // live VAD flag (conversation mode)
   bool _segEchoRisk = false; // current utterance started while we were talking
   bool _segGotAudio = false; // current utterance produced a VAD segment
@@ -307,30 +325,32 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Claude Code bridge (src/bridge/, docs/claude-code-bridge.md) ───────
   BridgePrefs _bridgePrefs = BridgePrefs();
   HarnessGateway? _gateway;
-  bool _bridgeBusy = false; // a bridge turn is in flight (chips disabled)
-  bool _harnessBackgrounded = false; // a turn the phone detached keeps
-  // working on the bridge with no ear on it: the terminal badge stays lit
-  // until a heard turn starts, /stop lands, or /new resets it.
-  DateTime? _harnessSince; // wall clock the in-flight bridge turn started
-  int _bridgeTurnSeq = 0; // busy-flag ownership token (turns bump it)
-  // ── The persistent backgrounded-work line ──────────────────────────
-  // What the harness is doing OUT OF EARSHOT — a turn the press
-  // detached, or a queued press parked behind it. The label is the last
-  // REAL tool step that work attested ('Bash npm test…'), snapshotted
-  // the moment it left the ear; the renderer shows it as a permanent
-  // bottom row that dismisses by itself when the badge goes out
-  // (heard again / /stop / retire / health) or the queue's 'started'
-  // ack proves the tool finished. Tally and verdict frames never label
-  // it: a counter is not a tool call.
-  String _lastToolStep = '';
-  String _bgWork = '';
-  // The cut-tool promise (behaviours 2/4): the bridge's 'queued' notice
-  // said a tool went to background; the banner stands on this third
-  // warrant even after the pin dissolved and the badge fell — until the
-  // tool's 'finished' frame or a /health proving nothing is (or waits
-  // to be) open retires it.
-  bool _bgDetached = false;
-  BridgeTurnPump? _pump; // live /talk listener — detached to BACKGROUND
+  // ── Bridge-turn truth (owned by TurnCoordinator — see turn_session.dart) ──
+  // This class only READS the truth (below) and fires the coordinator's
+  // named transitions; the old raw fields' meaning now lives on those
+  // methods' docs. What each getter answers:
+  late final TurnCoordinator _turn;
+
+  /// A bridge turn is in flight (chips disabled).
+  bool get _bridgeBusy => _turn.busy;
+
+  /// A turn the phone detached keeps working on the bridge with no ear
+  /// on it: the terminal badge stays lit until a heard turn starts,
+  /// /stop lands, or /new resets it.
+  bool get _harnessBackgrounded => _turn.backgrounded;
+
+  /// Wall clock the in-flight bridge turn started.
+  DateTime? get _harnessSince => _turn.since;
+
+  /// Busy-flag ownership token (turns claim it via the coordinator).
+  int get _bridgeTurnSeq => _turn.seq;
+
+  /// Cancels in-flight responses when bumped (via [TurnCoordinator.supersede]).
+  int get _generation => _turn.generation;
+
+  /// What the harness is doing OUT OF EARSHOT — the bottom line's
+  /// snapshot, fed by [TurnCoordinator.detach] and [TurnCoordinator.noteToolStep].
+  String get _bgWork => _turn.bgWork;
   // ── Stream reattach: surviving a background→foreground blink ──────────
   // The quiet-wire lease lives in [WireLease]; the retry ladder exists
   // here because waking phones wake their NETWORK late: one failed
@@ -450,13 +470,16 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Whether the channel's bottom line is warranted right now: the
   /// badge (a detached turn still working), the queue pin (a press
-  /// parked behind that work), or [_bgDetached] — a tool THIS press cut
-  /// into background, which the bridge's 'finished' frame retires (or a
-  /// /health read that finds nothing open and nothing detached). Every
-  /// completion path clears one of the three, so a false here IS the
-  /// auto-dismiss.
+  /// parked behind that work), or the cut-tool promise (a tool THIS
+  /// press cut into background — the coordinator's
+  /// [TurnCoordinator.detachedPromise], retired by the tool's own
+  /// 'finished' receipt, or by a /health read finding nothing open and
+  /// nothing detached). Every completion path clears one of the three,
+  /// so a false here IS the auto-dismiss.
   bool get showsBackgroundedWork =>
-      _harnessBackgrounded || _bgDetached || _chat.queuedBubble != null;
+      _harnessBackgrounded ||
+      _turn.detachedPromise ||
+      _chat.queuedBubble != null;
 
   /// The bottom line's label: the last real tool step the out-of-
   /// earshot work attested to, and only while warranted ([showsBackgroundedWork]).
@@ -539,33 +562,46 @@ class VoiceAssistant extends ChangeNotifier {
     // line has no work left to name and retires on the proof.
     final det = h?['detached'];
     if (h != null &&
-        (_bgDetached || _harnessBackgrounded || _bgWork.isNotEmpty) &&
+        (_turn.detachedPromise || _harnessBackgrounded || _bgWork.isNotEmpty) &&
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0) {
-      _bgDetached = false;
-      _harnessBackgrounded = false;
-      _bgWork = '';
+      // The banner's safety net: a harness that killed the tool WITH
+      // the turn never sends 'finished', but its receipts ledger does —
+      // nothing open, nothing queued, nothing detached means the line
+      // has no work left to name.
+      _turn.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: health — nothing open, none detached');
       notifyListeners();
     }
   }
 
   /// The proof-of-completion the background banner waits for (bridge
-  /// `tool finished` frame): one stamped bubble records the moment, the
-  /// bottom line retires. (behaviours 2/4)
-  void _retireBgWork(String label) {
-    _bgDetached = false;
-    _bgWork = '';
-    final note = '${label.isEmpty ? 'The background tool' : label} finished.';
+  /// `tool finished` frame — the late tool_result of a cut tool naming
+  /// its step, or the +128 lifecycle receipt of a turn that ended
+  /// unheard). The line retires on either; only a NAMED tool gets its
+  /// period in the chat — a lifecycle receipt journals its dismissal
+  /// without narrating prose at the screen. (behaviours 2/4)
+  void _retireBgWork(String detail) {
+    _turn.clearBgWork(); // the promise is paid here (see turn_session)
+    if (_harnessBackgrounded) _turn.retireBadgeAndWork();
+    if (detail.isEmpty || detail.startsWith('ended after')) {
+      _logDebug(
+        'backgrounded work finished (${detail.isEmpty ? 'unnamed turn' : detail})',
+      );
+      notifyListeners();
+      return;
+    }
+    final note = '$detail finished.';
     // Idempotent: a backlog replay may deliver the frame after the live
     // view already retired on it — one completion, one period.
     if (_chat.containsBlock(note)) {
-      _logDebug('msg bg done: "$label" already retired');
+      _logDebug('msg bg done: "$detail" already retired');
       return;
     }
     _chat.addSystemNote(note);
-    _logDebug('msg bg done: "$label" retired the line');
+    _logDebug('msg bg done: "$detail" retired the line');
+    notifyListeners();
   }
 
   // ── Live token ticker API (see TokenTicker) ────────────────────────────
@@ -729,16 +765,25 @@ class VoiceAssistant extends ChangeNotifier {
     // Bump FIRST: an abandoned event loop notices the superseded
     // generation and exits — a bare subscription cancel would leave it
     // parked on the wake future forever.
-    // A live turn (even a softly-detached one — detach keeps the busy
-    // flag) means an interrupt-off prompt goes behind it on the bridge:
-    // capture that before the abandon so the bubble knows to wear the
-    // pin until the harness actually starts on it. On the POLL ring the
-    // same fact arms the pump's pre-pickup armor: a parked POST must
-    // survive the busy turn's farewell done (see the transport).
+    // A prompt that goes behind a HEARD live turn wears the pin until
+    // the harness starts on it — the queue exists to protect an answer
+    // the ear is holding. A prompt that goes behind a turn already OUT
+    // OF EARSHOT (the badge alone; +126 field report) protects nothing:
+    // the press shows in the flow right away and the bottom line keeps
+    // carrying the wait. Capture both verdicts before the abandon,
+    // which clears _bridgeBusy and would launder an audible detach into
+    // a silent continuation.
+    final detachedContinuation = _harnessBackgrounded && !_bridgeBusy;
+    final queuedBehindLiveTurn = !interrupt && _bridgeBusy;
+    // Pin policy aside, ANY prompt sent while the bridge holds a turn
+    // (heard or backgrounded) PARKS at its front — and on the POLL ring
+    // the parked pump inherits the busy turn's farewell done, which it
+    // must survive to see its own pickup (the bash-sleep field report).
+    // The transport's pre-pickup armor is armed off this same
+    // before-abandon snapshot.
     final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
-    final queuedBehindLiveTurn = !interrupt && bridgeHadLiveTurn;
-    _generation++;
-    _abandonBridgeTurn();
+    _turn.supersede();
+    _turn.detach(TurnTrigger.newUtterance);
     if (_worker == null && !_ttsOff) {
       // TTS off means this send needs no audio machinery at all: the
       // text box answers even while the models are still loading.
@@ -767,16 +812,17 @@ class VoiceAssistant extends ChangeNotifier {
     // interrupted turn keeps the sections actually spoken — that IS what
     // the conversation was. A turn that never spoke is removed at the end.
     final turn = _chat.beginTurn();
-    final gen = ++_generation; // supersedes any in-flight voice reply
+    final gen = _turn.supersede(); // supersedes any in-flight voice reply
     _reply.stopPlayback(); // cut the current audio, like the voice preview does
-    final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
-    _bridgeBusy = true;
-    _harnessBackgrounded = false; // this turn is heard, not invisible
-    _lastToolStep = ''; // the new turn's identity starts clean: the
-    // abandoned turn's label is snapshotted into _bgWork (see
-    // _abandonBridgeTurn); carrying it forward would let a later cut
-    // name a step this turn never took.
-    _harnessSince = _clock(); // the chat spinner counts from here
+    final mySeq = _turn.claimSlot(); // claim the busy flag for this turn
+    // A heard turn clears the badge; a detached continuation keeps it —
+    // the tool really is still running unheard, and the pickup ack (or
+    // /stop, or a nothing-open probe) is what proves it closed. The age
+    // clock counts the WORK, not the latest press: re-anchor only when
+    // this very turn becomes the ear.
+    if (!detachedContinuation) {
+      _turn.becomeHeard(); // this turn is heard, not invisible
+    }
     // This utterance supersedes whatever a reattach chain was about to
     // re-hear: its own stream is the ear now, and a chain attach landing
     // later would steal the view from the QUEUED turn the bridge is
@@ -901,15 +947,24 @@ class VoiceAssistant extends ChangeNotifier {
         // Push view: our stream is silent until the flush, so ANY
         // frame is the pickup — EXCEPT the bridge's 'queued' notice,
         // which is the OPPOSITE promise (behaviour 1: a busy bridge
-        // answers a queue POST with this frame immediately, and the
-        // pin must keep watching the bottom of the channel until the
-        // turn actually starts). Poll view: the ring also carries the
-        // turn we queued BEHIND — only the bridge's explicit
-        // 'started' marker (tool branch below) may dissolve the pin
-        // there (+81).
+        // answers a queue POST with that frame the instant it parks,
+        // and the pin must keep watching the bottom of the channel
+        // until the turn actually starts), EXCEPT a 'started' tagged
+        // kind='background' — a pickup AND a promise: the tool branch
+        // below raises it with the abandoned step it must name, and a
+        // heardPickup here would blank that step first. Poll view: the
+        // ring also carries the turn we queued BEHIND — only the
+        // bridge's explicit 'started' marker may dissolve the pin
+        // there. Pickup also proves whatever left the ear is CLOSED
+        // (the bridge flushes only closed turns), so it retires the
+        // backgrounded badge and re-anchors the age to our live turn.
         if (!_transport.turnViaPoll &&
-            !(ev.kind == 'tool' && ev.toolName == 'queued')) {
+            !(ev.kind == 'tool' &&
+                (ev.toolName == 'queued' ||
+                    (ev.toolName == 'started' &&
+                        ev.toolKind == 'background')))) {
           _chat.unpinQueued();
+          _turn.heardPickup();
         }
       },
       isStale: () => gen != _generation,
@@ -952,11 +1007,16 @@ class VoiceAssistant extends ChangeNotifier {
             // is closed by definition, so retire the line now.
             _chat.unpinQueued();
             if (ev.toolKind == 'background') {
-              _bgDetached = true;
-              if (_bgWork.isEmpty) _bgWork = _lastToolStep;
-            } else if (!_bgDetached) {
-              _bgWork = '';
-              _lastToolStep = '';
+              // THIS prompt cut a running tool: the turn it waited
+              // behind closed (that is what flushed the queue), but
+              // the tool did not — the bottom line keeps naming it
+              // until the detached tool's own 'finished' receipt
+              // lands (behaviours 2/4, and the one delivery of that
+              // promise that a shared ring cursor cannot lose).
+              _turn.promiseDetachedTool();
+            } else {
+              _turn.heardPickup(); // the turn we waited behind is
+              // closed; the spinner times ours now
             }
             _logDebug(
               'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
@@ -964,17 +1024,28 @@ class VoiceAssistant extends ChangeNotifier {
             return;
           }
           if (ev.toolName == 'finished') {
+            // The bridge's receipt that the out-of-earshot work is
+            // OVER — the lifecycle receipt of a backgrounded turn
+            // (+128) and/or the late tool_result of a tool this press
+            // cut into background (behaviour 2): either way the bottom
+            // line dismisses itself. A live turn owns the slot here
+            // (this rides its view as a ring/backlog replay), so the
+            // spinner's clock is never touched — only the stale
+            // snapshot and the promise go.
             _retireBgWork(ev.detail);
             return;
           }
           if (ev.toolName == 'queued' &&
               ev.detail.toLowerCase().contains('background')) {
-            // The bridge's cut notice (+98 wording): the tool this turn
-            // was running is OUT OF EARSHOT now — the banner's third
-            // warrant, surviving the pin's dissolve and the badge's
-            // fall until the completion frame lands.
-            _bgDetached = true;
-            if (_bgWork.isEmpty) _bgWork = _lastToolStep;
+            // The bridge's cut notice (+98 wording): the tool this
+            // press was waiting behind is OUT OF EARSHOT now — the
+            // banner's third warrant lights on the bridge's own word,
+            // surviving the pin's dissolve and the badge's fall until
+            // the completion receipt lands. (The 'One moment' bubble
+            // this frame also files rides addSystemNote's adjacency
+            // guard — the flush re-announce is the same sentence, not
+            // a second one.)
+            _turn.promiseDetachedTool();
           }
           final tally = ev.toolName == 'tokens';
           _logDebug(
@@ -1010,11 +1081,14 @@ class VoiceAssistant extends ChangeNotifier {
                       '${ev.detail.isEmpty ? '' : ' ${p.basename(ev.detail)}'}…';
             _status = stepLine;
             if (ev.toolName != 'queued') {
-              _lastToolStep = stepLine; // the newest REAL step: this is
-              // what the bottom line names if this turn leaves the ear
-              // now. Steps landing behind a queue pin belong to the
-              // backgrounded work they wait on — keep that line current.
-              if (_chat.queuedBubble != null) _bgWork = stepLine;
+              // The newest REAL step: what the bottom line names if this
+              // turn leaves the ear now. Steps landing behind a queue
+              // pin — or behind the badge, from the turn this prompt
+              // queued after — belong to the backgrounded work they wait
+              // on: keep that line current (the /attach loop already
+              // did). Pure-plumbing steps still get label-only voice
+              // treatment below (+73/+94): the eyes keep the full line.
+              _turn.noteToolStep(stepLine);
             }
             // Pure-plumbing steps get label-only treatment: the eyes see
             // 'Read bridge.dart…', the ears get nothing — no immediate
@@ -1067,7 +1141,7 @@ class VoiceAssistant extends ChangeNotifier {
         }
       },
     );
-    _pump = pump;
+    _turn.installPump(pump);
     _lease.armWatch(); // this connection is watched for quiet from here on
     _hops.sent(); // asr→harness hop crossed: the words are on the wire
     _logDebug(
@@ -1148,12 +1222,11 @@ class VoiceAssistant extends ChangeNotifier {
       // an abandoned turn may be cleaned up after a successor turn (from
       // the voice barge-in it just triggered) has already installed its
       // own subscription and wake hook.
-      final stillOurs = identical(_pump, pump);
-      if (stillOurs) _pump = null;
+      final stillOurs = _turn.releasePumpIf(pump);
       // Did this turn die UNOWNED — the socket errored or hit EOF with no
       // `done` and no bridge `error`? Compute while still holding the busy
       // flag: a barge-in / stop / new-prompt detach went through
-      // _abandonBridgeTurn first (busy already cleared: the user CHOSE
+      // _turn.detach first (busy already cleared: the user CHOSE
       // that exit), and the /new chip's custom stream never had a /talk
       // connection to rejoin. An unowned death means the turn is likely
       // still alive on the bridge: the reattach chain below goes get it.
@@ -1165,13 +1238,10 @@ class VoiceAssistant extends ChangeNotifier {
           _bridgeTurnSeq == mySeq &&
           gen == _generation;
       if (stillOurs) _lease.cancel(); // the watchdog dies with its stream
-      if (_bridgeTurnSeq == mySeq) {
-        // We still own the busy flag (no newer turn claimed it). If
-        // _abandonBridgeTurn cleared it and a newer utterance took the
-        // slot, _bridgeTurnSeq moved on — do not stomp the new owner.
-        _bridgeBusy = false;
-        _harnessSince = null;
-      }
+      // Release the busy slot only if we still own it — a superseded
+      // turn must not stomp a new owner's state, and a SOFT detach
+      // keeps the elapsed clock (+126; see TurnCoordinator.releaseOwnership).
+      _turn.releaseOwnership(mySeq);
       // +108: a turn superseded by the user's own newer press died
       // mid-answer — stamp the bubble so the visualization admits it
       // (see ChatEntry.interrupted). A merely DETACHED turn is NOT
@@ -1212,16 +1282,17 @@ class VoiceAssistant extends ChangeNotifier {
       if (gen == _generation) {
         // Natural end of the current turn (done event / stream close /
         // error): tear down the streamed-player machinery here. An
-        // abandoned turn had it torn down by _abandonBridgeTurn already,
+        // abandoned turn had it torn down by _turn.detach already,
         // and a turn superseded by a barge-in successor must NOT close
         // the queue its successor's player loop is now feeding.
         _reply.closeStream();
-        _lastToolStep = ''; // the turn is over; its step labels are history
+        _turn
+            .clearLastToolStep(); // the turn is over; its step labels are history
       }
       final said = spoken.toString().trim();
       if (said.isNotEmpty) _lastSpoken = said;
       // An interrupted turn no longer POSTs /stop here: every interrupt
-      // site calls _abandonBridgeTurn, and that decides — voice barge-in
+      // site calls _turn.detach, and that decides — voice barge-in
       // DETACHES (the harness keeps working as a background turn, long
       // tools finish, the next prompt queues behind them), the stop-chip
       // adds a hard stop via its hardStop flag.
@@ -1319,59 +1390,12 @@ class VoiceAssistant extends ChangeNotifier {
   void _startPump(int gen) =>
       unawaited(_reply.runPump(isStale: () => gen != _generation));
 
-  /// Voice barge-in (or any takeover) while a harness turn is in flight:
-  /// detach the phone from that turn RIGHT NOW instead of waiting for the
-  /// next SSE event to break the loop. Cancelling the /talk subscription
-  /// closes the connection and the bridge turns it into a BACKGROUND
-  /// turn: the harness keeps working (a long-running tool call finishes
-  /// its work!), the output goes nowhere, and the queue logic in
-  /// claude_bridge.mjs decides what your next utterance does — it waits
-  /// behind an open tool, or cuts a mere thinking turn short in-band
-  /// and starts within a heartbeat. [hardStop] is the hard-stop variant
-  /// (stop-chip taps — "stop working", not "I'll steer"): the harness is
-  /// told to quit the turn itself (/stop — an in-band interrupt; the
-  /// CLI process survives, so no `--resume` re-prefill next turn).
-  /// Mode switches no
-  /// longer come through here at all while a turn is live: the bridge
-  /// session survives them (see [setMode]).
-  void _abandonBridgeTurn({bool hardStop = false}) {
-    if (!_bridgeBusy) return;
-    // An INTENTIONAL steer detaches this turn's view on purpose, so any
-    // reattach chain waiting to re-hear this (superseded) story goes
-    // quiet here — otherwise its delayed attach could steal the bridge's
-    // view right off the queued /talk stream the next prompt rides. (The
-    // zombie-hop watchdog re-kicks its own chain after calling us.)
-    _cancelReattachChain();
-    // Snapshot what this turn was doing as it leaves the ear: the
-    // channel's bottom line will name it until the turn proves itself
-    // done (see _bgWork).
-    _bgWork = _lastToolStep;
-    if (_harnessBackgrounded) {
-      _logDebug(
-        'msg bg: ${_bgWork.isEmpty ? 'the turn keeps' : '"$_bgWork" keeps'} '
-        'working unheard',
-      );
-    }
-    _logDebug(
-      'bridge view detached on purpose (hardStop=$hardStop): reattach '
-      'chain silenced, sub cancelled, loop parked — turn keeps working '
-      'unheard${hardStop ? ', /stop interrupt sent too' : ''}',
-    );
-    if (hardStop) unawaited(_gateway?.stop());
-    _bridgeBusy = false;
-    // A SOFT detach (badge lit) keeps the elapsed clock: the turn is
-    // working on the bridge exactly as before — pressing the mic must
-    // not visually kill the spinner the user is watching (0.1.0+72).
-    // A hard stop, or a detach into the void, zeroes it as always.
-    if (!_harnessBackgrounded) _harnessSince = null;
-    final pump = _pump;
-    _pump = null;
-    pump?.detach();
-    // The streamed-player machinery goes with the abandoned turn (drain
-    // it here so the abandoned loop can't clobber a successor's fresh
-    // _replyStreamDone=false set right after this call).
-    _reply.clearAndClose();
-  }
+  // Voice barge-in (or any takeover) while a harness turn is in flight
+  // goes through TurnCoordinator.detach — THE funnel every trigger lands
+  // in, with the detach-vs-hardStop policy decided once in takeoverStop.
+  // The old inline helper (_abandonBridgeTurn) was exactly this funnel
+  // with the flag matrix scattered around it; its semantics and their
+  // reasons now live on the coordinator's methods (turn_session.dart).
 
   /// Stop chip / conversation-mode stop during a bridge turn: silence the
   /// speaker, hard-stop the harness's WORK (a /stop interrupt, not just
@@ -1387,21 +1411,16 @@ class VoiceAssistant extends ChangeNotifier {
   int _promptBumps = 0;
 
   void bridgeStop() {
-    if (_harnessBackgrounded) {
-      // A turn the phone detached is still working invisibly: /stop hits
-      // it too (the interrupt lands whether attached or backgrounded).
-      unawaited(_gateway?.stop());
-      _harnessBackgrounded = false;
-      _logDebug('user STOP: /stop sent to the DETACHED turn (badge cleared)');
+    if (_turn.stopDetachedWork()) {
       _status = 'Stopped the harness — the detached turn was cut short.';
       notifyListeners();
     }
     if (!_bridgeBusy) return;
-    _generation++;
+    _turn.supersede();
     _reply.stopPlayback();
-    // Hard stop incl. the streamed-player teardown inside the helper.
-    _abandonBridgeTurn(hardStop: true);
-    _harnessBackgrounded = false; // nothing left working invisibly
+    // Hard stop incl. the streamed-player teardown inside the funnel.
+    _turn.detach(TurnTrigger.stopChip);
+    _turn.retireBadge(); // nothing left working invisibly
     _idleReady();
   }
 
@@ -1674,8 +1693,10 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     _captureResumeOnDone = _micStreamWanted;
-    _generation++; // abandon any in-flight reply turn
-    _abandonBridgeTurn(hardStop: true); // bench timing can't share the harness
+    _turn.supersede(); // abandon any in-flight reply turn
+    _turn.detach(
+      TurnTrigger.benchStart,
+    ); // bench timing can't share the harness
     _shutdownAudio();
     _benchChunks.clear();
     _benchSeconds = 0;
@@ -1847,8 +1868,8 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
     } else {
       _shutdownAudio();
-      _generation++; // abandon any in-flight voice turn
-      _abandonBridgeTurn(hardStop: true);
+      _turn.supersede(); // abandon any in-flight voice turn
+      _turn.detach(TurnTrigger.modeSwitch);
       _idleReady();
     }
   }
@@ -1907,7 +1928,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (bridgeLive) _pausedWorking = _status;
     _conversationWasLive = live;
     _backgrounded = true;
-    if (!bridgeLive) _generation++; // no talking to an empty app
+    if (!bridgeLive) _turn.supersede(); // no talking to an empty app
     _shutdownAudio();
     _phase = AssistantPhase.idle;
     _status = bridgeLive
@@ -2072,7 +2093,9 @@ class VoiceAssistant extends ChangeNotifier {
     _logDebug('bridge wire quiet ${quiet.inSeconds}s: presumed dead socket');
     _reattachGen = _generation;
     _reattachSeq = _bridgeTurnSeq;
-    _abandonBridgeTurn(); // give up on the zombie view (parked loop retires
+    _turn.detach(
+      TurnTrigger.zombieWire,
+    ); // give up on the zombie view (parked loop retires
     // exactly as any abandoned turn's does — see its docs)
     _startReattachChain(retire: true);
     _logDebug(
@@ -2138,14 +2161,13 @@ class VoiceAssistant extends ChangeNotifier {
       // turn, zero-delay probe finds nothing, idle-stomp races the mic
       // open, and the release lands on 'phase=idle not listening' with
       // eleven seconds of speech thrown away.
-      _harnessBackgrounded = false;
-      _harnessSince = null;
+      _turn
+          .retireBadgeAndWork(); // retired work is not background work any more
       _logDebug('orphan retired DURING a live press — phase left alone');
       return;
     }
-    _harnessBackgrounded = false; // the bridge just said nothing is open (or
+    _turn.retireBadgeAndWork(); // the bridge just said nothing is open (or
     // we stopped listening on its only channel) — the badge must not lie
-    _harnessSince = null;
     _idleReady();
     _status = 'Lost the bridge mid-turn — its answer ended unheard.';
     _logDebug('ORPHAN retired: spinner cleared, answer gone unheard');
@@ -2205,11 +2227,10 @@ class VoiceAssistant extends ChangeNotifier {
     _logDebug(
       'REATTACH start: ${_transport.noteHealth(probe)} — replaying backlog',
     );
-    final gen = ++_generation;
-    final mySeq = ++_bridgeTurnSeq; // claim the busy flag for this turn
-    _bridgeBusy = true;
-    _harnessBackgrounded = false; // heard again from here on
-    _harnessSince = _clock(); // the chat spinner counts from here
+    final claim = _turn.beginHeardTurn();
+    final gen = claim.gen;
+    final mySeq = claim.seq; // claim the busy flag for this turn
+    _turn.becomeHeard(); // heard again from here on
     _error = '';
     _ticker.resetForTurn();
     _phase = AssistantPhase.transcribing;
@@ -2356,11 +2377,10 @@ class VoiceAssistant extends ChangeNotifier {
               // /talk loop's identical branch).
               _chat.unpinQueued();
               if (ev.toolKind == 'background') {
-                _bgDetached = true;
-                if (_bgWork.isEmpty) _bgWork = _lastToolStep;
-              } else if (!_bgDetached) {
-                _bgWork = '';
-                _lastToolStep = '';
+                _turn.promiseDetachedTool();
+              } else {
+                _turn.heardPickup(); // the named background tool finished —
+                // the bottom line dismisses with the pin; heard again
               }
               _logDebug(
                 'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
@@ -2368,15 +2388,16 @@ class VoiceAssistant extends ChangeNotifier {
               return;
             }
             if (ev.toolName == 'finished') {
-              // Replayed from the backlog: the completion lands late,
-              // and the story still deserves its period.
+              // Same receipt rule as the /talk loop (see there): the
+              // backgrounded work this replay carries is provably over.
               _retireBgWork(ev.detail);
               return;
             }
             if (ev.toolName == 'queued' &&
                 ev.detail.toLowerCase().contains('background')) {
-              _bgDetached = true;
-              if (_bgWork.isEmpty) _bgWork = _lastToolStep;
+              // Same promise rule as the /talk loop: a replayed cut
+              // notice is the bridge still owing that receipt.
+              _turn.promiseDetachedTool();
             }
             final tally = ev.toolName == 'tokens';
             _logDebug(
@@ -2396,10 +2417,7 @@ class VoiceAssistant extends ChangeNotifier {
                 // A replayed backlog re-names the work the phone missed
                 // while it was away — the bottom line stays honest
                 // about what the backgrounded turn is actually on.
-                _lastToolStep = stepLine;
-                if (_chat.queuedBubble != null || _harnessBackgrounded) {
-                  _bgWork = stepLine;
-                }
+                _turn.noteToolStep(stepLine);
               }
               // No step line in the bubble here either — same policy as
               // the /talk loop: the strip labels the step, the journal
@@ -2416,7 +2434,7 @@ class VoiceAssistant extends ChangeNotifier {
           }
         },
       );
-      _pump = pump;
+      _turn.installPump(pump);
       _lease.armWatch(); // the quiet-wire watchdog rides this connection
       _hops.sent(); // rejoining counts as reached-the-harness too
       _logDebug('ATTACH stream open: gen=$gen backlog replay, then live');
@@ -2437,8 +2455,7 @@ class VoiceAssistant extends ChangeNotifier {
         // Same teardown discipline as runQuickCommand: never touch a
         // successor turn's pump, or busy flag.
         unawaited(_refreshSession());
-        final stillOurs = identical(_pump, pump);
-        if (stillOurs) _pump = null;
+        final stillOurs = _turn.releasePumpIf(pump);
         // An UNOWNED death of the reattached stream (socket, no done, no
         // error frame) — the turn is still the bridge's to finish: the
         // chain rejoins it without resetting the retry ladder, so a
@@ -2451,10 +2468,9 @@ class VoiceAssistant extends ChangeNotifier {
             _bridgeTurnSeq == mySeq &&
             gen == _generation;
         if (stillOurs) _lease.cancel();
-        if (_bridgeTurnSeq == mySeq) {
-          _bridgeBusy = false;
-          if (!_harnessBackgrounded) _harnessSince = null; // detach holds
-        }
+        // Release the busy slot only if we still own it (see
+        // TurnCoordinator.releaseOwnership for the +126 clock rule).
+        _turn.releaseOwnership(mySeq);
         // +114, replay side: a view that dies mid-replay withdraws the
         // paragraphs whose audio never started — the backlog copy for
         // them lives until a view actually speaks them.
@@ -2583,7 +2599,7 @@ class VoiceAssistant extends ChangeNotifier {
   }) async {
     final worker = _worker;
     if (worker == null) return;
-    final gen = ++_generation; // supersede whatever half-state survived
+    final gen = _turn.supersede(); // supersede whatever half-state survived
     _reply.stopPlayback();
     _error = '';
     _phase = AssistantPhase.transcribing;
@@ -2714,8 +2730,8 @@ class VoiceAssistant extends ChangeNotifier {
       // the work (release / slide right). Same supersede semantics as a
       // spoken barge-in in conversation mode — here, per spec, PTT's.
       _ptt.bridgeHold = _bridgeBusy;
-      if (_ptt.bridgeHold) _harnessBackgrounded = true;
-      _generation++;
+      if (_ptt.bridgeHold) _turn.markBackgrounded();
+      _turn.supersede();
       if (_ptt.bridgeHold) {
         _logDebug(
           'ptt DOWN over a live turn: detached it — the open tool '
@@ -2724,7 +2740,7 @@ class VoiceAssistant extends ChangeNotifier {
       }
       _reply.stopDebug();
       _reply.stopPlayback();
-      _abandonBridgeTurn();
+      _turn.detach(TurnTrigger.pttPress);
       if (_ptt.bridgeHold) {
         // The detach used to mean UNSEEN, not just unheard: every tool
         // line and context frame of the backgrounded turn piled into the
@@ -2981,19 +2997,19 @@ class VoiceAssistant extends ChangeNotifier {
   Future<void> _endConversation(String message) async {
     _shutdownAudio();
     _userSpeaking = false;
-    _generation++;
+    _turn.supersede();
     // No ear left on the harness: hard-stop its in-flight turn too.
-    _abandonBridgeTurn(hardStop: true);
+    _turn.detach(TurnTrigger.conversationClose);
     _phase = AssistantPhase.idle;
     _status = message;
     notifyListeners();
   }
 
   void _cancelResponse(String message) {
-    _generation++; // abandon any in-flight turn
+    _turn.supersede(); // abandon any in-flight turn
     // Tap = explicit stop: hard-quit the harness's work too (a spoken
-    // barge-in detaches/backgrounds instead — see _abandonBridgeTurn).
-    _abandonBridgeTurn(hardStop: true);
+    // barge-in detaches/backgrounds instead — see TurnCoordinator.detach).
+    _turn.detach(TurnTrigger.cancelTap);
     _reply.stopDebug();
     _reply.stopPlayback();
     _worker?.resetVad();
@@ -3031,18 +3047,20 @@ class VoiceAssistant extends ChangeNotifier {
           'kill reply after ${_reply.audibleFor.inMilliseconds}ms of reply',
         );
         _reply.stopPlayback();
-        _generation++; // abandon the response we were speaking
+        _turn.supersede(); // abandon the response we were speaking
         // Spoken takeover = DETACH (no hard stop): the harness keeps
         // working behind the scenes — a long tool call runs on, and the
         // utterance landing in a moment queues behind it (or cuts the
         // thinking turn short at the bridge). That is Claude Code's
         // background-the-long-task flow, voice-native edition.
-        _abandonBridgeTurn();
+        _turn.detach(TurnTrigger.voiceBargeIn);
         _status = 'Interrupted — go ahead.';
       } else if (_phase == AssistantPhase.transcribing) {
         _userSpeaking = true;
-        _generation++; // user resumed; drop the half-baked response
-        _abandonBridgeTurn(); // same detach semantics as above
+        _turn.supersede(); // user resumed; drop the half-baked response
+        _turn.detach(
+          TurnTrigger.speechResumed,
+        ); // same detach semantics as above
       } else {
         _userSpeaking = true;
       }
@@ -3078,7 +3096,7 @@ class VoiceAssistant extends ChangeNotifier {
     bool interrupt = true,
     bool cutTool = false,
   }) async {
-    final gen = ++_generation; // any newer turn supersedes this one
+    final gen = _turn.supersede(); // any newer turn supersedes this one
     _ptt.bridgeHold = false; // the hold is over: the turn owns the choice now
     _phase = AssistantPhase.transcribing;
     _status = 'Thinking…';
@@ -3153,7 +3171,7 @@ class VoiceAssistant extends ChangeNotifier {
         // push-to-talk slide-right release queued this prompt politely
         // (the turn in flight finishes first); anything else cuts a mere
         // thinking turn so the new prompt starts in a heartbeat.
-        _abandonBridgeTurn();
+        _turn.detach(TurnTrigger.newUtterance);
         _logDebug(
           '→ harness: bubble added, POSTing /talk (interrupt=$interrupt '
           'cutTool=$cutTool)',
@@ -3350,8 +3368,7 @@ class VoiceAssistant extends ChangeNotifier {
         // it finishes on its own and the next release queues behind it.
         if (interrupt || heldMs < _ptt.tapStopMs) {
           unawaited(_gateway?.stop());
-          _harnessBackgrounded = false;
-          _harnessSince = null;
+          _turn.retireBadge();
           _status = 'Heard nothing — stopped the harness.';
         } else {
           _status =

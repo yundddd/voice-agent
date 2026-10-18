@@ -299,8 +299,11 @@ class TitlTts implements TtsBackend {
           words,
           engine.vocab.keys.toSet(),
           // Italian graphs were trained on espeak's own tap; the English
-          // fold maps it to Misaki's capital-T flap token.
+          // fold maps it to Misaki's capital-T flap token. Italian takes
+          // no diphthong folds either — Misaki's Italian backend feeds
+          // espeak's output nearly verbatim.
           aliases: voice.startsWith('it') ? espeakAliasesIt : espeakAliases,
+          folds: voice.startsWith('it') ? null : TitlEngine.foldEspeakEn,
         ),
         speed: speed,
       ),

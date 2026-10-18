@@ -22,16 +22,31 @@ void main() {
     test('slide classification is exclusive by construction', () {
       expect(hold.slideOf(const Offset(0, -50)), PttSlide.up);
       expect(hold.slideOf(const Offset(60, 0)), PttSlide.right);
-      expect(hold.slideOf(const Offset(60, -50)), PttSlide.right,
-          reason: 'horizontal-dominant diagonal reads as the dismiss');
-      expect(hold.slideOf(const Offset(50, -60)), PttSlide.up,
-          reason: 'vertical-dominant diagonal reads as the interrupt');
-      expect(hold.slideOf(const Offset(60, -60)), PttSlide.none,
-          reason: 'a true tie is neither: both rules need a dominant axis');
-      expect(hold.slideOf(const Offset(-60, -50)), PttSlide.none,
-          reason: 'only a clear UPWARD drag cuts; leftward drift does not');
-      expect(hold.slideOf(const Offset(0, -40)), PttSlide.none,
-          reason: 'below the 48 px thumb threshold: a rolling press');
+      expect(
+        hold.slideOf(const Offset(60, -50)),
+        PttSlide.right,
+        reason: 'horizontal-dominant diagonal reads as the dismiss',
+      );
+      expect(
+        hold.slideOf(const Offset(50, -60)),
+        PttSlide.up,
+        reason: 'vertical-dominant diagonal reads as the interrupt',
+      );
+      expect(
+        hold.slideOf(const Offset(60, -60)),
+        PttSlide.none,
+        reason: 'a true tie is neither: both rules need a dominant axis',
+      );
+      expect(
+        hold.slideOf(const Offset(-60, -50)),
+        PttSlide.none,
+        reason: 'only a clear UPWARD drag cuts; leftward drift does not',
+      );
+      expect(
+        hold.slideOf(const Offset(0, -40)),
+        PttSlide.none,
+        reason: 'below the 48 px thumb threshold: a rolling press',
+      );
       expect(hold.slideOf(const Offset(50, 0)), PttSlide.right);
       expect(hold.slideOf(Offset.zero), PttSlide.none);
     });
@@ -52,30 +67,39 @@ void main() {
       expect(hold.move(const Offset(400, 101)), isFalse);
     });
 
-    test('a second finger does not re-arm the mic; the last release ends it',
-        () {
-      expect(hold.down(const Offset(0, 0)), isTrue);
-      expect(hold.down(const Offset(5, 5)), isFalse);
-      final r1 = hold.release(const Offset(5, 5));
-      expect(r1.stray, isFalse);
-      expect(hold.pointers, 1); // still holding
-      final r2 = hold.release(const Offset(0, 0));
-      expect(r2.stray, isFalse);
-      expect(hold.pointers, 0);
-    });
+    test(
+      'a second finger does not re-arm the mic; the last release ends it',
+      () {
+        expect(hold.down(const Offset(0, 0)), isTrue);
+        expect(hold.down(const Offset(5, 5)), isFalse);
+        final r1 = hold.release(const Offset(5, 5));
+        expect(r1.stray, isFalse);
+        expect(hold.pointers, 1); // still holding
+        final r2 = hold.release(const Offset(0, 0));
+        expect(r2.stray, isFalse);
+        expect(hold.pointers, 0);
+      },
+    );
 
     test('a release with no press is reported as stray, not slide', () {
       hold.down(const Offset(0, 0));
       hold.move(const Offset(0, -60)); // armed up
       final stray = hold.release(const Offset(0, -60));
       expect(stray.up, isTrue);
-      expect(stray.redraw, isTrue,
-          reason: 'the armed pill was on screen and must go now');
+      expect(
+        stray.redraw,
+        isTrue,
+        reason: 'the armed pill was on screen and must go now',
+      );
       final r = hold.release(const Offset(0, -60)); // the stray twin
       expect(r.stray, isTrue);
-      expect(r.heldMs, -1,
-          reason: 'held only reads true when a press was recorded (+95 '
-              'nonsense-clock bug)');
+      expect(
+        r.heldMs,
+        -1,
+        reason:
+            'held only reads true when a press was recorded (+95 '
+            'nonsense-clock bug)',
+      );
     });
 
     test('heldMs measures the real hold', () {
@@ -92,17 +116,16 @@ void main() {
     late List<BridgeEvent> seen;
     late bool stale;
     BridgeTurnPump pump() => BridgeTurnPump(
-          onEvent: (ev) async => seen.add(ev),
-          isStale: () => stale,
-          beforeEvent: (_) {},
-        );
+      onEvent: (ev) async => seen.add(ev),
+      isStale: () => stale,
+      beforeEvent: (_) {},
+    );
     setUp(() {
       seen = [];
       stale = false;
     });
 
-    test('frames queued before the loop even parks still wake it',
-        () async {
+    test('frames queued before the loop even parks still wake it', () async {
       final ctl = StreamController<BridgeEvent>();
       final p = pump();
       final done = p.run(ctl.stream);
@@ -118,8 +141,7 @@ void main() {
       expect(out.closedWithoutDone, isFalse);
     });
 
-    test('a done frame ends the loop even with more frames queued',
-        () async {
+    test('a done frame ends the loop even with more frames queued', () async {
       final ctl = StreamController<BridgeEvent>()
         ..add(BridgeEvent.forTest('done'))
         ..add(BridgeEvent.forTest('say', text: 'after'));
@@ -128,42 +150,47 @@ void main() {
       expect(seen, hasLength(1), reason: 'after-done frames are not ours');
     });
 
-    test('an error frame counts as a clean end (not a reattach orphan)',
-        () async {
-      final ctl = StreamController<BridgeEvent>()
-        ..add(BridgeEvent.forTest('error', text: 'boom', isError: true));
-      final out = await pump().run(ctl.stream);
-      expect(out.sawErrorFrame, isTrue);
-      expect(out.closedWithoutDone, isFalse);
-    });
+    test(
+      'an error frame counts as a clean end (not a reattach orphan)',
+      () async {
+        final ctl = StreamController<BridgeEvent>()
+          ..add(BridgeEvent.forTest('error', text: 'boom', isError: true));
+        final out = await pump().run(ctl.stream);
+        expect(out.sawErrorFrame, isTrue);
+        expect(out.closedWithoutDone, isFalse);
+      },
+    );
 
-    test('a socket that dies without done is reported for the orphan triage',
-        () async {
-      final ctl = StreamController<BridgeEvent>();
-      final p = pump();
-      final done = p.run(ctl.stream);
-      await settle();
-      ctl.addError(BridgeException('socket died'));
-      final out = await done;
-      expect(out.streamError, isA<BridgeException>());
-      expect(out.closedWithoutDone, isTrue);
-      expect(out.detached, isFalse);
-    });
+    test(
+      'a socket that dies without done is reported for the orphan triage',
+      () async {
+        final ctl = StreamController<BridgeEvent>();
+        final p = pump();
+        final done = p.run(ctl.stream);
+        await settle();
+        ctl.addError(BridgeException('socket died'));
+        final out = await done;
+        expect(out.streamError, isA<BridgeException>());
+        expect(out.closedWithoutDone, isTrue);
+        expect(out.detached, isFalse);
+      },
+    );
 
-    test('detach wakes a parked loop immediately (no next-event lottery)',
-        () async {
-      final ctl = StreamController<BridgeEvent>();
-      final p = pump();
-      final done = p.run(ctl.stream);
-      await settle();
-      p.detach(); // long tool run: zero frames pending
-      final out = await done; // would hang awaiting the next frame
-      expect(out.detached, isTrue);
-      expect(out.closedWithoutDone, isTrue);
-    });
+    test(
+      'detach wakes a parked loop immediately (no next-event lottery)',
+      () async {
+        final ctl = StreamController<BridgeEvent>();
+        final p = pump();
+        final done = p.run(ctl.stream);
+        await settle();
+        p.detach(); // long tool run: zero frames pending
+        final out = await done; // would hang awaiting the next frame
+        expect(out.detached, isTrue);
+        expect(out.closedWithoutDone, isTrue);
+      },
+    );
 
-    test('a superseded turn exits on its own (the generation guard)',
-        () async {
+    test('a superseded turn exits on its own (the generation guard)', () async {
       final ctl = StreamController<BridgeEvent>();
       final p = pump();
       final done = p.run(ctl.stream);

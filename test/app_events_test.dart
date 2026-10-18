@@ -68,24 +68,25 @@ void main() {
       expect(k.eventsAfter(1).single['msg'], 'after the restart');
     });
 
-    test('truncated last line (killed mid-append) is skipped, not fatal',
-        () async {
-      final j = journal();
-      await j.log('fine');
-      await File('${dir.path}/app_events.jsonl').writeAsString(
-        '{"seq":2,"t":123,"ms',
-        mode: FileMode.append,
-      );
-      final k = journal();
-      await k.load();
-      expect(k.eventsAfter(0).single['msg'], 'fine');
-      await k.log('still logging');
-      // The torn line is invisible to the counter too (never parsed, so
-      // never counted): its seq is simply reused by the next event. The
-      // one lost pre-kill event is the whole damage — a bridge watermark
-      // never saw it either, so filtering stays consistent.
-      expect(k.seq, 2);
-    });
+    test(
+      'truncated last line (killed mid-append) is skipped, not fatal',
+      () async {
+        final j = journal();
+        await j.log('fine');
+        await File(
+          '${dir.path}/app_events.jsonl',
+        ).writeAsString('{"seq":2,"t":123,"ms', mode: FileMode.append);
+        final k = journal();
+        await k.load();
+        expect(k.eventsAfter(0).single['msg'], 'fine');
+        await k.log('still logging');
+        // The torn line is invisible to the counter too (never parsed, so
+        // never counted): its seq is simply reused by the next event. The
+        // one lost pre-kill event is the whole damage — a bridge watermark
+        // never saw it either, so filtering stays consistent.
+        expect(k.seq, 2);
+      },
+    );
 
     test('mirror stays bounded across many appends', () async {
       final j = journal(capacity: 8);
@@ -102,8 +103,7 @@ void main() {
   });
 
   group('push transport (POST /applog, for dial-refused phones)', () {
-    test('flushNow ships the envelope, ack advances the watermark',
-        () async {
+    test('flushNow ships the envelope, ack advances the watermark', () async {
       final sent = <Map<String, Object>>[];
       final j = journal();
       j.transport = (env) async {
@@ -124,27 +124,29 @@ void main() {
       expect(sent.length, 1);
     });
 
-    test('a refused flush keeps the backlog and reships it next time',
-        () async {
-      final sent = <List<int>>[];
-      final j = journal();
-      var online = false;
-      j.transport = (env) async {
-        final seqs = (env['events'] as List)
-            .map((e) => (e as Map)['seq'] as int)
-            .toList();
-        sent.add(seqs);
-        return online;
-      };
-      await j.log('q1');
-      expect(await j.flushNow(), isFalse); // bridge down
-      expect(j.pushedThrough, 0); // nothing acked
-      online = true;
-      await j.log('q2');
-      expect(await j.flushNow(), isTrue); // backlog rode along with q2
-      expect(sent.last, [1, 2]); // at-least-once: q1 resent, bridge dedupes
-      expect(j.pushedThrough, 2);
-    });
+    test(
+      'a refused flush keeps the backlog and reships it next time',
+      () async {
+        final sent = <List<int>>[];
+        final j = journal();
+        var online = false;
+        j.transport = (env) async {
+          final seqs = (env['events'] as List)
+              .map((e) => (e as Map)['seq'] as int)
+              .toList();
+          sent.add(seqs);
+          return online;
+        };
+        await j.log('q1');
+        expect(await j.flushNow(), isFalse); // bridge down
+        expect(j.pushedThrough, 0); // nothing acked
+        online = true;
+        await j.log('q2');
+        expect(await j.flushNow(), isTrue); // backlog rode along with q2
+        expect(sent.last, [1, 2]); // at-least-once: q1 resent, bridge dedupes
+        expect(j.pushedThrough, 2);
+      },
+    );
 
     test('events appended mid-POST are NOT acked by that ack', () async {
       final j = journal();
@@ -172,20 +174,22 @@ void main() {
       expect(late.single, 1); // ...and goes next, exactly once
     });
 
-    test('log() re-arming honours the failure backoff (no retry storm)',
-        () async {
-      var hits = 0;
-      final j = journal();
-      j.transport = (env) async {
-        hits++;
-        return false; // bridge never answers
-      };
-      await j.log('down1');
-      expect(await j.flushNow(), isFalse);
-      await j.log('down2'); // re-kick inside the backoff window...
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
-      expect(hits, 1); // ...must NOT fire an immediate second attempt
-    });
+    test(
+      'log() re-arming honours the failure backoff (no retry storm)',
+      () async {
+        var hits = 0;
+        final j = journal();
+        j.transport = (env) async {
+          hits++;
+          return false; // bridge never answers
+        };
+        await j.log('down1');
+        expect(await j.flushNow(), isFalse);
+        await j.log('down2'); // re-kick inside the backoff window...
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        expect(hits, 1); // ...must NOT fire an immediate second attempt
+      },
+    );
   });
 
   group('HTTP endpoint (what the bridge dials)', () {
@@ -201,7 +205,9 @@ void main() {
       expect(port, greaterThan(0));
       final client = HttpClient();
       Future<Map> get(String path) async {
-        final req = await client.getUrl(Uri.parse('http://127.0.0.1:$port$path'));
+        final req = await client.getUrl(
+          Uri.parse('http://127.0.0.1:$port$path'),
+        );
         final res = await req.close();
         final body = await res.transform(utf8.decoder).join();
         return {'status': res.statusCode, 'body': jsonDecode(body)};

@@ -11,14 +11,15 @@ BridgeEvent tally({
   String kind = 'thinking',
   String thought = '',
   String draft = '',
-}) =>
-    BridgeEvent.forTest('tool',
-        toolName: 'tokens',
-        toolKind: kind,
-        outTokens: out,
-        inputTokens: inToks,
-        thought: thought,
-        draft: draft);
+}) => BridgeEvent.forTest(
+  'tool',
+  toolName: 'tokens',
+  toolKind: kind,
+  outTokens: out,
+  inputTokens: inToks,
+  thought: thought,
+  draft: draft,
+);
 
 void main() {
   late FakeScheduler time;
@@ -42,9 +43,13 @@ void main() {
       t.onFrame(tally(kind: 'settled', draft: 'partial'));
       expect(t.activityLabel('x'), 'Rendering audio…');
       expect(t.settled, isTrue); // +84: the wheel must stop
-      expect(t.draft, 'partial',
-          reason: '+83: settled carries the final tail — it may hold '
-              'sentences whose audio has not played yet');
+      expect(
+        t.draft,
+        'partial',
+        reason:
+            '+83: settled carries the final tail — it may hold '
+            'sentences whose audio has not played yet',
+      );
     });
   });
 

@@ -208,9 +208,7 @@ class BridgeTransport {
                 ? f['data'] as Map<Object?, Object?>
                 : const <String, Object>{},
           );
-          if (awaitingPickup &&
-              ev.kind == 'tool' &&
-              ev.toolName == 'started') {
+          if (awaitingPickup && ev.kind == 'tool' && ev.toolName == 'started') {
             // The flush's hand-over marker: from the next frame on, the
             // ring carries OUR turn.
             awaitingPickup = false;

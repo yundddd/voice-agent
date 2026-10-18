@@ -31,8 +31,7 @@ void main() {
       expect(repaints, greaterThanOrEqualTo(3));
     });
 
-    test('the cap trims oldest first (the on-screen AND on-disk bound)',
-        () {
+    test('the cap trims oldest first (the on-screen AND on-disk bound)', () {
       for (var i = 0; i < 6; i++) {
         store.addUser('u$i');
       }
@@ -40,8 +39,7 @@ void main() {
       expect(store.entries.first.blocks.single, 'u2');
     });
 
-    test('one pin at a time: a newer press outranks the old (+91 rules)',
-        () {
+    test('one pin at a time: a newer press outranks the old (+91 rules)', () {
       store.addUser('first parked', queued: true);
       expect(store.queuedText, 'first parked');
       store.addUser('second parked', queued: true);
@@ -69,16 +67,17 @@ void main() {
       expect(store.containsBlock('never said'), isFalse);
     });
 
-    test('a system note is its own bubble and reloads as history (+110)',
-        () {
+    test('a system note is its own bubble and reloads as history (+110)', () {
       final turn = store.beginTurn();
       store.addSystemNote('One moment — the thinking was interrupted.');
       // Standalone: the open turn stays empty — it will collect the
       // answer; the note stands after it as its own card.
       expect(turn.blocks, isEmpty);
       expect(store.entries.last.fromUser, isFalse);
-      expect(store.entries.last.blocks.single,
-          'One moment — the thinking was interrupted.');
+      expect(
+        store.entries.last.blocks.single,
+        'One moment — the thinking was interrupted.',
+      );
       // On disk it is an ordinary assistant bubble: reloads as history,
       // with no live pin semantics.
       store.load(persisted.last);
@@ -96,20 +95,25 @@ void main() {
       expect(t.blocks, ['heard fully']);
     });
 
-    test('containsBlock matches how the log stores (whitespace, not case)',
-        () {
+    test('containsBlock matches how the log stores (whitespace, not case)', () {
       final t = store.beginTurn();
       store.addBlock(t, 'Two   spaces\nand a newline');
       expect(store.containsBlock('Two spaces and a newline'), isTrue);
-      expect(store.containsBlock('two spaces and a newline'), isFalse,
-          reason: 'the fold is whitespace-only: case stays honest');
+      expect(
+        store.containsBlock('two spaces and a newline'),
+        isFalse,
+        reason: 'the fold is whitespace-only: case stays honest',
+      );
     });
 
     test('liveTurn: the last assistant bubble, under a queued pin (+91)', () {
       final t = store.beginTurn();
       store.addUser('press over live work', queued: true);
-      expect(store.liveTurn(turnRunning: true), same(t),
-          reason: 'the pin rides the card, not the spinner');
+      expect(
+        store.liveTurn(turnRunning: true),
+        same(t),
+        reason: 'the pin rides the card, not the spinner',
+      );
       expect(store.liveTurn(turnRunning: false), isNull);
     });
 
@@ -121,8 +125,7 @@ void main() {
       expect(store.entries.single.blocks.single, 'restored');
     });
 
-    test('lifecycle stamps + trace lines tell the queue→heard→cut story',
-        () {
+    test('lifecycle stamps + trace lines tell the queue→heard→cut story', () {
       var t = 1000000;
       final lines = <String>[];
       final s = ChatStore(
@@ -134,8 +137,10 @@ void main() {
       // Generated on the phone, parked behind live work:
       s.addUser('parked behind a build', queued: true);
       expect(s.entries.first.createdMs, 1000000);
-      expect(lines,
-          contains('msg phone: user "parked behind a build" queued=1'));
+      expect(
+        lines,
+        contains('msg phone: user "parked behind a build" queued=1'),
+      );
       // Harness takes it 47 s later — the queue wait is journaled:
       t = 1047000;
       s.unpinQueued();
@@ -149,12 +154,17 @@ void main() {
       expect(turn.deliveredMs, 1103000);
       expect(
         lines,
-        contains('msg heard: assistant "Build finished, tests pass." '
-            '(sent→heard 1m43s)'),
+        contains(
+          'msg heard: assistant "Build finished, tests pass." '
+          '(sent→heard 1m43s)',
+        ),
       );
       s.addBlock(turn, 'Second section.');
-      expect(lines.where((l) => l.startsWith('msg heard')).length, 1,
-          reason: 'the bubble is stamped DELIVERED once, at its first block');
+      expect(
+        lines.where((l) => l.startsWith('msg heard')).length,
+        1,
+        reason: 'the bubble is stamped DELIVERED once, at its first block',
+      );
       // A cut turn stamps its death and says what survived:
       final cut = s.beginTurn();
       t = 1111000;
@@ -189,8 +199,7 @@ void main() {
       );
     });
 
-    test('a stream that never delivers bytes is a zombie at the window',
-        () {
+    test('a stream that never delivers bytes is a zombie at the window', () {
       lease.armWatch();
       time.advance(const Duration(seconds: 23));
       expect(quietFired, isNull);
@@ -227,12 +236,14 @@ void main() {
       attached = true;
       paused = true;
       time.advance(const Duration(minutes: 2));
-      expect(quietFired, isNull,
-          reason: 'resumeConversation re-leases the stream itself');
+      expect(
+        quietFired,
+        isNull,
+        reason: 'resumeConversation re-leases the stream itself',
+      );
     });
 
-    test('a dribbling wire re-arms for the remainder, not the full window',
-        () {
+    test('a dribbling wire re-arms for the remainder, not the full window', () {
       lease.armWatch();
       time.advance(const Duration(seconds: 20));
       lease.markAlive(); // bytes crossed 20 s into the window

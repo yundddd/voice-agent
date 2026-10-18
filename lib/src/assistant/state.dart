@@ -3,7 +3,6 @@
 /// measured bench run. Plain values — no behaviour, no timers.
 library;
 
-
 /// Interaction styles.
 enum InteractionMode {
   /// Hands-free: the mic runs continuously; an utterance ends when the user

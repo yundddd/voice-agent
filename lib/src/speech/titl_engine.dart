@@ -70,14 +70,18 @@ const int _memTypeDefault = 0;
 /// with a foreign accent against the Hugging Face samples. Folding is
 /// one pass per char, so this coexists with the legacy 'T'→'θ' entry:
 /// espeak's theta sign becomes θ, the tap becomes T, never the reverse.
+/// 'ʔ'→'t', 'ä'→'ə' and the dropped 'ˑ' mirror the tail of Misaki's own
+/// fallback pass (its US branch strips every length mark), so the
+/// single-char rescue lands on the same trained ids as [foldEspeakEn].
 const Map<String, String> espeakAliases = {
   'D': 'ð',
   'T': 'θ',
   '1': 'ɨ',
   '2': 'ʉ',
-  'ä': 'ɐ',
+  'ä': 'ə',
   'ɾ': 'T',
-  'ˑ': 'ː',
+  'ʔ': 't',
+  'ˑ': '',
 };
 
 /// Italian students keep the tap: Kokoro's Italian pipeline (Misaki +
@@ -92,6 +96,52 @@ const Map<String, String> espeakAliasesIt = {
   'ä': 'ɐ',
   'ˑ': 'ː',
 };
+
+/// Misaki's espeak→Kokoro substitution table (EspeakFallback.E2M in
+/// misaki/espeak.py, tie marks stripped because the piper build emits
+/// diphthongs bare), applied in two phases around the syllabic-diacritic
+/// regex exactly like upstream. THE students were trained on this
+/// alphabet: the ow in 'sound' is ONE 'W' token, and espeak's raw 'aʊ'
+/// pair — two legal ids the graph never saw in that slot — is what made
+/// the student say "sown" (field report + A/B on the same int8 graph).
+/// Misaki's tail 'ɾ'→'T'/'ʔ'→'t' rules live in [espeakAliases] instead,
+/// where the one-pass fold cannot feed a rescued flap back into 'T'→'θ'.
+const List<List<String>> _espeakFoldsBeforeSyllabic = [
+  ['ʔˌn̩', 'ʔn'],
+  ['ʔn̩', 'ʔn'],
+  ['aʊ', 'W'],
+  ['aɪ', 'I'],
+  ['dʒ', 'ʤ'],
+  ['eɪ', 'A'],
+  ['e', 'A'],
+  ['tʃ', 'ʧ'],
+  ['ɔɪ', 'Y'],
+  ['əl', 'ᵊl'],
+  ['ʲo', 'jo'],
+  ['ʲə', 'jə'],
+  ['ʲ', ''],
+  ['ɚ', 'əɹ'],
+  ['r', 'ɹ'],
+  ['x', 'k'],
+  ['ç', 'k'],
+  ['ɐ', 'ə'],
+  ['ɬ', 'l'],
+  ['̃', ''],
+];
+
+/// The US branch, after the (\S)̩ → ᵊ\1 rewrite: GOAT, the NURSE
+/// fold (which ADDS the r the piper build's data omits), NEAR, and the
+/// total removal of length marks — Misaki's US output carries no 'ː'.
+const List<List<String>> _espeakFoldsUs = [
+  ['oʊ', 'O'],
+  ['ɜːɹ', 'ɜɹ'],
+  ['ɜː', 'ɜɹ'],
+  ['ɪə', 'iə'],
+  ['ː', ''],
+  ['o', 'ɔ'],
+];
+
+const _syllabicMark = '̩'; // the syllabic diacritic Misaki folds away
 
 class TitlException implements Exception {
   final String message;
@@ -234,19 +284,39 @@ class TitlEngine {
 
   // ── Pure text plumbing (unit-tested without any native) ───────────────
 
+  /// espeak's bare-IPA diphthongs → the trained Kokoro singletons
+  /// ([_espeakFoldsBeforeSyllabic], then Misaki's syllabic-diacritic
+  /// rewrite, then the US branch). Pure; unit-tested.
+  static String foldEspeakEn(String phonemized) {
+    var s = phonemized;
+    for (final f in _espeakFoldsBeforeSyllabic) {
+      s = s.replaceAll(f[0], f[1]);
+    }
+    s = s.replaceAllMapped(RegExp('(\\S)$_syllabicMark'), (m) => 'ᵊ${m[1]}');
+    for (final f in _espeakFoldsUs) {
+      s = s.replaceAll(f[0], f[1]);
+    }
+    return s.replaceAll(_syllabicMark, '');
+  }
+
   /// espeak-ng word phonemes (code points per word, the piper_phonemize
-  /// shape) → one Kokoro phoneme string: [aliases] folded, foreign chars
-  /// dropped against [vocab], words joined on the vocab's own space
-  /// char, and a final stop added when the piece lost one (sentence
-  /// intonation, like the teacher's own pipeline feeds it).
+  /// shape) → one Kokoro phoneme string: [folds] (e.g. [foldEspeakEn])
+  /// applied per word first, then [aliases], foreign chars dropped
+  /// against [vocab], words joined on the vocab's own space char, and a
+  /// final stop added when the piece lost one (sentence intonation, like
+  /// the teacher's own pipeline feeds it).
   static String phonemesFromWords(
     List<List<int>> words,
     Set<String> vocab, {
     Map<String, String> aliases = espeakAliases,
+    String Function(String)? folds,
   }) {
     final b = StringBuffer();
     for (final w in words) {
-      for (final rune in String.fromCharCodes(w).runes) {
+      final word = folds == null
+          ? String.fromCharCodes(w)
+          : folds(String.fromCharCodes(w));
+      for (final rune in word.runes) {
         final c = String.fromCharCode(rune);
         final folded = aliases[c] ?? c;
         if (vocab.contains(folded)) b.write(folded);

@@ -189,8 +189,9 @@ void main() {
       expect(a.backgroundedWork, isEmpty, reason: 'the line dismisses itself');
     });
 
-    test('a queue pin behind an open tool keeps the line; the pickup ack '
-        'retires it (the bridge only flushes a closed turn)', () async {
+    test('a press behind an open DETACHED tool shows in the flow (the pin '
+        'protects only in-ear answers, +126); the line survives on the '
+        'badge and the pickup ack retires it', () async {
       await withBridge();
       unawaited(a.runQuickCommand('go'));
       await settle();
@@ -210,11 +211,20 @@ void main() {
         ),
       );
       await settle();
-      expect(a.queuedBubble, isNotNull);
+      expect(
+        a.queuedBubble,
+        isNull,
+        reason:
+            'nothing audible to protect — the press shows right away '
+            '(+126: the pin guards only in-ear answers)',
+      );
+      expect(a.chat.where((e) => e.fromUser).last.queued, isFalse);
       expect(
         a.backgroundedWork,
         'Bash npm test…',
-        reason: 'waiting behind the open tool is still background work',
+        reason:
+            'the badge still carries the wait: the tool IS still '
+            'running unheard until the ack proves it closed',
       );
       harness.emit(
         BridgeEvent.forTest(
@@ -224,8 +234,8 @@ void main() {
         ),
       );
       await settle();
-      expect(a.queuedBubble, isNull);
       expect(a.backgroundedWork, isEmpty); // auto-dismiss at delivery
+      expect(a.harnessBackgrounded, isFalse);
     });
 
     test('tool steps update the label; plumbing steps are eyes-only', () async {
@@ -577,99 +587,93 @@ void main() {
       },
     );
 
-    test(
-      'poll view: the prior turn’s DONE cannot end the queue pump — the '
-      'pin dissolves at the started marker BEHIND it (field report: a '
-      'queue press over a live bash sleep left the pin frozen)',
-      () async {
-        await withBridge();
-        // The busy turn opens BEFORE the ring is known — the classic
-        // session start, riding SSE.
-        harness.turnOpenOnServer = true;
-        unawaited(a.runQuickCommand('run bash sleep 10'));
-        await settle();
+    test('poll view: the prior turn’s DONE cannot end the queue pump — the '
+        'pin dissolves at the started marker BEHIND it (field report: a '
+        'queue press over a live bash sleep left the pin frozen)', () async {
+      await withBridge();
+      // The busy turn opens BEFORE the ring is known — the classic
+      // session start, riding SSE.
+      harness.turnOpenOnServer = true;
+      unawaited(a.runQuickCommand('run bash sleep 10'));
+      await settle();
 
-        // Mid-turn, the bridge's /health reveals the ring: from here the
-        // phone pulls.
-        harness.healthState = {
-          'ok': true,
-          'claudeUp': true,
-          'now': time.now.millisecondsSinceEpoch,
-          'poll': {'ring': 10},
-        };
-        await a.debugProbeTransport();
+      // Mid-turn, the bridge's /health reveals the ring: from here the
+      // phone pulls.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': time.now.millisecondsSinceEpoch,
+        'poll': {'ring': 10},
+      };
+      await a.debugProbeTransport();
 
-        // The Queue button, pressed while the sleep runs: polite, cuts
-        // the tool into background. The POST parks; its pump inherits
-        // the ring cursor at the head of everything the SSE view already
-        // delivered (+81 catch-up) — and NOTHING else has rung since.
-        unawaited(
-          a.runQuickCommand(
-            'status please',
-            interrupt: false,
-            cutTool: true,
-            bubble: 'status please',
+      // The Queue button, pressed while the sleep runs: polite, cuts
+      // the tool into background. The POST parks; its pump inherits
+      // the ring cursor at the head of everything the SSE view already
+      // delivered (+81 catch-up) — and NOTHING else has rung since.
+      unawaited(
+        a.runQuickCommand(
+          'status please',
+          interrupt: false,
+          cutTool: true,
+          bubble: 'status please',
+        ),
+      );
+      await settle();
+      expect(a.queuedText, 'status please');
+      expect(harness.lastCutTool, isTrue);
+
+      // Ten seconds later the sleep settles, and the flush lands on
+      // the ring as one batch, in the bridge's own order: the busy
+      // turn's done FIRST, then the disposition notice, then the
+      // pickup marker. Handing that done to the pump ended the queue
+      // turn before its markers — the pin fossilised at 'queued' and
+      // the flushed answer strangled in the ring unheard, exactly as
+      // reported. The pump must eat the foreign done and keep waiting.
+      harness.pollPages.add(
+        FakeHarness.page(13, [
+          BridgeEvent.forTest('done'),
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'queued',
+            detail:
+                'the running tool was put into background — the agent '
+                'is freed to answer you now',
           ),
-        );
-        await settle();
-        expect(a.queuedText, 'status please');
-        expect(harness.lastCutTool, isTrue);
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'started',
+            detail: 'status please',
+            toolKind: 'background',
+          ),
+        ], first: 11),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(a.queuedText, isNull, reason: 'the marker dissolved the pin');
+      expect(a.debugLog.any((l) => l.contains('queue picked up')), isTrue);
 
-        // Ten seconds later the sleep settles, and the flush lands on
-        // the ring as one batch, in the bridge's own order: the busy
-        // turn's done FIRST, then the disposition notice, then the
-        // pickup marker. Handing that done to the pump ended the queue
-        // turn before its markers — the pin fossilised at 'queued' and
-        // the flushed answer strangled in the ring unheard, exactly as
-        // reported. The pump must eat the foreign done and keep waiting.
-        harness.pollPages.add(
-          FakeHarness.page(13, [
-            BridgeEvent.forTest('done'),
-            BridgeEvent.forTest(
-              'tool',
-              toolName: 'queued',
-              detail:
-                  'the running tool was put into background — the agent '
-                  'is freed to answer you now',
-            ),
-            BridgeEvent.forTest(
-              'tool',
-              toolName: 'started',
-              detail: 'status please',
-              toolKind: 'background',
-            ),
-          ], first: 11),
-        );
-        time.advance(const Duration(milliseconds: 300));
-        await settle();
-        expect(a.queuedText, isNull, reason: 'the marker dissolved the pin');
-        expect(
-          a.debugLog.any((l) => l.contains('queue picked up')),
-          isTrue,
-        );
-
-        // And the surviving pump HEARS the flushed turn — the reply the
-        // frozen pump used to strand unheard behind the foreign done.
-        harness.pollPages.add(
-          FakeHarness.page(14, [
-            BridgeEvent.forTest('say', text: 'All green.'),
-          ], first: 14),
-        );
-        time.advance(const Duration(milliseconds: 300));
-        await settle();
-        expect(
-          a.chat.any((e) => !e.fromUser && e.blocks.contains('All green.')),
-          isTrue,
-          reason: 'own-turn frames after the marker reach the pump alive',
-        );
-        harness.pollPages.add(
-          FakeHarness.page(15, [BridgeEvent.forTest('done')], first: 15),
-        );
-        time.advance(const Duration(milliseconds: 300));
-        await settle();
-        expect(a.phase, isNot(AssistantPhase.transcribing));
-      },
-    );
+      // And the surviving pump HEARS the flushed turn — the reply the
+      // frozen pump used to strand unheard behind the foreign done.
+      harness.pollPages.add(
+        FakeHarness.page(14, [
+          BridgeEvent.forTest('say', text: 'All green.'),
+        ], first: 14),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        a.chat.any((e) => !e.fromUser && e.blocks.contains('All green.')),
+        isTrue,
+        reason: 'own-turn frames after the marker reach the pump alive',
+      );
+      harness.pollPages.add(
+        FakeHarness.page(15, [BridgeEvent.forTest('done')], first: 15),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(a.phase, isNot(AssistantPhase.transcribing));
+    });
 
     test(
       'push view: the bridge’s queued NOTICE is not a pickup — the pin '
@@ -841,13 +845,9 @@ void main() {
       );
       await settle();
       expect(a.queuedText, 'status?');
-      expect(
-        a.backgroundedWork,
-        'Bash flutter test…',
-        reason: 'waiting behind the cut tool is background work',
-      );
       // The bridge's notice confirms the tool went to background — the
-      // banner now rides its own warrant, not just the pin:
+      // banner lights on the bridge's own word (not the phone's guess),
+      // and it rides its own warrant from here, not just the pin:
       harness.healthState = {
         'ok': true,
         'claudeUp': true,
@@ -864,10 +864,23 @@ void main() {
         ),
       );
       await settle();
+      expect(
+        a.backgroundedWork,
+        'Bash flutter test…',
+        reason:
+            'waiting behind the cut tool is background work '
+            'the moment the bridge says so',
+      );
       // Pick-up of the queued prompt must NOT retire the line: the
-      // cut tool is precisely what is still running.
+      // cut tool is precisely what is still running — and the bridge
+      // tags this flush's marker with the promise it carries.
       harness.emit(
-        BridgeEvent.forTest('tool', toolName: 'started', detail: 'status?'),
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'status?',
+          toolKind: 'background',
+        ),
       );
       await settle();
       expect(a.queuedText, isNull, reason: 'the pin dissolved at pickup');
@@ -1530,6 +1543,92 @@ void main() {
         engine.synthesized.any((t) => t.contains('Something from before')),
         isFalse,
         reason: '…but the user already heard it; never re-voice',
+      );
+    });
+  });
+
+  group('the backgrounded-work receipt (0.1.0+128)', () {
+    test('poll view: the finished receipt dismisses the bottom line '
+        'without waiting for a pickup', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('busy turn'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'npm test'),
+      );
+      await settle();
+      // The press detaches the turn: badge lit, the line names the work.
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(Offset.zero);
+      await settle();
+      expect(a.harnessBackgrounded, isTrue);
+      expect(a.backgroundedWork, 'Bash npm test…');
+
+      // The next prompt rides the ring (poll): beforeEvent keeps its
+      // hands off there, so nothing retires the line until the wire
+      // itself proves something. The bridge relays the detached turn's
+      // 'finished' receipt the moment its result lands — the ring
+      // delivers it to the queued view ahead of any pickup.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': time.now.millisecondsSinceEpoch,
+        'poll': {'ring': 10},
+      };
+      await a.debugProbeTransport();
+      unawaited(a.runQuickCommand('follow-up', bubble: 'follow-up'));
+      await settle();
+      expect(
+        a.queuedText,
+        isNull,
+        reason: 'an interrupt prompt shows right away (+126)',
+      );
+      expect(
+        a.backgroundedWork,
+        'Bash npm test…',
+        reason: 'the work IS still running unheard until the receipt',
+      );
+
+      harness.pollPages.add(
+        FakeHarness.page(11, [
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'ended after 9s unheard',
+          ),
+        ], first: 11),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        a.backgroundedWork,
+        isEmpty,
+        reason:
+            'the receipt proves the work over — the line dismisses '
+            'itself, no pickup required',
+      );
+      expect(a.harnessBackgrounded, isFalse);
+      expect(
+        a.debugLog.any(
+          (l) =>
+              l.contains('backgrounded work finished (ended after 9s unheard)'),
+        ),
+        isTrue,
+        reason: 'the journal keeps WHEN the out-of-earshot work ended',
+      );
+
+      // The queue's own pickup ack still does its pin/spinner work after.
+      harness.pollPages.add(
+        FakeHarness.page(12, [
+          BridgeEvent.forTest('tool', toolName: 'started', detail: 'follow-up'),
+        ], first: 12),
+      );
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        a.harnessElapsed,
+        Duration.zero,
+        reason: 'the live turn re-anchored the age clock at pickup',
       );
     });
   });
