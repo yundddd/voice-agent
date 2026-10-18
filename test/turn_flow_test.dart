@@ -2152,7 +2152,15 @@ void main() {
             'means WAIT, politely and completely',
       );
       expect(a.queuedText, 'queued', reason: 'parked behind the live turn');
-      expect(a.view.showBackgroundedRow, isTrue);
+      expect(
+        a.view.showBackgroundedRow,
+        isFalse,
+        reason:
+            '+145: a queue PIN does not warrant the background line — '
+            'the agent waits on its tool in the foreground and the '
+            'parked queue view keeps hearing it; that is a wait, not '
+            'a background (pin card + spinner tell it)',
+      );
     });
 
     test('+142: a cut tool’s cancelled receipt files “cancelled.” — and '

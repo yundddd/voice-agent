@@ -32,11 +32,13 @@ final class QueuedPin {
   final int createdMs;
 }
 
-/// The persistent bottom row for out-of-earshot work. [visible] is the
-/// whole dismissal policy, precomputed: the row rides the proof-of-work
-/// signals (the detached-turn badge or a queue pin naming the wait), and
-/// every completion path clears one — so an absent row is never a bug
-/// the screen has to explain.
+/// The persistent bottom row for UNHEARD work — the badge (a detached
+/// turn), the cut-tool promise, or the agent's own backgrounded shell.
+/// A queue pin is NOT a warrant (+145): parked-behind-and-hearing is a
+/// wait the pin card and spinner tell, not a background. [visible] is
+/// the whole dismissal policy, precomputed from those three proofs,
+/// and every completion path clears them — so an absent row is never
+/// a bug the screen has to explain.
 final class BgWork {
   const BgWork({
     required this.visible,

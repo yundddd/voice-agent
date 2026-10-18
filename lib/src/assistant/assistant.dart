@@ -630,21 +630,21 @@ class VoiceAssistant extends ChangeNotifier {
   bool get bridgeBusy => _bridgeBusy;
   bool get harnessBackgrounded => _harnessBackgrounded;
 
-  /// The persistent bottom line's label: the last real tool step the
-  /// out-of-earshot work attested to, and ONLY while a line is actually
-  /// warranted — the badge (detached turn still working), the queue
-  /// pin (a press parked behind that work), the cut-tool promise (a
-  /// tool THIS press put into background), or the agent's own
-  /// backgrounded shell (+133, the bridge's `tool backgrounded` frame).
-  /// Every completion path clears one of them, so the empty string IS
-  /// the auto-dismiss: /stop, an orphan retire, a health probe that
+  /// Whether the channel's bottom line is warranted right now — and
+  /// the warrant is UNHEARD work, +145: the badge (a detached turn
+  /// the phone stopped listening to), the cut-tool promise (a tool a
+  /// cut orphaned, owed its receipt), or the agent's own backgrounded
+  /// shell. A queue PIN alone does NOT warrant it: the field caught
+  /// the line claiming 'working in the background' for a sleep the
+  /// agent was waiting on in the FOREGROUND while the phone's own
+  /// parked queue view kept hearing its tail — that wait is told by
+  /// the pin card and the spinner, not by a row that lies. Every
+  /// completion path clears the three, so the empty string IS the
+  /// auto-dismiss: /stop, an orphan retire, a health probe that
   /// finds nothing open, or the tool's 'finished' receipt paying the
   /// promise.
   bool get showsBackgroundedWork =>
-      _harnessBackgrounded ||
-      _turn.detachedPromise ||
-      _turn.agentWork ||
-      _chat.queuedBubble != null;
+      _harnessBackgrounded || _turn.detachedPromise || _turn.agentWork;
 
   String get backgroundedWork => showsBackgroundedWork ? _bgWork : '';
 
@@ -3032,6 +3032,15 @@ class VoiceAssistant extends ChangeNotifier {
       _applyPttCutTrace();
     } else {
       _dropPttCutTrace();
+      // +145: the press detached the heard turn and lit the badge —
+      // honest while the mic owned the moment. A QUEUE release hands
+      // the ear straight back: the successor's pump rides the ring
+      // and hears the settling turn's tail (armored, deduped), so
+      // 'working unheard' has expired — the pin card and the spinner
+      // carry the wait from here. (Discard deliberately keeps the
+      // badge: no successor view exists, the work really is out of
+      // earshot until a drain brings it back.)
+      _turn.retireBadge();
     }
     await _startTurn(cleaned, interrupt: willCut);
   }
