@@ -39,14 +39,74 @@ class ModelPack {
 /// Download progress callback: label, bytes done, total bytes (0 if unknown).
 typedef ModelProgress = void Function(String, int, int);
 
-/// Download + unpack [pack] unless its marker file already exists.
+/// The retry ladder for a phone-sized network: backgrounding KILLS long
+/// downloads (Doze cuts the socket on screen-off, Wi-Fi handoff and
+/// tailnet re-key black-hole it mid-body, and Android may freeze or
+/// kill the whole process), and a 334 MB pack must not restart from
+/// zero every time the screen blinks. Every transfer failure keeps
+/// `dirName.part` where it is and comes back at the byte the wire
+/// stopped at (HTTP Range) — the ladder only decides how long to wait
+/// before the next continue, not what to re-fetch. ~4 minutes of
+/// attempts covers the deep-sleep cases; the app's own resume hook
+/// (§VoiceAssistant) re-arms a fresh ladder after longer naps.
+const kDownloadRetries = [
+  Duration(seconds: 1),
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+  Duration(seconds: 16),
+  Duration(seconds: 30),
+  Duration(seconds: 60),
+  Duration(seconds: 60),
+];
+
+/// The stalled-body watchdog: a route that dies quietly (the carrier's
+/// NAT forgets the flow, the tailnet drops it without a FIN) leaves a
+/// listening socket that delivers NOTHING and never errors — the
+/// download would hang at its last percentage forever. No body bytes
+/// for this long and the attempt is declared dead: the partial file
+/// stays on disk and the retry ladder continues it. Longer than any
+/// legitimate silence a CDN produces mid-stream, shorter than a user's
+/// patience.
+const kDownloadIdle = Duration(seconds: 30);
+
+/// Download + unpack [pack], resuming an interrupted transfer across
+/// retries. Only a corrupted or vanished pack starts the bytes over;
+/// every wire death continues from the partial file.
+///
+/// [retryDelays] and [pause] are the test seam: the ladder and its
+/// sleeps are injectable so the resume choreography pins in
+/// milliseconds on a local server.
 Future<void> ensurePack(
   String modelsDir,
   ModelPack pack, {
   ModelProgress? onProgress,
+  List<Duration> retryDelays = kDownloadRetries,
+  Duration idleTimeout = kDownloadIdle,
+  Future<void> Function(Duration) pause = Future.delayed,
 }) async {
   if (await packInstalled(modelsDir, pack)) return;
-  await _fetchAndUnpack(modelsDir, pack, onProgress);
+  final delays = List.of(retryDelays);
+  while (true) {
+    try {
+      await _fetchAndUnpack(modelsDir, pack, onProgress, idleTimeout);
+      return;
+    } on _PermanentPackFailure catch (e) {
+      // 404 / marker-less garbage: another attempt reads the same
+      // nothing. Loud is the only useful answer.
+      throw HttpException(e.message);
+    } catch (_) {
+      if (delays.isEmpty) rethrow;
+      await pause(delays.removeAt(0));
+    }
+  }
+}
+
+/// A failure no retry can fix (gone from the origin, or corrupt past
+/// the point of re-reading the same bytes).
+class _PermanentPackFailure implements Exception {
+  const _PermanentPackFailure(this.message);
+  final String message;
 }
 
 Future<bool> packInstalled(String modelsDir, ModelPack pack) =>
@@ -66,27 +126,70 @@ Future<void> _fetchAndUnpack(
   String modelsDir,
   ModelPack pack,
   ModelProgress? onProgress,
+  Duration idleTimeout,
 ) async {
   final dir = Directory(p.join(modelsDir, pack.dirName));
   final tmp = File('${dir.path}.part');
   final client = HttpClient();
+  // The partial file's fate by the time this function exits: TRUE
+  // through every wire death (those bytes are valid, they are just
+  // not the whole story yet); false only after success, after
+  // corruption, or after a 4xx that says the origin has nothing to
+  // resume into.
+  var keepPartial = true;
   try {
+    var have = await tmp.exists() ? await tmp.length() : 0;
     final req = await client.getUrl(Uri.parse(pack.url));
-    final res = await req.close();
-    if (res.statusCode != 200) {
+    if (have > 0) req.headers.set(HttpHeaders.rangeHeader, 'bytes=$have-');
+    // The header phase gets the same watchdog as the body: a connect
+    // into a black hole must stall the ladder, not stop it.
+    final res = await req.close().timeout(idleTimeout);
+    if (res.statusCode == 416) {
+      // The origin is smaller than what we have: the asset changed
+      // under the resume (or the partial file is stale garbage).
+      // Discard and refetch on the next attempt.
+      keepPartial = false;
+      throw const SocketException('range past end of pack — restarting fetch');
+    }
+    if (res.statusCode == 200 && have > 0) {
+      // Range ignored (an origin without byte serves): the full body
+      // arrives, so appending would duplicate every byte already on
+      // disk. Start the file over — the next death resumes again.
+      have = 0;
+    }
+    if (res.statusCode != 200 && res.statusCode != 206) {
+      // Server-busy family: transient — come back (with the partial)
+      // and ask again. Anything else (404, 403, 410) is the origin
+      // saying this pack is not there: no ladder helps.
+      final transient =
+          res.statusCode >= 500 ||
+          res.statusCode == 408 ||
+          res.statusCode == 429;
+      keepPartial = transient;
+      if (!transient) {
+        throw _PermanentPackFailure('HTTP ${res.statusCode} for ${pack.url}');
+      }
       throw HttpException('HTTP ${res.statusCode} for ${pack.url}');
     }
-    final total = res.contentLength;
-    var done = 0;
-    final sink = tmp.openWrite();
+    final total = res.contentLength > 0 ? have + res.contentLength : 0;
+    var done = have;
+    final sink = tmp.openWrite(
+      mode: have > 0 ? FileMode.append : FileMode.write,
+    );
     try {
-      await for (final chunk in res) {
-        sink.add(chunk);
-        done += chunk.length;
+      await _watchedCopy(res, sink, idleTimeout, (n) {
+        done += n;
         onProgress?.call(pack.label, done, total);
-      }
+      });
     } finally {
       await sink.close();
+    }
+    if (res.contentLength > 0 &&
+        await tmp.length() != have + res.contentLength) {
+      // EOF early without an error frame (a proxy truncating the
+      // stream): the lie is only that we believed it was done. Keep
+      // what arrived, resume the rest.
+      throw const SocketException('body shorter than content-length');
     }
 
     onProgress?.call('Unpacking ${pack.label}', 0, 0);
@@ -112,14 +215,82 @@ Future<void> _fetchAndUnpack(
       // "Unpacking…" sat dead-faced through it), and the tar.bz2 branch
       // peaked at full-archive-in-RAM on top. The isolate fixes both:
       // peak is one member, and the label updates per file.
-      await _unpackOnIsolate(tmp.path, pack, dir.path, onProgress: onProgress);
+      try {
+        await _unpackOnIsolate(
+          tmp.path,
+          pack,
+          dir.path,
+          onProgress: onProgress,
+        );
+      } on _PermanentPackFailure {
+        keepPartial = false; // corrupt bytes: re-reading them won't help
+        rethrow;
+      } on FormatException {
+        keepPartial = false;
+        rethrow;
+      }
+      // An OOM'd isolate (StateError: worker died) keeps the bytes:
+      // they are complete and good, the next attempt just needs the
+      // memory more than the download.
     }
+    keepPartial = false; // unpacked: the archive has served its purpose
   } finally {
-    try {
-      await tmp.delete();
-    } catch (_) {}
+    if (!keepPartial) {
+      try {
+        await tmp.delete();
+      } catch (_) {}
+    }
     client.close(force: true);
   }
+}
+
+/// Pipes [body] into [sink], dying loudly when the stream goes quiet.
+/// A cancelled subscription is how a mid-body route death LOOKS from
+/// here when the network never sent FIN: nothing errors, nothing
+/// arrives — so the watchdog cancels it and throws the failure the
+/// retry ladder turns into a resume.
+Future<void> _watchedCopy(
+  Stream<List<int>> body,
+  StreamSink<List<int>> sink,
+  Duration idleTimeout,
+  void Function(int chunkBytes) onBytes,
+) {
+  final done = Completer<void>();
+  Timer? idle;
+  StreamSubscription<List<int>>? sub;
+  void arm() {
+    idle?.cancel();
+    idle = Timer(idleTimeout, () {
+      unawaited(sub?.cancel());
+      if (!done.isCompleted) {
+        done.completeError(
+          SocketException(
+            'download stalled — no bytes for ${idleTimeout.inSeconds}s',
+          ),
+        );
+      }
+    });
+  }
+
+  sub = body.listen(
+    (chunk) {
+      arm();
+      sink.add(chunk);
+      onBytes(chunk.length);
+    },
+    onError: (Object e, StackTrace s) {
+      if (!done.isCompleted) done.completeError(e, s);
+    },
+    onDone: () {
+      idle?.cancel();
+      if (!done.isCompleted) done.complete();
+    },
+  );
+  arm();
+  return done.future.whenComplete(() {
+    idle?.cancel();
+    unawaited(sub?.cancel());
+  });
 }
 
 /// Unpack an already-downloaded pack (archive or single file) into [dir].
@@ -200,11 +371,22 @@ Future<void> _unpackOnIsolate(
       case 'err':
         // The worker's own error object, un-wrapped: callers (and the
         // unpack tests) match on ArchiveException/FormatException/
-        // StateError types, exactly as when decode ran inline.
-        done.completeError(
-          msg[1] as Object,
-          msg[2] is StackTrace ? msg[2] as StackTrace : StackTrace.current,
-        );
+        // StateError types, exactly as when decode ran inline. One
+        // translation: a valid archive MISSING its marker is a broken
+        // asset, not a bad wire — the downloader must not spend the
+        // whole retry ladder re-fetching the same incomplete zip.
+        final e = msg[1] as Object;
+        if (e is StateError && e.message.contains('unpacked without')) {
+          done.completeError(
+            _PermanentPackFailure('${pack.label}: ${e.message}'),
+            msg[2] is StackTrace ? msg[2] as StackTrace : StackTrace.current,
+          );
+        } else {
+          done.completeError(
+            e,
+            msg[2] is StackTrace ? msg[2] as StackTrace : StackTrace.current,
+          );
+        }
     }
   });
   await Isolate.spawn(

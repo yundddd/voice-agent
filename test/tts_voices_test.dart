@@ -40,8 +40,11 @@ void main() {
     test('the old single-student voice id migrates', () {
       final p = TtsPrefs.fromJson({'voice': 'titl-heart', 'sid': 0});
       expect(p.voiceId, 'titl');
-      expect(TtsPrefs.fromJson({}).voiceId, 'titl',
-          reason: 'the students are the shipped default: 9 MB, not 334');
+      expect(
+        TtsPrefs.fromJson({}).voiceId,
+        'titl',
+        reason: 'the students are the shipped default: 9 MB, not 334',
+      );
       expect(TtsPrefs.fromJson({'voice': 'kokoro', 'sid': 3}).sid, 3);
     });
 

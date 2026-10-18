@@ -261,6 +261,18 @@ class VoiceAssistant extends ChangeNotifier {
   bool _segGotAudio = false; // current utterance produced a VAD segment
   bool _disposed = false;
 
+  /// The cold-start model download/pack step FAILED (typically: the app
+  /// was backgrounded and Android ate the transfer). Not fatal — the
+  /// partial file is on disk, the retry ladder has the rest — but the
+  /// worker stays null until one attempt gets through, so every way
+  /// back to the network (a foreground, a tap) doubles as a retry
+  /// trigger. See init().
+  bool _modelsFailed = false;
+
+  /// One re-armed attempt at a time (see [_retryModels]) — two parallel
+  /// init() retries would append to the same .part from two sockets.
+  bool _modelsRetrying = false;
+
   /// The background→foreground dance (hidden flag, was-live relisten
   /// intent, the cut-paragraph drop mark, the unheard-say buffer, the
   /// snapshotted working line) as one named-transition unit.
@@ -1278,6 +1290,7 @@ class VoiceAssistant extends ChangeNotifier {
 
   Future<void> init() async {
     try {
+      _modelsFailed = false;
       final modelsDir = await unpackModels(onProgress: _modelProgress);
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
@@ -1287,15 +1300,19 @@ class VoiceAssistant extends ChangeNotifier {
       // loads its disk mirror first: when Android killed this process
       // mid-turn last time, the events leading up to the kill — and the
       // reattach that (didn't) happen after — are exactly what a poll
-      // from the desktop should find waiting.
-      final j = AppEventJournal(dir: modelsDir);
+      // from the desktop should find waiting. (Re-entrant: a retry of
+      // init() after a failed pack start reuses the journal that
+      // already bound its port — re-serving it would fail the bind and
+      // quietly take the phone's side of the story offline.)
+      final j = _events ??= AppEventJournal(dir: modelsDir);
       await j.load();
-      _events = j;
-      _eventsPort = await j.serve(
-        preferredPort: kAppLogDefaultPort,
-        tokenProvider: () => _bridgePrefs.token,
-        flagsProvider: _journalFlags,
-      );
+      if (_eventsPort == 0) {
+        _eventsPort = await j.serve(
+          preferredPort: kAppLogDefaultPort,
+          tokenProvider: () => _bridgePrefs.token,
+          flagsProvider: _journalFlags,
+        );
+      }
       final carried = j.seq > 0
           ? ' — carried over $j.seq events across the process gap'
           : '';
@@ -1368,8 +1385,27 @@ class VoiceAssistant extends ChangeNotifier {
         }
       }());
     } catch (e) {
+      // The downloader kept the partial pack and the ladder ran out
+      // (or the asset itself is missing): mark the state so BOTH ways
+      // back to a live network — a foreground, a tap on the big button
+      // — re-arm a fresh attempt. The resume re-feeds the partial file
+      // from the byte the wire stopped at, so a retry never re-pays a
+      // finished stretch.
+      _modelsFailed = true;
+      _logDebug('model init FAILED: $e');
       _fail('Model init failed: $e');
     }
+  }
+
+  /// Re-run the cold-start init after a model fetch failed (background
+  /// death, dead network). Every resume and every error-phase tap
+  /// funnels here, one attempt in flight at a time; the downloader
+  /// side (ensurePack) resumes the partial file where the wire
+  /// stopped, so repeated attempts cost only the missing tail.
+  void _retryModels() {
+    if (_modelsRetrying || _disposed) return;
+    _modelsRetrying = true;
+    unawaited(init().whenComplete(() => _modelsRetrying = false));
   }
 
   void _modelProgress(String label, int done, int total) {
@@ -1736,6 +1772,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// of them), then reopen the conversation exactly as the user left it
   /// (VAD reseeded, watchdog rearmed — all inside [_beginConversation]).
   Future<void> resumeConversation() async {
+    // A cold-start download that backgrounding cut (the screen goes
+    // off, the socket dies, the ladder sleeps out): coming back IS the
+    // retry trigger — ensurePack's resume picks the partial file up at
+    // the exact byte the wire stopped at. The rest of this method then
+    // runs on the state as it is NOW (worker still null); when the
+    // retry lands, init's own tail brings the app ready.
+    if (_modelsFailed && _worker == null) _retryModels();
     final plan = _hide.resume();
     _logDebug(
       'RESUME: busy=$_bridgeBusy replay=${plan.unheardReply != null} '
@@ -2083,8 +2126,16 @@ class VoiceAssistant extends ChangeNotifier {
     switch (_mode) {
       case InteractionMode.conversation:
         switch (_phase) {
-          case AssistantPhase.idle:
           case AssistantPhase.error:
+            if (_modelsFailed && _worker == null) {
+              // The tap that retries a download backgrounding killed
+              // (the status line says as much): the mic has no models
+              // to feed yet, so this press is the retry, not a listen.
+              _retryModels();
+              return;
+            }
+            await _beginConversation();
+          case AssistantPhase.idle:
             await _beginConversation();
           case AssistantPhase.listening:
             await _endConversation('Conversation closed. Tap to talk again.');
