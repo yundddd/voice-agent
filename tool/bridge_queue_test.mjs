@@ -262,9 +262,9 @@ test('a queue press over a running tool backgrounds it and frees the agent ' +
     // Queue politely-with-backgrounding over the open tool:
     const b = await call(PORT6, `/talk?token=${TOKEN}&interrupt=0&cuttool=1`,
       { body: 'status please', method: 'POST' });
-    await until('notice names the backgrounding', async () =>
+    await until('notice announces the cut', async () =>
       b.text.includes('"name":"queued"') &&
-      b.text.includes('put into background'));
+      b.text.includes('the running call was interrupted'));
 
     // The queue did NOT wait for the 30 s build: the cut flushed the
     // floor within a heartbeat, in order, with no stray done (+106).

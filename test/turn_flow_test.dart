@@ -698,8 +698,10 @@ void main() {
             'tool',
             toolName: 'queued',
             detail:
-                'the running tool was put into background — the agent '
-                'is freed to answer you now',
+                'the running call was interrupted — the agent is freed '
+                'to answer you now; the tool outcome reports on its '
+                'own',
+            toolKind: 'background',
           ),
           BridgeEvent.forTest(
             'tool',
@@ -920,8 +922,9 @@ void main() {
           'tool',
           toolName: 'queued',
           detail:
-              'the running tool was put into background — the agent '
-              'is freed to answer you now',
+              'the running call was interrupted — the agent is freed '
+              'to answer you now; the tool outcome reports on its own',
+          toolKind: 'background',
         ),
       );
       await settle();

@@ -1344,11 +1344,18 @@ function flushPending() {
     if (p.interrupt || p.backgrounded) {
       relay('tool', {
         name: 'queued',
+        // The tool's FATE is the receipt's verdict (finished or
+        // cancelled — the CLI aborts an interrupted call), not this
+        // note's guess: 'put into background' stamped a killed sleep
+        // with a claim its own receipt contradicted seconds later
+        // (field report: 'says put to background incorrectly'). The
+        // banner promise rides the kind tag, not the prose.
         detail: p.hadTools
-          ? 'the running tool was put into background — the agent is '
-            + 'freed to answer you now'
+          ? 'the running call was interrupted — the agent is freed to '
+            + 'answer you now; the tool outcome reports on its own'
           : 'the thinking was interrupted and aborted; your message '
             + 'goes next',
+        ...(p.hadTools ? {kind: 'background'} : {}),
       });
     }
     // +81: the pickup marker. 'queued' is filed at ENQUEUE time; the
@@ -1469,13 +1476,14 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
       // promises neither.
       detail: openTools.size
         ? cut
-          ? 'the running tool was put into background — the agent is '
-            + 'freed to answer you now'
+          ? 'the running call was interrupted — the agent is freed to '
+            + 'answer you now; the tool outcome reports on its own'
           : 'a tool call is running; your message goes next when it settles'
         : cut
           ? 'the thinking was interrupted and aborted; '
             + 'your message goes next'
           : 'finishing the current turn; your message goes next',
+      ...(openTools.size && cut ? {kind: 'background'} : {}),
       _ts: Date.now(),
     };
     sse(res, 'tool', note);

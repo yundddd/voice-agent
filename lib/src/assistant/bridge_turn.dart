@@ -561,7 +561,9 @@ class BridgeTurn {
     // guard absorbs the poll transport's double delivery. Eyes-only,
     // as ever.)
     final queued = ev.toolName == 'queued';
-    if (queued && ev.detail.toLowerCase().contains('background')) {
+    if (queued &&
+        (ev.toolKind == 'background' ||
+            ev.detail.toLowerCase().contains('background'))) {
       // The bridge's cut notice (+98 wording): the tool this press was
       // waiting behind is OUT OF EARSHOT now — the banner's warrant
       // lights on the bridge's own word (or, replayed: the bridge is
