@@ -165,7 +165,6 @@ final class AssistantView {
     required this.error,
     required this.chat,
     required this.chatVersion,
-    required this.liveTurnBubble,
     required this.queued,
     required this.backgrounded,
     required this.bridgeBusy,
@@ -187,7 +186,6 @@ final class AssistantView {
   final String error;
   final List<ChatEntry> chat;
   final int chatVersion;
-  final ChatEntry? liveTurnBubble;
   final QueuedPin? queued;
   final BgWork backgrounded;
   final bool bridgeBusy, harnessBackgrounded, bridgeConfigured, userSpeaking;
@@ -212,9 +210,25 @@ final class AssistantView {
   /// The spinner's visibility law (moved out of the widget): pure
   /// playback IS the status — while the app is only speaking with no
   /// open bridge turn, the wheel hides; anything working keeps it live
-  /// even through its own voice.
+  /// even through its own voice. +151 reads the turn flags directly:
+  /// the elapsed-clock proxy went wrong at re-anchors (a pickup
+  /// re-anchors the age, and for a tick the wheel went dark on work
+  /// that was verifiably still open).
   bool get spinnerVisible =>
-      !(phase == AssistantPhase.speaking && harnessElapsed == Duration.zero);
+      !(phase == AssistantPhase.speaking &&
+          !bridgeBusy &&
+          !harnessBackgrounded);
+
+  /// +151: THE WORKING ROW — the spinner, its one-line activity and the
+  /// meter — sits at the bottom of the channel, attached to NO bubble.
+  /// It shows while a bridge turn is heard OR a detached one keeps
+  /// working (the +72/+91 honesty, now structural: no press, pin,
+  /// placeholder or drain shell can move it, because it has no place
+  /// to move to); hidden over pure playback by the same [spinnerVisible]
+  /// rule. A turn's own bubble appears in the flow the moment it has
+  /// something to say.
+  bool get showWorkingRow =>
+      (bridgeBusy || harnessBackgrounded) && spinnerVisible;
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

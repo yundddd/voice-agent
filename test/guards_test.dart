@@ -71,25 +71,9 @@ void main() {
     });
   });
 
-  group('live-turn bubble (0.1.0+91: the press must not hide the spinner)', () {
-    test('a queued pin pressed over live work keeps the work bubble', () {
-      final chat = [
-        ChatEntry.user('first question'),
-        ChatEntry.assistant()..blocks.add('spoken block'),
-        ChatEntry.user('queued press', queued: true),
-      ];
-      // The pin rides the card below, out of the flow — the assistant
-      // entry is still the bubble the working line belongs on.
-      expect(liveTurnFor(chat, turnRunning: true), same(chat[1]));
-    });
-    test('no running turn, no bubble', () {
-      final chat = [ChatEntry.user('q'), ChatEntry.assistant()];
-      expect(liveTurnFor(chat, turnRunning: false), isNull);
-    });
-    test('a turn with no assistant bubble yet has none to show', () {
-      expect(liveTurnFor([ChatEntry.user('q')], turnRunning: true), isNull);
-    });
-  });
+  // (+151): the live-turn-bubble group retired with the in-bubble
+  // spinner — the working line rides the channel's bottom row now, and
+  // AssistantView.showWorkingRow is projected (assistant_view_test).
 
   group(
     'turn input delta (0.1.0+93: the meter bills the turn, not the world)',

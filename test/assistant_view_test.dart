@@ -141,9 +141,12 @@ void main() {
         reason: 'the label rides the row: dark while pending',
       );
       expect(
-        v.liveTurnBubble,
-        isNotNull,
-        reason: 'the press must not hide the spinner it proved wrong',
+        v.showWorkingRow,
+        isTrue,
+        reason:
+            'the press must not hide the spinner it proved wrong '
+            '(+151: the box the pin could once steal is now the '
+            'channel\u2019s own bottom row — nothing to move)',
       );
       expect(
         v.spinnerVisible,
@@ -336,12 +339,13 @@ void main() {
       await settle();
       harness.emit(BridgeEvent.forTest('say', text: 'Spoken answer.'));
       await settle();
-      // First word just landed on the speaker and the age clock is
-      // anchored at this instant: elapsed zero, so the wheel holds —
-      // one second later (the agent DOES keep working while talking)
-      // it spins.
+      // First word just landed on the speaker and the turn is still
+      // OPEN on the wire: the wheel keeps spinning through its own
+      // voice (+151: the law reads the turn flags directly — the old
+      // elapsed-clock proxy froze the wheel for a tick every time a
+      // pickup re-anchored the age, on work verifiably still running).
       expect(a.view.phase, AssistantPhase.speaking);
-      expect(a.view.spinnerVisible, isFalse);
+      expect(a.view.spinnerVisible, isTrue);
       time.advance(const Duration(seconds: 1));
       expect(a.view.spinnerVisible, isTrue);
       harness.emit(BridgeEvent.forTest('done')); // the wire closes MID-VOICE

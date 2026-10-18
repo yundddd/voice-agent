@@ -364,7 +364,6 @@ class VoiceAssistant extends ChangeNotifier {
     error: _error,
     chat: _chat.entries,
     chatVersion: _chat.version,
-    liveTurnBubble: liveTurnBubble,
     queued: queuedBubble == null
         ? null
         : QueuedPin(text: queuedText ?? '', createdMs: queuedBubble!.createdMs),
@@ -602,15 +601,6 @@ class VoiceAssistant extends ChangeNotifier {
   int get chatVersion => _chat.version;
   ChatEntry? get queuedBubble => _chat.queuedBubble;
   String? get queuedText => _chat.queuedText;
-
-  /// The bubble carrying the in-flight working line. Delegates to
-  /// [liveTurnFor] so the mapping is unit-guarded: a queued pin
-  /// pressed over live work must not drop the spinner — the background
-  /// turn keeps working, and (+91) now keeps showing.
-  ChatEntry? get liveTurnBubble => _chat.liveTurn(
-    turnRunning: bridgeBusy || harnessBackgrounded,
-    parkedBehind: _awaitPickup,
-  );
 
   String get _chatPath => p.join(_modelsDir, 'chat_log.json');
 

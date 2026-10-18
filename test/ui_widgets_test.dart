@@ -50,7 +50,6 @@ AssistantView _view({
   error: '',
   chat: chat,
   chatVersion: 1,
-  liveTurnBubble: null,
   queued: queued,
   backgrounded: backgrounded,
   bridgeBusy: true,
@@ -99,12 +98,7 @@ void main() {
       final entry = ChatEntry.user('Repo status', createdMs: 1);
       await tester.pumpWidget(
         _host(
-          ChatBubble(
-            entry: entry,
-            isLiveTurn: false,
-            maxWidthFrac: 0.86,
-            source: () => _view(),
-          ),
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
         ),
       );
       expect(find.text('Repo status'), findsOne);
@@ -117,26 +111,18 @@ void main() {
       entry.interruptedMs = 2;
       await tester.pumpWidget(
         _host(
-          ChatBubble(
-            entry: entry,
-            isLiveTurn: false,
-            maxWidthFrac: 0.86,
-            source: () => _view(),
-          ),
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
         ),
       );
       expect(find.text('First heard section.'), findsOne);
       expect(find.textContaining('interrupted'), findsOne);
     });
 
-    testWidgets('the live turn paints the spinner with the projected '
-        'label and meter', (tester) async {
-      final entry = ChatEntry.assistant(createdMs: 1);
+    testWidgets('+151: the bottom working row paints the spinner with '
+        'the projected label and meter, attached to no bubble', (tester) async {
       await tester.pumpWidget(
         _host(
-          ChatBubble(
-            entry: entry,
-            isLiveTurn: true,
+          WorkingRowCard(
             maxWidthFrac: 0.86,
             source: () => _view(
               phase: AssistantPhase.transcribing,
@@ -167,7 +153,6 @@ void main() {
         _host(
           ChatBubble(
             entry: entry,
-            isLiveTurn: true,
             maxWidthFrac: 0.86,
             source: () => _view(
               phase: AssistantPhase.speaking,
@@ -183,6 +168,25 @@ void main() {
         reason: 'no meter over pure playback — voice is the status',
       );
     });
+
+    testWidgets('+151: a cut turn\u2019s stamp shows even while the row '
+        'spins elsewhere', (tester) async {
+      final entry = ChatEntry.assistant(createdMs: 1)
+        ..blocks.add('Half an answer.')
+        ..interrupted = true
+        ..interruptedMs = 2;
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+        ),
+      );
+      expect(find.textContaining('interrupted'), findsOne);
+      expect(
+        find.textContaining('⠋'),
+        findsNothing,
+        reason: 'the wheel left the bubble for the bottom row (+151)',
+      );
+    });
   });
 
   group('the queued message in the flow', () {
@@ -192,12 +196,7 @@ void main() {
       final parked = ChatEntry.user('polite follow-up')..queued = true;
       await tester.pumpWidget(
         _host(
-          ChatBubble(
-            entry: parked,
-            isLiveTurn: false,
-            maxWidthFrac: 0.86,
-            source: () => _view(),
-          ),
+          ChatBubble(entry: parked, maxWidthFrac: 0.86, source: () => _view()),
         ),
       );
       expect(
@@ -219,12 +218,7 @@ void main() {
       parked.queued = false; // the started marker cleared the pin
       await tester.pumpWidget(
         _host(
-          ChatBubble(
-            entry: parked,
-            isLiveTurn: false,
-            maxWidthFrac: 0.86,
-            source: () => _view(),
-          ),
+          ChatBubble(entry: parked, maxWidthFrac: 0.86, source: () => _view()),
         ),
       );
       expect(

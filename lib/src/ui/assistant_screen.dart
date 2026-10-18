@@ -103,19 +103,12 @@ class _AssistantScreenState extends State<AssistantScreen>
       });
     }
 
-    // The in-flight harness turn: while a bridge turn runs, its bubble is
-    // the last (possibly still empty) assistant entry — where the Claude
-    // Code-style working line (below the last spoken block) gets painted.
-    // A DETACHED-but-still-running turn counts too (0.1.0+72): pressing
-    // the mic over live work backgrounds the stream — it never stopped
-    // the work, and since +72 it no longer stops the display either.
-    // The wheel and its command line keep ticking under the bubble for
-    // the whole hold, as if the finger had never touched the screen.
-    // +91 extends that honesty over QUEUED presses: the utterance lands
-    // as a pinned card (out of the flow until pickup), so the work
-    // bubble is the last ASSISTANT entry, not the literal last entry —
-    // pressing the mic must not hide the spinner the hold proved wrong.
-    final liveTurn = v.liveTurnBubble;
+    // +151: the working line rides NO bubble — it owns the channel's
+    // bottom row (WorkingRowCard, below), so the flow shows only what
+    // has been said. Empty assistant entries (a turn still thinking, a
+    // parked prompt's placeholder, a drain's deduped shell) render
+    // nothing at all: the row is their spinner, and the bubble
+    // materialises with its first block.
 
     final (icon, color) = switch ((v.phase, v.userSpeaking)) {
       (AssistantPhase.error, _) => (Icons.error_outline, scheme.error),
@@ -251,18 +244,31 @@ class _AssistantScreenState extends State<AssistantScreen>
                             ],
                             const SizedBox(height: 16),
                             for (final e in v.chat)
-                              if (identical(e, liveTurn) || e.blocks.isNotEmpty)
+                              if (e.fromUser || e.blocks.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
                                   ),
                                   child: ChatBubble(
                                     entry: e,
-                                    isLiveTurn: identical(e, liveTurn),
                                     maxWidthFrac: 0.86,
                                     source: () => a.view,
                                   ),
                                 ),
+
+                            // The working row: spinner, one-line
+                            // activity, meter — permanently the
+                            // channel's last word while any bridge
+                            // turn runs, heard or unheard (+151).
+                            // Nothing in the flow can move it,
+                            // because it belongs to no bubble.
+                            if (v.showWorkingRow)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                ),
+                                child: WorkingRowCard(source: () => a.view),
+                              ),
 
                             // A backgrounded tool call keeps a permanent
                             // line at the channel's bottom while it works

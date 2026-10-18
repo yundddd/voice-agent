@@ -9,6 +9,11 @@
 /// lands or a tool event fires, so a harness thinking for minutes would
 /// otherwise freeze the glyph mid-frame.
 ///
+/// Since +151 it paints in [WorkingRowCard] — the channel's bottom
+/// row, attached to no bubble — rather than inside the in-flight turn's
+/// bubble; the wheel's visibility law survived the move
+/// ([AssistantView.spinnerVisible], now flag-based).
+///
 /// Reads [AssistantView] through a [ViewSource] — every state decision
 /// (visibility, settle, label, meter) is already projected; the widget
 /// owns only the wheel frame and the paint.

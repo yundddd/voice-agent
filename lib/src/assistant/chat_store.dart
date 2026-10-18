@@ -66,34 +66,10 @@ class ChatStore {
   /// the parked prompt's fresh, empty bubble. +148: a Queue press must
   /// leave the tool-call box untouched; it migrates to the new bubble
   /// at the started marker, when the prompt is actually taken.
-  /// The bubble the working line rides. +150 re-wrote the law after
-  /// journal 23:04:38: a backlog drain opened a fresh bubble whose
-  /// replay DEDUPED to nothing, and the positional rule ('last
-  /// assistant') dragged the spinner into that empty shell below the
-  /// last reply — the 'box appears for no reason' report, second
-  /// cycle. The box rides the NEWEST bubble with CONTENT; empty
-  /// bubbles (drain shells, the parked prompt's placeholder, a
-  /// thinking turn that has not spoken) host it only when no content
-  /// survives to ride. While parked, even a full placeholder is
-  /// content-exempt: its blocks are the WAITED turn's relayed tail
-  /// (+149), not an answer — the started marker ends that exemption
-  /// along with the park.
-  ChatEntry? liveTurn({required bool turnRunning, bool parkedBehind = false}) {
-    if (!turnRunning) return null;
-    final newest = liveTurnFor(_entries, turnRunning: true);
-    if (newest == null) return null;
-    // A bubble that speaks hosts its own line, marker or no.
-    if (!parkedBehind && newest.blocks.isNotEmpty) return newest;
-    ChatEntry? nextShell; // newest assistant other than the placeholder
-    for (final e in _entries.reversed) {
-      if (e.fromUser) continue;
-      if (identical(e, newest)) continue;
-      if (e.blocks.isNotEmpty) return e;
-      nextShell ??= e;
-    }
-    if (!parkedBehind) return newest; // +91: a fresh thinking bubble rides
-    return nextShell ?? newest; // parked: the RUNNING story's shell
-  }
+  /// +151 retired the which-bubble question with the spinner itself:
+  /// the working line now rides NO bubble (see
+  /// [AssistantView.showWorkingRow]), so drains, placeholders and pins
+  /// have nothing left to steal.
 
   /// Is this exact reply block already in the (disk-persisted) log?
   /// The reattach replay consults this so paragraphs the user heard

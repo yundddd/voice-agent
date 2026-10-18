@@ -142,9 +142,11 @@ void main() {
           reason: 'the badge must stay lit while it works unheard',
         );
         expect(
-          a.liveTurnBubble,
-          isNotNull,
-          reason: 'the work bubble must survive the press (+91)',
+          a.view.showWorkingRow,
+          isTrue,
+          reason:
+              'the work must keep showing through the press (+91, '
+              '+151: on the bottom row, attached to no bubble)',
         );
         expect(
           harness.viewDetached,
@@ -601,20 +603,24 @@ void main() {
           ),
         );
         await settle();
-        // The journal's shape: a bubble WITH content hosts the running
-        // tool — the cycle that broke had an empty drain-shell newer
-        // than this content bubble, and the positional rule rode the
-        // box into it (+150).
-        final running = a.view.liveTurnBubble!;
+        time.advance(const Duration(seconds: 3)); // a working turn ages
+        // +151 rewrote this walk's law: the working row is the
+        // CHANNEL's bottom row, attached to no bubble — there is no
+        // 'which entry carries the box' left to assert, only that the
+        // row stays LIT and its line stays TRUE across the whole
+        // press-record-queue cycle (the +148/+150 stomp class, made
+        // structural: placeholders and drain shells have no bubble to
+        // steal the box INTO).
+        expect(a.view.showWorkingRow, isTrue);
         expect(a.view.token.activityLabel, contains('sleep 10'));
 
         // Press, record, plain release — the queue flavour.
         a.pttDown(Offset.zero);
         await settle();
         expect(
-          a.view.liveTurnBubble,
-          same(running),
-          reason: 'the press alone moves nothing',
+          a.view.showWorkingRow,
+          isTrue,
+          reason: 'the press alone hides nothing (the badge is raw)',
         );
         mic.emit(FakeMic.audio(10));
         await settle();
@@ -628,11 +634,9 @@ void main() {
           reason: 'no “Asking the bridge…” over a queue release',
         );
         expect(
-          a.view.liveTurnBubble,
-          same(running),
-          reason:
-              '+148: the parked placeholder does NOT steal the '
-              'spinner — the tool-call box stands untouched',
+          a.view.showWorkingRow,
+          isTrue,
+          reason: '+148: the parked prompt leaves the working row lit',
         );
         expect(
           a.view.token.activityLabel,
@@ -667,11 +671,11 @@ void main() {
           reason: '+149: behind frames are not the pickup',
         );
         expect(
-          a.view.liveTurnBubble,
-          same(running),
+          a.view.showWorkingRow,
+          isTrue,
           reason:
-              '+149: a relayed tail into the placeholder does not '
-              'steal the box either — the marker is the arbiter',
+              '+149: the relayed tail does not end the row either — '
+              'the marker remains the arbiter of the pickup',
         );
 
         // A queued NOTICE is still not a pickup; the started marker is —
@@ -686,7 +690,7 @@ void main() {
           ),
         );
         await settle();
-        expect(a.view.liveTurnBubble, same(running));
+        expect(a.view.showWorkingRow, isTrue);
         harness.emit(
           const BridgeEvent.forTest(
             'tool',
@@ -696,9 +700,16 @@ void main() {
         );
         await settle();
         expect(
-          a.view.liveTurnBubble,
-          isNot(same(running)),
-          reason: 'taken at last: the spinner migrates to the answer',
+          a.queuedText,
+          isNull,
+          reason: 'taken at last: the grey lifts at the marker',
+        );
+        expect(
+          a.chat.last.blocks,
+          contains('Done — clean finish.'),
+          reason:
+              'the tail the parked view relayed lives in the flow '
+              'now — the answer\u2019s own bubble, on its own merits',
         );
       },
     );

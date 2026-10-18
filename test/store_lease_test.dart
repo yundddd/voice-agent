@@ -106,71 +106,9 @@ void main() {
       );
     });
 
-    test('liveTurn: the last assistant bubble, under a queued pin (+91)', () {
-      final t = store.beginTurn();
-      store.addUser('press over live work', queued: true);
-      expect(
-        store.liveTurn(turnRunning: true),
-        same(t),
-        reason: 'the pin rides the card, not the spinner',
-      );
-      expect(store.liveTurn(turnRunning: false), isNull);
-    });
-
-    test('liveTurn: parkedBehind keeps the spinner on the RUNNING work '
-        "(+148: a queued press's placeholder must not steal the box)", () {
-      final work = store.beginTurn();
-      store.addBlock(work, 'Bash still chewing');
-      store.addUser('press', queued: true);
-      store.beginTurn(); // the parked prompt's bubble
-      expect(
-        store.liveTurn(turnRunning: true),
-        same(work),
-        reason: '+150: the work has content, the placeholder does not',
-      );
-      expect(
-        store.liveTurn(turnRunning: true, parkedBehind: true),
-        same(work),
-        reason: 'parked: the tool-call box stays where the work is',
-      );
-    });
-
-    test('liveTurn: empty shells never host the spinner while content '
-        'survives (+150: the drain that dragged the box)', () {
-      final answer = store.beginTurn();
-      store.addBlock(answer, 'Done — clean finish.');
-      // A backlog drain whose replay deduped to nothing: an empty
-      // shell, positionally newer than the content.
-      final shell = store.beginTurn();
-      store.addUser('press', queued: true);
-      store.beginTurn(); // the parked prompt's placeholder
-      expect(
-        store.liveTurn(turnRunning: true, parkedBehind: true),
-        same(answer),
-        reason: 'parked: content rides, shells wait',
-      );
-      expect(
-        store.liveTurn(turnRunning: true),
-        same(answer),
-        reason: '+150: the content law needs no parking to hold',
-      );
-      // All-empty (a thinking story): the RUNNING turn's bubble rides,
-      // not the placeholder parked on top of it.
-      final fresh = ChatStore(
-        nowMs: () => 0,
-        persist: (_) async {},
-        repaint: () {},
-      );
-      final work = fresh.beginTurn();
-      fresh.addUser('press', queued: true);
-      final parked = fresh.beginTurn();
-      expect(fresh.liveTurn(turnRunning: true, parkedBehind: true), same(work));
-      expect(fresh.liveTurn(turnRunning: true), same(parked));
-      // Nothing but the shell's own answer: it rides like always.
-      answer.blocks.add('more');
-      expect(store.liveTurn(turnRunning: true), same(answer));
-      expect(shell.blocks, isEmpty); // the shell stays the drain's grave
-    });
+    // (+151): the liveTurn tests retired with ChatStore.liveTurn — the
+    // spinner rides no bubble, so the store has no box-placement law left
+    // to pin; the bottom row's visibility is AssistantView.showWorkingRow.
 
     test('load is tolerant: garbage starts a fresh log', () {
       store.addUser('keep me until reload');
