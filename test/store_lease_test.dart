@@ -122,17 +122,54 @@ void main() {
       final work = store.beginTurn();
       store.addBlock(work, 'Bash still chewing');
       store.addUser('press', queued: true);
-      final placeholder = store.beginTurn(); // the parked prompt's bubble
+      store.beginTurn(); // the parked prompt's bubble
       expect(
         store.liveTurn(turnRunning: true),
-        same(placeholder),
-        reason: 'the plain rule still lands on the newest turn',
+        same(work),
+        reason: '+150: the work has content, the placeholder does not',
       );
       expect(
         store.liveTurn(turnRunning: true, parkedBehind: true),
         same(work),
         reason: 'parked: the tool-call box stays where the work is',
       );
+    });
+
+    test('liveTurn: empty shells never host the spinner while content '
+        'survives (+150: the drain that dragged the box)', () {
+      final answer = store.beginTurn();
+      store.addBlock(answer, 'Done — clean finish.');
+      // A backlog drain whose replay deduped to nothing: an empty
+      // shell, positionally newer than the content.
+      final shell = store.beginTurn();
+      store.addUser('press', queued: true);
+      store.beginTurn(); // the parked prompt's placeholder
+      expect(
+        store.liveTurn(turnRunning: true, parkedBehind: true),
+        same(answer),
+        reason: 'parked: content rides, shells wait',
+      );
+      expect(
+        store.liveTurn(turnRunning: true),
+        same(answer),
+        reason: '+150: the content law needs no parking to hold',
+      );
+      // All-empty (a thinking story): the RUNNING turn's bubble rides,
+      // not the placeholder parked on top of it.
+      final fresh = ChatStore(
+        nowMs: () => 0,
+        persist: (_) async {},
+        repaint: () {},
+      );
+      final work = fresh.beginTurn();
+      fresh.addUser('press', queued: true);
+      final parked = fresh.beginTurn();
+      expect(fresh.liveTurn(turnRunning: true, parkedBehind: true), same(work));
+      expect(fresh.liveTurn(turnRunning: true), same(parked));
+      // Nothing but the shell's own answer: it rides like always.
+      answer.blocks.add('more');
+      expect(store.liveTurn(turnRunning: true), same(answer));
+      expect(shell.blocks, isEmpty); // the shell stays the drain's grave
     });
 
     test('load is tolerant: garbage starts a fresh log', () {

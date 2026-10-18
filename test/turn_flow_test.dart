@@ -592,6 +592,7 @@ void main() {
         engine.transcripts = ['steer please'];
         unawaited(a.runQuickCommand('sleep please'));
         await settle();
+        harness.emit(BridgeEvent.forTest('say', text: 'On it — sleeping ten.'));
         harness.emit(
           const BridgeEvent.forTest(
             'tool',
@@ -600,6 +601,10 @@ void main() {
           ),
         );
         await settle();
+        // The journal's shape: a bubble WITH content hosts the running
+        // tool — the cycle that broke had an empty drain-shell newer
+        // than this content bubble, and the positional rule rode the
+        // box into it (+150).
         final running = a.view.liveTurnBubble!;
         expect(a.view.token.activityLabel, contains('sleep 10'));
 
