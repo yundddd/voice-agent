@@ -221,7 +221,7 @@ class VoiceAssistant extends ChangeNotifier {
         reattach: (health) => reattachBackgroundTurn(health: health),
         retireWork: _turn.retireBadgeAndWork,
         idleReady: _idleReady,
-        setStatus: (a) => _activity = a,
+        setStatus: _setStatus,
         log: _logDebug,
         repaint: notifyListeners,
       ),
@@ -1207,7 +1207,7 @@ class VoiceAssistant extends ChangeNotifier {
     badgeLit: () => _harnessBackgrounded,
     hasError: () => _error.isNotEmpty,
     mergeContext: _mergeContext,
-    setStatus: (a) => _activity = a,
+    setStatus: _setStatus,
     setPhase: (ph) => _phase = ph,
     markSpeaking: () => _phase = AssistantPhase.speaking,
     idleReady: _idleReady,
@@ -1246,6 +1246,23 @@ class VoiceAssistant extends ChangeNotifier {
   /// bridge's pickup (whichever transport delivers it) clears the flag
   /// and the answer's bubble takes the box.
   bool _awaitPickup = false;
+
+  /// +152: a queue verdict may not bump a running tool's line. The
+  /// spinner's fallback label (tally kind 'calling X') reads the
+  /// status — so every 'One moment — a tool call is running…' notice
+  /// that stomped the live StepLine flipped the row from the command
+  /// to the announcement of the wait and back on the next step:
+  /// 'leave it untouched showing the tool call command we are waiting
+  /// on'. The verdict still journals at its call site, and the greyed
+  /// message remains the on-screen wait indicator (+146).
+  void _setStatus(Activity a) {
+    if (a is QueuedVerdict && _activity is StepLine) {
+      _logDebug('queue verdict held: the row keeps naming the tool');
+      return;
+    }
+    _activity = a;
+    notifyListeners();
+  }
 
   // Queue-prompt bookkeeping: every runQuickCommand (a NEW USER PROMPT)
   // bumps this alongside _generation. A queue turn's finally drops its

@@ -691,6 +691,19 @@ void main() {
         );
         await settle();
         expect(a.view.showWorkingRow, isTrue);
+        expect(
+          a.view.token.activityLabel,
+          contains('sleep 10'),
+          reason:
+              '+152: the notice does not bump the command — the row '
+              'keeps naming the tool we are waiting on (no “One '
+              'moment — ” flip mid-wait)',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('queue verdict held')),
+          isTrue,
+          reason: 'the skipped repaint says why in the journal',
+        );
         harness.emit(
           const BridgeEvent.forTest(
             'tool',
