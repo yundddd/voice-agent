@@ -188,6 +188,15 @@ final class TurnCoordinator {
   String _lastToolStep = ''; // the newest REAL tool step this turn attested
   String _bgWork = ''; // what the harness is doing OUT OF EARSHOT — the
   // bottom line's snapshot; see [detach] and [noteToolStep].
+  TurnTrigger? _lastTakeover; // the most recent takeover's trigger:
+  // an abandoned turn's teardown reads this to tell a PRESS (whose
+  // trace the release gesture decides, +132) from a decided takeover.
+  bool _lastTakeoverPolite = false; // the superseding press queued
+  // (interrupt=0) instead of interrupting: the turn it abandoned was
+  // NOT cut — it settles unheard or keeps working behind the banner,
+  // and the teardown's +110 trace must not accuse a polite press of a
+  // murder it never committed. Read by the abandoned turn's finally;
+  // describes the MOST RECENT takeover (each detach overwrites).
   bool _detachedPromise = false; // a tool THIS press cut into background
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
@@ -205,6 +214,14 @@ final class TurnCoordinator {
   /// The cut-tool promise: the bottom line is warranted even without the
   /// badge or a pin while a tool this phone cut is owed its receipt.
   bool get detachedPromise => _detachedPromise;
+
+  /// The most recent takeover's trigger (null before the first one).
+  TurnTrigger? get lastTakeover => _lastTakeover;
+
+  /// Whether the most recent takeover was a POLITE press (interrupt=0):
+  /// the superseded turn's teardown reads this to decide whether an
+  /// 'Interrupted before answering.' trace would be a lie.
+  bool get lastTakeoverPolite => _lastTakeoverPolite;
   BridgeTurnPump? get pump => _pump;
 
   // ── Transitions ────────────────────────────────────────────────────────
@@ -350,9 +367,15 @@ final class TurnCoordinator {
   ///  8. the pump slot empties and its connection cancels mid-tool-run
   ///     (the bridge backgrounds the turn);
   ///  9. `_afterDetach` — the streamed player goes with the turn.
-  void detach(TurnTrigger trigger) {
+  /// [polite] records the superseding press's flavour for the abandoned
+  /// turn's teardown (+132): a queue press interrupts NOTHING — the
+  /// work it leaves behind settles or continues out of the ear, so the
+  /// takeover must not stamp 'Interrupted before answering.' on it.
+  void detach(TurnTrigger trigger, {bool polite = false}) {
     if (!_busy) return;
     final hardStop = takeoverStop(trigger) == TakeoverStop.hardStop;
+    _lastTakeover = trigger;
+    _lastTakeoverPolite = polite && !hardStop;
     _beforeDetach();
     _bgWork = _lastToolStep;
     if (_backgrounded) {

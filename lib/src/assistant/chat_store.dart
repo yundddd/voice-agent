@@ -198,6 +198,18 @@ class ChatStore {
     }
   }
 
+  /// Put back an entry that was withdrawn while its verdict was still
+  /// pending (+132: a push-to-talk press defers the interrupted trace to
+  /// the release gesture — the entry object survived [removeEmptyTurn],
+  /// and a decided cut re-files it whole, blocks, stamp and all).
+  void reAppend(ChatEntry entry) {
+    if (!_entries.contains(entry)) {
+      _entries.add(entry);
+      _version++;
+      unawaited(persist(encodeChatLog(_entries)));
+    }
+  }
+
   /// /new: blank the channel (the ack stays brief; the wipe speaks for
   /// itself on screen).
   void clearAll() {

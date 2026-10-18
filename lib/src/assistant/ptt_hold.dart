@@ -40,6 +40,11 @@ typedef PttRelease = ({
   bool stray,
   int heldMs,
   bool redraw,
+  // How far the finger travelled between press and release, whatever
+  // slide (if any) it spelled: a too-short release only earns the
+  // mid-turn hard stop when it never moved — a drift that fell short
+  // of a slide threshold was a mind half-changed, not a tap (+132).
+  double driftPx,
 });
 
 class PttHold {
@@ -49,6 +54,7 @@ class PttHold {
     this.slideRightPx = 48,
     this.leanMaxPx = 72,
     this.tapStopMs = 400,
+    this.tapSlopPx = 24,
   });
 
   final Clock clock;
@@ -66,6 +72,13 @@ class PttHold {
   /// Press-and-release faster than this while a turn runs is a TAP: the
   /// hard stop (detach + /stop), the old tap-Stop behaviour, not a hold.
   final int tapStopMs;
+
+  /// Below this drag distance a quick release was a TAP and nothing
+  /// else: between slop and the slide thresholds the finger meant
+  /// something, and the too-short hard stop must not read a stalling
+  /// swipe as "stop the harness" (+132 — the gentle right that
+  /// cancelled the tool call).
+  final double tapSlopPx;
 
   // Debug counters (shown under the button in debug mode): press/release
   // edges observed — proves on-device whether holds reach the Listener.
@@ -163,9 +176,17 @@ class PttHold {
     }
     final held = stray ? -1 : clock().difference(_downAt).inMilliseconds;
     final redraw = !visualsClear;
+    final drift = (at != null && start != null) ? (at - start).distance : 0.0;
     _slide = PttSlide.none;
     _drag = Offset.zero;
-    return (up: up, right: right, stray: stray, heldMs: held, redraw: redraw);
+    return (
+      up: up,
+      right: right,
+      stray: stray,
+      heldMs: held,
+      redraw: redraw,
+      driftPx: drift,
+    );
   }
 
   /// Back gesture / system interruption: behave exactly like a release

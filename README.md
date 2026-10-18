@@ -363,6 +363,16 @@ a field report; the wire flags are `?interrupt=`, `?cuttool=1`, `?poll=1`):
   dead turn), its bubble keeps the ✋ `interrupted` stamp and whatever was
   heard, and the new prompt's flush carries the same `kind='background'`
   promise as a queued cut.
+- **Push-to-talk defers its verdict to the release** (+132): pressing
+  over a live turn takes the EAR (the mic must open now) but stamps
+  NOTHING — at press time the gesture has decided nothing. The release
+  settles it: slide-up cuts (and files the trace it deferred), a
+  motionless quick tap is the mid-turn hard stop (stamped too), a plain
+  release queues politely (tool to background, no trace), and a
+  slide-right dismiss leaves no trace at all — the tool call the user
+  only walked away from keeps running. A release that merely DRIFTED
+  (past touch slop, short of a slide threshold) is a half-changed mind,
+  never the old tap-Stop: cancelling is not stopping.
 - **A press behind already-detached work shows in the flow** (+126): the
   pin protects an answer the *ear* is holding; behind unheard work the
   badge and the bottom line already carry the wait, so the message rides

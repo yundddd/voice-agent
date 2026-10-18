@@ -783,7 +783,7 @@ class VoiceAssistant extends ChangeNotifier {
     // before-abandon snapshot.
     final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
     _turn.supersede();
-    _turn.detach(TurnTrigger.newUtterance);
+    _turn.detach(TurnTrigger.newUtterance, polite: !interrupt);
     if (_worker == null && !_ttsOff) {
       // TTS off means this send needs no audio machinery at all: the
       // text box answers even while the models are still loading.
@@ -1262,11 +1262,30 @@ class VoiceAssistant extends ChangeNotifier {
         // +110: a cut that never got to speak still leaves a bubble.
         // The interruption of a bare thinking run or a tool call used
         // to vanish with its empty turn — erasing the very event the
-        // user's own press caused. One line, stamped, permanent.
-        if (turn.isEmpty) {
-          _chat.addBlock(turn, 'Interrupted before answering.');
+        // user's own press caused. One line, stamped, permanent —
+        // UNLESS the press that took the turn was a queue (+132): a
+        // polite supersede interrupts nothing (the tool it abandons is
+        // backgrounded and finishes on its own — a sleep still sleeps,
+        // a build still builds, and the 'finished' receipt proves it),
+        // so stamping 'Interrupted' on the silent turn accused the
+        // user's own Queue press of a murder it never committed. The
+        // queue's story is already told by its note and the banner;
+        // and a push-to-talk PRESS defers the whole verdict (+132):
+        // the slide that ends the hold is the decision — up cuts, the
+        // motionless tap stops, right dismisses as if nothing
+        // happened, and only the first two owe this bubble a trace.
+        final deferred = _turn.lastTakeover == TurnTrigger.pttPress;
+        if (deferred && _pttCutTrace == null) {
+          _pttCutTrace = turn;
+        } else if (!deferred) {
+          final wasCut = !(_turn.lastTakeoverPolite && turn.isEmpty);
+          if (turn.isEmpty && wasCut) {
+            _chat.addBlock(turn, 'Interrupted before answering.');
+          }
+          if (wasCut || !turn.isEmpty) {
+            _chat.markInterrupted(turn);
+          }
         }
-        _chat.markInterrupted(turn);
         // A queue press that never reached the harness before a NEWER
         // PROMPT superseded it: its promise died with the bridge's
         // single pending slot (latest wins), so retire the pin — an
@@ -1278,7 +1297,9 @@ class VoiceAssistant extends ChangeNotifier {
           _chat.dropPin(pinnedByMe);
         }
       }
-      if (turn.isEmpty) _chat.removeEmptyTurn(turn);
+      if (turn.isEmpty && !identical(_pttCutTrace, turn)) {
+        _chat.removeEmptyTurn(turn);
+      }
       if (gen == _generation) {
         // Natural end of the current turn (done event / stream close /
         // error): tear down the streamed-player machinery here. An
@@ -2685,6 +2706,38 @@ class VoiceAssistant extends ChangeNotifier {
   /// edges observed — proves on-device whether holds reach the Listener.
   int get pttEdgeCount => _ptt.edgeCount;
 
+  /// +132: the bubble a push-to-talk PRESS took out of the ear, while
+  /// the gesture that decides its trace is still in flight. The press
+  /// detaches (the mic must open now); the stamp does not: only the
+  /// release knows whether this was a slide-up cut, a motionless tap
+  /// stop, a polite queue, or a dismiss that ends 'as if nothing
+  /// happened'. The abandoned turn's finally parks its bubble here
+  /// (withdrawn while empty, untouched while it has spoken text); the
+  /// release applies the trace, or drops it and the bubble with it.
+  ChatEntry? _pttCutTrace;
+
+  /// The release decided: this turn WAS cut — file the +110 trace it
+  /// owed from press time (a withdrawn-empty bubble comes back wearing
+  /// it; a partly-spoken one only gets the ✋ mark).
+  void _applyPttCutTrace() {
+    final t = _pttCutTrace;
+    _pttCutTrace = null;
+    if (t == null) return;
+    if (t.isEmpty) {
+      _chat.reAppend(t);
+      _chat.addBlock(t, 'Interrupted before answering.');
+    }
+    _chat.markInterrupted(t);
+  }
+
+  /// The release decided NOTHING was cut: no trace, and the empty
+  /// bubble that only existed to carry one is finally withdrawn.
+  void _dropPttCutTrace() {
+    final t = _pttCutTrace;
+    _pttCutTrace = null;
+    if (t != null && t.isEmpty) _chat.removeEmptyTurn(t);
+  }
+
   /// A push-to-talk hold whose mic opened on top of a running harness
   /// turn — the UI says "release to queue / slide up to interrupt" while
   /// this is set and the button is being held.
@@ -2725,9 +2778,13 @@ class VoiceAssistant extends ChangeNotifier {
       // more audio), cut anything audible, then let this very hold open
       // the mic. For a BRIDGE turn, abandon = DETACH: the harness keeps
       // working backgrounded (an open tool call finishes its work!),
-      // and the release gesture decides whether the new prompt cuts a
-      // mere thinking turn short (slide up) or queues politely behind
-      // the work (release / slide right). Same supersede semantics as a
+      // and the release gesture decides what the new prompt does: slide
+      // up cuts even the thinking, a plain release queues politely and
+      // only backgrounds an open tool (cutTool), and slide right throws
+      // the recording away as if nothing happened. No trace is stamped
+      // at press for exactly that reason (+132) — the verdict belongs
+      // to the release, and _pttCutTrace holds the bubble's paperwork
+      // until then. Same supersede semantics as a
       // spoken barge-in in conversation mode — here, per spec, PTT's.
       _ptt.bridgeHold = _bridgeBusy;
       if (_ptt.bridgeHold) _turn.markBackgrounded();
@@ -2822,9 +2879,9 @@ class VoiceAssistant extends ChangeNotifier {
     _reply.warmUpRoute(); // connect the output route while we transcribe
     if (r.right) {
       // Slide-right release: throw the recording away unsent.
-      unawaited(_stopAndRespond(discard: true));
+      unawaited(_stopAndRespond(discard: true, driftPx: r.driftPx));
     } else {
-      unawaited(_stopAndRespond(interrupt: r.up));
+      unawaited(_stopAndRespond(interrupt: r.up, driftPx: r.driftPx));
     }
   }
 
@@ -3171,7 +3228,7 @@ class VoiceAssistant extends ChangeNotifier {
         // push-to-talk slide-right release queued this prompt politely
         // (the turn in flight finishes first); anything else cuts a mere
         // thinking turn so the new prompt starts in a heartbeat.
-        _turn.detach(TurnTrigger.newUtterance);
+        _turn.detach(TurnTrigger.newUtterance, polite: !interrupt);
         _logDebug(
           '→ harness: bubble added, POSTing /talk (interrupt=$interrupt '
           'cutTool=$cutTool)',
@@ -3313,11 +3370,15 @@ class VoiceAssistant extends ChangeNotifier {
   Future<void> _stopAndRespond({
     bool interrupt = false,
     bool discard = false,
+    double driftPx = double.infinity,
   }) async {
     if (_phase != AssistantPhase.listening) {
       // Another silent sinkhole for a vanishing message: the mic was not
       // actually open by the time the release arrived (press raced a
       // mode switch, the watchdog closed the stream, a duplicate call).
+      // The hold did END though: a trace deferred at press resolves as
+      // nothing-was-cut — the detached turn keeps working unheard.
+      if (_ptt.bridgeHold) _dropPttCutTrace();
       _logDebug(
         'release dropped: phase=${_phase.name} not listening '
         '(discard=$discard interrupt=$interrupt)',
@@ -3350,6 +3411,9 @@ class VoiceAssistant extends ChangeNotifier {
       _status = bridgeHold
           ? 'Dismissed — the harness keeps working in the background.'
           : 'Dismissed — nothing sent.';
+      // Nothing was cut and nothing was sent: the deferred trace dies
+      // with the recording (+132's 'as if nothing happened').
+      _dropPttCutTrace();
       _logDebug('release: slide-right DISCARD — ${total}B dropped unsent');
       notifyListeners();
       return;
@@ -3362,15 +3426,22 @@ class VoiceAssistant extends ChangeNotifier {
       );
       if (bridgeHold) {
         // The hold opened over a harness turn but nothing speakable came
-        // out. A quick tap is the hard stop the button always was mid-
-        // turn: /stop cuts the (already detached, still running) turn.
-        // A longer hold with no words leaves the background work ALONE —
+        // out. A MOTIONLESS quick tap is the hard stop the button
+        // always was mid-turn: /stop cuts the (already detached, still
+        // running) turn, and the trace the press deferred finally
+        // lands (+110). A release that drifted at all was a mind
+        // half-changed, not a tap — cancelling is not stopping (+132:
+        // the gentle right swipe that killed the tool call). A longer
+        // hold with no words also leaves the background work ALONE —
         // it finishes on its own and the next release queues behind it.
-        if (interrupt || heldMs < _ptt.tapStopMs) {
+        if (interrupt ||
+            (heldMs < _ptt.tapStopMs && driftPx < _ptt.tapSlopPx)) {
           unawaited(_gateway?.stop());
           _turn.retireBadge();
+          _applyPttCutTrace();
           _status = 'Heard nothing — stopped the harness.';
         } else {
+          _dropPttCutTrace();
           _status =
               'Heard nothing — the harness keeps working in the background.';
         }
@@ -3411,16 +3482,24 @@ class VoiceAssistant extends ChangeNotifier {
       if (_ptt.pointers == 0) _idleReady();
       return;
     }
-    // A slide-right release is the POLITE queue (interrupt: false): if
-    // the bridge still has a turn in flight (the one this hold detached,
-    // or an older one backgrounded unheard), this prompt waits for it to
-    // finish — THINKING at least. A running TOOL still goes to
-    // background (cutTool, behaviour 2): nobody press-and-holds the mic
-    // through a five-minute build just to keep waiting politely.
-    // Everything else keeps the established takeover flavour.
+    // Words made it through: the release gesture's meaning is final.
+    // A plain release over the detached turn POLITELY QUEUES (interrupt
+    // false — slide-right never reaches here, it discarded the
+    // recording): the turn finishes THINKING first, and only a running
+    // TOOL goes to background (cutTool, behaviour 2 — nobody holds the
+    // mic through a five-minute build just to keep waiting politely).
+    // Slide-up (or any prompt with no turn behind it) keeps the
+    // established cutting flavour — and only a cut owes the abandoned
+    // bubble its +110 trace.
+    final willCut = interrupt || !bridgeHold;
+    if (willCut) {
+      _applyPttCutTrace();
+    } else {
+      _dropPttCutTrace();
+    }
     await _startTurn(
       cleaned,
-      interrupt: interrupt || !bridgeHold,
+      interrupt: willCut,
       cutTool: bridgeHold && !interrupt,
     );
   }

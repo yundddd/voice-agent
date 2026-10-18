@@ -324,6 +324,22 @@ void main() {
       expect(turn.since, time.now);
     });
 
+    test('detach records the trigger so a PRESS takeover can defer its '
+        'trace to the release (+132)', () {
+      turn.claimSlot();
+      turn.detach(TurnTrigger.pttPress);
+      expect(turn.lastTakeover, TurnTrigger.pttPress);
+      expect(
+        turn.lastTakeoverPolite,
+        isFalse,
+        reason: 'a press has no flavour yet — that is the point',
+      );
+      turn.claimSlot();
+      turn.detach(TurnTrigger.newUtterance, polite: true);
+      expect(turn.lastTakeover, TurnTrigger.newUtterance);
+      expect(turn.lastTakeoverPolite, isTrue);
+    });
+
     test('markBackgrounded lights the badge WITHOUT touching the clock', () {
       turn.beginHeardTurn();
       turn.becomeHeard();

@@ -1663,4 +1663,116 @@ void main() {
       expect(a.benchBusy, isFalse);
     });
   });
+
+  group('push-to-talk defers its verdict to the release (0.1.0+132)', () {
+    // The bug this pins: the press-down detached the running tool call
+    // AND stamped 'Interrupted before answering.' before the finger
+    // knew what it would do — then a slide-right (or any release that
+    // merely failed to cross the slide threshold) fired the mid-turn
+    // tap-Stop, killing a tool the user had only tried to walk away
+    // from. The press may only take the EAR; the release owes the
+    // verdict, and cancelling is not stopping.
+    Future<void> busyWithTool() async {
+      await withBridge();
+      unawaited(a.runQuickCommand('run bash sleep 10'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'sleep 10'),
+      );
+      await settle();
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(Offset.zero);
+      await settle();
+      expect(a.harnessBackgrounded, isTrue);
+      expect(
+        a.chat.any((e) => e.blocks.contains('Interrupted before answering.')),
+        isFalse,
+        reason: 'at press time the gesture has decided NOTHING yet',
+      );
+    }
+
+    test('a slide-right dismiss leaves no trace and stops nothing', () async {
+      await busyWithTool();
+      a.pttUp(const Offset(300, 0)); // clear right, past the threshold
+      await settle();
+      expect(harness.stops, 0, reason: 'the dismiss branch never stops');
+      expect(
+        a.status,
+        contains('keeps working in the background'),
+        reason: 'as if nothing happened — the tool still sleeps',
+      );
+      expect(
+        a.chat.any((e) => e.blocks.contains('Interrupted before answering.')),
+        isFalse,
+        reason:
+            'the deferred trace died with the recording — the bubble '
+            'went back to never having been interrupted',
+      );
+    });
+
+    test(
+      'a gentle right that misses the slide threshold is no tap-stop',
+      () async {
+        await busyWithTool();
+        a.pttUp(const Offset(30, 0)); // drifted, but under 48px: plain
+        await settle();
+        expect(
+          harness.stops,
+          0,
+          reason:
+              'a release that moved was a mind half-changed, not the '
+              'old mid-turn tap — this is the reported tool murder',
+        );
+        expect(
+          a.chat.any((e) => e.blocks.contains('Interrupted before answering.')),
+          isFalse,
+        );
+      },
+    );
+
+    test('a motionless quick tap still stops — and now stamps', () async {
+      await busyWithTool();
+      a.pttUp(const Offset(2, 0)); // under slop, under tapStopMs
+      await settle();
+      expect(harness.stops, 1, reason: 'the tap-Stop the button always was');
+      final cut = a.chat
+          .where(
+            (e) =>
+                !e.fromUser &&
+                e.blocks.contains('Interrupted before answering.'),
+          )
+          .single;
+      expect(cut.interrupted, isTrue, reason: 'the verdict arrived: stamped');
+    });
+
+    test(
+      'a slide-up cut over live words stamps the abandoned turn too',
+      () async {
+        await busyWithTool();
+        engine.transcripts = ['status please'];
+        mic.emit(FakeMic.audio(10)); // enough audio for a real turn
+        await settle(); // the bytes must land before the release
+        final talksBefore = harness.talkCount + harness.talkPollCount;
+        a.pttUp(const Offset(0, -100)); // clear up: the interrupt
+        await settle();
+        expect(
+          harness.talkCount + harness.talkPollCount,
+          greaterThan(talksBefore),
+          reason: 'the words were sent',
+        );
+        expect(
+          harness.lastInterrupt,
+          isTrue,
+          reason: 'slide-up keeps the cutting flavour (+106)',
+        );
+        expect(
+          a.chat.any((e) => e.blocks.contains('Interrupted before answering.')),
+          isTrue,
+          reason:
+              'this release DID cut the tool call — the trace it '
+              'deferred at press finally lands',
+        );
+      },
+    );
+  });
 }
