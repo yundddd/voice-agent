@@ -299,8 +299,7 @@ void main() {
     });
   });
 
-  group('the bottom line (noteToolStep)', () {
-    test('a step labels the line behind a queue pin', () {
+  group('the bottom line (noteToolStep)', () {    test('a step labels the line behind a queue pin', () {
       pinned = true;
       turn.noteToolStep('Bash npm test…');
       expect(turn.lastToolStep, 'Bash npm test…');
@@ -311,6 +310,20 @@ void main() {
       turn.markBackgrounded();
       turn.noteToolStep('Bash npm test…');
       expect(turn.bgWork, 'Bash npm test…');
+    });
+
+    test("clearBgWork takes the snapshot but never the live spinner's "
+        'clock (a receipt about OLDER work rides a live view)', () {
+      turn.beginHeardTurn();
+      turn.becomeHeard();
+      turn.noteToolStep('Bash npm test…'); // the work it queued behind
+      final since = turn.since;
+      time.advance(const Duration(seconds: 12));
+      turn.clearBgWork();
+      expect(turn.bgWork, isEmpty);
+      expect(turn.since, since,
+          reason: "the live turn's age is not the receipt's business");
+      expect(turn.busy, isTrue);
     });
 
     test('a heard, unpinned turn keeps its step out of the bottom line', () {

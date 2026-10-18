@@ -839,6 +839,70 @@ void main() {
     });
   });
 
+  group('the backgrounded-work receipt (0.1.0+128)', () {
+    test('poll view: the finished receipt dismisses the bottom line '
+        'without waiting for a pickup', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('busy turn'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('tool',
+          toolName: 'Bash', detail: 'npm test'));
+      await settle();
+      // The press detaches the turn: badge lit, the line names the work.
+      a.setMode(InteractionMode.pushToTalk);
+      a.pttDown(Offset.zero);
+      await settle();
+      expect(a.harnessBackgrounded, isTrue);
+      expect(a.backgroundedWork, 'Bash npm test…');
+
+      // The next prompt rides the ring (poll): beforeEvent keeps its
+      // hands off there, so nothing retires the line until the wire
+      // itself proves something. The bridge relays the detached turn's
+      // 'finished' receipt the moment its result lands — the ring
+      // delivers it to the queued view ahead of any pickup.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'now': time.now.millisecondsSinceEpoch,
+        'poll': {'ring': 10},
+      };
+      await a.debugProbeTransport();
+      unawaited(a.runQuickCommand('follow-up', bubble: 'follow-up'));
+      await settle();
+      expect(a.queuedText, isNull,
+          reason: 'an interrupt prompt shows right away (+126)');
+      expect(a.backgroundedWork, 'Bash npm test…',
+          reason: 'the work IS still running unheard until the receipt');
+
+      harness.pollPages.add(FakeHarness.page(11, [
+        BridgeEvent.forTest('tool',
+            toolName: 'finished', detail: 'ended after 9s unheard'),
+      ], first: 11));
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(a.backgroundedWork, isEmpty,
+          reason: 'the receipt proves the work over — the line dismisses '
+              'itself, no pickup required');
+      expect(a.harnessBackgrounded, isFalse);
+      expect(
+        a.debugLog.any((l) => l.contains(
+            'backgrounded work finished (ended after 9s unheard)')),
+        isTrue,
+        reason: 'the journal keeps WHEN the out-of-earshot work ended',
+      );
+
+      // The queue's own pickup ack still does its pin/spinner work after.
+      harness.pollPages.add(FakeHarness.page(12, [
+        BridgeEvent.forTest('tool',
+            toolName: 'started', detail: 'follow-up'),
+      ], first: 12));
+      time.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(a.harnessElapsed, Duration.zero,
+          reason: 'the live turn re-anchored the age clock at pickup');
+    });
+  });
+
   group('latency bench', () {
     test('a bench run transcribes the capture and echoes it, timed',
         () async {

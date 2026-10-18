@@ -26,6 +26,7 @@ const PORT1 = 18732 + (process.pid % 977);
 const PORT2 = PORT1 + 1;
 const PORT3 = PORT1 + 2;
 const PORT4 = PORT1 + 3;
+const PORT5 = PORT1 + 4;
 
 function startBridge(stubLog, port, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -231,6 +232,67 @@ test('every relayed sentence keeps one replayable copy, never two (+114)',
         'the live-delivered copy was eaten or stacked (+112/+113 failure modes)');
       assert.equal(counts('Never twice.'), 1);
       a.kill();
+    } finally {
+      await stopBridge(proc);
+    }
+  });
+
+// The lifecycle receipt (0.1.0+128): a turn that ends with NO ear on it
+// — backgrounded by a press, a hide, or a dead socket — closes with a
+// structured 'finished' frame ahead of its done, so whatever view next
+// listens reads WHEN the out-of-earshot work actually ended. A heard
+// turn gets no marker (its own done is the receipt).
+test('a backgrounded turn ends with a finished receipt before its done',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+    const proc = startBridge(stubLog, PORT5);
+    try {
+      await up(PORT5);
+      const a = await call(PORT5, `/talk?token=${TOKEN}`,
+        { body: 'long working turn', method: 'POST' });
+      await until('turn open', async () => (await health(PORT5)).turnOpen === true);
+
+      // The phone hangs up mid-turn: the turn runs BACKGROUND. Its
+      // result (stub clock: 1.5 s) fires with nobody listening — exactly
+      // the shape the receipt exists for.
+      a.kill();
+      await until('backgrounded turn settled', async () => {
+        const h = await health(PORT5);
+        return h.turnOpen === false && h.backgrounded === false;
+      });
+
+      // The replay tells the whole story, in order: work…, finished, done.
+      const replayed = await call(PORT5, `/attach?token=${TOKEN}`);
+      await until('backlog drained', async () => {
+        try { return (await health(PORT5)).missed === 0; } catch { return false; }
+      });
+      await sleep(150); // let the replay bytes land in the collector
+      const at = (needle) => replayed.text.indexOf(needle);
+      assert.ok(at('"name":"finished"') >= 0,
+        'no finished receipt on the replay — the badge question stays ' +
+        'unanswerable from the wire');
+      assert.ok(at('"name":"finished"') < at('event: done'),
+        'the receipt must precede the done (replay order: work, finished, done)');
+      assert.ok(replayed.text.includes('ended after'),
+        'the receipt should say how long the work ran');
+    } finally {
+      await stopBridge(proc);
+    }
+  });
+
+test('a heard turn closes with its done alone — no finished marker',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+    const proc = startBridge(stubLog, PORT5 + 1);
+    try {
+      await up(PORT5 + 1);
+      const a = await call(PORT5 + 1, `/talk?token=${TOKEN}`,
+        { body: 'short heard turn', method: 'POST' });
+      await until('turn done', async () => a.text.includes('event: done'));
+      assert.ok(!a.text.includes('"name":"finished"'),
+        'a heard turn must not carry a finished marker — its done is the ' +
+        'receipt, and a marker would let a replay retire a badge about ' +
+        'work that never left the ear');
     } finally {
       await stopBridge(proc);
     }

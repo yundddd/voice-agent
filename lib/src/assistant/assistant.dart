@@ -862,6 +862,24 @@ class VoiceAssistant extends ChangeNotifier {
             );
             return;
           }
+          if (ev.toolName == 'finished') {
+            // The bridge's receipt for a turn that ended with NO ear on
+            // it — backgrounded by a press, a hide, or a dead socket (a
+            // heard turn's own done is its receipt; a turn cut for a
+            // waiting prompt gets none, +106). It proves the
+            // out-of-earshot work is OVER: the bottom line dismisses
+            // itself. A live turn owns the slot here (this rides its
+            // view as a ring/backlog replay), so the spinner's clock is
+            // never touched — only the stale snapshot goes.
+            _turn.clearBgWork();
+            if (_harnessBackgrounded) _turn.retireBadgeAndWork();
+            _logDebug(
+              'backgrounded work finished '
+              '(${ev.detail})${_transport.wireTag(ev)}',
+            );
+            notifyListeners();
+            return;
+          }
           final tally = ev.toolName == 'tokens';
           _logDebug(
             'bridge tool ${ev.toolName} ${ev.detail}${_transport.wireTag(ev)}',
@@ -2149,6 +2167,18 @@ class VoiceAssistant extends ChangeNotifier {
               _logDebug(
                 'queue picked up: "${ev.detail}"${_transport.wireTag(ev)}',
               );
+              return;
+            }
+            if (ev.toolName == 'finished') {
+              // Same receipt rule as the /talk loop (see there): the
+              // backgrounded work this replay carries is provably over.
+              _turn.clearBgWork();
+              if (_harnessBackgrounded) _turn.retireBadgeAndWork();
+              _logDebug(
+                'backgrounded work finished '
+                '(${ev.detail})${_transport.wireTag(ev)}',
+              );
+              notifyListeners();
               return;
             }
             final tally = ev.toolName == 'tokens';

@@ -259,6 +259,8 @@ const backlog = [];
 const BACKLOG_CAP = 200;
 let turnStartAt = 0;    // when the open turn began (survives a detach: the
                         // replay-timestamp guards read this, not curRes)
+let turnBeganAt = 0;    // true begin (no replay-slack): the 'finished'
+                        // receipt's duration reads this, not turnStartAt
 // tool_use ids still without tool_result in the open turn. This is the
 // evidence that decides what a new /talk does while a backgrounded turn
 // runs: an open tool means "genuinely working — queue mine behind it and
@@ -866,6 +868,28 @@ function handleEvent(line) {
     // in). The queued turn's own frames — and the +81 'started' marker
     // on the ring transport — say everything that needs saying.
     if (!(pending && cutForPrompt)) {
+      // The lifecycle receipt for a turn that is ending with NO ear on
+      // it — backgrounded by a press, a hide, a dead socket, or the
+      // poll transport's mute floor. A HEARD turn's phone holds its own
+      // done and needs no marker; a turn CUT for a waiting prompt gets
+      // neither (the +106 rule: the new turn's frames are the story).
+      // The frame rides the ring and the backlog like every tool frame,
+      // so whatever view next listens reads WHEN the out-of-earshot
+      // work actually ended and how long it ran — the
+      // badge-stayed-lit-long-after-the-work-finished triage question,
+      // answered by the wire instead of probe archaeology. It lands
+      // ahead of the done, so a replay reads work…, finished, done.
+      if (!curRes) {
+        const ran = turnBeganAt
+            ? Math.max(0, Math.round((Date.now() - turnBeganAt) / 1000))
+            : 0;
+        relay('tool', {
+          name: 'finished',
+          detail: m.is_error
+            ? `ended after ${ran}s — cut by the interrupt that backgrounded it`
+            : `ended after ${ran}s unheard`,
+        });
+      }
       relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
     }
     if (curRes) endTurn();
@@ -1091,6 +1115,7 @@ function interruptTurn() {
 function beginTurn(text, res, keep) {
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
   turnStartAt = Date.now() - 5000; // slack: clock skew
+  turnBeganAt = Date.now(); // the receipt's honest duration clock
   curRes = { res, keep, turnStart: turnStartAt };
   backlog.length = 0; // a new turn: the old one's buffered frames are stale
   cutForPrompt = false; // a fresh turn closes with its own done (+106)

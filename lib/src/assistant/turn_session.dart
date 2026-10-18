@@ -269,6 +269,14 @@ final class TurnCoordinator {
     _lastToolStep = '';
   }
 
+  /// The bottom line's snapshot goes, but the badge and the clock stay:
+  /// a LIVE turn owns the slot here (this arrives on its view as a
+  /// replayed receipt for the work it queued behind), and its spinner's
+  /// age must never be zeroed by a frame about OLDER work.
+  void clearBgWork() {
+    _bgWork = '';
+  }
+
   /// The badge goes out and the clock stops, but the snapshot is KEPT:
   /// the too-short tap-stop path only proves the badge stale, and the
   /// post-detach sweep must not blank a snapshot another flow owns.
