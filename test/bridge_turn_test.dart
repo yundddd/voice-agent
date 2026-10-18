@@ -107,8 +107,8 @@ class EnvProbe {
         )),
     drainBacklog: (gen, seq) async => drains.add((gen, seq)),
     ttsOff: () => ttsOff,
-    retireBgWork: (d) {
-      retiredBg.add(d);
+    retireBgWork: (d, {bool cancelled = false}) {
+      retiredBg.add((d, cancelled));
       // The assistant's law (see _retireBgWork): the promise is paid,
       // and a lit badge goes with it.
       coord?.clearBgWork();
@@ -131,7 +131,7 @@ class EnvProbe {
   // these to drive the new branches.
   bool ttsOff = false, turnOpen = false;
   int promptBumps = 0, bgProbes = 0;
-  final List<String> retiredBg = [];
+  final List<(String, bool)> retiredBg = [];
   ChatEntry? parked;
   TurnCoordinator? coord;
 }
@@ -431,7 +431,7 @@ void main() {
       // assistant's law now — the loop just hands the detail over.
       expect(
         probe.retiredBg,
-        contains('ended after 9s unheard'),
+        contains(('ended after 9s unheard', false)),
         reason: 'the finished frame funnels through the retirement hook',
       );
       expect(turn.since, isNull, reason: 'the badge retired WITH the clock');

@@ -275,6 +275,17 @@ let pending = null;     // { res, text, keep } — prompt queued behind a backgr
 // /health counts these as `detached` so the phone knows a promise is
 // still owed (and finds it honestly cleared when the process dies).
 const detached = new Map();
+// A cut tool's receipt, held until the flush explains the cut: while a
+// prompt waits in `pending`, the killed tool's late tool_result lands
+// BEFORE the turn's `result` (and with it flushPending's queued/started
+// notices) — relaying it on the spot stamped 'Bash sleep 10 finished.'
+// in the chat ABOVE the 'put into background' notice it referred to,
+// and said FINISHED for a tool the cut itself had CANCELLED (field
+// report: out of timestamp order, finished/cancelled/backgrounded all
+// at once). Held frames go out at the flush, AFTER the disposition,
+// with the honest verb: an error tool_result (Claude's own interrupt
+// reply) pays as 'cancelled', never 'finished'.
+const heldFinished = [];
 // +106: the open turn was cut by interruptTurn to let a waiting prompt
 // through — its `result` is then the phone's own doing, and the `done`
 // relay skips it (see the result branch).
@@ -680,6 +691,7 @@ function spawnClaude(resume) {
                       // are gone, and /health honestly drops to 0
     agentTasks.clear();
     bgTools.clear();
+    heldFinished.length = 0; // no flush will ever come to owe them
     proactiveTurn = false;
     if (curRes) endTurn();
     flushPending();
@@ -867,11 +879,32 @@ function handleEvent(line) {
         // The result of a tool the interrupt put into background: the
         // phone's banner promise retires HERE, whatever turn holds the
         // view this lands in (the +99 contract behaviour 2 leans on).
+        // The honest verb: an INTERRUPTED tool was killed, not
+        // completed — Claude answers a killed call with an error result
+        // (is_error / 'Interrupted'), and a 'finished' receipt for it
+        // contradicts the agent's own 'the sleep was cancelled' on the
+        // phone's screen within the same second.
         const label = detached.get(c.tool_use_id);
         if (label !== undefined) {
           detached.delete(c.tool_use_id);
-          console.error(`  -> finished "${label}"`);
-          relay('tool', { name: 'finished', detail: label });
+          const txt = typeof c.content === 'string'
+            ? c.content : JSON.stringify(c.content ?? '');
+          const cancelled = c.is_error === true ||
+            /command (was )?(interrupt|cancel|kill|abort)ed|exit code (130|143)\b/i
+              .test(txt);
+          const frame = {
+            name: 'finished',
+            detail: label,
+            ...(cancelled ? { kind: 'cancelled' } : {}),
+          };
+          console.error(`  -> ${cancelled ? 'cancelled' : 'finished'} ` +
+            `"${label}"`);
+          // While a prompt sits in the queue, the cut's explanation
+          // (queued/started) has not been written yet: hold the receipt
+          // so the chat reads backgrounded → then its outcome, never
+          // the outcome first (see heldFinished).
+          if (pending) heldFinished.push(frame);
+          else relay('tool', frame);
         }
       }
     }
@@ -1330,6 +1363,12 @@ function flushPending() {
       ...(p.backgrounded ? {kind: 'background'} : {}),
     };
     relay('tool', marker);
+    // The cut's receipts, relayed AFTER the disposition: the phone's
+    // chat reads 'put into background' first, then the tool's honest
+    // outcome (finished/cancelled) — never the outcome over its own
+    // explanation (see heldFinished).
+    const receipts = heldFinished.splice(0);
+    for (const f of receipts) relay('tool', f);
     beginTurn(p.text, mute, 0);
     // beginTurn wipes the backlog — old frames are stale for a replay,
     // but the marker we just filed belongs to THIS turn and the wipe
@@ -1337,10 +1376,21 @@ function flushPending() {
     // recovery) can retire the pin with it instead of fossilising it.
     backlog.push({ ev: 'tool', data: marker });
     if (backlog.length > BACKLOG_CAP) backlog.shift();
+    // …and the cut's receipts with it: the drain must be able to
+    // retire the banner too, not just the pin (their live copies above
+    // may die with a superseded loop the same way the notice's did).
+    for (const f of receipts) {
+      backlog.push({ ev: 'tool', data: f });
+      if (backlog.length > BACKLOG_CAP) backlog.shift();
+    }
     endTurn();
     return;
   }
   beginTurn(p.text, p.res, p.keep); // pinger rides on into the new turn
+  // Same ordering rule on the push transport: receipts follow their
+  // explanation. The live view takes these directly; the ring copy is
+  // the phone's deduped replay insurance.
+  for (const f of heldFinished.splice(0)) relay('tool', f);
 }
 // [the phone's ear] is pressed to it) or only a BACKGROUNDED turn is
 // open. Either way a new prompt never waits on it — it is QUEUED at the
@@ -1794,6 +1844,7 @@ const server = http.createServer((req, res) => {
       bgTools.clear();
       proactiveTurn = false;
       detached.clear(); // a fresh conversation inherits no banner promise
+      heldFinished.length = 0; // …nor a receipt still owed one
       // A reset conversation has nothing unheard: drop the replay backlog
       // or the next /attach (a later cold start, a respawned app) dutifully
       // re-speaks the dead conversation's tail as if it still mattered.
@@ -1805,6 +1856,7 @@ const server = http.createServer((req, res) => {
       lastCtx = { in: 0, window: ctxWindow };
       estIn = estSentIn = 0;
       if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
+      heldFinished.length = 0; // the flush that owed them is gone
       endTurn();
       child?.kill('SIGTERM'); child = null; childDead = true;
       res.writeHead(200).end('ok\n');

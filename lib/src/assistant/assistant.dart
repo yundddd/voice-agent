@@ -845,7 +845,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// name. With no agent debt it retires the line journal-only,
   /// exactly as before: no process finished, only an unheard turn
   /// closed. (behaviours 2/4)
-  void _retireBgWork(String detail) {
+  void _retireBgWork(String detail, {bool cancelled = false}) {
     final unnamed = detail.isEmpty || detail.startsWith('ended after');
     if (unnamed && _turn.agentWork) {
       _logDebug(
@@ -867,7 +867,7 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     _turn.payAgentDebt(detail); // no-op for a cut tool's label
-    _bgFinishedBubble(detail);
+    _bgFinishedBubble(detail, cancelled: cancelled);
   }
 
   /// The persistent bubble a finished background process earns — the
@@ -875,16 +875,23 @@ class VoiceAssistant extends ChangeNotifier {
   /// or the /health proof draining the ledger) files the same period
   /// per name. Idempotent: a backlog replay may deliver a second
   /// proof after the live view already retired on the first — one
-  /// completion, one period.
-  void _bgFinishedBubble(String who) {
+  /// completion, one period. A CUT tool's receipt says CANCELLED, the
+  /// verb the agent itself will use seconds later; the period is
+  /// still ONE per name whichever verb arrived first (the killed
+  /// sleep must not collect 'cancelled.' and 'finished.').
+  void _bgFinishedBubble(String who, {bool cancelled = false}) {
     if (who.isEmpty) return;
-    final note = '$who finished.';
-    if (_chat.containsBlock(note)) {
+    if (_chat.containsBlock('$who finished.') ||
+        _chat.containsBlock('$who cancelled.')) {
       _logDebug('msg bg done: "$who" already retired');
       return;
     }
+    final note = '$who ${cancelled ? 'cancelled' : 'finished'}.';
     _chat.addSystemNote(note);
-    _logDebug('msg bg done: "$who" retired the line');
+    _logDebug(
+      'msg bg done: "$who" ${cancelled ? 'cancelled' : 'finished'} '
+      '— retired the line',
+    );
     notifyListeners();
   }
 
@@ -1407,7 +1414,7 @@ class VoiceAssistant extends ChangeNotifier {
         );
       }
       final carried = j.seq > 0
-          ? ' — carried over $j.seq events across the process gap'
+          ? ' — carried over ${j.seq} events across the process gap'
           : '';
       await j.log(
         'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '

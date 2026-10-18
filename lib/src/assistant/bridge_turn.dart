@@ -161,8 +161,11 @@ final class BridgeTurnEnv {
   /// The bridge's `finished` receipt: the proof-of-completion the
   /// background banner waits for (named tool → permanent note; a
   /// lifecycle receipt → journal dismissal only). See the assistant's
-  /// _retireBgWork (behaviours 2/4, +133).
-  final void Function(String detail) retireBgWork;
+  /// _retireBgWork (behaviours 2/4, +133). [cancelled] rides the
+  /// frame's kind: the tool did not finish — the cut killed it — and
+  /// the chat says so (the field's 'finished AND cancelled AND
+  /// backgrounded all at once' contradiction, resolved at the wire).
+  final void Function(String detail, {bool cancelled}) retireBgWork;
 
   /// +132: a push-to-talk PRESS took this turn out of the ear; the
   /// release gesture has not decided its trace yet. Park the bubble's
@@ -511,7 +514,7 @@ class BridgeTurn {
       // (behaviour 2): either way the bottom line dismisses itself,
       // and only a NAMED tool gets its period in the chat (the receipt
       // rule lives behind the env hook, identical for both origins).
-      env.retireBgWork(ev.detail);
+      env.retireBgWork(ev.detail, cancelled: ev.toolKind == 'cancelled');
       return;
     }
     if (ev.toolName == 'backgrounded') {

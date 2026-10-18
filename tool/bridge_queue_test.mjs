@@ -299,6 +299,65 @@ test('a queue press over a running tool backgrounds it and frees the agent ' +
   }
 });
 
+// The cut's paperwork, in the order the story needs (field report:
+// 'out of timestamp order — says cancelled AND finished AND backgrounded
+// all at once'). A queue press that kills a RUNNING tool sends its
+// tool_result (Claude's error reply) BEFORE the turn's result — and
+// with it flushPending: relaying that receipt on arrival stamped
+// 'Bash sleep 10 finished.' above the 'put into background' notice it
+// belonged to, and said FINISHED for a call the cut itself cancelled.
+// The receipt now (1) waits for the flush, landing after queued/started,
+// and (2) carries kind='cancelled' when the result says aborted.
+const PORT6B = PORT1 + 15;
+test('a cut tool\u2019s cancelled receipt follows its backgrounding notice ' +
+    '(ordered, honest verb)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT6B, {
+    STUB_TOOL: 'sleep 10', STUB_TOOL_START_MS: '100',
+    STUB_RESULT_MS: '30000',
+    STUB_TOOL_DONE_MS: '400',
+    STUB_TOOL_CANCELLED: '1',
+  });
+  try {
+    await up(PORT6B);
+    const a = await call(PORT6B, `/talk?token=${TOKEN}`,
+      { body: 'sleep please', method: 'POST' });
+    await until('tool open', async () =>
+      a.text.includes('"name":"Bash"'));
+    const b = await call(PORT6B, `/talk?token=${TOKEN}&interrupt=0&cuttool=1`,
+      { body: 'new message', method: 'POST' });
+
+    // The ring is the phone's eye (both transports feed it; the pull
+    // loop reads it): assert the STORY ORDER on the single sequence.
+    await until('cancelled receipt on the ring', async () => {
+      const r = JSON.parse((await call(PORT6B, `/poll?token=${TOKEN}&since=0`)).text);
+      return (r.events ?? []).some((e) =>
+        e.ev === 'tool' && e.data?.name === 'finished' &&
+        e.data?.kind === 'cancelled');
+    });
+    const r = JSON.parse((await call(PORT6B, `/poll?token=${TOKEN}&since=0`)).text);
+    const names = (r.events ?? []).map((e) =>
+      e.ev === 'tool' ? `${e.data?.name}:${e.data?.kind ?? ''}` : e.ev);
+    const atQueued = names.findIndex((n) => n.startsWith('queued:'));
+    const atStarted = names.findIndex((n) => n.startsWith('started:'));
+    const atFinished = names.findIndex((n) =>
+      n === 'finished:cancelled');
+    assert.ok(atQueued >= 0, 'the backgrounding notice rode the flush');
+    assert.ok(atQueued < atFinished,
+      'the cancelled receipt lands AFTER the backgrounding it answers ' +
+      `— ring order: ${names.join(' ')}`);
+    assert.ok(atStarted === -1 || atStarted < atFinished,
+      'and after the pickup marker when one rides');
+    const fin = (r.events ?? [])[atFinished]?.data ?? {};
+    assert.equal(fin.detail, 'Bash sleep 10',
+      'and it still names the step the banner showed');
+    a.kill();
+    b.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
 // The phone's pump died mid-handoff (the +104 flip: Android cut the SSE
 // stream while the prompt sat queued). Its recovery is a drain /attach —
 // and the ONLY thing that retires a fossilised 'queued' pin there is the

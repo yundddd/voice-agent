@@ -93,12 +93,19 @@ process.stdin.on('data', (b) => {
       const gen = ++turnSeq;
       if (openToolId && toolDoneMs) {
         const id = openToolId;
+        const cancelled = process.env.STUB_TOOL_CANCELLED === '1';
         setTimeout(() => {
           out({
             type: 'user', session_id: 'stub-session',
             message: { role: 'user',
               content: [{ type: 'tool_result', tool_use_id: id,
-                          content: 'done in background' }] },
+                          ...(cancelled
+                            ? {
+                                is_error: true,
+                                content:
+                                  'Command aborted (exit code 143)',
+                              }
+                            : { content: toolDoneText }) }] },
           });
           out({
             type: 'assistant', session_id: 'stub-session',

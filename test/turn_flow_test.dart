@@ -2129,6 +2129,68 @@ void main() {
       );
     });
 
+    test('+142: a cut tool’s cancelled receipt files “cancelled.” — and '
+        'one more replay never files a second period', () async {
+      await withBridge();
+      unawaited(a.runQuickCommand('sleep please'));
+      await settle();
+      harness.emit(
+        BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'sleep 10'),
+      );
+      await settle();
+      // The killed tool's late result: the bridge relays it kind=
+      // cancelled (Claude answered with an error result), and the
+      // banner was wearing exactly this step.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 10',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 10',
+          toolKind: 'cancelled',
+        ),
+      );
+      await settle();
+      expect(
+        a.chat.any((e) => e.blocks.contains('Bash sleep 10 cancelled.')),
+        isTrue,
+        reason:
+            'the note carries the verb the agent itself will use — '
+            'never finished for a call the cut killed',
+      );
+      expect(a.backgroundedWork, isEmpty);
+
+      // A backlog replay delivers the same receipt again, and the
+      // /health proof then pays the ledger: still exactly one period.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 10',
+          toolKind: 'cancelled',
+        ),
+      );
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      expect(
+        a.chat
+            .where((e) => e.blocks.contains('Bash sleep 10 cancelled.'))
+            .length,
+        1,
+      );
+      expect(
+        a.chat.any((e) => e.blocks.contains('Bash sleep 10 finished.')),
+        isFalse,
+        reason: 'one completion, one period — whichever verb came first',
+      );
+    });
+
     test('a report that opened and CLOSED between heartbeat beats is '
         'drained, not retired over — the answer arrives now, not at the '
         'next prompt (field report: no response unless I ask)', () async {
