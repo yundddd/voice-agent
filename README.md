@@ -325,6 +325,115 @@ commit subject. The phone gets the new `+N` via Telegram (`--split-per-abi`
 keeps the arm64 APK under the bot's 50 MB cap); the bridge updates with a
 service restart.
 
+## Queueing & interrupting: expected behaviour, and how it is driven in the simulator
+
+What the two composer buttons owe the user, stated as contracts (each was
+a field report; the wire flags are `?interrupt=`, `?cuttool=1`, `?poll=1`):
+
+- **Queue over a thinking turn** (`interrupt=0`): the message pins at the
+  bottom of the channel ("Queued — waiting for the current work") and the
+  turn is left to settle. The pin dissolves **only** at the bridge's
+  `started` pickup marker — never at a foreign turn's `done`, and never at
+  the `queued` notice, which is the *opposite* promise (+81, +131). The
+  parked pump must survive that farewell `done`: on the shared ring cursor
+  it arrives ahead of the marker, and a pump that ends there fossilises
+  the pin forever (the bash-sleep report — the journal line
+  `poll: done of the PRIOR turn swallowed pre-pickup` is the fix proving
+  itself). A superseded press retires its own pin: the bridge's pending
+  slot is latest-wins, and a replaced prompt never gets a `started` to
+  dissolve it.
+- **Queue over a running tool** (`cuttool=1`, the Queue button): polite
+  towards thinking is not polite towards builds — the moment the agent is
+  chewing on a tool call, a queue press **backgrounds it** and the agent
+  answers now. The bridge relays the disposition twice (enqueue notice and
+  a re-announce at flush — any single copy is losable to a dying turn's
+  pump), tags the pickup marker `kind='background'`, files the cut call
+  in a `detached` map, and when the late `tool_result` lands it speaks a
+  `finished` frame naming the step — that receipt, not the pickup, is
+  what retires the banner; the phone files a `“Bash sleep 10 finished.”`
+  bubble at the same moment (behaviours 2/4, +131). `/health` exposes
+  `detached` so the count's own 0→1→0 trail is externally checkable, and
+  a /health sweep finding nothing open and nothing detached retires the
+  banner even if the tool's receipt never arrives (a harness that killed
+  the tool with the turn owes nothing).
+- **Interrupt** (default `interrupt=1`, and every voice barge-in): the
+  turn is cut in-band with a `control_request interrupt` — thinking and
+  in-flight tools alike. The cut turn's `done` is *suppressed* (+106: the
+  phone cut it itself; a stray done landing on the fresh bubble births a
+  dead turn), its bubble keeps the ✋ `interrupted` stamp and whatever was
+  heard, and the new prompt's flush carries the same `kind='background'`
+  promise as a queued cut.
+- **A press behind already-detached work shows in the flow** (+126): the
+  pin protects an answer the *ear* is holding; behind unheard work the
+  badge and the bottom line already carry the wait, so the message rides
+  the conversation immediately and dissolves nothing. The banner's
+  warrants are exactly three — badge, pin, cut-tool promise — and every
+  dismissal path clears one of them, so the line vanishing *is* the proof.
+- **No duplicate bubbles.** Poll cursor hygiene at hand-offs (the cursor
+  advances with what the pump *consumed*, not what the wire held; a
+  push→pull flip catches the cursor up to the ring head), the flush
+  re-announce lands on the system note's adjacency guard, and the
+  heard-ledger (written at first audio chunk, retracted if the wire died
+  before air) dedups every replay (+109…+116).
+
+**Driving it in the emulator (what works, what bites):**
+
+```bash
+emulator -avd Pixel_8_API_35 -no-window -no-audio -no-boot-anim &   # headless
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+# seed bridge prefs where the app actually reads them — INSIDE the models dir:
+adb push prefs.json /data/local/tmp/bridge_prefs.json
+adb shell run-as com.voiceagent.voice_agent \
+    sh -c 'mkdir -p files/models && cp /data/local/tmp/bridge_prefs.json files/models/'
+```
+
+- The stub harness (`--claude tool/bridge_stub_claude.mjs`) makes every
+  scenario clock-deterministic: `STUB_RESULT_MS` pins the turn length,
+  `STUB_TOOL`/`STUB_TOOL_START_MS` open a Bash step mid-turn,
+  `STUB_TOOL_DONE_MS` makes that tool SURVIVE a cut and report `finished`
+  N seconds later. The real bridge + real claude participate the same way
+  with `sleep 10` as the tool; the stub exists so the *timing*, not the
+  model, is what the test controls.
+- Ground truth is the files, not the pixels: `prompts.log` (`STUB_LOG`)
+  answers "did the harness get it"; the bridge-relayed journal answers
+  "what did the phone believe and when" (`curl '/applogs?token=…&since=N'`
+  or the bridge stderr `[app` lines) — but pushes arrive batched (~30 s),
+  so reading the journal immediately after a press shows yesterday.
+  `/health`'s `queued` is likewise a millisecond-wide window on a cut
+  flush (the prompt parks and flushes in the same round trip) — a false
+  there on a Queue press is EXPECTED, check the marker in the journal.
+- `uiautomator dump` cannot settle while any spinner ticks (the elapsed
+  counter repaints every second), which is exactly when you want a dump.
+  Work around it: screenshots (`adb exec-out screencap -p`) always work;
+  calibrate tap coordinates ONCE while idle and cache them; the composer
+  row is at its dumped bounds in every state with at least one bubble on
+  screen (empty-chat and IME-open screens float the layout ~250 px higher
+  — re-dump after the first send, not before).
+- Screenshots are 1080-px wide and display scaled: read tap coordinates
+  from the uiautomator XML, never from the picture.
+- Keep the stock companions pacified or they steal focus at the worst
+  moment: `pm disable-user --user 0 com.google.android.apps.photos
+  com.google.android.gm`, and note that snapshot restores can undo it.
+  `show_ime_with_hard_keyboard=0` matters: with the IME shown, the
+  driver's `keyevent 4` (IME close) becomes an app-exit, and taps land on
+  a layout the calibration never saw.
+- Force-stop between scenarios and delete `files/models/chat_log.json`
+  for a clean channel; an unfinished control-chip turn (`/compact`)
+  restores as a spinning zombie and poisons both dumps and banner
+  assertions. And a fresh boot may re-send a pending chip command by
+  itself — one unexplained `/compact` in `prompts.log` on a wiped start is
+  this, not a bug in the queue.
+
+The regression net stays three-deep on purpose: node drives the real
+bridge over HTTP (`tool/bridge_queue_test.mjs` — every wire contract
+above, incl. the marker surviving beginTurn's backlog wipe), Dart drives
+the state machine against scripted ring pages
+(`test/turn_flow_test.dart` — pin, armor, banner, receipts;
+`test/turn_session_test.dart` — the coordinator's transition matrix),
+and the emulator above is only for what no fake can prove: that the
+compositor, the IME and the notification shade leave the promises above
+visible where they belong.
+
 ## Claude Code bridge
 
 The app can put the desktop's Claude Code harness between its ASR and TTS:
