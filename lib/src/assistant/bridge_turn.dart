@@ -509,6 +509,19 @@ class BridgeTurn {
     // a barge-in from here drops the paragraph, it never re-owes it
     // (user dictum: 'for barge in just drop').
     if (ev.mid != 0) env.commitHeard(ev.mid);
+    if (sayText.isEmpty) {
+      // +179: the paragraph WAS the markup — once the tags fall there
+      // is nothing to show or say (the 13:11 tape's entire 'answer').
+      // Consumed like news (the ack above rides anyway, so the wire
+      // trims it), spoken by nobody: the empty-turn machinery the
+      // 'nothing to say' walk already pins treats the reply as never
+      // said.
+      env.log(
+        'say #${ev.mid} was pure tool-call markup — dropped'
+        '${transport.wireTag(ev)}',
+      );
+      return;
+    }
     if (ev.mid != 0 && age > 120000) {
       // Never heard AND ancient: lived through while the phone was
       // gone (an APK update, a week offline). Text, never the speaker

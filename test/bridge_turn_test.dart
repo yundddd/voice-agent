@@ -292,6 +292,40 @@ void main() {
       expect(probe.drains, [(1, mySeq)], reason: 'every heard turn end drains');
     });
 
+    test('+179: a say that IS tool-call markup: taken, acked, spoken '
+        'by nobody', () async {
+      // The 13:11 field tape's frame: the upstream wrote its call in
+      // prose; the phone's scrubber strips the span (arguments with
+      // it — a lone 'flutter test' would promise a run that never
+      // happened) and what is left is nothing. Nothing is shown,
+      // nothing is said; the frame is still TAKEN (the drain acks
+      // ride the id, not the mouthfeel).
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(BridgeEvent.forTest(
+        'say',
+        mid: 9,
+        text: '<tool_call>\n<function name="Bash">\n'
+            '<parameter name="command">flutter test</parameter>'
+            '</function></tool_call>',
+      ));
+      wire.add(const BridgeEvent.forTest('say', text: 'On it.', mid: 10));
+      wire.add(BridgeEvent.forTest('done'));
+      final outcome = await r;
+      out.complete();
+      await settle();
+      expect(outcome.sawDone, isTrue);
+      expect(engine.synthesized, ['On it.'],
+          reason: 'only the prose reaches the mouth');
+      expect(bubble.blocks, ['On it.'], reason: 'and only it hits the screen');
+      expect(
+        probe.logs.any((l) => l.contains('pure tool-call markup')),
+        isTrue,
+        reason: 'the drop is journalled — future tapes read honest',
+      );
+    });
+
     test('+163: a steered pickup makes the turn heard and promises no '
         'banner — the fold law on the phone side', () async {
       // The bridge folded this prompt into the RUNNING turn at a tool

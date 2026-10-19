@@ -257,6 +257,36 @@ void main() {
       expect(s, 'Two files changed, tests pass.');
     });
 
+    test('+179: tool-call markup emitted AS TEXT is stripped, '
+        'arguments and all', () {
+      // The 13:11 tape: a degraded upstream wrote its call in prose
+      // and the phone spoke 27.6 s of angle-brackets. The call's
+      // arguments vanish WITH the tags — a lone 'flutter test' would
+      // promise a run that never happened.
+      expect(
+        cleanForSpeech('<tool_call>\n<function name="Bash">\n'
+            '<parameter name="command">flutter test</parameter>\n</function></tool_call>'),
+        isEmpty,
+        reason: 'a whole call is nothing to say',
+      );
+      final m = cleanForSpeech(
+        'Sure. <antml:invoke name="Read">'
+        '<antml:parameter name="path">pubspec.yaml</parameter>'
+        '</antml:invoke> Checking now.',
+      );
+      expect(m, contains('Sure'));
+      expect(m, contains('Checking'));
+      expect(m, isNot(contains('pubspec')),
+          reason: 'args die with the span');
+      expect(m, isNot(contains('<')), reason: 'no tag survives for espeak');
+      // A truncated emission (no closer at all) still falls.
+      expect(
+        cleanForSpeech('<tool_call>\n<function name="Bash">\n'
+            '<parameter name="command">flutter test'),
+        isEmpty,
+      );
+    });
+
     test('dots espeak would say as the word "period" are folded', () {
       // file-extension dots: the lowercase-dot-lowercase case espeak
       // cannot read as sentence punctuation

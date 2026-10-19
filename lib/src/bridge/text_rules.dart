@@ -9,13 +9,41 @@ library;
 /// that ignores it (or a repo report full of bullet lists) would
 /// otherwise get its formatting *spoken* ("asterisk asterisk...").
 String cleanForSpeech(String t) {
-  var s = t.replaceAll(RegExp(r'``[\s\S]*?``'), ' (code omitted) ');
+  // +179: tool-call markup emitted AS TEXT — the degraded-upstream
+  // shape the 13:11 tape caught: the model wrote its own `
+  // <tool_call><function name="Bash"><parameter …` block (a proxy
+  // after a /compact re-anchor forgetting the call is a wire object),
+  // the CLI saw prose, executed nothing, and the phone got 27.6 s of
+  // spoken angle-brackets. Strip SPANS first, on raw text: the
+  // markdown pass below eats the underscores that identify them, and
+  // the call's ARGUMENTS must vanish with its tags — announcing a
+  // lone 'flutter test' would promise a run that never happened.
+  var s = t.replaceAll(
+    RegExp(
+      r'<(antml[:_])?(tool_?calls?|tool_use|function_?calls?|invoke)'
+      r'\b[^<>]*>[\s\S]*?(?:</\1?\2\s*>|$)',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  // Orphan tags next (a truncated emission has openers without
+  // closers), and the attribute tails a partial span can leave.
+  s = s.replaceAll(
+    RegExp(
+      r'</?\s*(antml[:_])?(tool_?calls?|tool_use|function_?calls?|'
+      r'invoke|parameters?|arguments?|description|command)\b[^<>]*>?',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  s = s.replaceAll(RegExp(r'\bname\s*=\s*"[^"]*"'), ' ');
+  s = s.replaceAll(RegExp(r'``[\s\S]*?``'), ' (code omitted) ');
   // Links -> their text (replaceAll doesn't expand $1; mapped does).
   s = s.replaceAllMapped(
     RegExp(r'\[([^\]]+)\]\([^)]*\)'),
     (m) => m.group(1) ?? m.group(0)!,
   );
-  s = s.replaceAll(RegExp(r'[*_`~#>|]'), '');
+  s = s.replaceAll(RegExp(r'[*_`~#><|]'), '');
   // espeak (the pack's phonemizer) says the WORD 'period' wherever a dot
   // can't be sentence punctuation: inside filenames ('pubspec.yaml') and
   // at the joins below when the next clause starts lowercase. Neither dot
