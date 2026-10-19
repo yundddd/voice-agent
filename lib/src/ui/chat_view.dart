@@ -499,3 +499,54 @@ class _FileBody extends StatelessWidget {
     );
   }
 }
+
+/// New bubbles FADE and RISE into the channel (field dictate: they used
+/// to just flicker onto the screen). One-shot by construction: the
+/// animation belongs to the element's first build, so an already-open
+/// bubble that merely grows a streamed section never re-animates —
+/// give each entry a stable ObjectKey and only genuinely-new cards
+/// slide in. A boot-reload fades the restored log in as a group, which
+/// reads as the screen settling, not strobing.
+class FadeInBubble extends StatefulWidget {
+  const FadeInBubble({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<FadeInBubble> createState() => _FadeInBubbleState();
+}
+
+class _FadeInBubbleState extends State<FadeInBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    return FadeTransition(
+      opacity: t,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.06),
+          end: Offset.zero,
+        ).animate(t),
+        child: widget.child,
+      ),
+    );
+  }
+}

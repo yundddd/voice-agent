@@ -97,6 +97,43 @@ double _bandOpacity(WidgetTester tester, String label) => tester
     .opacity;
 
 void main() {
+  group('FadeInBubble', () {
+    testWidgets('a new bubble fades in, settles opaque, and never replays',
+        (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const FadeInBubble(key: ValueKey('e1'), child: Text('arriving')),
+        ),
+      );
+      FadeTransition fade() => tester.widget<FadeTransition>(
+        find
+            .descendant(
+              of: find.byType(FadeInBubble),
+              matching: find.byType(FadeTransition),
+            )
+            .first,
+      );
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(
+        fade().opacity.value,
+        lessThan(1.0),
+        reason: 'mid-flight: the bubble eases in, it does not flicker',
+      );
+      await tester.pumpAndSettle();
+      expect(fade().opacity.value, 1.0);
+      // A rebuild of the SAME element (a streamed section growing the
+      // bubble) must not re-animate: the one-shot belongs to the
+      // element's birth, and the ObjectKey keeps that birth honest.
+      await tester.pumpWidget(
+        _host(
+          const FadeInBubble(key: ValueKey('e1'), child: Text('arriving')),
+        ),
+      );
+      await tester.pump();
+      expect(fade().opacity.value, 1.0);
+    });
+  });
+
   group('ChatBubble', () {
     testWidgets('a user bubble shows its text', (tester) async {
       final entry = ChatEntry.user('Repo status', createdMs: 1);

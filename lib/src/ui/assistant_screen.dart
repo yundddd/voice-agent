@@ -256,12 +256,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
                                   ),
-                                  child: ChatBubble(
-                                    entry: e,
-                                    maxWidthFrac: 0.86,
-                                    source: () => a.view,
-                                    onFileTap: a.fetchChatFile,
-                                    onQueueTap: (_) => a.interruptForQueued(),
+                                  // ObjectKey = the entry's identity:
+                                  // the fade fires once per bubble, not
+                                  // on every streamed section added to
+                                  // an open one.
+                                  child: FadeInBubble(
+                                    key: ObjectKey(e),
+                                    child: ChatBubble(
+                                      entry: e,
+                                      maxWidthFrac: 0.86,
+                                      source: () => a.view,
+                                      onFileTap: a.fetchChatFile,
+                                      onQueueTap: (_) => a.interruptForQueued(),
+                                    ),
                                   ),
                                 ),
 
