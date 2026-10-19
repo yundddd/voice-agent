@@ -870,6 +870,13 @@ class BridgeTurn {
       // and a turn superseded by a barge-in successor must NOT close
       // the queue its successor's player loop is now feeding.
       reply.closeStream();
+      // +165: the audio-rendering verdict dies with the wire. A
+      // settled tally is the TURN's state — leaving it standing across
+      // the close would hide the +164 drain-debt row behind a caption
+      // about an audio pipeline the next phase has nothing to do
+      // with. The next turn resets too (runQuickCommand / reattach);
+      // this reset covers the gap where a debt is owed between turns.
+      ticker.resetForTurn();
       if (!isAttach) turn.clearLastToolStep(); // the turn is over
     }
     final said = spoken.toString().trim();

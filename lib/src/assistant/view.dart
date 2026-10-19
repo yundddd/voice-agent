@@ -247,7 +247,23 @@ final class AssistantView {
   /// to move to); hidden over pure playback by the same [spinnerVisible]
   /// rule. A turn's own bubble appears in the flow the moment it has
   /// something to say.
-  bool get showWorkingRow => agentBusy && spinnerVisible;
+  ///
+  /// +165 makes the slot EXCLUSIVELY about agent status: when the
+  /// bridge says `settled` (message_stop with no tool open — the text
+  /// is final and only the phone's TTS pipeline remains) the row is
+  /// gone, not frozen-and-captioned 'Rendering audio…'. Audio
+  /// rendering is the speaker's business; the wheel had already been
+  /// frozen over it since +84, and the +83 draft preview it kept
+  /// alive has been superseded by +161 — the full received text is in
+  /// the bubble while it renders, so the preview row only reported on
+  /// the queue outside the box. Two guards keep this from ever hiding
+  /// real work: settled can only ever describe the HEARD turn (a
+  /// detached one receives no tally at all — counters stay live-only,
+  /// +159), and it dies at the close (teardown's resetForTurn), so a
+  /// +164 drain debt — the next reply owed — always re-lights the row
+  /// from zero.
+  bool get showWorkingRow =>
+      agentBusy && spinnerVisible && !(token.settled && !drainOwed);
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

@@ -296,6 +296,64 @@ void main() {
       expect(a.phase, AssistantPhase.idle);
     });
 
+    test('+165: a settled turn hides the row — rendering audio is not '
+        'agent status — and the owed drain re-lights it after the close',
+        () async {
+      // The field sequence of the steered exchange: the host's text
+      // settles (message_stop, no tool open), the farewell closes the
+      // turn, and the answer to THIS phone's prompt is born a beat
+      // later in the follow-on. The box belongs to the agent: while
+      // only the phone's TTS pipeline remained, the row showed a
+      // frozen wheel captioned 'Rendering audio…' — the speaker's
+      // queue inside the agent's status slot.
+      await withBridge();
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2,
+      };
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'settled',
+          outTokens: 800,
+          inputTokens: 5000,
+          draft: 'Done — the sleep finished cleanly.',
+        ),
+      );
+      await settle();
+      expect(a.turnSettled, isTrue);
+      expect(
+        a.view.agentBusy,
+        isTrue,
+        reason: 'the turn is open — the wire has not closed yet',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason: 'but nothing computes: settled means only the speaker '
+            'is left, and TTS is independent of the box (+165)',
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'Done — the sleep finished cleanly.',
+          mid: 41,
+        ),
+      );
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      expect(a.view.token.settled, isFalse,
+          reason: 'the rendering verdict died with the wire');
+      expect(a.view.drainOwed, isTrue, reason: 'the +164 debt is owed');
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason: 'the row re-lights honestly from zero for the owed reply',
+      );
+    });
+
     test(
       'the live tally projects as numbers + settled + thought tail',
       () async {
