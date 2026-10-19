@@ -15,12 +15,4 @@ class ModelPaths {
     required this.whisperTokens,
     this.vadModel = '',
   });
-
-  /// Paths for the layout produced by [unpackModels] (lib/model_packs.dart).
-  factory ModelPaths.fromModelsDir(String dir) => ModelPaths(
-    whisperEncoder: '$dir/asr-whisper-tiny.en/tiny.en-encoder.int8.onnx',
-    whisperDecoder: '$dir/asr-whisper-tiny.en/tiny.en-decoder.int8.onnx',
-    whisperTokens: '$dir/asr-whisper-tiny.en/tiny.en-tokens.txt',
-    vadModel: '$dir/silero_vad.onnx',
-  );
 }

@@ -72,11 +72,11 @@ import '../common/clock.dart';
 import '../common/sinks.dart';
 import '../journal/app_events.dart';
 import '../models/model_packs.dart';
-import '../models/model_paths.dart';
 import '../platform/audio_output.dart';
 import '../platform/file_player_output.dart';
 import '../platform/mic_source.dart';
 import '../platform/record_mic_source.dart';
+import '../speech/asr_models.dart';
 import '../speech/kokoro_voices.dart';
 import '../speech/speech_worker.dart';
 import '../speech/tts_voices.dart';
@@ -101,6 +101,8 @@ export './hide_resume.dart' show HideResume, ResumePlan;
 export './reattach_chain.dart' show ReattachChain, ReattachEnv;
 export './view.dart';
 export '../speech/speech_worker.dart' show SpeechEvent, SpeechWorker, TtsSpec;
+export '../speech/asr_models.dart'
+    show AsrModel, AsrPrefs, loadAsrPrefs, saveAsrPrefs, asrModels, asrModelById;
 export '../speech/tts_voices.dart'
     show TtsVoice, TtsPrefs, loadTtsPrefs, saveTtsPrefs, ttsVoices, voiceById;
 
@@ -423,14 +425,18 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Voice selection & cloning ───────────────────────────────────────────
   String _modelsDir = '';
   TtsPrefs _prefs = TtsPrefs();
+  AsrPrefs _asrPrefs = AsrPrefs();
   String _activeVoiceId = 'titl';
+  String _activeAsrId = 'tiny.en';
   int _ttsNumSpeakers = 0; // engine roster size; 0 = none loaded yet
   String _voiceStatus = ''; // one-line feedback for the voice screen
   bool _voiceBusy = false; // download / engine swap in progress
 
   List<TtsVoice> get voices => ttsVoices;
+  List<AsrModel> get asrOptions => asrModels;
   String get modelsDir => _modelsDir;
   String get ttsVoiceId => _activeVoiceId;
+  String get asrModelId => _activeAsrId;
   int get ttsSid => _prefs.sid;
   int get ttsNumSpeakers => _ttsNumSpeakers;
   String get voiceStatus => _voiceStatus;
@@ -1480,6 +1486,17 @@ class VoiceAssistant extends ChangeNotifier {
       final modelsDir = await unpackModels(onProgress: _modelProgress);
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
+      _asrPrefs = await loadAsrPrefs(modelsDir);
+      // The saved ASR pack must be fully on disk (marker present);
+      // otherwise fall back to the default (tiny.en), which downloads on
+      // first run just like the voice packs below.
+      var asr = asrModelById(_asrPrefs.modelId) ?? asrModelById('tiny.en')!;
+      if (asr.id != 'tiny.en' && !await asr.installedIn(modelsDir)) {
+        asr = asrModelById('tiny.en')!;
+      }
+      _asrPrefs.modelId = asr.id;
+      _activeAsrId = asr.id;
+      await asr.ensureIn(modelsDir, onProgress: _modelProgress);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
       _heardLedger = await loadHeardLedger(
         modelsDir,
@@ -1549,7 +1566,7 @@ class VoiceAssistant extends ChangeNotifier {
         );
       }
       _worker = await SpeechWorker.start(
-        ModelPaths.fromModelsDir(modelsDir),
+        asr.pathsIn(modelsDir),
         tts: ttsOn ? await _spec(voice, sid: _prefs.sid) : null,
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
@@ -1667,6 +1684,66 @@ class VoiceAssistant extends ChangeNotifier {
     _voiceBusy = true;
     try {
       await v.deleteIn(_modelsDir);
+      _voiceStatus = '';
+    } finally {
+      _voiceBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Switch the speech-recognition model, downloading its pack first if
+  /// needed (progress shows in [voiceStatus]). Unlike TTS, the ASR graph
+  /// is baked into the worker isolate at start, so the swap is a worker
+  /// restart with the same TTS wiring — a brief mic gap while the new
+  /// engine loads.
+  Future<void> selectAsr(String id) async {
+    if (_worker == null || _voiceBusy) return;
+    final m = asrModelById(id);
+    if (m == null || id == _activeAsrId) return;
+    _voiceBusy = true;
+    _voiceStatus = 'Setting up ${m.label}…';
+    notifyListeners();
+    SpeechWorker? fresh;
+    try {
+      await m.ensureIn(_modelsDir, onProgress: _voiceProgress);
+      final ttsOn = _bridgePrefs.tts;
+      final voice = voiceById(_prefs.voiceId) ?? voiceById('titl')!;
+      fresh = await SpeechWorker.start(
+        m.pathsIn(_modelsDir),
+        tts: ttsOn ? await _spec(voice, sid: _prefs.sid) : null,
+        onEvent: _onSpeechEvent,
+        endpointSilence: _endpointSilence,
+      );
+      _worker!.dispose(); // old engine out only after the new one is ready
+      _worker = fresh;
+      _ttsNumSpeakers = fresh.ttsNumSpeakers;
+      fresh = null;
+      _activeAsrId = m.id;
+      _asrPrefs.modelId = m.id;
+      await saveAsrPrefs(_modelsDir, _asrPrefs);
+      _voiceStatus = '';
+    } catch (e) {
+      _voiceStatus = 'Could not switch speech model: $e';
+    } finally {
+      fresh?.dispose(); // start failed mid-flight: don't leak the isolate
+      _voiceBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Free the disk space of a speech model's pack (the one in use stays
+  /// protected).
+  Future<void> deleteAsr(String id) async {
+    final m = asrModelById(id);
+    if (m == null || _voiceBusy) return;
+    if (id == _activeAsrId) {
+      _voiceStatus = 'Switch to another model before deleting this one.';
+      notifyListeners();
+      return;
+    }
+    _voiceBusy = true;
+    try {
+      await m.deleteIn(_modelsDir);
       _voiceStatus = '';
     } finally {
       _voiceBusy = false;

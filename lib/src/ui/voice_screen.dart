@@ -18,7 +18,8 @@ class VoiceScreen extends StatefulWidget {
 }
 
 class _VoiceScreenState extends State<VoiceScreen> {
-  /// voiceId -> pack on disk. Refreshed on open and after every action.
+  /// voiceId (and asrModelId) -> pack on disk. Refreshed on open and
+  /// after every action.
   final Map<String, bool> _installed = {};
 
   VoiceAssistant get a => widget.assistant;
@@ -34,6 +35,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
     for (final v in a.voices) {
       map[v.id] = a.ttsVoiceId == v.id || await v.installedIn(a.modelsDir);
     }
+    for (final m in a.asrOptions) {
+      map['asr:${m.id}'] =
+          a.asrModelId == m.id || await m.installedIn(a.modelsDir);
+    }
     if (mounted) setState(() => _installed.addAll(map));
   }
 
@@ -41,6 +46,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
     unawaited(
       a.selectVoice(v.id, force: force).then((_) => _refreshInstalled()),
     );
+  }
+
+  void _pickAsr(AsrModel m) {
+    unawaited(a.selectAsr(m.id).then((_) => _refreshInstalled()));
   }
 
   // ── Round-trip bench ────────────────────────────────────────────────────
@@ -262,6 +271,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               const SizedBox(height: 20),
               Text(
+                'SPEECH RECOGNITION',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              const SizedBox(height: 4),
+              for (final m in a.asrOptions) _asrTile(m),
+              const SizedBox(height: 20),
+              Text(
                 'ROUND-TRIP BENCH',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
@@ -269,9 +285,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
               _benchCard(),
               const SizedBox(height: 16),
               Text(
-                'The voice pack downloads only when you pick it and can be '
+                'A model pack downloads only when you pick it and can be '
                 'deleted again with the trash icon; re-picking a deleted '
-                'voice downloads it fresh.',
+                'pack downloads it fresh.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -321,6 +337,40 @@ class _VoiceScreenState extends State<VoiceScreen> {
         ],
       ),
       onTap: () => _pick(v),
+    );
+  }
+
+  Widget _asrTile(AsrModel m) {
+    final scheme = Theme.of(context).colorScheme;
+    final active = a.asrModelId == m.id;
+    final installed = _installed['asr:${m.id}'] ?? false;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+      leading: Icon(
+        active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        color: active ? scheme.primary : null,
+      ),
+      title: Text(m.label),
+      subtitle: Text(
+        installed
+            ? active
+                  ? '${m.note} · ${m.sizeLabel} · in use'
+                  : '${m.note} · ${m.sizeLabel} · downloaded'
+            : '${m.note} · ${m.sizeLabel} · downloads when selected',
+      ),
+      trailing:
+          installed && !active
+              ? IconButton(
+                tooltip: 'Delete downloaded model',
+                onPressed: a.voiceBusy
+                    ? null
+                    : () => unawaited(
+                      a.deleteAsr(m.id).then((_) => _refreshInstalled()),
+                    ),
+                icon: const Icon(Icons.delete_outline),
+              )
+              : null,
+      onTap: () => _pickAsr(m),
     );
   }
 

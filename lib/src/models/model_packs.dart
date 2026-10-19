@@ -8,17 +8,6 @@ import 'model_unpack.dart';
 
 export 'model_unpack.dart';
 
-/// Packs every run needs, downloaded on first launch.
-const modelPacks = [
-  ModelPack(
-    label: 'speech recognition (Whisper tiny.en)',
-    url:
-        'https://github.com/yundddd/voice-agent/releases/download/models-v1/asr-whisper-tiny.en.zip',
-    dirName: 'asr-whisper-tiny.en',
-    markerFile: 'tiny.en-decoder.int8.onnx',
-  ),
-];
-
 const _vadAsset = 'assets/models/silero_vad.onnx';
 
 /// Directory holding the unpacked model subdirectories (created on demand).
@@ -29,8 +18,10 @@ Future<String> modelsRootDir() async {
   return dir.path;
 }
 
-/// Downloads the always-required packs (ASR) and copies the bundled Silero
-/// VAD model out of the APK. Returns the models directory path.
+/// Copies the bundled Silero VAD model out of the APK. The ASR pack is a
+/// lazy [AsrModel] choice (see lib/speech/asr_models.dart) — the assistant
+/// ensures the selected variant, like every voice pack. Returns the models
+/// directory path.
 Future<String> unpackModels({ModelProgress? onProgress}) async {
   final modelsDir = await modelsRootDir();
 
@@ -45,8 +36,5 @@ Future<String> unpackModels({ModelProgress? onProgress}) async {
     );
   }
 
-  for (final pack in modelPacks) {
-    await ensurePack(modelsDir, pack, onProgress: onProgress);
-  }
   return modelsDir;
 }
