@@ -2978,4 +2978,16 @@ void main() {
       );
     });
   });
+
+  group('queue-bubble tap-to-interrupt', () {
+    test('tapping the grey bubble /stops the in-flight turn (+172)',
+        () async {
+      await withBridge();
+      await a.interruptForQueued();
+      await settle();
+      expect(harness.stops, 1,
+          reason: 'just /stop — the bridge interrupts and flushes the '
+              'parked prompt; the queued view stays listening');
+    });
+  });
 }

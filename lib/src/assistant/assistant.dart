@@ -1087,6 +1087,18 @@ class VoiceAssistant extends ChangeNotifier {
     return err;
   }
 
+  /// The grey queue bubble's tap: cut the in-flight turn so the parked
+  /// prompt starts NOW. Just a /stop — NOT the Stop chip's full
+  /// bridgeStop: no detach, no supersede, no speaker silencing. This
+  /// phone's queued view stays listening; the interrupted turn's
+  /// farewell is swallowed by owner attribution (v2: done carries its
+  /// turn id), the bridge's flush hands the floor to the parked prompt
+  /// one event later, and its answer arrives in the ordinary place.
+  Future<void> interruptForQueued() async {
+    _logDebug('queue tap: /stop to flush the parked prompt now');
+    await _gateway?.stop();
+  }
+
   // ── Files relayed from the bridge (POST /send -> 'file' frames) ────────
 
   /// The file bubble's tap: OPEN. Saved already? Straight to the

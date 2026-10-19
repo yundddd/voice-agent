@@ -265,6 +265,44 @@ void main() {
   });
 
   group('the queued message in the flow', () {
+    testWidgets('the grey bubble is a button: it offers the interrupt '
+        'and its tap lands (plain Text, no tap-thief inside)', (
+      tester,
+    ) async {
+      ChatEntry? tapped;
+      final parked = ChatEntry.user('ship it now')..queued = true;
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: parked,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+            onQueueTap: (e) => tapped = e,
+          ),
+        ),
+      );
+      expect(find.text('tap to interrupt now'), findsOne);
+      await tester.tap(find.text('ship it now'));
+      expect(tapped, same(parked),
+          reason: 'while queued the words are plain Text — the tap '
+              'reaches the button instead of dying in a selectable');
+      tapped = null;
+      parked.queued = false; // taken: the button retires, the select comes back
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: parked,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+            onQueueTap: (e) => tapped = e,
+          ),
+        ),
+      );
+      expect(find.text('tap to interrupt now'), findsNothing);
+      await tester.tap(find.text('ship it now'));
+      expect(tapped, isNull);
+    });
+
     testWidgets('+146: greys while pinned, full color once taken', (
       tester,
     ) async {

@@ -32,6 +32,7 @@ class ChatBubble extends StatelessWidget {
     required this.maxWidthFrac,
     required this.source,
     this.onFileTap,
+    this.onQueueTap,
   });
 
   final ChatEntry entry;
@@ -44,6 +45,10 @@ class ChatBubble extends StatelessWidget {
   /// A file bubble's tap (fetch/inspect): wired to the assistant in
   /// production, null in a bare render test.
   final void Function(ChatEntry)? onFileTap;
+
+  /// A GREY queued bubble's tap: cut the in-flight turn so this parked
+  /// prompt starts immediately. Wired to the assistant's /stop path.
+  final void Function(ChatEntry)? onQueueTap;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +92,8 @@ class ChatBubble extends StatelessWidget {
                     behavior: HitTestBehavior.opaque,
                     onTap: entry.isFile && !entry.downloading
                         ? () => onFileTap?.call(entry)
+                        : entry.queued
+                        ? () => onQueueTap?.call(entry)
                         : null,
                     child: Card(
                       color: entry.fromUser
@@ -129,19 +136,50 @@ class ChatBubble extends StatelessWidget {
                           ? Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                SelectableText(
-                                  entry.blocks.join(' '),
-                                  style: Theme.of(context).textTheme.bodyLarge
-                                      ?.copyWith(
-                                        color: scheme.onPrimaryContainer,
-                                      ),
-                                ),
+                                // While GREY the bubble is a button,
+                                // so it renders its words as plain
+                                // Text: the same tap-thief law that
+                                // killed the file bubble's receive —
+                                // a SelectableText inside would win
+                                // the arena and the interrupt tap
+                                // would look dead. Once taken, the
+                                // selectability comes back.
+                                if (entry.queued)
+                                  Text(
+                                    entry.blocks.join(' '),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyLarge?.copyWith(
+                                      color: scheme.onPrimaryContainer,
+                                    ),
+                                  )
+                                else
+                                  SelectableText(
+                                    entry.blocks.join(' '),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyLarge?.copyWith(
+                                      color: scheme.onPrimaryContainer,
+                                    ),
+                                  ),
                                 _BubbleStamp(
                                   text: stamp,
                                   color: scheme.onPrimaryContainer.withValues(
                                     alpha: 0.7,
                                   ),
                                 ),
+                                if (entry.queued)
+                                  Text(
+                                    'tap to interrupt now',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.labelSmall?.copyWith(
+                                      fontStyle: FontStyle.italic,
+                                      color: scheme.onPrimaryContainer.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                    ),
+                                  ),
                               ],
                             )
                           : Column(

@@ -257,6 +257,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     maxWidthFrac: 0.86,
                                     source: () => a.view,
                                     onFileTap: a.fetchChatFile,
+                                    onQueueTap: (_) => a.interruptForQueued(),
                                   ),
                                 ),
 
