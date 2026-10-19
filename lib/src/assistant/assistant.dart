@@ -1688,6 +1688,11 @@ class VoiceAssistant extends ChangeNotifier {
       _activeAsrId = asr.id;
       await asr.ensureIn(modelsDir, onProgress: _modelProgress);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
+      // The mode tab the user last used — a habit, restored, not reset
+      // to the factory default every cold start.
+      _mode = _bridgePrefs.mode == 'pushToTalk'
+          ? InteractionMode.pushToTalk
+          : InteractionMode.conversation;
       _heardLedger = await loadHeardLedger(
         modelsDir,
         send: (mids) async => await _gateway?.heard(mids) ?? false,
@@ -2142,6 +2147,8 @@ class VoiceAssistant extends ChangeNotifier {
   void setMode(InteractionMode mode) {
     if (_mode == mode) return;
     _mode = mode;
+    _bridgePrefs.mode = mode.name;
+    unawaited(_saveBridgePrefs());
     _hide.resetRelisten();
     if (_bridgeBusy) {
       // A mode switch rewires the INPUT side only; it must not break the

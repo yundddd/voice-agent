@@ -7,7 +7,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/assistant.dart';
-import 'package:voice_agent/src/chat/chat_log.dart';
 import 'package:voice_agent/src/common/sinks.dart';
 import 'package:voice_agent/src/platform/audio_output.dart';
 

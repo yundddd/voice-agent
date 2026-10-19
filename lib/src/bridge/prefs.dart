@@ -25,9 +25,16 @@ class BridgePrefs {
     this.voice = true,
     this.narrate = false,
     this.tts = true,
+    this.mode = 'conversation',
   });
   String url, token;
   bool voice;
+
+  /// The remembered interaction-mode tab: 'conversation' or 'pushToTalk'
+  /// (the InteractionMode enum names). The app reopens the way the user
+  /// left it — which mode they talk to their assistant in is a habit,
+  /// not a per-launch accident.
+  String mode;
 
   /// Master switch for the voice. Off (a test/degraded-network mode):
   /// replies land as text in the chat bubbles only — no synthesis, no
@@ -52,6 +59,7 @@ class BridgePrefs {
     'voice': voice,
     'narrate': narrate,
     'tts': tts,
+    'mode': mode,
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
@@ -59,6 +67,9 @@ class BridgePrefs {
     voice: j['voice'] as bool? ?? true,
     narrate: j['narrate'] as bool? ?? false,
     tts: j['tts'] as bool? ?? true,
+    // Only the two real tabs; anything else (an enum rename, a hand
+    // edit) falls back to the factory default.
+    mode: j['mode'] == 'pushToTalk' ? 'pushToTalk' : 'conversation',
   );
 }
 

@@ -287,8 +287,21 @@ void main() {
         token: 't',
         voice: false,
         tts: false,
+        mode: 'pushToTalk',
       );
       final q = BridgePrefs.fromJson(p.toJson());
+      // The mode tab the user left on must be the one the app reopens on.
+      expect(q.mode, 'pushToTalk');
+      expect(
+        BridgePrefs.fromJson({'url': 'x'}).mode,
+        'conversation',
+        reason: 'a file with no mode key falls back to the default tab',
+      );
+      expect(
+        BridgePrefs.fromJson({'mode': 'bogus'}).mode,
+        'conversation',
+        reason: 'an unknown mode (enum rename, hand-edit) falls back',
+      );
       expect(q.configured, isTrue);
       expect(
         q.voice,
