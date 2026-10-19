@@ -558,6 +558,12 @@ class BridgeTurn {
       // retire the line now.
       chat.unpinQueued();
       env.notePickup();
+      // +170: a pickup is a turn's birth — counters start fresh, and a
+      // `settled` carried over from the prompt this queued BEHIND must
+      // not hide the new turn's box until its first tally happens to
+      // relay (the bridge resets its counters at beginTurn; the phone
+      // mirrors at the marker).
+      ticker.resetForTurn();
       if (ev.toolKind == 'background') {
         // THIS prompt cut a running tool: the turn it waited behind
         // closed (that is what flushed the queue), but the tool did
@@ -597,6 +603,9 @@ class BridgeTurn {
       // retires it; the heartbeat keeps watching for the UNPROMPTED
       // report turn meanwhile.
       turn.noteAgentWork(ev.detail);
+      // +170: the harness backgrounded a shell — a tool IS running,
+      // whatever the last message's message_stop said.
+      ticker.markToolStep();
       env.log(
         'agent backgrounded "${ev.detail}" — banner lit'
         '${transport.wireTag(ev)}',

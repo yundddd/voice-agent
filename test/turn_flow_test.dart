@@ -232,6 +232,50 @@ void main() {
       expect(a.backgroundedWork, isEmpty, reason: 'the line dismisses itself');
     });
 
+    test('+170: Stop over a running agent shell lands — lit means '
+        'kills, and the record keeps its own receipt', () async {
+      // The sleep-300 field shape: the agent backgrounded a shell and
+      // closed its turn (done 31 ms after the frame). The box and the
+      // banner both claim work (out-of-earshot work IS agent status),
+      // so the lit brake must reach the task itself: /stop kills it,
+      // and the termination receipt pays the banner like any finished
+      // frame — Stop silences the process, not the record.
+      await withBridge();
+      // The running task is in /health's detached count (the bridge
+      // adds agentTasks at line 2008) — the retirement proof stays
+      // false and the banner lives for the kill's receipt.
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': false,
+        'queued': false, 'missed': 0, 'detached': 1,
+      };
+      unawaited(a.runQuickCommand('sleep 300 in the background'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 300',
+        ),
+      );
+      harness.emit(BridgeEvent.forTest('done'));
+      await settle();
+      expect(a.view.agentBusy, isTrue, reason: 'the chip is lit for the shell');
+      final stopsBefore = harness.stops;
+      a.bridgeStop();
+      await settle();
+      expect(
+        harness.stops,
+        greaterThan(stopsBefore),
+        reason: 'a press over a running bgd shell must /stop it',
+      );
+      expect(
+        a.backgroundedWork,
+        isNotEmpty,
+        reason: 'the banner lives for the kill\'s receipt — the record '
+            'is paid by proof, not by a wish',
+      );
+    });
+
     test('a press behind an open DETACHED tool shows in the flow (the pin '
         'protects only in-ear answers, +126); the line survives on the '
         'badge and the pickup ack retires it', () async {

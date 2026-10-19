@@ -242,8 +242,30 @@ final class AssistantView {
   /// long before the attach). Reading mail is not churning. A rejoin
   /// of a GENERATING turn (turnOpen=true at the probe) is real work
   /// and spins.
-  bool get agentWorking =>
-      (bridgeBusy && !drainReading) || harnessBackgrounded;
+  ///
+  /// +170 names the arm the detach badge never covered: work the agent
+  /// backgrounded ITSELF (14:20 field: 'Let's do the bridge to app' —
+  /// the agent launched `Bash sleep 300` with run_in_background, the
+  /// `backgrounded` frame armed the banner, `done clean` landed 31 ms
+  /// later, and the box stayed dark for the ENTIRE 13 s the shell ran
+  /// — 'even after more than 4 seconds the box did not reappear').
+  /// harnessBackgrounded is the DETACH badge (+133 pinned the
+  /// distinction: an agent-initiated frame never lights it) — so the
+  /// box was blind to the one warrant the banner row already stands
+  /// for. [outOfEarshotWork] is that warrant set, and the box and the
+  /// banner must answer the same question.
+  bool get agentWorking => (bridgeBusy && !drainReading) || outOfEarshotWork;
+
+  /// +170: a live promise of work outside the ear's reach — the
+  /// detach badge, the cut-tool promise, or the agent's own backgrounded
+  /// shell. Precisely the [backgrounded] row's warrants (a queue pin is
+  /// NOT one: a parked notice is an intention, and the turn it waits
+  /// behind is bridgeBusy anyway). Out-of-earshot work also VOIDS a
+  /// `settled` verdict for the box: message_stop's 'settled' is
+  /// per-MESSAGE truth — the words are final — while a running shell
+  /// proves the agent is not done. The veto that hid the box behind
+  /// the sleep belongs to the words, not to the agent's ledger.
+  bool get outOfEarshotWork => harnessBackgrounded || backgrounded.visible;
 
   /// Any bridge work in flight — heard, unheard, or owed. The Stop
   /// chip's enablement (+154): grey when nothing can be stopped, lit
@@ -279,7 +301,7 @@ final class AssistantView {
   /// +161's take-time bubbles). A turn's own bubble appears in the
   /// flow the moment it has something to say.
   bool get showWorkingRow =>
-      agentWorking && spinnerVisible && !token.settled;
+      agentWorking && spinnerVisible && (!token.settled || outOfEarshotWork);
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

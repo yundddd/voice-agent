@@ -179,8 +179,21 @@ class TokenTicker {
   void markSpoken() => _live = false;
 
   /// A real step (Bash npm test…) froze the counter: the estimate
-  /// stopped being about live generation.
-  void markToolStep() => _live = false;
+  /// stopped being about live generation. +170: a step is also proof
+  /// the agent is working AGAIN — it voids a `settled` verdict (text
+  /// final, only the phone's rendering left). The settled frame is
+  /// per-MESSAGE truth (bridge message_stop, no tool open); the next
+  /// message may be a tool round whose first relayed tally, on a
+  /// partial-less upstream, lands only when that round ends. Without
+  /// this void, the working box stayed hidden THROUGH the tool work
+  /// that a spoken 'Now the render side…' sentence announced
+  /// (0.1.0+169 field: minutes-long dark stretches between relabels
+  /// in one agentic turn).
+  void markToolStep() {
+    _live = false;
+    _kind = '';
+    _thought = '';
+  }
 
   /// /new wiped the conversation: no counters, no learned rate — the
   /// bar goes blank, not into a monotonic decline from last week's

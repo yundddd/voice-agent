@@ -1544,10 +1544,18 @@ class VoiceAssistant extends ChangeNotifier {
     final owed = _drainAfterSpeech != null && !_bridgeBusy;
     _drainAfterSpeech = null;
     if (!_bridgeBusy) {
-      if (owed) {
+      if (owed || _turn.agentWork) {
+        // +170: the press lands on both out-of-band debts. The owed
+        // reply: silence, drop the second look, idle. The RUNNING
+        // AGENT SHELL (the sleep-300 field shape — a backgrounded
+        // task with the turn already closed): the box and the banner
+        // both claim work, so the brake must /stop it; the CLI kills
+        // the task and its termination receipt pays the banner like
+        // any finished frame. Silence-on-press is the +166 law either
+        // way.
         unawaited(_gateway?.stop());
         _reply.stopPlayback();
-        _idleReady();
+        if (owed) _idleReady();
       }
       return;
     }

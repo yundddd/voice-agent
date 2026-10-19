@@ -77,6 +77,23 @@ void main() {
       expect(t.isOn, isFalse);
     });
 
+    test('+170: a tool step voids a settled verdict — the farewell '
+        'was message truth, the step is agent truth', () {
+      t.onFrame(tally(out: 12, kind: 'settled'));
+      expect(t.settled, isTrue);
+      t.markToolStep(); // the next message's Bash frame arrives
+      expect(
+        t.settled,
+        isFalse,
+        reason:
+            'message_stop settles a MESSAGE; a tool round proves the '
+            'agent is not done — the relabel must die on arrival or '
+            'the box stays dark through the whole round (14:20 field)',
+      );
+      expect(t.isOn, isFalse,
+          reason: 'the counters stay frozen; only the verdict dies');
+    });
+
     test('growth caps at 5 s of silence (a stalled stream is honest)', () {
       t.onFrame(tally(out: 100));
       t.onFrame(tally(out: 200));
