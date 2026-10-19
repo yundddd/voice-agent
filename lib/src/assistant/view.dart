@@ -169,6 +169,7 @@ final class AssistantView {
     required this.backgrounded,
     required this.bridgeBusy,
     required this.harnessBackgrounded,
+    required this.drainOwed,
     required this.bridgeConfigured,
     required this.ttsOn,
     required this.userSpeaking,
@@ -220,7 +221,23 @@ final class AssistantView {
   /// Any bridge work in flight — heard or unheard. The Stop chip's
   /// enablement and the working row's slot share this one signal:
   /// grey when the agent is not busy, lit when it is (+154).
-  bool get agentBusy => bridgeBusy || harnessBackgrounded;
+  /// +164 adds the third form of in-flight work: [drainOwed] — a
+  /// parked stranded-backlog drain (+124), i.e. the answer to a prompt
+  /// this phone TAKEN (typically the steered follow-on after a fold's
+  /// re-stamped done) that is owed its moment on the wire. Without
+  /// it the row blinked: dark while the first chunk played, lit for a
+  /// heartbeat by the drain's reattach, dark again — over work that
+  /// was, in the user's words, "indeed still working on the next
+  /// message". The brake reads the same truth as before, now honest
+  /// about this state too: bridgeStop cuts the playback and drops the
+  /// owed reply under it.
+  bool get agentBusy => bridgeBusy || harnessBackgrounded || drainOwed;
+
+  /// +164: a parked drain verdict — the wire owes this phone a reply
+  /// it has taken but not yet heard, waiting for the speaker to fall
+  /// silent (+124's no-interruptions rule). Projected straight from
+  /// VoiceAssistant._drainAfterSpeech.
+  final bool drainOwed;
 
   /// +151: THE WORKING ROW — the spinner, its one-line activity and the
   /// meter — sits at the bottom of the channel, attached to NO bubble.

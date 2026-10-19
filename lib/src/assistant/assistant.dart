@@ -378,6 +378,7 @@ class VoiceAssistant extends ChangeNotifier {
     ),
     bridgeBusy: _bridgeBusy,
     harnessBackgrounded: _harnessBackgrounded,
+    drainOwed: _drainAfterSpeech != null,
     bridgeConfigured: bridgeConfigured,
     ttsOn: _bridgePrefs.tts,
     userSpeaking: _userSpeaking,
@@ -1379,6 +1380,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// teardown drains then).
   Future<void> _drainStrandedBacklog(int gen, int mySeq) async {
     if (pttHoldActive || _backgrounded) return;
+    // +164: flush heard-acks in flight BEFORE the verdict — a just-
+    // spoken reply trims its backlog copies under this POST, and the
+    // row must not stay lit for a drain that was only ever racing its
+    // own ack. (Since +164 the verdict also drives the working row: a
+    // parked drain projects as agentBusy — a false park here would
+    // spin through the last sentence.)
+    await _heard.retry();
     final h = await _gateway?.healthInfo();
     if (h == null) return;
     final missed = (h['missed'] as num?)?.toInt() ?? 0;
@@ -1402,6 +1410,10 @@ class VoiceAssistant extends ChangeNotifier {
         'stranded backlog: missed=$missed — audio still on air; '
         'drain parked to the natural end',
       );
+      // +164: the parked promise IS in-flight work — repaint so the
+      // row (and the brake) light through the on-air chunk instead of
+      // blinking at the drain.
+      notifyListeners();
       return;
     }
     _drainAfterSpeech = null;
@@ -1435,7 +1447,23 @@ class VoiceAssistant extends ChangeNotifier {
       );
       notifyListeners();
     }
-    if (!_bridgeBusy) return;
+    // +164: a parked drain owes this phone a reply — the chip is lit
+    // for it (agentBusy), so the press must land: silence the speaker,
+    // drop the owed second look (the drain's own guards would re-check
+    // it anyway; dropping it merely admits the user chose 'skip'),
+    // and /stop in case the follow-on turn is live on the harness.
+    // Nothing is spoken when only the debt was open — the silence the
+    // user asked for arrives by doing nothing else.
+    final owed = _drainAfterSpeech != null && !_bridgeBusy;
+    _drainAfterSpeech = null;
+    if (!_bridgeBusy) {
+      if (owed) {
+        unawaited(_gateway?.stop());
+        _reply.stopPlayback();
+        _idleReady();
+      }
+      return;
+    }
     _turn.supersede();
     _reply.stopPlayback();
     // Hard stop incl. the streamed-player teardown inside the funnel.

@@ -37,6 +37,7 @@ AssistantView _view({
   Duration harnessElapsed = Duration.zero,
   bool bridgeBusy = true,
   bool harnessBackgrounded = false,
+  bool drainOwed = false,
   PttGuide ptt = const PttGuide(
     holdActive: false,
     slide: PttSlide.none,
@@ -54,6 +55,7 @@ AssistantView _view({
   backgrounded: backgrounded,
   bridgeBusy: bridgeBusy,
   harnessBackgrounded: harnessBackgrounded,
+  drainOwed: drainOwed,
   bridgeConfigured: true,
   ttsOn: true,
   userSpeaking: false,

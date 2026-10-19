@@ -256,6 +256,46 @@ void main() {
       expect(a.view.showBackgroundedRow, isFalse);
     });
 
+    test('+164: a parked drain keeps row and brake lit through the '
+        'on-air chunk — the blink was the bug', () async {
+      // The fold's visible seam: the steered follow-on is born AFTER
+      // the re-stamped done, so the heard turn closed while the
+      // answer to THIS phone's prompt was still owed (missed>0) and
+      // the drain sat parked behind on-air audio (+124). The row went
+      // dark, blinked on the drain, went dark again — over work that
+      // was indeed still running. The owed reply is now the third
+      // form of in-flight work.
+      await withBridge();
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2, // the steered follow-on, unheard
+      };
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'Done — the sleep finished cleanly.',
+          mid: 40,
+        ),
+      );
+      await settle();
+      expect(out.playing, isTrue, reason: 'the chunk is on the speaker');
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      final v = a.view;
+      expect(v.drainOwed, isTrue, reason: 'missed>0 with audio on air: parked');
+      expect(v.agentBusy, isTrue,
+          reason: 'the owed reply IS work in flight (+164)');
+      expect(v.showWorkingRow, isTrue,
+          reason: 'the row rides through the on-air chunk — no blink');
+      // The lit brake must LAND: silence, drop the owed second look.
+      a.bridgeStop();
+      await settle();
+      expect(a.view.drainOwed, isFalse, reason: 'skip chosen, debt dropped');
+      expect(out.stopCount, greaterThan(0), reason: 'the press silenced it');
+      expect(a.phase, AssistantPhase.idle);
+    });
+
     test(
       'the live tally projects as numbers + settled + thought tail',
       () async {
