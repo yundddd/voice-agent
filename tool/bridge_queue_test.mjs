@@ -29,13 +29,17 @@ const PORT4 = PORT1 + 3;
 const PORT5 = PORT1 + 4;
 const PORT8 = PORT1 + 7;
 const PORT9 = PORT1 + 8;
+// +159: the debt-payment and transients-not-memory ports.
+const PORT11 = PORT1 + 30;
+const PORT12 = PORT1 + 31;
 
-function startBridge(stubLog, port, extraEnv = {}) {
+function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
   const proc = spawn(
     process.execPath,
     [join(HERE, 'claude_bridge.mjs'), '--dir', dir, '--token', TOKEN,
-      '--port', String(port), '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+      '--port', String(port), '--claude', join(HERE, 'bridge_stub_claude.mjs'),
+      ...extraArgs],
     { env: { ...process.env, STUB_LOG: stubLog, STUB_RESULT_MS: '1500',
       ...extraEnv } },
   );
@@ -727,3 +731,113 @@ test('wire v2: reserved turn ids, done carries its owner, /heard trims',
       await stopBridge(proc);
     }
   });
+
+// +159 field report: three shells launched run_in_background and
+// finished; the harness NOTIFIED — but the notification landed between
+// turns, so the proactive-close net never ran and the Read-the-output
+// scan never fired either (the model answered straight from the
+// notification text). The bridge kept naming the dead shells
+// `detached`, and the phone's background banner has exactly one
+// dismissal proof — /health saying NOTHING detached. The banner could
+// never retire, and the missed backlog below it kept the 10 s
+// reattach heartbeat flashing the thinking box forever. The
+// notification message itself now pays the debt.
+test('a background task notification pays the agent’s background debt ' +
+    'with no proactive turn in sight (+159)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT11, {
+    STUB_TOOL: 'sleep 60', STUB_TOOL_BG: '1',
+    STUB_TOOL_START_MS: '100', STUB_BG_NOTIFY_MS: '500',
+    STUB_SAYS: 'Launched.', STUB_RESULT_MS: '300',
+  });
+  try {
+    await up(PORT11);
+    const a = await call(PORT11, `/talk?token=${TOKEN}`,
+      { body: 'launch it', method: 'POST' });
+    await until('launch turn closes', async () =>
+      (await health(PORT11)).turnOpen === false);
+    // The shell is a tracked, OWED debt — and decisively not paid by
+    // its own launch receipt, the user message naming the same id and
+    // output path (a task must not pay itself at birth).
+    assert.equal((await health(PORT11)).detached, 1,
+      'the launched shell is not owed / paid by its launch receipt');
+    // The completion notification lands BETWEEN turns: no listener,
+    // no open turn, no proactive report anywhere.
+    await until('the notification pays the debt', async () =>
+      (await health(PORT11)).detached === 0, 4000);
+    // The receipt is real backlog now: the next drain picks it up,
+    // and acking it empties the unheard queue (the stuck-counter
+    // symptom dies at the root).
+    const at = await call(PORT11, `/attach?token=${TOKEN}`);
+    await sleep(150);
+    const replay = sseEvents(at.text);
+    const fin = replay.find((e) => e.ev === 'tool' &&
+      e.data?.name === 'finished');
+    assert.ok(fin && fin.data.detail.includes('sleep 60'),
+      'the finished receipt did not ride the drain');
+    const { mids } = await ackAll(PORT11, at.text);
+    assert.ok(mids.includes(fin.data._mid), 'the receipt carries an id');
+    await until('backlog drained', async () =>
+      (await health(PORT11)).missed === 0);
+    a.kill();
+    at.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// +159, the same loop's other half: relay()'s head comment always
+// promised transient frames (the token tally, the ctx preview) stay
+// live-only — “a reattaching phone re-derives them” — yet an UNHEARD
+// turn pushed them into the backlog all the same. Counters are noise,
+// not memory: against BACKLOG_CAP a long silent turn's tallies EVICT
+// the frames a drain exists to deliver, and every survivor inflated
+// `missed` forever (field: stuck at 197), holding the banner's
+// dismissal proof hostage. The backlog now holds only what cannot be
+// re-derived: markers, steps, says, receipts, the farewell.
+test('an unheard turn backs up memory, never counters (+159)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT12,
+    { STUB_TOOL: 'cargo build', STUB_TOOL_START_MS: '50',
+      STUB_RESULT_MS: '2000' },
+    ['--tok-heartbeat', '200']);
+  try {
+    await up(PORT12);
+    const a = await call(PORT12, `/talk?token=${TOKEN}`,
+      { body: 'build it', method: 'POST' });
+    await until('tool step lands', async () =>
+      a.text.includes('"name":"Bash"'));
+    a.kill(); // the phone hangs up mid-turn: everything after is out of earshot
+    await until('the unheard turn closes', async () =>
+      (await health(PORT12)).turnOpen === false);
+    // The drain owes exactly three frames: the pickup marker, the
+    // +128 lifecycle receipt (the farewell of a turn that closed out
+    // of earshot), and the done. No ctx preview (the result's last
+    // word is visible on the next /health glance), no tally
+    // (re-derived from the ring). The Bash step rode the LIVE view
+    // before the hang-up, and delivered non-say frames archive
+    // nothing — it is not owed a replay.
+    const h = await health(PORT12);
+    assert.equal(h.missed, 3,
+      `only the memory frames survive unheard, got ${h.missed}`);
+    const at = await call(PORT12, `/attach?token=${TOKEN}`);
+    await sleep(150);
+    const replay = sseEvents(at.text);
+    assert.ok(!replay.some((e) => e.ev === 'context'),
+      'a context preview rode the backlog');
+    assert.ok(!replay.some((e) => e.ev === 'tool' &&
+      e.data?.name === 'tokens'), 'a token tally rode the backlog');
+    assert.ok(replay.some((e) => e.ev === 'tool' &&
+      e.data?.name === 'started'), 'the pickup marker survived');
+    assert.ok(replay.some((e) => e.ev === 'tool' &&
+      e.data?.name === 'finished'),
+      'the unheard-turn lifecycle receipt — the frame the banner ' +
+      'dismissal listens for — survived');
+    await ackAll(PORT12, at.text);
+    await until('backlog drained by ack', async () =>
+      (await health(PORT12)).missed === 0);
+    at.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});

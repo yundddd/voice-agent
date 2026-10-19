@@ -292,6 +292,50 @@ void main() {
       expect(probe.drains, [(1, mySeq)], reason: 'every heard turn end drains');
     });
 
+    test('+159: consumption IS the ack — every non-say frame the pump '
+        'digests is committed, or the bridge backlog never drains', () async {
+      // The 0.1.0+159 field loop: the phone digested the replayed
+      // backlog but only SAYES got committed, so `missed` stuck at a
+      // dead number — the heartbeat read it as a streaming report,
+      // re-attached every 10 s, and the thinking box flashed while the
+      // banner could never retire (the retire proof demands missed==0).
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'cargo build',
+          mid: 11,
+        ),
+      );
+      wire.add(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 4242,
+          contextWindow: 200000,
+          mid: 12,
+        ),
+      );
+      wire.add(
+        const BridgeEvent.forTest('tool', toolName: 'tokens', detail: 'thinking · 1.2k out', mid: 13),
+      );
+      wire.add(const BridgeEvent.forTest('say', text: 'Brief answer.', mid: 14));
+      wire.add(const BridgeEvent.forTest('done', mid: 15));
+      final outcome = await r;
+      out.complete();
+      await settle();
+      expect(outcome.sawDone, isTrue);
+      expect(
+        probe.took,
+        containsAll(<int>[11, 12, 13, 14, 15]),
+        reason: 'tool, context, tally and farewell frames are TAKEN the '
+            'moment they are digested — the bridge trims its backlog '
+            'only under /heard',
+      );
+    });
+
     test('+116: a say frozen mid-synth is NOT in the ledger — and its '
         'air writes it', () async {
       final gate = Completer<void>();

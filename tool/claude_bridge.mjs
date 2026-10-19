@@ -554,6 +554,14 @@ const relay = (ev, data) => {
     if (backlog.length > BACKLOG_CAP) backlog.shift();
     return;
   }
+  // +159: counters are noise, not memory — the law stated at the head
+  // of this function ("a reattaching phone re-derives them") now holds
+  // for the UNHEARD case too. An unwatched background turn relays a
+  // tally every ~0.8 s; against BACKLOG_CAP that flood EVICTS the real
+  // memory (says, markers, finished receipts) — the very frames a drain
+  // exists to deliver — and every survivor inflated `missed` with a
+  // number no ack could ever retire (0.1.0+159: stuck at 197).
+  if (ev === 'context' || (ev === 'tool' && data?.name === 'tokens')) return;
   if (curRes) return; // transient frames stay live-only while heard
   backlog.push({ ev, data });
   if (backlog.length > BACKLOG_CAP) backlog.shift();
@@ -857,6 +865,32 @@ function handleEvent(line) {
   // open count is what lets a later /talk decide queue-vs-interrupt.
   if (m.type === 'assistant' || m.type === 'user') {
     const content = Array.isArray(m.message?.content) ? m.message.content : [];
+    // +159: the harness's OWN task notification ("…task b3xyz has been
+    // completed… output written to …b3xyz.output") arrives as a plain
+    // user message inside the NEXT turn — often a phone-initiated one,
+    // so the proactive-close net below never runs, and nothing else
+    // paid the debt until the model happened to Read the file (field
+    // report 0.1.0+159: three shells finished; /health kept naming
+    // them detached forever; the phone's banner could never retire).
+    // Scanned BEFORE the content loop: the LAUNCH receipt is also a
+    // user message naming the same id and path — a task must not pay
+    // itself at birth. (The tool_use scan below stays the precise
+    // trigger for the Read-the-output shape; this is the notification
+    // shape.)
+    if (m.type === 'user' && agentTasks.size) {
+      const hay = typeof m.message?.content === 'string'
+        ? m.message.content
+        : JSON.stringify(m.message?.content ?? '');
+      for (const [id, t] of agentTasks) {
+        if ((t.outPath && hay.includes(t.outPath)) ||
+            hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
+          agentTasks.delete(id);
+          console.error(`  -> finished "${t.label}" ` +
+            `(task notification in stream)`);
+          relay('tool', { name: 'finished', detail: t.label });
+        }
+      }
+    }
     for (const c of content) {
       if (c.type === 'tool_use' && c.id) {
         // Map, not set: the value is the step label ('Bash npm test') —

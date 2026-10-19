@@ -32,6 +32,14 @@
 //                      shapes the real CLI (2.1.286, probe-verified)
 //                      emits when its own background shell finishes.
 //   STUB_BG_SAYS       the report turn's answer lines
+//   STUB_BG_NOTIFY_MS  the +159 shape: this long after the launch, a
+//                      plain-text USER message — the real CLI's task
+//                      notification naming the id and the output file
+//                      — lands with no turn necessarily open. This is
+//                      how a finished background shell reports when
+//                      the model never Reads the file: the bridge must
+//                      pay the debt off THIS message, not wait for a
+//                      proactive report turn.
 //   STUB_BG_BEAT_MS    pause inside the report turn (default 300) — the
 //                      window during which /health shows it open; raise
 //                      it to watch a phone wake mid-report
@@ -47,6 +55,7 @@ const toolDoneText = process.env.STUB_TOOL_DONE_TEXT ??
   'Bash finished — its output is in the log.';
 const toolBg = process.env.STUB_TOOL_BG === '1';
 const bgDoneMs = Number(process.env.STUB_BG_DONE_MS ?? 0);
+const bgNotifyMs = Number(process.env.STUB_BG_NOTIFY_MS ?? 0);
 const bgBeat = Number(process.env.STUB_BG_BEAT_MS ?? 300);
 const bgSays = (process.env.STUB_BG_SAYS ??
   'The background command finished. It printed:\n\nBGOUT-hello\n\n(exit code 0)')
@@ -158,6 +167,24 @@ process.stdin.on('data', (b) => {
               }] },
             });
           }, 80);
+          if (bgNotifyMs) {
+            // The +159 shape: the plain-text task notification the
+            // real CLI injects as a USER message when the shell ends —
+            // often long after the launching turn closed, with no
+            // listener on the wire. The bridge must pay the tracked
+            // debt off this message alone.
+            setTimeout(() => {
+              if (gen !== turnSeq) return;
+              out({
+                type: 'user', session_id: 'stub-session',
+                message: { role: 'user',
+                  content: `<task-notification>Bash command ` +
+                    `(id: tbg${gen}) completed (exit code 0). Output ` +
+                    `written to /tmp/stub-tasks/tbg${gen}.output.` +
+                    `</task-notification>` },
+              });
+            }, toolStartMs + bgNotifyMs);
+          }
           if (bgDoneMs) {
             // The UNPROMPTED report turn (probe-verified shapes): Read
             // of the output, its content, the model's answer, result.

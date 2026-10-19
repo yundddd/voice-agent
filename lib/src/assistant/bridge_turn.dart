@@ -429,6 +429,19 @@ class BridgeTurn {
   }
 
   Future<void> _onEvent(BridgeEvent ev) async {
+    // wire v2: CONSUMPTION is the ack. Only `say` gets its commit at
+    // the take (before the speaker — the barge-in-drop law below);
+    // every other frame this pump digests — tool lifecycle, context
+    // previews, the farewell done — is TAKEN the moment it is digested.
+    // A consumed-but-unacked frame stays in the bridge's unheard
+    // backlog forever, so `missed` sticks at a dead number and every
+    // heartbeat reads it as "a report is still streaming": the chain
+    // steals the view, replays the backlog it already ate, dies on its
+    // own farewell, and the thinking box flashes on a 10 s cadence
+    // while the banner can never retire (0.1.0+159 field report).
+    if (ev.kind != 'turn' && !ev.isSay && ev.mid != 0) {
+      env.commitHeard(ev.mid);
+    }
     if (ev.kind == 'turn') {
       // The receipt, arriving in-band: this pump now knows its own
       // name — every later marker and farewell is attributed by it.
