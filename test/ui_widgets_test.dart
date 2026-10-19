@@ -122,6 +122,37 @@ void main() {
       expect(find.textContaining('interrupted'), findsOne);
     });
 
+    testWidgets('a file bubble renders the slip AND its tap receives '
+        '(the field report: tap to receive did nothing — SelectableText '
+        'was eating it)', (tester) async {
+      ChatEntry? tapped;
+      final entry = ChatEntry.file(
+        'README.md',
+        'voice-agent/README.md',
+        49250,
+        createdMs: 1,
+      );
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: entry,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+            onFileTap: (e) => tapped = e,
+          ),
+        ),
+      );
+      expect(find.text('README.md'), findsOne);
+      expect(find.text('48 KB · tap to receive'), findsOne);
+      // The tap must fire from the name, the status line, and the
+      // card's padding — the whole bubble is the button.
+      await tester.tap(find.text('README.md'));
+      expect(tapped, same(entry));
+      tapped = null;
+      await tester.tap(find.text('48 KB · tap to receive'), warnIfMissed: true);
+      expect(tapped, same(entry));
+    });
+
     testWidgets('+151: the bottom working row paints the spinner with '
         'the projected label and meter, attached to no bubble', (tester) async {
       await tester.pumpWidget(

@@ -78,6 +78,13 @@ class ChatBubble extends StatelessWidget {
                   opacity: entry.fromUser && entry.queued ? 0.42 : 1.0,
                   child: GestureDetector(
                     // A file bubble is a button: tap pulls the bytes.
+                    // OPAQUE behavior — the tap must land anywhere on
+                    // the card, and NO SelectableText may live inside a
+                    // file bubble: its own tap recognizer wins the
+                    // arena over this ancestor and the button looked
+                    // dead on the first install (field report: 'the tap
+                    // to receive is not working').
+                    behavior: HitTestBehavior.opaque,
                     onTap: entry.isFile && !entry.downloading
                         ? () => onFileTap?.call(entry)
                         : null,
@@ -423,7 +430,11 @@ class _FileBody extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              SelectableText(
+              Text(
+                // NOT SelectableText: a selectable runs its own tap
+                // recognizer, beats the bubble's GestureDetector in
+                // the arena, and swallows the receive. The slip's
+                // words are the bridge's own path anyway.
                 name,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   fontFamily: 'monospace',
