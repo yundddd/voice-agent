@@ -2719,6 +2719,18 @@ void main() {
             'the note carries the verb the agent itself will use — '
             'never finished for a call the cut killed',
       );
+      expect(
+        a.chat
+            .firstWhere(
+              (e) => e.blocks.contains('Bash sleep 10 cancelled.'),
+            )
+            .cancelled,
+        isTrue,
+        reason:
+            '+168: the receipt is FLAGGED, not just worded — the '
+            'renderer styles it an acknowledgement, never a spoken '
+            'reply, and the flag survives the log reload',
+      );
       expect(a.backgroundedWork, isEmpty);
 
       // A backlog replay delivers the same receipt again, and the

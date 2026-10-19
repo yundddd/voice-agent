@@ -12,6 +12,7 @@ class ChatEntry {
     List<String>? blocks,
     this.queued = false,
     this.interrupted = false,
+    this.cancelled = false,
     this.createdMs = 0,
   }) : blocks = blocks ?? <String>[];
 
@@ -19,11 +20,12 @@ class ChatEntry {
     String text, {
     this.queued = false,
     this.interrupted = false,
+    this.cancelled = false,
     this.createdMs = 0,
   }) : fromUser = true,
        blocks = [text];
 
-  ChatEntry.assistant({this.createdMs = 0})
+  ChatEntry.assistant({this.createdMs = 0, this.cancelled = false})
     : fromUser = false,
       blocks = <String>[],
       queued = false,
@@ -68,6 +70,14 @@ class ChatEntry {
   /// cut is history, not live machinery.
   bool interrupted;
 
+  /// +168: a background process this phone cut reports
+  /// 'X cancelled.' — a RECEIPT, not a reply. It wears the same bubble
+  /// as spoken prose today and reads as though the agent said it; the
+  /// flag asks the renderer for a distinct style (outline, warning,
+  /// italic). Like `interrupted`, it is history, not machinery: it
+  /// survives a reload.
+  bool cancelled;
+
   bool get isEmpty => blocks.isEmpty;
 
   Map<String, Object> toJson() => {
@@ -79,6 +89,7 @@ class ChatEntry {
     if (interruptedMs != 0) 'cut': interruptedMs,
     if (queued) 'queued': true,
     if (interrupted) 'interrupted': true,
+    if (cancelled) 'cancelled': true,
   };
 
   static ChatEntry fromJson(Map<String, Object?> j) {
@@ -93,6 +104,7 @@ class ChatEntry {
           for (final b in (j['blocks'] as List? ?? const <Object>[])) '$b',
         ],
         interrupted: j['interrupted'] == true,
+        cancelled: j['cancelled'] == true,
         createdMs: ms(j['t']) ?? 0,
       )
       ..pickedUpMs = ms(j['pickedUp']) ?? 0

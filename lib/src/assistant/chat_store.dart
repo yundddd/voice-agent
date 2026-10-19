@@ -122,7 +122,7 @@ class ChatStore {
   /// later still gets its own fresh card (a text ledger would swallow
   /// every second tool-cut with the same wording — the lesson v2 took
   /// to heart: TEXT is never an identity).
-  void addSystemNote(String text) {
+  void addSystemNote(String text, {bool cancelled = false}) {
     if (_entries.isNotEmpty) {
       final last = _entries.last;
       if (!last.fromUser &&
@@ -131,7 +131,13 @@ class ChatStore {
         return;
       }
     }
-    _entries.add(ChatEntry.assistant(createdMs: _nowMs())..blocks.add(text));
+    // +168: a cancelled receipt is a RECEIPT — flagged for the outline
+    // style, so the acknowledgement of a cut never dresses in the
+    // clothes of spoken prose.
+    _entries.add(
+      ChatEntry.assistant(createdMs: _nowMs(), cancelled: cancelled)
+        ..blocks.add(text),
+    );
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
   }

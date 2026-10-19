@@ -285,9 +285,15 @@ void main() {
       final v = a.view;
       expect(v.drainOwed, isTrue, reason: 'missed>0 with audio on air: parked');
       expect(v.agentBusy, isTrue,
-          reason: 'the owed reply IS work in flight (+164)');
-      expect(v.showWorkingRow, isTrue,
-          reason: 'the row rides through the on-air chunk — no blink');
+          reason: 'the owed reply keeps the BRAKE lit (+164)');
+      expect(
+        v.showWorkingRow,
+        isFalse,
+        reason: '+167 supersedes the row half of +164: the agent is '
+            'done (done clean closed it) and only the phone speaks — '
+            'the box shows agent status, TTS is independent of it. '
+            'A real follow-on turn lights the box itself via ATTACH.',
+      );
       // The lit brake must LAND: silence, drop the owed second look.
       a.bridgeStop();
       await settle();
@@ -399,9 +405,16 @@ void main() {
           reason: 'the rendering verdict died with the wire');
       expect(a.view.drainOwed, isTrue, reason: 'the +164 debt is owed');
       expect(
-        a.view.showWorkingRow,
+        a.view.agentBusy,
         isTrue,
-        reason: 'the row re-lights honestly from zero for the owed reply',
+        reason: 'it keeps the BRAKE lit — pressing it silences the tail',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason: '+167: but the box shows AGENT status — the agent '
+            'closed the turn; the owed tail is the phone\'s own '
+            'playback, and a real follow-on lights the box itself',
       );
     });
 

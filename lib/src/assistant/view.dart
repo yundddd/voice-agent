@@ -215,23 +215,34 @@ final class AssistantView {
   /// even through its own voice. +151 reads the turn flags directly:
   /// the elapsed-clock proxy went wrong at re-anchors (a pickup
   /// re-anchors the age, and for a tick the wheel went dark on work
-  /// that was verifiably still open).
-  bool get spinnerVisible => !(phase == AssistantPhase.speaking && !agentBusy);
+  /// that was verifiably still open). +167: the law reads
+  /// [agentWorking], not [agentBusy] — a parked drain (+124/+164) is
+  /// phone-side audio bookkeeping, and the wheel must not turn for
+  /// the speaker.
+  bool get spinnerVisible =>
+      !(phase == AssistantPhase.speaking && !agentWorking);
 
-  /// Any bridge work in flight — heard or unheard. The Stop chip's
-  /// enablement and the working row's slot share this one signal:
-  /// grey when the agent is not busy, lit when it is (+154).
-  /// +164 adds the third form of in-flight work: [drainOwed] — a
-  /// parked stranded-backlog drain (+124), i.e. the answer to a prompt
-  /// this phone TAKEN (typically the steered follow-on after a fold's
-  /// re-stamped done) that is owed its moment on the wire. Without
-  /// it the row blinked: dark while the first chunk played, lit for a
-  /// heartbeat by the drain's reattach, dark again — over work that
-  /// was, in the user's words, "indeed still working on the next
-  /// message". The brake reads the same truth as before, now honest
-  /// about this state too: bridgeStop cuts the playback and drops the
-  /// owed reply under it.
-  bool get agentBusy => bridgeBusy || harnessBackgrounded || drainOwed;
+  /// The agent itself is churning — a heard turn open on the wire, or
+  /// a detached one working out of earshot. +167 names it for the ONE
+  /// claim the box is allowed to make: user dictate 'the spinning box
+  /// is exclusively to show agent status. TTS is independent of it.'
+  /// The field counter-example to +164's optimism: after a slide-up
+  /// cut's done clean, missed=2 parked the drain while the phone was
+  /// merely finishing the sentence it was reading — the box spun
+  /// through it and there was in truth no next message coming. When a
+  /// follow-on turn IS coming (the fold), its own ATTACH lights the
+  /// box for real — bridgeBusy is the honest signal, a parked drain
+  /// never was.
+  bool get agentWorking => bridgeBusy || harnessBackgrounded;
+
+  /// Any bridge work in flight — heard, unheard, or owed. The Stop
+  /// chip's enablement (+154): grey when nothing can be stopped, lit
+  /// when something can — INCLUDING a parked drain, whose silencing
+  /// the lit brake now performs (+166). The box itself asks the
+  /// narrower [agentWorking]; the owed reply (+164) keeps the brake
+  /// honest without making the agent look busy while the phone is
+  /// only talking.
+  bool get agentBusy => agentWorking || drainOwed;
 
   /// +164: a parked drain verdict — the wire owes this phone a reply
   /// it has taken but not yet heard, waiting for the speaker to fall
@@ -244,26 +255,15 @@ final class AssistantView {
   /// It shows while a bridge turn is heard OR a detached one keeps
   /// working (the +72/+91 honesty, now structural: no press, pin,
   /// placeholder or drain shell can move it, because it has no place
-  /// to move to); hidden over pure playback by the same [spinnerVisible]
-  /// rule. A turn's own bubble appears in the flow the moment it has
-  /// something to say.
-  ///
-  /// +165 makes the slot EXCLUSIVELY about agent status: when the
-  /// bridge says `settled` (message_stop with no tool open — the text
-  /// is final and only the phone's TTS pipeline remains) the row is
-  /// gone, not frozen-and-captioned 'Rendering audio…'. Audio
-  /// rendering is the speaker's business; the wheel had already been
-  /// frozen over it since +84, and the +83 draft preview it kept
-  /// alive has been superseded by +161 — the full received text is in
-  /// the bubble while it renders, so the preview row only reported on
-  /// the queue outside the box. Two guards keep this from ever hiding
-  /// real work: settled can only ever describe the HEARD turn (a
-  /// detached one receives no tally at all — counters stay live-only,
-  /// +159), and it dies at the close (teardown's resetForTurn), so a
-  /// +164 drain debt — the next reply owed — always re-lights the row
-  /// from zero.
+  /// to move to). +167 tightens it to the agent alone:
+  /// [agentWorking] gates the row, pure playback hides it
+  /// ([spinnerVisible]), and a settled turn — text final, only the
+  /// phone's TTS pipeline remaining — hides it too (the +165 retire-
+  /// ment of 'Rendering audio…', the +83 draft preview superseded by
+  /// +161's take-time bubbles). A turn's own bubble appears in the
+  /// flow the moment it has something to say.
   bool get showWorkingRow =>
-      agentBusy && spinnerVisible && !(token.settled && !drainOwed);
+      agentWorking && spinnerVisible && !token.settled;
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

@@ -901,7 +901,7 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     final note = '$who ${cancelled ? 'cancelled' : 'finished'}.';
-    _chat.addSystemNote(note);
+    _chat.addSystemNote(note, cancelled: cancelled);
     _logDebug(
       'msg bg done: "$who" ${cancelled ? 'cancelled' : 'finished'} '
       '— retired the line',

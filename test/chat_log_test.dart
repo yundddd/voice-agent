@@ -55,6 +55,20 @@ void main() {
     );
   });
 
+  test('+168: a cancelled receipt stamp survives a reload too', () {
+    final note = ChatEntry.assistant(cancelled: true)
+      ..blocks.add('Bash sleep 10 cancelled.');
+    final json = encodeChatLog([note]);
+    expect(json.contains('"cancelled":true'), isTrue);
+    final back = decodeChatLog(json);
+    expect(back.single.cancelled, isTrue); // the receipt stays a receipt
+    expect(
+      encodeChatLog([ChatEntry.assistant()..blocks.add('Bash x finished.')]),
+      isNot(contains('cancelled')),
+      reason: 'a completed receipt carries nothing — plain prose',
+    );
+  });
+
   test('garbage or newer-format files start a fresh log, never throw', () {
     expect(decodeChatLog('not json at all'), isEmpty);
     expect(decodeChatLog('{"objects":"instead of lists"}'), isEmpty);

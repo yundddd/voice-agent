@@ -74,7 +74,21 @@ class ChatBubble extends StatelessWidget {
                   child: Card(
                     color: entry.fromUser
                         ? scheme.primaryContainer
+                        // +168: a cancelled background receipt is an
+                        // acknowledgement, not prose — outline card,
+                        // warning ink. It never dresses in the clothes
+                        // of a spoken reply.
+                        : entry.cancelled
+                        ? Colors.transparent
                         : scheme.secondaryContainer,
+                    shape: entry.cancelled
+                        ? RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(
+                              color: scheme.error.withValues(alpha: 0.6),
+                            ),
+                          )
+                        : null,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 14,
@@ -106,9 +120,19 @@ class ChatBubble extends StatelessWidget {
                                   if (i > 0) const Divider(height: 24),
                                   SelectableText(
                                     s,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyLarge,
+                                    // +168: receipt italic in warning
+                                    // ink (see the outline card).
+                                    style: entry.cancelled
+                                        ? Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                fontStyle: FontStyle.italic,
+                                                color: scheme.error,
+                                              )
+                                        : Theme.of(
+                                            context,
+                                          ).textTheme.bodyLarge,
                                   ),
                                 ],
                                 if (entry.interrupted) ...[
