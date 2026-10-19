@@ -87,6 +87,32 @@ const up = (port) => until('bridge health', async () => {
   try { return (await health(port)).ok === true; } catch { return false; }
 });
 
+// Parse an SSE body into {ev, data} frames (padding comments ignored).
+function sseEvents(text) {
+  const out = [];
+  for (const frame of text.split('\n\n')) {
+    let ev = null, data = null;
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) ev = line.slice(7).trim();
+      else if (line.startsWith('data: ')) {
+        try { data = JSON.parse(line.slice(6)); } catch {}
+      }
+    }
+    if (ev) out.push({ev, data});
+  }
+  return out;
+}
+// v2: /attach replay does NOT consume the backlog — the phone's ack
+// does. Ack every _mid in an SSE body (what a real phone does as it
+// TAKES each frame).
+async function ackAll(port, sseBody) {
+  const mids = sseEvents(sseBody).map((e) => e.data?._mid)
+    .filter(Number.isFinite);
+  const r = await call(port, `/heard?token=${TOKEN}`,
+    {body: JSON.stringify({mids}), method: 'POST'});
+  return {mids, res: r};
+}
+
 test('a polite queue whose phone stream died still gets its turn (+104)', async () => {
   const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
   const proc = startBridge(stubLog, PORT1);
@@ -224,15 +250,26 @@ test('every relayed sentence keeps one replayable copy, never two (+114)',
         return h.turnOpen === false && h.missed >= 2;
       });
       const replayed = await call(PORT4, `/attach?token=${TOKEN}`);
-      await until('backlog drained', async () => {
-        try { return (await health(PORT4)).missed === 0; } catch { return false; }
-      });
       await sleep(150); // let the replay bytes land in the collector
       const counts = (needle) =>
         replayed.text.split(needle).length - 1;
       assert.equal(counts('Heard once.'), 1,
         'the live-delivered copy was eaten or stacked (+112/+113 failure modes)');
       assert.equal(counts('Never twice.'), 1);
+      // v2: the replay CONSUMES nothing — the backlog shrinks only
+      // under acks. Every replayed frame carries an id; acking the
+      // says trims exactly them.
+      const frames = sseEvents(replayed.text);
+      assert.ok(frames.every((f) => Number.isFinite(f.data?._mid)),
+        'every relayed frame carries _mid');
+      const once = frames.filter((f) => f.data?.text === 'Heard once.');
+      assert.equal(once.length, 1);
+      const before = (await health(PORT4)).missed;
+      await call(PORT4, `/heard?token=${TOKEN}`, {method: 'POST',
+        body: JSON.stringify({mids: [once[0].data._mid]})});
+      const after = (await health(PORT4)).missed;
+      assert.equal(after, before - 1,
+        '/heard trimmed exactly the acked copy');
       a.kill();
     } finally {
       await stopBridge(proc);
@@ -425,10 +462,14 @@ test('a backgrounded turn ends with a finished receipt before its done',
 
       // The replay tells the whole story, in order: work…, finished, done.
       const replayed = await call(PORT7, `/attach?token=${TOKEN}`);
-      await until('backlog drained', async () => {
-        try { return (await health(PORT7)).missed === 0; } catch { return false; }
-      });
       await sleep(150); // let the replay bytes land in the collector
+      // v2: the replay is a look, not a meal — missed only drops under
+      // /heard. Ack the whole replay; the backlog must empty exactly.
+      assert.ok((await health(PORT7)).missed > 0,
+        '/attach consumed the backlog again — only /heard may trim it');
+      await ackAll(PORT7, replayed.text);
+      await until('backlog drained', async () =>
+        (await health(PORT7)).missed === 0);
       const at = (needle) => replayed.text.indexOf(needle);
       assert.ok(at('"name":"finished"') >= 0,
         'no finished receipt on the replay — the badge question stays ' +
@@ -512,10 +553,21 @@ test('the harness backgrounding its own shell reports in unprompted (+133)',
         (await health(PORT8)).turnOpen === true);
       const b = await call(PORT8, `/talk?token=${TOKEN}&poll=1&interrupt=0`,
         { body: 'queued behind the report', method: 'POST' });
-      await until('queue notice', async () =>
-        b.text.includes('"name":"queued"'));
+      // v2: the polled receipt NAMES the reserved turn; the notice
+      // itself rides the ring (where the pull transport reads all of
+      // its frames anyway).
+      await until('queue receipt', async () => {
+        try { return JSON.parse(b.text).turn > 0; } catch { return false; }
+      });
+      await until('queue notice on the ring', async () => {
+        const r = JSON.parse((await call(PORT8,
+          `/poll?token=${TOKEN}&since=0`)).text);
+        return r.events.some((e) =>
+          e.data?.name === 'queued');
+      });
       assert.ok(!seen(stubLog).includes('queued behind the report'),
         'the queue jumped the agent\'s own report turn');
+      const bReceipt = JSON.parse(b.text);
 
       // The ring tells the whole story in order: the named receipt
       // lands inside the report turn, the model's ANSWER rides as
@@ -577,3 +629,101 @@ test('an idle bridge announces the pickup of the turn it starts now (+155)', asy
     await stopBridge(proc);
   }
 });
+
+// wire v2, end to end: a polled POST answers with a JSON receipt naming
+// the turn RESERVED for it — before the queue even flushes. The queue
+// notice on the ring, the flush's started marker, and the answer's say
+// all carry that id; the turn the prompt parked behind closes with a
+// done stamped with its OWN (different) id. A reattach replays the
+// unheard and consumes nothing; /heard trims by _mid; the second
+// replay is silent. The phone never guesses from text, order or age.
+const PORT10 = PORT1 + 20;
+test('wire v2: reserved turn ids, done carries its owner, /heard trims',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT10, {STUB_SAYS: 'The answer.'});
+    try {
+      await up(PORT10);
+      assert.equal((await health(PORT10)).proto, 2,
+        'the health page names the protocol');
+      // Turn A, heard and slow (1.5 s): the farewell we must not confuse.
+      const a = await call(PORT10, `/talk?token=${TOKEN}`,
+        {body: 'hold the floor', method: 'POST'});
+      await until('turn A open', async () =>
+        (await health(PORT10)).turnOpen === true);
+      const tA = (await health(PORT10)).turn;
+
+      // Polled queue press: the receipt names the turn B will own.
+      const b = await call(PORT10, `/talk?token=${TOKEN}&poll=1`,
+        {body: 'my answer please', method: 'POST'});
+      await sleep(120);
+      const receipt = JSON.parse(b.text);
+      assert.equal(receipt.ok, true);
+      assert.ok(Number.isFinite(receipt.turn),
+        'a polled POST answers {ok,turn} — no SSE to discard');
+      assert.ok(receipt.turn > tA,
+        'the id is RESERVED (the running turn wears its own, older one)');
+
+      await until('flushed', async () =>
+        (await health(PORT10)).queued === false);
+      await until('answer on the ring', async () => {
+        const r = JSON.parse((await call(PORT10,
+          `/poll?token=${TOKEN}&since=0`)).text);
+        return r.events.some((e) => e.ev === 'say' &&
+          e.data?.text === 'The answer.');
+      });
+      const r = JSON.parse((await call(PORT10,
+        `/poll?token=${TOKEN}&since=0`)).text);
+      const evs = r.events;
+      const note = evs.find((e) => e.data?.name === 'queued');
+      const marker = evs.find((e) => e.data?.name === 'started' &&
+        e.data?.detail === 'my answer please');
+      const say = evs.find((e) => e.ev === 'say');
+      assert.ok(note && marker && say, 'story frames missing');
+      assert.equal(note.data._turn, receipt.turn,
+        'the queue notice belongs to the reserved turn');
+      assert.equal(marker.data._turn, receipt.turn,
+        'the pickup marker belongs to the reserved turn');
+      assert.equal(say.data._turn, receipt.turn,
+        'the answer belongs to the turn the receipt promised');
+      // The +106 cut leaked A's farewell, so the ring's dones are
+      // either the flush turn's own (correctly stamped) or a heard
+      // A-shaped farewell — never an anonymous one. The phone's pump
+      // tells farewells apart by this field, never by order.
+      const dones = evs.filter((e) => e.ev === 'done');
+      assert.ok(dones.length >= 1 && dones.every((e) =>
+        e.data?._turn === receipt.turn || e.data?._turn === tA),
+        'every done names the turn it closes');
+      assert.ok(Number.isFinite(note.data._mid) &&
+        Number.isFinite(marker.data._mid) &&
+        Number.isFinite(say.data._mid));
+      assert.ok(marker.data._mid > note.data._mid &&
+        say.data._mid > marker.data._mid, 'ids march forward');
+
+      // The drain: replay everything unheard, and prove the replay
+      // consumed nothing…
+      const at = await call(PORT10, `/attach?token=${TOKEN}`);
+      await sleep(200);
+      const replay = sseEvents(at.text);
+      const replayedSay = replay.find((e) => e.ev === 'say');
+      assert.ok(replayedSay, 'the unheard answer did not ride /attach');
+      assert.equal(replayedSay.data._mid, say.data._mid,
+        'the replayed copy carries the SAME id — one message, one id');
+      assert.ok((await health(PORT10)).missed > 0,
+        '/attach consumed the backlog again — only /heard may trim it');
+      // …then acking the answer trims it and the next replay is silent.
+      await call(PORT10, `/heard?token=${TOKEN}`, {method: 'POST',
+        body: JSON.stringify({mids: [say.data._mid]})});
+      const at2 = await call(PORT10, `/attach?token=${TOKEN}`);
+      await sleep(200);
+      assert.ok(!sseEvents(at2.text).some((e) => e.ev === 'say' &&
+        e.data?.text === 'The answer.'),
+        'an acked message is never replayed again');
+      a.kill();
+      at.kill();
+      at2.kill();
+    } finally {
+      await stopBridge(proc);
+    }
+  });

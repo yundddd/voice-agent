@@ -496,8 +496,24 @@ const ring = [];
 // empty, every event silently backlog-bound). An epoch seed makes any
 // pre-restart cursor older than any post-restart event.
 let ringSeq = Date.now();
+// ── wire v2: identity ─────────────────────────────────────────────────
+// Every relayed frame is stamped with a message id (_mid — ONE counter,
+// so the ring copy, the backlog copy and every live view share it) and
+// with the id of the turn that owns it (_turn). Turn ids are RESERVED
+// at POST time, so a queue notice and the `started` marker of its
+// prompt name the same future turn; `done` and `error` carry the id of
+// the turn they close. The phone ACKS each _mid the moment it takes a
+// frame (POST /heard) — the unheard backlog is then trimmed by proof of
+// hearing, and no side ever infers from text, order or age again.
+let msgSeq = Date.now();
+let nextTurnId = Date.now();
+let curTurnId = 0; // 0 = outside any turn
 const relay = (ev, data) => {
   data._ts ??= Date.now();
+  // ??=, never =: a re-relayed receipt (heldFinished rides two turns)
+  // keeps the identity it was born with — one message, one id.
+  data._mid ??= ++msgSeq;
+  data._turn ??= curTurnId;
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
   if (curRes) sse(curRes.res, ev, data);
@@ -1294,8 +1310,11 @@ function interruptTurn() {
 // Attach `res` as the heard view of a brand-new turn and release the
 // prompt to claude. The keep-pinger/heartbeat belongs to the turn object
 // now: a backgrounded turn and whatever replaces it each carry their own.
-function beginTurn(text, res, keep, markerKind) {
+function beginTurn(text, res, keep, markerKind, turnId) {
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
+  // The id the POST promised this prompt; every frame relayed from here
+  // on wears it (proactive turns invent their own — no echo, no queue).
+  curTurnId = turnId ?? ++nextTurnId;
   turnStartAt = Date.now() - 5000; // slack: clock skew
   turnBeganAt = Date.now(); // the receipt's honest duration clock
   curRes = { res, keep, turnStart: turnStartAt };
@@ -1350,6 +1369,11 @@ function flushPending() {
   if (!pending) return;
   const p = pending;
   pending = null;
+  // The disposition notice and everything after it belong to the
+  // RESERVED turn, not the one whose `done` just fired (the result
+  // handler relays that farewell BEFORE flushing — it stays stamped
+  // with the old id, and the phone's pump tells them apart by it).
+  curTurnId = p.turnId;
   // +104: an ended response is NOT an abandoned message. This branch
   // used to eat the utterance silently — field report 'the queued
   // message was lost': the phone's stream died in the queue (quiet-wire
@@ -1396,7 +1420,8 @@ function flushPending() {
     // running tool — the phone's banner promise, delivered where a
     // shared ring cursor cannot lose it.
     const receipts = heldFinished.splice(0);
-    beginTurn(p.text, mute, 0, p.backgrounded ? 'background' : undefined);
+    beginTurn(p.text, mute, 0, p.backgrounded ? 'background' : undefined,
+      p.turnId);
     // The cut's receipts, relayed AFTER the disposition AND after the
     // marker (beginTurn's first frame): the phone's chat reads 'put
     // into background', then the pickup, then the tool's honest
@@ -1416,7 +1441,7 @@ function flushPending() {
     return;
   }
   beginTurn(p.text, p.res, p.keep, // pinger rides on into the new turn
-    p.backgrounded ? 'background' : undefined);
+    p.backgrounded ? 'background' : undefined, p.turnId);
   // Same ordering rule on the push transport: receipts follow their
   // explanation. The live view takes these directly; the ring copy is
   // the phone's deduped replay insurance.
@@ -1450,6 +1475,11 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
   // watchdog) should not get creative with a stream that is merely
   // thinking.
   const keep = startKeep(res);
+  // v2: the turn this prompt will own is decided HERE, before the
+  // branch — immediate or queued, the answer is the same number, and
+  // the POST echoes it so the phone can name its own turn forever
+  // after (a burned id — superseded queue — just skips the sequence).
+  const t = ++nextTurnId;
   // NOTE: must listen on the RESPONSE, not the request: a POST's req
   // 'close' fires the instant its body is read, which would end the
   // stream before claude ever answers. res 'close' = client hung up or
@@ -1479,7 +1509,7 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // `result` closes its stream, or the backgrounded one's) flushes it.
     if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); }
     pending = {
-      res, text, keep, poll, interrupt,
+      res, text, keep, poll, interrupt, turnId: t,
       // Remember what the cut decision saw, so the flush can re-announce
       // both the notice wording and the background promise (see above).
       hadTools: openTools.size > 0,
@@ -1507,9 +1537,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
             + 'your message goes next'
           : 'finishing the current turn; your message goes next',
       ...(openTools.size && cut ? {kind: 'background'} : {}),
-      _ts: Date.now(),
+      _ts: Date.now(), _mid: ++msgSeq, _turn: t,
     };
-    sse(res, 'tool', note);
     // The ring too (+behaviour 1): the poll client drains its POST
     // response without reading it — without this frame on the ring it
     // never learns WHAT KIND of queue it landed in, and the 'One
@@ -1519,9 +1548,17 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // earned, not to a later replay.
     ring.push({seq: ++ringSeq, ev: 'tool', data: note});
     if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
-    // Poll client: the queue notice is its confirmation — the turn's own
-    // frames arrive through the ring when flushPending gives it the floor.
-    if (poll) { try { res.end(); } catch {} }
+    // v2 transport split: a polled POST answers with a JSON receipt
+    // (the notice itself rides the ring below — draining an SSE body
+    // only to discard it bought nobody anything); a pushed stream
+    // opens by naming its turn, then carries the notice in-band.
+    if (poll) {
+      res.writeHead(200, {'content-type': 'application/json'});
+      try { res.end(JSON.stringify({ok: true, turn: t})); } catch {}
+    } else {
+      sse(res, 'turn', {turn: t, queued: true});
+      sse(res, 'tool', note);
+    }
     // +99 (supersedes the +33 rule): the interrupt gesture cuts the
     // TURN even with a tool in flight — the field spec: 'put the
     // running tool into background and free the agent to answer my
@@ -1534,16 +1571,23 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     return;
   }
   if (poll) {
-    // Pull transport: begin the turn streaming into this response for the
-    // first couple of frames, close, and background it — from there every
-    // relay lands in the ring (and the /attach backlog) for the phone to
-    // fetch with its next outbound GET.
-    beginTurn(text, res, keep);
-    try { res.end(); } catch {}
+    // v2 pull transport: a JSON receipt closes the POST, and the turn
+    // begins against a MUTE floor exactly like the queue flush's poll
+    // branch — every frame rings, the marker and every say keep their
+    // backlog copies, and nothing hangs on a body the client discards.
+    // (The old shape wrote the turn's first frames into the POST and
+    // threw them away: the marker died with the view — +157's lost
+    // birth certificate started right here.)
+    res.writeHead(200, {'content-type': 'application/json'});
+    try { res.end(JSON.stringify({ok: true, turn: t})); } catch {}
+    endKeep({keep});
+    beginTurn(text, {write: () => true, end: () => {}, on: () => {}},
+      0, undefined, t);
     endTurn();
     return;
   }
-  beginTurn(text, res, keep);
+  sse(res, 'turn', {turn: t}); // v2: the push stream opens by naming its turn
+  beginTurn(text, res, keep, undefined, t);
 }
 // tool_use ids already relayed this turn (tool_use ids are unique per
 // call and stable across snapshots of the same message). Cleared at
@@ -1552,6 +1596,9 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
 const spokenTools = new Set();
 // Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
+// v2 note: this dedups the CLI's snapshot re-emissions AT THE SOURCE —
+// it is not the phone's dedup (that is _mid + /heard, and the phone
+// never guesses from text again).
 const spokenTexts = new Set();
 
 // ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
@@ -1745,6 +1792,9 @@ const server = http.createServer((req, res) => {
       // (on every /health probe) so frame stamps become honest latencies.
       now: Date.now(),
       turnOpen, queued: !!pending,
+      // v2 handshake: ids are law. An app that sees anything else
+      // shows one honest error banner instead of guessing.
+      proto: 2, turn: curTurnId,
       backgrounded: turnOpen && !curRes,
       // Open tool_use ids an interrupt (or a cuttool queue) parked
       // out-of-earshot, plus the agent's own run_in_background shells
@@ -1752,8 +1802,10 @@ const server = http.createServer((req, res) => {
       // `tool finished` frame, until its result lands or the process
       // retires it.
       detached: detached.size + agentTasks.size,
-      // A turn (or its tail) ran with nobody listening: /attach replays
-      // this many buffered events, even after the turn itself ended.
+      // Relayed and NOT yet acked by the phone: what /attach will
+      // replay, even after the turn itself ended. v2: the phone trims
+      // it with /heard, so this is literally the never-heard count —
+      // the background banner's data source finally tells the truth.
       missed: backlog.length,
       // Last known phone-journal peer and our relay watermark: visible on
       // the app's Bridge screen (which renders /health) so you can see the
@@ -1820,8 +1872,11 @@ const server = http.createServer((req, res) => {
     // dormant until this view actually owns the turn (or it never does,
     // if the turn ended and the replayed tail just closes us out).
     const keep = startKeep(res);
+    // v2: replay does NOT clear the backlog — /heard does. What the
+    // attacher takes gets acked and trimmed within the same second;
+    // what it never reaches (a death mid-replay) legitimately waits
+    // for the next ear instead of being consumed unseen.
     for (const { ev, data } of backlog) sse(res, ev, data);
-    backlog.length = 0;
     if (!turnOpen) { clearInterval(keep); res.end(); return; }
     // Become the turn's heard view — STEALING it from a (believed) attached
     // previous socket. That previous view's keep-pinger must die with it,
@@ -1846,8 +1901,12 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => body += c);
   req.on('end', () => {
     if (url.pathname === '/talk') {
-      res.writeHead(200, { 'content-type': 'text/event-stream',
-        'cache-control': 'no-cache', connection: 'keep-alive' });
+      // v2: pushed turns open an SSE stream right here; polled POSTs
+      // answer with a JSON receipt the transport writes itself.
+      if (url.searchParams.get('poll') !== '1') {
+        res.writeHead(200, { 'content-type': 'text/event-stream',
+          'cache-control': 'no-cache', connection: 'keep-alive' });
+      }
       // ?interrupt=0 = the polite queue (PTT slide-right): let the turn
       // in flight finish instead of interrupting a thinking-only one.
       // ?cuttool=1 = the queue-with-backgrounding (behaviour 2, the
@@ -1891,6 +1950,24 @@ const server = http.createServer((req, res) => {
       endTurn();
       child?.kill('SIGTERM'); child = null; childDead = true;
       res.writeHead(200).end('ok\n');
+    } else if (url.pathname === '/heard') {
+      // v2: the phone's commit ack. A mid leaves the unheard backlog
+      // the moment the phone TAKES the paragraph (speak-path or chat
+      // log); a later barge-in does not retract it — dropped is
+      // dropped. Idempotent by design: unknown or already-trimmed
+      // mids are no-ops, so a lost ack POST simply retries from the
+      // phone's ledger and the worst case is one replay the phone's
+      // own heard-set swallows.
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const mids = new Set((Array.isArray(j?.mids) ? j.mids : [])
+        .map(Number).filter(Number.isFinite));
+      for (let i = backlog.length - 1; i >= 0; i--) {
+        if (mids.has(backlog[i].data?._mid)) backlog.splice(i, 1);
+      }
+      console.error(`  [heard] ack=${mids.size} backlog=${backlog.length}`);
+      res.writeHead(200, {'content-type': 'application/json'})
+        .end(JSON.stringify({ok: true, missed: backlog.length}));
     } else if (url.pathname === '/applog') {
       // PUSHED journal envelope (see ingestAppEnvelope): the transport for
       // phones nothing can dial back into. Body is the exact envelope
