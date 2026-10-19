@@ -170,6 +170,7 @@ final class AssistantView {
     required this.bridgeBusy,
     required this.harnessBackgrounded,
     required this.drainOwed,
+    required this.drainReading,
     required this.bridgeConfigured,
     required this.ttsOn,
     required this.userSpeaking,
@@ -233,16 +234,31 @@ final class AssistantView {
   /// follow-on turn IS coming (the fold), its own ATTACH lights the
   /// box for real — bridgeBusy is the honest signal, a parked drain
   /// never was.
-  bool get agentWorking => bridgeBusy || harnessBackgrounded;
+  ///
+  /// +168 completes the honesty: an /attach claimed while /health
+  /// said NO turn is open is a mail fetch ([drainReading]) — its
+  /// replay surfaces history the ear already owns (the +167 flash-by:
+  /// 174 ms of spin before the last reply's words surfaced, generated
+  /// long before the attach). Reading mail is not churning. A rejoin
+  /// of a GENERATING turn (turnOpen=true at the probe) is real work
+  /// and spins.
+  bool get agentWorking =>
+      (bridgeBusy && !drainReading) || harnessBackgrounded;
 
   /// Any bridge work in flight — heard, unheard, or owed. The Stop
   /// chip's enablement (+154): grey when nothing can be stopped, lit
   /// when something can — INCLUDING a parked drain, whose silencing
-  /// the lit brake now performs (+166). The box itself asks the
+  /// the lit brake now performs (+166), and including a mail fetch,
+  /// whose replay a press may still cut. The box itself asks the
   /// narrower [agentWorking]; the owed reply (+164) keeps the brake
   /// honest without making the agent look busy while the phone is
   /// only talking.
-  bool get agentBusy => agentWorking || drainOwed;
+  bool get agentBusy => agentWorking || bridgeBusy || drainOwed;
+
+  /// +168: the current view is an /attach drain (claimed while
+  /// turnOpen=false) — replay only, no generating turn. Projected
+  /// from VoiceAssistant._drainReading.
+  final bool drainReading;
 
   /// +164: a parked drain verdict — the wire owes this phone a reply
   /// it has taken but not yet heard, waiting for the speaker to fall

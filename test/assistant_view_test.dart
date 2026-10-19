@@ -418,6 +418,45 @@ void main() {
       );
     });
 
+    test('+168: a mail-fetch attach keeps the box dark — no more '
+        'flash-by before the last reply', () async {
+      // The +167 field report's second half: the drain ran, the
+      // probe said turnOpen=false (nothing generating — the reply
+      // sat in the backlog already), yet the ATTACH's busy-claim
+      // spun the box for a 174 ms heartbeat around the replay.
+      // Reading mail is not the agent working.
+      await withBridge();
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 3,
+      };
+      expect(await a.reattachBackgroundTurn(), isTrue);
+      await settle();
+      final v = a.view;
+      expect(v.bridgeBusy, isTrue,
+          reason: 'the replay holds the slot (chips stay asleep)');
+      expect(v.drainReading, isTrue, reason: 'the badge is earned: '
+          'the very probe that justified ATTACH said no turn is open');
+      expect(v.agentWorking, isFalse,
+          reason: 'reading mail is not churning — no flash-by');
+      expect(v.showWorkingRow, isFalse);
+      expect(v.agentBusy, isTrue,
+          reason: 'the brake stays lit: the replay is cuttable (+154)');
+    });
+
+    test('+168: rejoining a GENERATING turn spins the box — the mail '
+        'badge does not leak onto real work', () async {
+      await withBridge();
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': true, 'missed': 0,
+      };
+      expect(await a.reattachBackgroundTurn(), isTrue);
+      await settle();
+      expect(a.view.drainReading, isFalse,
+          reason: 'turnOpen at the probe: a live turn being rejoined');
+      expect(a.view.agentWorking, isTrue);
+      expect(a.view.showWorkingRow, isTrue);
+    });
+
     test(
       'the live tally projects as numbers + settled + thought tail',
       () async {

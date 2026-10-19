@@ -379,6 +379,7 @@ class VoiceAssistant extends ChangeNotifier {
     bridgeBusy: _bridgeBusy,
     harnessBackgrounded: _harnessBackgrounded,
     drainOwed: _drainAfterSpeech != null,
+    drainReading: _drainReading,
     bridgeConfigured: bridgeConfigured,
     ttsOn: _bridgePrefs.tts,
     userSpeaking: _userSpeaking,
@@ -1223,6 +1224,8 @@ class VoiceAssistant extends ChangeNotifier {
       _ticker.resetForTurn();
       _awaitPickup = false;
     }
+    _drainReading = false; // +168: a /talk turn is real work by
+    // definition — the mail-fetch badge belongs to reattaches only.
     notifyListeners();
     _reply.warmUpRoute(); // hold the output route while the harness thinks
     _reply.startStream();
@@ -1320,6 +1323,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// bridge's pickup (whichever transport delivers it) clears the flag
   /// and the answer's bubble takes the box.
   bool _awaitPickup = false;
+
+  /// +168: this view is a MAIL FETCH — an /attach claimed while /health
+  /// said no turn is open, so its replay surfaces history, not work.
+  /// Keeps the working box dark while the busy slot and the Stop chip
+  /// stay honest (the replay is real and cuttable). Set at the reattach
+  /// claim, cleared by any /talk (real work by definition).
+  bool _drainReading = false;
 
   /// +152: a queue verdict may not bump a running tool's line. The
   /// spinner's fallback label (tally kind 'calling X') reads the
@@ -2331,10 +2341,28 @@ class VoiceAssistant extends ChangeNotifier {
     final gen = claim.gen;
     final mySeq = claim.seq; // claim the busy flag for this turn
     _turn.becomeHeard(); // heard again from here on
+    // +168: was this ATTACH a MAIL FETCH? The probe that justified it
+    // knows: turnOpen=false means no turn is generating — every frame
+    // the replay carries is history the ear already owns or a receipt,
+    // and the view dies on the backlog's own farewell. The busy slot
+    // and the Stop chip stay honest (the replay can be cut), but the
+    // working box stays dark: reading mail is not the agent working
+    // (field report on +167: 'spinning box flashes by before showing
+    // the last reply' — the 174 ms of an attach that surfaced the
+    // steered follow-on's already-generated words). When turnOpen is
+    // true the attach rejoins a GENERATING turn — real work, real
+    // spin.
+    _drainReading = probe!['turnOpen'] != true; // probe is non-null
+    // here: an unreachable snapshot answers need=null and the guard
+    // above returned.
     _error = '';
     _ticker.resetForTurn();
     _phase = AssistantPhase.transcribing;
-    _activity = const StatusText('Reattached — working…');
+    _activity = StatusText(_drainReading
+        ? 'Replaying what the wire owed…' // +168: mail fetch — no
+        // turn is generating; the caption says what it is instead of
+        // borrowing the live-turn wording.
+        : 'Reattached — working…');
     notifyListeners();
     _reply.warmUpRoute();
     // A fresh bubble continues the story: the pre-drop blocks live in the
