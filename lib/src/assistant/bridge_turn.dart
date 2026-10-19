@@ -3,7 +3,9 @@
 /// Both harness loops the orchestrator used to run inline (the /talk
 /// loop in runQuickCommand, the /attach replay loop in
 /// reattachBackgroundTurn) are the SAME conversation with the wire:
-/// speak each say the moment it lands (ledger first, +109/+114/+116),
+/// speak each say the moment it lands (text at the take, audio when
+/// it's ready — ledger first, +109/+114; bubble-at-air inverted by the
+/// +161 field dictate),
 /// label each tool step, honour the queue receipts, and tear down
 /// without ever stomping a successor turn's slots. They were a
 /// 350-line copy-paste pair with SUBTLY divergent bug fixes — the exact
@@ -314,12 +316,9 @@ class BridgeTurn {
 
   final StringBuffer spoken = StringBuffer();
 
-  // What this turn committed to the ledger, and which of those
-  // paragraphs ever had audio START (+114). A wire death retracts the
-  // unheard commits so a block in the ledger means HEARD — the replay
-  // dedup leans entirely on that promise.
-  final List<String> committed = [];
-  final Set<String> aired = {};
+  // +114's committed/aired ledger pair retired with +161: with the text
+  // stamped at the take, the only accounting the loop keeps is what it
+  // said (for the echo guard and the 'nothing to say' verdict).
 
   // The newest tool-step progress line, e.g. 'Edit foo.dart…' — what
   // the heartbeat repeats while a long build says nothing.
@@ -689,50 +688,48 @@ class BridgeTurn {
     await speak(cleanForSpeech(line));
   }
 
-  /// Speak one answer block end-to-end (+116: the ledger write lands at
-  /// the first audio CHUNK, the moment sound genuinely begins — not
-  /// merely enqueues; until air, the bubble shows only the draft tail
-  /// the tally frames carry, so the screen speaks no words the speaker
-  /// has not said).
+  /// Speak one answer block end-to-end (+161: the TEXT lands in the
+  /// bubble the moment it is TAKEN — the +116 law of showing only what
+  /// the speaker has said is inverted, by field dictate: chunk-by-chunk
+  /// reveals made the reader wait at the speaker's pace, and a user who
+  /// could not see the rest of the answer could not decide to skip it.
+  /// All three dispositions now share the stamp line: tts-off (the
+  /// screen IS the ear), hidden (no audio is expected, so a text stamp
+  /// is no lie), and audible (the audio follows when it's ready —
+  /// barge-in still drops the REMAINING AUDIO, never the words: the
+  /// press that cuts reads as 'I got it, skip the voice', and the ✋
+  /// mark keeps that honest). The mid was already committed at the take
+  /// in [_onSay], so a redelivery dedups by id whichever way this block
+  /// plays out.)
   Future<void> speak(String text) async {
     if (isLive) env.noteAudioActivity(); // audio just became active: hush
     env.noteReplyText(text);
+    spoken.write('$text ');
+    chat.addBlock(turnBubble, text);
     if (env.ttsOff()) {
-      // Eyes-only mode: the words land in the bubble NOW (screen is
-      // the ear). The mid was already committed at the take in
-      // [_onSay] — before this call — so a later redelivery dedups by
-      // id exactly as on the spoken path. No audio debt exists to
-      // retract: the ledger is the take, and the take is final.
-      spoken.write('$text ');
-      chat.addBlock(turnBubble, text);
+      // Eyes-only mode: nothing else to do — no audio debt exists to
+      // retract, the ledger is the take, and the take is final.
       return;
     }
     if (isLive && env.backgrounded()) {
       // App is hidden: keep drinking the harness's firehose but skip
-      // synth and audio entirely (the speaker is gone anyway). The
-      // block still lands like everywhere else — no audio is EXPECTED
-      // while hidden, so a text stamp is not a lie — and the most
-      // recent one is what the resume path speaks on return.
-      spoken.write('$text ');
-      chat.addBlock(turnBubble, text);
+      // synth and audio entirely (the speaker is gone anyway) — and
+      // the most recent block is what the resume path speaks on
+      // return.
       env.noteUnheardSay(text);
       return;
     }
-    committed.add(text); // +114: audio-path commitment only — hidden
-    // turns buffer their text on purpose and answer that accounting
-    // with the resume replay instead. (+115's in-process airborne set
-    // retires with v2: a redelivery of a TAKEN mid is a set lookup,
-    // and takes are recorded before the speaker, not after.)
+    // +115's in-process airborne set retired with v2: a redelivery of a
+    // TAKEN mid is a set lookup, and takes are recorded before the
+    // speaker, not after (+114's retraction retires too — the bubble
+    // now mirrors the WIRE, and a cut turn says so with its ✋ mark,
+    // not by erasing words the phone received).
     await reply.speakBlock(
       text,
       alive: () => gen == env.generation(),
       drop: () => env.isDropped(text), // hide cut this paragraph
       // mid-play: skip it whole — its chunks die here, no replay
       onAir: (sinceText) {
-        aired.add(text); // +114: the ear has it, the ledger may keep it
-        // +116: the ledger stamp itself, at true first sound:
-        spoken.write('$text ');
-        chat.addBlock(turnBubble, text);
         env.blockAired(); // this block's air outranks the hide mark
         env.markSpeaking();
         hops.tts(); // reply→audio hop crossed: the first chunk of a
@@ -815,18 +812,14 @@ class BridgeTurn {
     // merely DETACHED turn is NOT stamped: it is still running, and a
     // reattach may deliver its real done. An empty dead turn gets
     // removed below either way.
-    // +114: a wire that died UNOWNED mid-turn owes the user nothing it
-    // never got to say. Every paragraph committed but never aired comes
-    // OUT of the bubble: the screen mirrors the ear. v2 fixes the price
-    // of that honesty: the HEARD ledger does NOT retract (the ack rode
-    // the take) — the unheard tail is DROPPED, not re-owed (the dictum
-    // 'for barge in just drop'; the +114 retraction experiment kept
-    // failing back here anyway).
-    if (!outcome.sawDone) {
-      for (final t in committed) {
-        if (!aired.contains(t)) chat.removeBlock(turnBubble, t);
-      }
-    }
+    // +114's retraction (the screen mirrored the ear: committed-but-
+    // never-aired paragraphs came OUT of the bubble) retires with +161:
+    // the bubble mirrors the WIRE. Words the phone received stay on
+    // screen even when their audio never aired — the user read them,
+    // or pressed past them — and a turn cut mid-answer admits the
+    // takeover with its ✋ mark, not with amnesia. The ledger never
+    // retracted anyway (v2: the ack rode the take; 'for barge in just
+    // drop').
     if (!outcome.sawDone && gen != env.generation()) {
       // +110: a cut that never got to speak still leaves a bubble.
       // The interruption of a bare thinking run or a tool call used

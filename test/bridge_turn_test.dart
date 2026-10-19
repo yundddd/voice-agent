@@ -336,8 +336,8 @@ void main() {
       );
     });
 
-    test('+116: a say frozen mid-synth is NOT in the ledger — and its '
-        'air writes it', () async {
+    test('+161: a say frozen mid-synth is on the screen at the take — '
+        'its air adds sound, not a second copy', () async {
       final gate = Completer<void>();
       engine.holdChunks = gate.future;
       mkTurn();
@@ -346,15 +346,23 @@ void main() {
       wire.add(BridgeEvent.forTest('say', text: 'Stuck in the synth.'));
       wire.add(BridgeEvent.forTest('done'));
       await settle();
-      expect(bubble.blocks, isEmpty);
+      expect(
+        bubble.blocks,
+        ['Stuck in the synth.'],
+        reason: 'the bubble mirrors the WIRE (+161, inverting +116): '
+            'received text waits for its audio in the open, so the '
+            'reader can see the answer and press past the speaker',
+      );
       expect(out.played, isEmpty, reason: 'no audio reached the player');
       gate.complete();
       await r;
       out.complete();
       await settle();
-      expect(bubble.blocks, [
-        'Stuck in the synth.',
-      ], reason: 'the ledger stamps at true first sound');
+      expect(
+        bubble.blocks,
+        ['Stuck in the synth.'],
+        reason: 'stamped once at the take — the air never re-writes it',
+      );
     });
 
     test('a wire death without done arms the reattach chain and leaves '
@@ -601,7 +609,8 @@ void main() {
       );
     });
 
-    test('a paragraph marked for the hide skips air AND the ledger', () async {
+    test('a paragraph marked for the hide skips its AIR, not its words '
+        '(+161)', () async {
       mkTurn();
       final cut = cleanForSpeech('Cut mid-play.');
       probe.dropped.add(cut);
@@ -611,7 +620,13 @@ void main() {
       await r;
       await settle();
       expect(out.played, isEmpty, reason: 'the chunk guard killed it');
-      expect(bubble.blocks, isEmpty);
+      expect(
+        bubble.blocks,
+        ['Cut mid-play.'],
+        reason: 'the old law lost a hide-cut answer ENTIRELY (never '
+            'aired, never shown, already acked — gone); +161 keeps '
+            'the words and skips only the voice',
+      );
       expect(probe.dropMarkCleared, isFalse);
     });
   });

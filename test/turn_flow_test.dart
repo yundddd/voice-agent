@@ -1676,21 +1676,19 @@ void main() {
       harness.emit(BridgeEvent.forTest('say', text: 'Stuck in the synth.'));
       await settle();
 
-      expect(
-        out.played.where((c) => c.$1.length == 2400),
-        isEmpty,
-        reason: 'the reply audio is still mid-synth (UI blips exempt)',
-      );
+      expect(out.played.where((c) => c.$1.length == 2400), isEmpty,
+          reason: 'the reply audio is still mid-synth (UI blips exempt)');
       expect(a.phase, isNot(AssistantPhase.speaking));
       expect(
         a.chat.any(
           (e) => !e.fromUser && e.blocks.contains('Stuck in the synth.'),
         ),
-        isFalse,
+        isTrue,
         reason:
-            '+116: the ledger waits for the FIRST SOUND — an '
-            'unspoken commit must never fossilise into fake history '
-            '(the in-flight set, not the log, guards the queueing gap)',
+            '+161: the text is on the screen AT THE TAKE, frozen '
+            'synth or not — the reader sees the whole answer while '
+            'the speaker is still warming up (the id commit, taken '
+            'in _onSay before this call, guards the queueing gap)',
       );
       expect(harness.view != null, isTrue); // frame WAS taken: it is in
 
@@ -1702,18 +1700,21 @@ void main() {
           (e) => !e.fromUser && e.blocks.contains('Stuck in the synth.'),
         ),
         isTrue,
-        reason: 'air is the stamp (+116)',
+        reason: 'stamped at the take (+161); the air brings sound, '
+            'not a second copy',
       );
     });
 
     test(
-      'the ledger stamp waits for the PLAYER, not the queue (+121)',
+      'the AUDIO order waits for the PLAYER, not the queue '
+      '(+121, restated +161)',
       () async {
-        // The afternoon's silent-tail killer, unit-caught: onAir used to
-        // fire when a synth chunk reached the QUEUE, so paragraphs
-        // parked there while the drain bumped the generation were
-        // stamped 'heard' and then cleared unheard — the audio stopped
-        // exactly when the spinner box dismissed.
+        // +121's original wound — chunks parked in the queue stamped
+        // 'heard' while a generation bump killed them — is v2's
+        // nothing: the ledger rides the id commit at the take, and the
+        // audio handover still waits for the player. What +161 moves is
+        // the TEXT: both paragraphs are on the screen the moment they
+        // arrive; only their voices keep the queue's order.
         await withBridge();
         harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
         unawaited(a.runQuickCommand('go'));
@@ -1726,23 +1727,23 @@ void main() {
             a.chat.where((e) => !e.fromUser).expand((e) => e.blocks).toList();
         expect(
           bubbles(),
-          contains('First, playing.'),
-          reason: 'its audio started: stamped',
+          containsAll(['First, playing.', 'Second, queued.']),
+          reason: 'both TAKEN: both on the screen (+161) — the reader '
+              'seems the whole answer while the speaker is on paragraph '
+              'one',
         );
         expect(
-          bubbles(),
-          isNot(contains('Second, queued.')),
-          reason:
-              'it only sits in the queue — a stale-clear there '
-              'must never leave a fake heard mark (+121)',
+          out.played.where((c) => c.$1.length == 2400),
+          hasLength(1),
+          reason: 'the queued paragraph holds its VOICE back (+121)',
         );
 
         out.complete(); // the first ends; the pump hands over the second
         await settle();
         expect(
-          bubbles(),
-          containsAll(['First, playing.', 'Second, queued.']),
-          reason: 'heard now, stamped now',
+          out.played.where((c) => c.$1.length == 2400),
+          hasLength(2),
+          reason: 'the queue order reaches the ear one at a time',
         );
       },
     );
@@ -2004,9 +2005,9 @@ void main() {
       },
     );
 
-    test('a wire death withdraws unheard commits from the bubble — and '
-        'the ack keeps them out of the speaker for good (v2: dropped '
-        'is dropped)', () async {
+    test('a wire death keeps received text on the bubble (+161: the '
+        'screen mirrors the wire) — and the ack keeps it out of the '
+        'speaker for good (v2: dropped is dropped)', () async {
       await withBridge();
       harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
       unawaited(a.runQuickCommand('go'));
@@ -2026,32 +2027,30 @@ void main() {
       await settle();
       expect(
         a.chat.last.blocks,
-        isNot(contains('Never aired.')),
+        contains('Never aired.'),
         reason:
-            '+116: no block without sound — and nothing to '
-            'retract later either, the lie was never written',
+            '+161: the take is the stamp — the reader sees it under '
+            'the paragraph being voiced, frozen synth or not, and may '
+            'press past the audio at any moment',
       );
 
       harness.finishView(); // the wire dies mid-synth: no done frame
       await settle();
       // A newer turn takes the ear (the field shape: the user's next
       // press arrives while the unheard paragraph is still frozen in
-      // synth): the dead turn's chunks drop on its alive-guard, and its
-      // teardown retracts what never aired.
+      // synth): the dead turn's chunks drop on its alive-guard, and
+      // +161 leaves its RECEIVED text standing — the bubble tells the
+      // truth of what the wire delivered, ✋ mark and all.
       unawaited(a.runQuickCommand('next'));
       gate.complete();
       await settle();
       expect(
         a.chat.first.blocks,
-        isNot(contains('Never aired.')),
+        containsAll(['Heard, this one.', 'Never aired.']),
         reason:
-            'never heard, so the bubble withholds it — but the '
-            'TAKE was acked: v2 drops, it does not re-owe',
-      );
-      expect(
-        a.chat.first.blocks,
-        contains('Heard, this one.'),
-        reason: 'heard text is heard history',
+            '+161: no retraction — both received paragraphs stay; '
+            'the TAKE was acked, so v2 drops the audio, it never '
+            're-owes the words',
       );
 
       // v2, the user's dictum ('for barge in just drop'): give the
