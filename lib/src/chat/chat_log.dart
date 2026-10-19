@@ -109,6 +109,11 @@ class ChatEntry {
   int downloadBytes = 0;
   int totalBytes = 0;
 
+  /// Why the last OPEN failed (no viewer, no channel) — memory-only,
+  /// like the download counters: the bubble must never wear yesterday's
+  /// error as if it were fresh news.
+  String? openError;
+
   bool get isEmpty => blocks.isEmpty;
 
   Map<String, Object> toJson() => {

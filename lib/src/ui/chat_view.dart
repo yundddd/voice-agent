@@ -406,12 +406,18 @@ class _FileBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = entry.fileName;
     final isApk = name.toLowerCase().endsWith('.apk');
+    // ONE honest status line per state: the offer, the live
+    // percentage, the open failure, or the tap-that-opens (a saved
+    // file's tap goes straight to the system viewer — the installer,
+    // for an APK).
     final status = entry.downloading
         ? (entry.totalBytes > 0 && entry.downloadBytes > 0
               ? 'Receiving ${entry.downloadBytes * 100 ~/ entry.totalBytes}%'
               : 'Receiving…')
+        : entry.openError != null
+        ? 'Could not open · ${entry.openError!.length > 40 ? '${entry.openError!.substring(0, 40)}…' : entry.openError}'
         : entry.savedMs != 0
-        ? 'Saved on this device'
+        ? 'Saved · tap to open'
               '${formatBubbleClock(entry.savedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.savedMs)}'}'
         : '${formatBytes(entry.fileSize)} · tap to receive';
     return Row(

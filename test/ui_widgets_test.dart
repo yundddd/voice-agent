@@ -153,6 +153,46 @@ void main() {
       expect(tapped, same(entry));
     });
 
+    testWidgets('a saved bubble re-offers as an OPEN, and a failed open '
+        'says so (never silently)', (tester) async {
+      ChatEntry? tapped;
+      final entry = ChatEntry.file(
+        'app-release.apk',
+        'voice-agent/build/app-release.apk',
+        34567890,
+        createdMs: 1,
+      )..savedMs = 2000;
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: entry,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+            onFileTap: (e) => tapped = e,
+          ),
+        ),
+      );
+      expect(find.textContaining('Saved · tap to open'), findsOne);
+      await tester.tap(find.text('app-release.apk'));
+      expect(tapped, same(entry),
+          reason: 'the tap after the save goes to the system viewer');
+      entry.openError = 'MissingPluginException(no handler)';
+      tapped = null;
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(
+            entry: entry,
+            maxWidthFrac: 0.86,
+            source: () => _view(),
+            onFileTap: (e) => tapped = e,
+          ),
+        ),
+      );
+      expect(find.textContaining('Could not open'), findsOne);
+      await tester.tap(find.textContaining('Could not open'));
+      expect(tapped, same(entry), reason: 'even the failed tap retries');
+    });
+
     testWidgets('+151: the bottom working row paints the spinner with '
         'the projected label and meter, attached to no bubble', (tester) async {
       await tester.pumpWidget(

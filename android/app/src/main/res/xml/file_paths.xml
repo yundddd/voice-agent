@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Covers the app's whole private root (where path_provider puts the
+     support/received dir). The open intent grants READ per-URI to one
+     file, so breadth here leaks nothing. -->
+<paths>
+    <root-path name="root" path="." />
+    <files-path name="files" path="." />
+    <cache-path name="cache" path="." />
+</paths>

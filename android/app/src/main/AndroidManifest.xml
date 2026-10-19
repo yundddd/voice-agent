@@ -2,6 +2,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The self-update loop: an APK received from the bridge opens in
+         the package installer (the user still confirms on Android's
+         sheet; this permission only says we may SHOW that sheet). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- The Claude Code bridge (lib/bridge.dart) is plain http on the LAN
          or tailnet (Android blocks cleartext since API 28); every other
          request this app makes is https. -->
@@ -37,6 +41,19 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- The received-file URI for the open/install intent
+             (MainActivity 'voiceagent/files'). root-path '.' covers the
+             app support dir the downloader writes into; the grant is
+             per-URI, so the viewer sees exactly one file. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

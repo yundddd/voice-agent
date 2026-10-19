@@ -11,6 +11,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:voice_agent/src/bridge/bridge_event.dart';
+import 'package:voice_agent/src/platform/file_opener.dart';
 import 'package:voice_agent/src/bridge/gateway.dart';
 import 'package:voice_agent/src/platform/mic_source.dart';
 import 'package:voice_agent/src/speech/speech_engine.dart';
@@ -357,4 +358,17 @@ class FakeMic implements MicSource {
   /// `n` frames of 16 ms: 256 PCM16 samples, ramping so RMS is well
   /// above the fake floor (the DSP is tested separately, gate_test).
   static Uint8List audio(int n) => Uint8List(n * 512 * 2);
+}
+
+/// A recorder for the received-file open: [open]ed lists (path, mime)
+/// pairs; [throwOnOpen] surfaces an error the bubble must admit.
+class FakeOpener implements FileOpener {
+  final List<(String, String)> opened = [];
+  Object? throwOnOpen;
+
+  @override
+  Future<void> open(String path, {required String mime}) async {
+    if (throwOnOpen != null) throw throwOnOpen!;
+    opened.add((path, mime));
+  }
 }

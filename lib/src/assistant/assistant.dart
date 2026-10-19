@@ -74,6 +74,7 @@ import '../common/sinks.dart';
 import '../journal/app_events.dart';
 import '../models/model_packs.dart';
 import '../platform/audio_output.dart';
+import '../platform/file_opener.dart';
 import '../platform/file_player_output.dart';
 import '../platform/mic_source.dart';
 import '../platform/record_mic_source.dart';
@@ -126,11 +127,23 @@ class VoiceAssistant extends ChangeNotifier {
     /// without the model isolate (init() overwrites it with the real
     /// worker when it loads).
     SpeechEngine? worker,
+
+    /// Test seam for the received-file open (Android channel by
+    /// default; VM tests hand in a recorder).
+    FileOpener? opener,
+
+    /// Test seam for where received files land (default: app
+    /// support/received — the platform the plugin knows).
+    Future<String> Function()? receivedDir,
   }) {
     _clock = clock ?? wallClock;
     _scheduler = scheduler ?? const WallScheduler();
     _gatewayFactory = gatewayFactory;
     _worker = worker;
+    _opener = opener ?? ChannelFileOpener();
+    _receivedDir =
+        receivedDir ??
+        () async => p.join((await getApplicationSupportDirectory()).path, 'received');
 
     _hops = HopTracker(
       clock: _clock,
@@ -426,6 +439,8 @@ class VoiceAssistant extends ChangeNotifier {
   bool get hopTts => _hops.hopTts;
 
   // ── Voice selection & cloning ───────────────────────────────────────────
+  late final FileOpener _opener;
+  late final Future<String> Function() _receivedDir;
   String _modelsDir = '';
   TtsPrefs _prefs = TtsPrefs();
   AsrPrefs _asrPrefs = AsrPrefs();
@@ -1074,22 +1089,29 @@ class VoiceAssistant extends ChangeNotifier {
 
   // ── Files relayed from the bridge (POST /send -> 'file' frames) ────────
 
-  /// Fetch a delivered file's bytes — the file bubble's tap. Saves
-  /// under app support/received/`name` (a .part from an interrupted
-  /// transfer resumes where the wire died) and stamps the bubble saved
-  /// on success. Progress mutates the entry's memory-only fields, so
-  /// the channel repaints the percentage without touching disk.
+  /// The file bubble's tap: OPEN. Saved already? Straight to the
+  /// system viewer (the package installer for an APK). Not saved yet?
+  /// Fetch first, then open on the same tap — one gesture, one
+  /// intent. Saves under app support/received/`name` (a .part from an
+  /// interrupted transfer resumes where the wire died); progress
+  /// mutates the entry's memory-only fields, so the channel repaints
+  /// the percentage without touching disk.
   Future<void> fetchChatFile(ChatEntry e) async {
+    if (e.downloading) return;
+    if (e.savedMs != 0 && e.savedPath.isNotEmpty) {
+      await _openChatFile(e);
+      return;
+    }
     final g = _gateway;
-    if (g == null || e.filePath.isEmpty || e.downloading) return;
+    if (g == null || e.filePath.isEmpty) return;
     e.downloading = true;
+    e.openError = null;
     e.totalBytes = e.fileSize;
     notifyListeners();
     var ok = false;
     var dest = '';
     try {
-      final support = await getApplicationSupportDirectory();
-      final dir = Directory(p.join(support.path, 'received'));
+      final dir = Directory(await _receivedDir());
       await dir.create(recursive: true);
       dest = p.join(dir.path, p.basename(e.fileName));
       ok = await g.downloadFile(
@@ -1106,12 +1128,27 @@ class VoiceAssistant extends ChangeNotifier {
     }
     e.downloading = false;
     if (ok) {
-      e.savedMs = DateTime.now().millisecondsSinceEpoch;
+      e.savedMs = _clock().millisecondsSinceEpoch;
       e.savedPath = dest;
       _chat.touch(); // persist the saved stamp (and repaint)
+      await _openChatFile(e); // the tap asked to OPEN it; deliver
     } else {
       notifyListeners();
     }
+  }
+
+  /// Hand a saved bubble to the OS. Any failure (no viewer for the
+  /// type, no channel on a test host) lands on the bubble's status
+  /// line — the tap must never fail silently.
+  Future<void> _openChatFile(ChatEntry e) async {
+    try {
+      await _opener.open(e.savedPath, mime: mimeForFile(e.fileName));
+      e.openError = null;
+    } on Object catch (err) {
+      e.openError = '$err';
+      _logDebug('file open "${e.fileName}" failed: $err');
+    }
+    notifyListeners();
   }
 
   // ── The harness turn (see bridge_turn.dart for the loop itself) ────────
