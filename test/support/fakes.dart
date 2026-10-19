@@ -130,6 +130,18 @@ class FakeHarness implements HarnessGateway {
   int pollCount = 0;
   int lastPollSince = -1;
 
+  /// wire v2: every talkPoll returns the next reserved turn id (echoing
+  /// the bridge's {ok,turn} receipt). Tests stamp ring frames against
+  /// [lastTurnId] (theirs) or [foreignTurn] (someone else's farewell).
+  int lastTurnId = 400000;
+  int get foreignTurn => lastTurnId - 1;
+  int reserveTurn() => lastTurnId = lastTurnId + 1;
+
+  /// wire v2: the phone's /heard acks, batch by batch — a test asserts
+  /// the take was acked (and can fail the send to walk the retry path).
+  final List<List<int>> heardBatches = [];
+  bool heardOk = true;
+
   @override
   Stream<BridgeEvent> talk(
     String text, {
@@ -148,7 +160,7 @@ class FakeHarness implements HarnessGateway {
   }
 
   @override
-  Future<void> talkPoll(
+  Future<int> talkPoll(
     String text, {
     bool interrupt = true,
     bool cutTool = false,
@@ -156,6 +168,14 @@ class FakeHarness implements HarnessGateway {
     talkPollCount++;
     lastInterrupt = interrupt;
     lastCutTool = cutTool;
+    return reserveTurn();
+  }
+
+  @override
+  Future<bool> heard(List<int> mids) async {
+    if (mids.isEmpty) return true;
+    heardBatches.add(List.of(mids));
+    return heardOk;
   }
 
   @override
@@ -248,6 +268,8 @@ class FakeHarness implements HarnessGateway {
               if (e.outTokens > 0) 'out': e.outTokens,
               if (e.contextWindow > 0) 'window': e.contextWindow,
               if (e.wireMs > 0) '_ts': e.wireMs,
+              if (e.mid > 0) '_mid': e.mid,
+              if (e.turn > 0) '_turn': e.turn,
               if (e.isError) 'isError': true,
             },
           },

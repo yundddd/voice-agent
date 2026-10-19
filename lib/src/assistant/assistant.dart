@@ -49,6 +49,7 @@ import './activity.dart';
 import './bridge_turn.dart';
 import './chat_store.dart';
 import './hide_resume.dart';
+import './heard_ledger.dart';
 import './hop_tracker.dart';
 import './mic_pipeline.dart';
 import './narration_gate.dart';
@@ -513,14 +514,19 @@ class VoiceAssistant extends ChangeNotifier {
   /// snapshot, fed by [TurnCoordinator.detach] and [TurnCoordinator.noteToolStep].
   String get _bgWork => _turn.bgWork;
 
-  /// +115: paragraphs this process has committed to the ledger whose
-  /// audio has NOT started — mid-synth or queued. The replay dedup
-  /// consults this beside the log: after a process death (an APK swap
-  /// landing between commit and first chunk) the set is gone while the
-  /// on-disk commit survives, so the relaunched app re-voices the tail
-  /// the old process never got out of the speaker instead of skipping
-  /// it as heard — the field report of the plus-fourteen install.
-  final Set<String> _inFlight = {};
+  /// wire v2: what this phone has TAKEN (mids), on disk, with the
+  /// bridge's /heard acks queued until the wire allows. The one dedup
+  /// for every view and every replay — loaded with the models dir,
+  /// null only before init (isHeard answers false: a fresh install
+  /// speaks everything, which is the truth).
+  HeardLedger? _heardLedger;
+
+  /// The one ledger. Before init loads the disk copy (or in a test that
+  /// never unpacks models) an in-memory one serves: dedup is per-process
+  /// truth, persistence only widens it across restarts.
+  HeardLedger get _heard => _heardLedger ??= HeardLedger(
+    send: (mids) async => await _gateway?.heard(mids) ?? false,
+  );
 
   // ── Phone-side journal (src/journal/) — the same notes mirrored
   // to disk AND served over HTTP for the bridge to poll: the desktop half
@@ -700,6 +706,15 @@ class VoiceAssistant extends ChangeNotifier {
 
   Future<void> _refreshSession() async {
     final h = await _gateway?.healthInfo();
+    // wire v2 housekeeping on every bridge glance: re-ack whatever the
+    // wire swallowed (idempotent both ends), and hold the honest
+    // banner while the bridge does not speak ids — v2 has no silent
+    // fallback: a wrong-proto bridge gets words, not guessing.
+    unawaited(_heard.retry());
+    if (h != null && h['proto'] is num && (h['proto'] as num).toInt() != 2) {
+      _error = 'Bridge too old — install the new claude_bridge.mjs (wire v2)';
+      notifyListeners();
+    }
     final sid = h?['sessionId'];
     final s = (sid is String && sid.isNotEmpty) ? sid : null;
     if (s != _sessionId) {
@@ -1051,6 +1066,13 @@ class VoiceAssistant extends ChangeNotifier {
       _fail('No bridge — open the terminal icon and set url + token.');
       return;
     }
+    if (_transport.proto != 0 && !_transport.protoV2) {
+      // wire v2, no fallback: ids are the delivery law, and a bridge
+      // that has never announced proto 2 cannot honour them. One
+      // honest banner, no silent guessing.
+      _fail('Bridge too old — install the new claude_bridge.mjs (wire v2)');
+      return;
+    }
     // A new prompt never waits on the busy flag — it SUPERSEDES the
     // in-flight turn (voice barge-ins have usually detached it already;
     // this is the typed-text path): detach first and let the bridge
@@ -1173,7 +1195,6 @@ class VoiceAssistant extends ChangeNotifier {
       lease: _lease,
       transport: _transport,
       scheduler: _scheduler,
-      inFlight: _inFlight,
       gen: gen,
       mySeq: mySeq,
       turnBubble: turn,
@@ -1237,6 +1258,8 @@ class VoiceAssistant extends ChangeNotifier {
     armBgProbe: _scheduleBgProbe,
     notePickup: () => _awaitPickup = false,
     awaitingPickup: () => _awaitPickup,
+    isHeard: _heard.isHeard,
+    commitHeard: _heard.commit,
     turnOpenOnWire: () async {
       final h = await _gateway?.healthInfo();
       return h != null && h['turnOpen'] == true;
@@ -1458,6 +1481,10 @@ class VoiceAssistant extends ChangeNotifier {
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
+      _heardLedger = await loadHeardLedger(
+        modelsDir,
+        send: (mids) async => await _gateway?.heard(mids) ?? false,
+      );
       _loadChat(); // restore the on-screen conversation (file read is tiny)
       // The journal comes up BEFORE anything else can go wrong, and it
       // loads its disk mirror first: when Android killed this process
@@ -2183,7 +2210,6 @@ class VoiceAssistant extends ChangeNotifier {
         lease: _lease,
         transport: _transport,
         scheduler: _scheduler,
-        inFlight: _inFlight,
         gen: gen,
         mySeq: mySeq,
         turnBubble: turn,

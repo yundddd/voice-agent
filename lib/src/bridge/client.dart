@@ -101,7 +101,7 @@ class BridgeClient extends HarnessGateway {
       _sse((client) => client.getUrl(_u('/attach')), onActivity);
 
   @override
-  Future<void> talkPoll(
+  Future<int> talkPoll(
     String text, {
     bool interrupt = true,
     bool cutTool = false,
@@ -118,14 +118,37 @@ class BridgeClient extends HarnessGateway {
       req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
       req.add(utf8.encode(text));
       final res = await req.close();
-      await res.drain<void>();
+      final body = await res.transform(utf8.decoder).join();
       if (res.statusCode != 200) {
         throw BridgeException('bridge said HTTP ${res.statusCode}');
       }
+      // v2: the polled POST answers {ok:true,turn:N} — the receipt
+      // that names this prompt's turn before a single frame rings.
+      final j = BridgeEvent.tryJson(body);
+      final t = j is Map ? j['turn'] : null;
+      return t is num ? t.toInt() : 0;
     } on BridgeException {
       rethrow;
     } on Object catch (e) {
       throw BridgeException('bridge unreachable: $e');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  @override
+  Future<bool> heard(List<int> mids) async {
+    if (mids.isEmpty) return true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/heard'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'mids': mids})));
+      final res = await req.close();
+      await res.drain<void>();
+      return res.statusCode == 200;
+    } on Object {
+      return false; // unreachable: the ledger keeps the pending list
     } finally {
       client.close(force: true);
     }

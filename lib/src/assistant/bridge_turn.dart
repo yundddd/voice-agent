@@ -16,6 +16,12 @@
 ///    pulse, hidden says buffered for the resume promise, a stranded
 ///    backlog drain at teardown, and a permanent note for a cut that
 ///    never spoke (+110).
+///
+/// Delivery law (wire v2): every say carries `_mid`; it is spoken once
+/// per phone because [BridgeTurnEnv.isHeard]/[BridgeTurnEnv.commitHeard]
+/// are the dedup and the bridge trims its replay copy on the ack.
+/// Farewells and markers are attributed by `_turn`. Text matching is
+/// not a fact anywhere in this file.
 ///  * [BridgeTurnOrigin.control] — a caller-supplied stream (/new's
 ///    reset): like talk, but its teardown may not call the turn an
 ///    unowned death — there was never a /talk connection to rejoin
@@ -100,6 +106,8 @@ final class BridgeTurnEnv {
     required this.turnOpenOnWire,
     required this.notePickup,
     required this.awaitingPickup,
+    required this.isHeard,
+    required this.commitHeard,
   });
 
   final InteractionMode Function() mode;
@@ -155,9 +163,8 @@ final class BridgeTurnEnv {
   final Future<void> Function(int gen, int seq) drainBacklog;
 
   /// The TTS kill switch (BridgePrefs.tts): replies are text-only —
-  /// nothing synthesises, and the ledger write happens at the block
-  /// itself (the containsBlock answer IS the dedup ledger, no audio
-  /// debt to retract).
+  /// nothing synthesises; the heard-commit already rode the take in
+  /// [_onSay], so the ledger is exact on this path too.
   final bool Function() ttsOff;
 
   /// The bridge's `finished` receipt: the proof-of-completion the
@@ -208,6 +215,15 @@ final class BridgeTurnEnv {
   /// may take the spinner box (+148).
   final void Function() notePickup;
 
+  /// wire v2 heard-ledger (see HeardLedger): a message's paragraph is
+  /// news UNLESS this phone already TOOK its id. [isHeard] is the whole
+  /// dedup — exact, persistent, and text-blind, so a reused paragraph
+  /// is never swallowed and a replayed one never re-speaks.
+  /// [commitHeard] remembers the take (irrevocably: a barge-in drops,
+  /// never re-owes) and acks the bridge so its backlog trims.
+  final bool Function(int mid) isHeard;
+  final void Function(int mid) commitHeard;
+
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
 }
@@ -225,7 +241,6 @@ class BridgeTurn {
     required this.lease,
     required this.transport,
     required this.scheduler,
-    required this.inFlight,
     required this.gen,
     required this.mySeq,
     required this.turnBubble,
@@ -248,11 +263,6 @@ class BridgeTurn {
   final WireLease lease;
   final BridgeTransport transport;
   final Scheduler scheduler;
-
-  /// Paragraphs committed to the speaker but not yet audible — process-
-  /// wide (+115): a replay consults it beside the ledger so a block
-  /// mid-flight in EITHER loop is never voiced twice.
-  final Set<String> inFlight;
 
   /// This turn's ownership tokens, claimed by the opener.
   final int gen, mySeq;
@@ -296,6 +306,8 @@ class BridgeTurn {
     // period is real. The /talk loop's done is its own, always.
     keepOpenOnDone: isAttach ? () => env.turnOpenOnWire() : null,
   );
+
+  int _myTurn = 0;
 
   bool get isLive => origin != BridgeTurnOrigin.attach;
   bool get isAttach => origin == BridgeTurnOrigin.attach;
@@ -369,9 +381,12 @@ class BridgeTurn {
   // the moment the first answer paragraph landed, so a tts-on phone
   // lost its banner for a tool that was still running.
   bool _pickupDone = false;
-  // +155: this view has seen ITS prompt's started marker — from here
-  // the stream is the answer, and the replay ledger retires.
-  bool _startedSeen = false;
+
+  /// wire v2: the turn id the POST receipt reserved for THIS prompt
+  /// (from the pump's first `turn` event; 0 on views that never POSTed
+  /// — an /attach drain has no name of its own and honours any
+  /// marker). Farewells and markers are attributed by it, never by
+  /// text or order.
 
   void _beforeEvent(BridgeEvent ev) {
     hops.reply(); // harness→reply hop crossed: bytes arrived
@@ -414,7 +429,11 @@ class BridgeTurn {
   }
 
   Future<void> _onEvent(BridgeEvent ev) async {
-    if (ev.isSay && ev.text.trim().isNotEmpty) {
+    if (ev.kind == 'turn') {
+      // The receipt, arriving in-band: this pump now knows its own
+      // name — every later marker and farewell is attributed by it.
+      _myTurn = ev.turn;
+    } else if (ev.isSay && ev.text.trim().isNotEmpty) {
       await _onSay(ev);
     } else if (ev.kind == 'context') {
       // message_start also moves the ticker's `in` number (the context
@@ -439,91 +458,62 @@ class BridgeTurn {
   }
 
   Future<void> _onSay(BridgeEvent ev) async {
-    // +156: ONE law for every view. PAST MY pickup marker the stream is
-    // this prompt's answer — news by construction, even when the agent
-    // reused a paragraph word for word (the +155 field report that killed
-    // the ledger for live answers; the fresh journal caught the same
-    // swallow through the DRAIN: the marker replayed, the un-pin rode it,
-    // the answer behind it died to 'already in chat' anyway because the
-    // view was an /attach). The marker — replayed or live, transport
-    // whatever — is the boundary; what survives on the replay side is
-    // the ARCHAEOLOGY guard: a paragraph older than the two-minute window
-    // was lived through once and must not re-voice however freshly a
-    // drain just relayed it.
+    // wire v2: a paragraph's identity is its id, and the ONLY question
+    // at arrival is "did this phone already TAKE it?" — a set lookup.
+    // The text ledger (+155's swallowed reused paragraph), the marker
+    // boundary (+131/+157's fossilised pins), the airborne set (+115)
+    // and the replay/live branches (+156's drain dup) all inferred
+    // this answer from text, order or age — and each misfired in its
+    // own field report. The id does not: news unless its mid says
+    // otherwise.
     final sayText = cleanForSpeech(ev.text.trim());
     final age = transport.wireAgeMs(ev);
-    final pastMarker = _startedSeen || (isLive && !transport.turnViaPoll);
-    if (pastMarker && age <= 120000) {
-      if (inFlight.contains(sayText)) {
-        // Already airborne in this process (+115's rule survives the
-        // boundary): a re-delivery of a paragraph whose audio is playing
-        // needs no second speaker.
-        env.log('say already airborne — skipped');
-        return;
-      }
-      // The answer closed and is being spoken: nothing is generating to
-      // grow a counter over. Harness-generated text just crossed the
-      // wire: journal it with its skew-corrected delivery age, so a
-      // delayed or dropped paragraph shows as a gap in the stamp trail.
-      ticker.markSpoken();
-      // The PUSH view's say line mirrors the RAW frame (what arrived);
-      // replay views log the cleaned text — match like you store.
-      final logged = (isLive && !transport.turnViaPoll)
-          ? ev.text.trim()
-          : sayText;
-      env.log(
-        'msg harness: say "${_trunc(logged, 48)}"${transport.wireTag(ev)}',
-      );
-      await speak(sayText);
+    if (ev.mid != 0 && env.isHeard(ev.mid)) {
+      // Exact redelivery — live double, drain replay, whatever. Even
+      // with identical text, even freshly stamped: it cannot speak
+      // twice (today's 'Here.' dup, killed at the root).
+      env.log('dup by id #${ev.mid} — skipped');
       return;
     }
-    // Everything before the boundary may carry HISTORY: the /attach
-    // replay, and — the case that lost bubbles over a shared ring (field
-    // report: 'when I queue or interrupt, messages show up AGAIN') — the
-    // frames of the turn a parked prompt waits behind. 'My view = my
-    // news' holds only past the marker; before it, the LEDGER decides.
-    final via = isAttach ? 'replay' : 'ring';
-    if (age > 120000 &&
-        !chat.containsBlock(sayText) &&
-        !inFlight.contains(sayText)) {
-      // Archaeology, not news: a line from BEFORE the app went away
-      // (an APK update, a kill) belongs in the conversation as text,
-      // never in the speaker again — the user already lived through
-      // this exchange.
+    // TAKEN: the commit (and its ack) land NOW, before the speaker —
+    // a barge-in from here drops the paragraph, it never re-owes it
+    // (user dictum: 'for barge in just drop').
+    if (ev.mid != 0) env.commitHeard(ev.mid);
+    if (ev.mid != 0 && age > 120000) {
+      // Never heard AND ancient: lived through while the phone was
+      // gone (an APK update, a week offline). Text, never the speaker
+      // — one courtesy rule where the old law kept a matrix.
       chat.addBlock(turnBubble, sayText);
       final ageSec = ev.wireMs == 0 ? 'unstamped' : '${age ~/ 1000}s old';
-      env.log('$via $ageSec: logged silently, not spoken');
-    } else if (chat.containsBlock(sayText) || inFlight.contains(sayText)) {
-      // Already heard — or already airborne in this process. +116 makes
-      // the first half TRUE: the persisted log only ever carries blocks
-      // whose audio started, so containsBlock means heard, full stop.
-      // One trade kept from the old law: a paragraph cut off MID-audio
-      // counts as heard and its tail is not repeated — never
-      // re-listening beats never not-listening.
-      env.log('$via dedup: paragraph already in chat — skipped');
-    } else {
-      ticker.markSpoken();
-      env.log(
-        'msg harness: say ($via) "${_trunc(sayText, 48)}"'
-        '${transport.wireTag(ev)}',
-      );
-      await speak(sayText);
+      env.log('backlog $ageSec: logged silently, not spoken');
+      return;
     }
+    ticker.markSpoken();
+    // The PUSH view's say line mirrors the RAW frame (what arrived);
+    // other views log the cleaned text — match like you store.
+    final logged = (isLive && !transport.turnViaPoll)
+        ? ev.text.trim()
+        : sayText;
+    env.log('msg harness: say "${_trunc(logged, 48)}"${transport.wireTag(ev)}');
+    await speak(sayText);
   }
 
   Future<void> _onTool(BridgeEvent ev) async {
     if (ev.toolName == 'started') {
       // +155: the ring remembers markers for prompts long dead (it is
       // a 2000-event tape) — a stale marker must not fake this view's
-      // pickup. Only the marker naming MY prompt crosses the line.
-      final mine = utterance.length > 60
-          ? utterance.substring(0, 60)
-          : utterance;
-      if (utterance.isNotEmpty && ev.detail.isNotEmpty && ev.detail != mine) {
-        env.log('stale pickup marker for "${_trunc(ev.detail, 30)}" — ignored');
+      // pickup. v2 says WHOSE by id: the marker was born stamped with
+      // the turn its POST reserved. Views that never POSTed (an
+      // attach drain, an ack stream) have no name of their own and
+      // honour any marker — the backlog they replay is by definition
+      // theirs to catch up on.
+      final mine = _myTurn == 0 || ev.turn == 0 || ev.turn == _myTurn;
+      if (!mine) {
+        env.log(
+          'stale pickup marker (turn ${ev.turn}, ours $_myTurn) — ignored',
+        );
         return;
       }
-      _startedSeen = true;
       // The queue's pickup ack (bridge +81): Claude Code has the prompt
       // NOW. Dissolve the pin and journal the hand-off. (Push view:
       // this frame claims the turn's one pickup — the beforeEvent gate
@@ -696,11 +686,10 @@ class BridgeTurn {
     env.noteReplyText(text);
     if (env.ttsOff()) {
       // Eyes-only mode: the words land in the bubble NOW (screen is
-      // the ear), and the heard-ledger is written here exactly like
-      // the first-audio commit of the spoken path — so a later ring
-      // or backlog replay dedups against it and never duplicates the
-      // paragraph into a second bubble. No audio debt exists to
-      // retract: the containsBlock answer IS the ledger.
+      // the ear). The mid was already committed at the take in
+      // [_onSay] — before this call — so a later redelivery dedups by
+      // id exactly as on the spoken path. No audio debt exists to
+      // retract: the ledger is the take, and the take is final.
       spoken.write('$text ');
       chat.addBlock(turnBubble, text);
       return;
@@ -718,8 +707,9 @@ class BridgeTurn {
     }
     committed.add(text); // +114: audio-path commitment only — hidden
     // turns buffer their text on purpose and answer that accounting
-    // with the resume replay instead
-    inFlight.add(text); // +115: not heard UNTIL it airs
+    // with the resume replay instead. (+115's in-process airborne set
+    // retires with v2: a redelivery of a TAKEN mid is a set lookup,
+    // and takes are recorded before the speaker, not after.)
     await reply.speakBlock(
       text,
       alive: () => gen == env.generation(),
@@ -727,7 +717,6 @@ class BridgeTurn {
       // mid-play: skip it whole — its chunks die here, no replay
       onAir: (sinceText) {
         aired.add(text); // +114: the ear has it, the ledger may keep it
-        inFlight.remove(text); // +115: the ledger is the truth from here
         // +116: the ledger stamp itself, at true first sound:
         spoken.write('$text ');
         chat.addBlock(turnBubble, text);
@@ -815,15 +804,16 @@ class BridgeTurn {
     // removed below either way.
     // +114: a wire that died UNOWNED mid-turn owes the user nothing it
     // never got to say. Every paragraph committed but never aired comes
-    // OUT of the ledger: the bubble mirrors the ear, and the bridge's
-    // always-kept replay copy can voice it honestly to the next view
-    // instead of being deduped against a fake "heard".
+    // OUT of the bubble: the screen mirrors the ear. v2 fixes the price
+    // of that honesty: the HEARD ledger does NOT retract (the ack rode
+    // the take) — the unheard tail is DROPPED, not re-owed (the dictum
+    // 'for barge in just drop'; the +114 retraction experiment kept
+    // failing back here anyway).
     if (!outcome.sawDone) {
       for (final t in committed) {
         if (!aired.contains(t)) chat.removeBlock(turnBubble, t);
       }
     }
-    inFlight.removeAll(committed); // +115: this turn's flight is over
     if (!outcome.sawDone && gen != env.generation()) {
       // +110: a cut that never got to speak still leaves a bubble.
       // The interruption of a bare thinking run or a tool call used

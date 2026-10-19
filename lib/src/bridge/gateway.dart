@@ -17,9 +17,10 @@ abstract class HarnessGateway {
   /// app wires it in: the parameter is simply absent then.
   int Function()? journalPort;
 
-  /// Starts a turn with [text]; the stream yields say/tool/context
-  /// events as the harness works and a final done (or error) event,
-  /// then closes. Cancelling the subscription abandons the phone's VIEW
+  /// Starts a turn with [text]; the stream yields a `turn` meta event
+  /// naming the reserved turn id FIRST, then say/tool/context events
+  /// as the harness works and a final done (or error) event, and
+  /// closes. Cancelling the subscription abandons the phone's VIEW
   /// of the turn (the harness keeps working, backgrounded).
   ///
   /// [interrupt] decides what a QUEUED prompt does to a turn already in
@@ -41,12 +42,21 @@ abstract class HarnessGateway {
   });
 
   /// Pull transport: start a turn whose events are read from the ring
-  /// with [poll] instead of a pushed stream.
-  Future<void> talkPoll(
+  /// with [poll] instead of a pushed stream. The bridge answers the
+  /// POST with a JSON receipt — returns the turn id it RESERVED for
+  /// this prompt (0 only if the receipt was unreadable: proto drift).
+  Future<int> talkPoll(
     String text, {
     bool interrupt = true,
     bool cutTool = false,
   });
+
+  /// wire v2: commit the phone's hearing — the bridge trims these
+  /// message ids from the unheard backlog. Idempotent by contract;
+  /// true = acknowledged (a false only postpones: the phone re-sends
+  /// its pending list, the worst case is one replay the heard-ledger
+  /// swallows on arrival).
+  Future<bool> heard(List<int> mids);
 
   /// One ring page: events with seq > [since]; null = unreachable.
   Future<Map<String, Object>?> poll(int since);

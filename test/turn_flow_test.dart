@@ -863,16 +863,28 @@ void main() {
     );
 
     test(
-      'poll view: a paragraph the ledger already owns does NOT resurface '
-      'as a second bubble (queue/interrupt duplicate-bubble field report)',
+      'v2: a paragraph this phone TOOK never resurfaces, whichever '
+      'ring copy returns it (the dup-bubble field report, told by id)',
       () async {
         await withBridge();
-        // Turn 1 rides the PUSH view: heard, spoken, in the ledger.
+        // Turn 1 rides the PUSH view: taken, spoken, in the ledger —
+        // and acked (v2: the bridge trims its replay copy on that).
         unawaited(a.runQuickCommand('go'));
         await settle();
-        harness.emit(BridgeEvent.forTest('say', text: 'All done — one copy.'));
+        harness.emit(
+          const BridgeEvent.forTest(
+            'say',
+            text: 'All done — one copy.',
+            mid: 77,
+          ),
+        );
         harness.emit(const BridgeEvent.forTest('done'));
         await settle();
+        expect(
+          harness.heardBatches.expand((b) => b).toList(),
+          contains(77),
+          reason: 'the take rode a /heard ack',
+        );
         int copies() => a.chat
             .where((e) => e.blocks.contains('All done — one copy.'))
             .length;
@@ -884,9 +896,9 @@ void main() {
 
         // The ring gets advertised; the NEXT press (queue or interrupt —
         // both ride the same /talk) chooses the poll transport. The ring
-        // now hands the SAME paragraph again: a superseded polling view
-        // left the cursor behind it, or the flush re-announced it. The
-        // view says "mine"; only the ledger may say "heard".
+        // now hands the SAME message again (same _mid — one message,
+        // one id, every copy): a superseded polling view left the cursor
+        // behind it. The view says "mine"; only the ID says "taken".
         harness.healthState = {
           'ok': true,
           'claudeUp': true,
@@ -898,7 +910,11 @@ void main() {
         await settle();
         harness.pollPages.add(
           FakeHarness.page(11, [
-            BridgeEvent.forTest('say', text: 'All done — one copy.'),
+            const BridgeEvent.forTest(
+              'say',
+              text: 'All done — one copy.',
+              mid: 77,
+            ),
           ], first: 11),
         );
         time.advance(const Duration(milliseconds: 300));
@@ -907,8 +923,8 @@ void main() {
           copies(),
           1,
           reason:
-              'the ring is shared history: dedup is the ledger, not '
-              'the view — a heard paragraph must never re-bubble',
+              'the ring is shared history: the heard-ledger is the '
+              'dedup, not the view — a taken message never re-bubbles',
         );
         expect(
           engine.synthesized.where((t) => t == 'All done — one copy.').length,
@@ -916,20 +932,22 @@ void main() {
           reason: 'and it must never re-speak',
         );
         expect(
-          a.debugLog.any((l) => l.contains('ring dedup')),
+          a.debugLog.any((l) => l.contains('dup by id')),
           isTrue,
-          reason: 'the skip is journalled under the ring-delivery law',
+          reason: 'the skip is journalled at the set lookup',
         );
       },
     );
 
-    test('+155: past MY started marker the ledger retires — a reused '
-        'paragraph IS the answer (field: the row said audio, the chat '
-        'stayed silent)', () async {
+    test('v2: a reused paragraph with a FRESH id IS the answer — the '
+        'ledger matches ids, never words (the +155 swallow, killed at '
+        'the root)', () async {
       await withBridge();
       unawaited(a.runQuickCommand('go'));
       await settle();
-      harness.emit(BridgeEvent.forTest('say', text: 'All done — one copy.'));
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'All done — one copy.', mid: 77),
+      );
       harness.emit(const BridgeEvent.forTest('done'));
       await settle();
       harness.healthState = {
@@ -945,10 +963,16 @@ void main() {
           a.chat.where((e) => e.blocks.contains('All done — one copy.')).length;
 
       // A stale marker — the ring is a tape, it remembers other
-      // prompts’ pickups — must not fake this view's boundary.
+      // prompts’ pickups — must not fake this view's pickup. v2 says
+      // whose by the turn id: this one names the PREVIOUS turn.
       harness.pollPages.add(
         FakeHarness.page(11, [
-          const BridgeEvent.forTest('tool', toolName: 'started', detail: 'go'),
+          BridgeEvent.forTest(
+            'tool',
+            toolName: 'started',
+            detail: 'go',
+            turn: harness.foreignTurn,
+          ),
         ], first: 11),
       );
       time.advance(const Duration(milliseconds: 300));
@@ -956,33 +980,39 @@ void main() {
       expect(
         a.debugLog.any((l) => l.contains('stale pickup marker')),
         isTrue,
-        reason: 'the marker named another prompt — ignored',
+        reason: 'the marker wore another turn\'s id — ignored',
       );
       expect(
         copies(),
         1,
-        reason: 'and the ledger still owns the floor at that point',
+        reason: 'the taken paragraph stays taken while strangers pass',
       );
 
-      // MY marker draws the line.
+      // MY marker — my reserved id, straight off the receipt.
       harness.pollPages.add(
         FakeHarness.page(12, [
-          const BridgeEvent.forTest(
+          BridgeEvent.forTest(
             'tool',
             toolName: 'started',
             detail: 'again',
+            turn: harness.lastTurnId,
           ),
         ], first: 12),
       );
       time.advance(const Duration(milliseconds: 300));
       await settle();
 
-      // The agent reused a paragraph from minutes ago. Before +155
-      // the poll view's replay rules swallowed the live answer whole
-      // — an idle bridge emitted no marker, so no boundary existed.
+      // The agent reused a paragraph from minutes ago — as a FRESH
+      // message (the bridge stamps it a new _mid, and one message
+      // keeps one id across every copy). There is no text ledger left
+      // to swallow it: news by id.
       harness.pollPages.add(
         FakeHarness.page(13, [
-          BridgeEvent.forTest('say', text: 'All done — one copy.'),
+          const BridgeEvent.forTest(
+            'say',
+            text: 'All done — one copy.',
+            mid: 78,
+          ),
         ], first: 13),
       );
       time.advance(const Duration(milliseconds: 300));
@@ -990,7 +1020,7 @@ void main() {
       expect(
         copies(),
         2,
-        reason: '+155: past the pickup, every say is news again',
+        reason: 'v2: a new id is the answer, whatever words it wears',
       );
       expect(
         engine.synthesized.where((t) => t == 'All done — one copy.').length,
@@ -998,15 +1028,19 @@ void main() {
         reason: 'and it is spoken, not silently “already in chat”',
       );
 
-      // The journal's drain case (#791): the SAME paragraph arriving
-      // as a REPLAY behind a replayed marker. The boundary is the
-      // marker, not the transport — a drain must never swallow the
-      // answer it exists to deliver, duplicate wording or no.
-      out.complete(); // the first replay's audio commits (+115)
+      // Today's dup, told exactly: the SAME message (same mid — the
+      // drain replays what the ack has not trimmed yet) arriving while
+      // its first copy is still airborne. +115 kept a whole airborne
+      // set for this moment; v2 answers it with one set lookup.
+      out.complete(); // the first copy's audio commits
       await settle();
       harness.pollPages.add(
         FakeHarness.page(14, [
-          BridgeEvent.forTest('say', text: 'All done — one copy.'),
+          const BridgeEvent.forTest(
+            'say',
+            text: 'All done — one copy.',
+            mid: 78,
+          ),
         ], first: 14),
       );
       time.advance(const Duration(milliseconds: 300));
@@ -1014,14 +1048,19 @@ void main() {
       expect(
         copies(),
         2,
-        reason: 'committed + a second airborne copy: not stamped twice',
+        reason: 'taken mid 78: the redelivery cannot speak twice',
       );
-      // The journal's exact wound (#791): a paragraph that duplicates
-      // something HEARD LONG AGO (in the ledger) and is not itself
-      // airborne — drained behind the replayed marker, it must speak.
+      // And the +156 wound, healed without the waiver: a paragraph
+      // that DUPLICATES old heard wording but is itself a fresh id —
+      // the reused answer behind a drain — still speaks, because the
+      // only thing the ledger reads is the id.
       harness.pollPages.add(
         FakeHarness.page(15, [
-          BridgeEvent.forTest('say', text: 'And a second paragraph.'),
+          const BridgeEvent.forTest(
+            'say',
+            text: 'And a second paragraph.',
+            mid: 79,
+          ),
         ], first: 15),
       );
       time.advance(const Duration(milliseconds: 300));
@@ -1037,18 +1076,18 @@ void main() {
       await settle();
       expect(
         engine.synthesized.where((t) => t == 'All done — one copy.').length,
-        3,
+        2,
         reason:
-            'the page-14 re-delivery spoke too — its stamp rides the '
-            'same bubble as its twin (no twin lines in one bubble), '
-            'so the SPOKEN count is the proof',
+            'v2: the page-14 re-delivery is the SAME message — one '
+            'id, one voice. Where +115 kept an airborne set and +156 '
+            'a marker waiver, the heard-set answers with one lookup.',
       );
 
-      // The archaeology guard survives the boundary: minutes later (an
-      // app restart's backlog burst replays this turn again), the
-      // paragraph was lived through once — text yes, speaker no.
-      // Stamped NOW, delivered after the clock moves five minutes: a
-      // replay of genuinely old news (the restart-drain shape).
+      // And the restart-drain shape — a copy of the ORIGINAL heard
+      // paragraph (mid 77, the push view took it) replayed five
+      // minutes later: the dup check precedes the age rule, so old
+      // news stays silent whatever its stamp — the ledger, not the
+      // clock, owns the answer.
       final stamp = time.now.millisecondsSinceEpoch;
       harness.pollPages.add(
         FakeHarness.page(16, [
@@ -1056,19 +1095,20 @@ void main() {
             'say',
             text: 'All done — one copy.',
             wireMs: stamp,
+            mid: 77,
           ),
         ], first: 16),
       );
       time.advance(const Duration(minutes: 5));
       await settle();
       expect(
-        a.debugLog.any((l) => l.contains('already in chat — skipped')),
+        a.debugLog.any((l) => l.contains('dup by id #77')),
         isTrue,
-        reason: 'old news stays silent, boundary or no',
+        reason: 'taken is taken — age adds nothing',
       );
       expect(
         engine.synthesized.where((t) => t == 'All done — one copy.').length,
-        3,
+        2,
         reason: 'the archaeology replay did not re-voice it',
       );
       expect(
@@ -1116,13 +1156,13 @@ void main() {
       // Ten seconds later the sleep settles, and the flush lands on
       // the ring as one batch, in the bridge's own order: the busy
       // turn's done FIRST, then the disposition notice, then the
-      // pickup marker. Handing that done to the pump ended the queue
-      // turn before its markers — the pin fossilised at 'queued' and
-      // the flushed answer strangled in the ring unheard, exactly as
-      // reported. The pump must eat the foreign done and keep waiting.
+      // pickup marker. v2 hands the pump the fact the +131 armour
+      // inferred: the done WEARS the foreign turn's id (the receipt
+      // named ours before the first poll), so it skips it by number
+      // and keeps waiting — no swallow law, no marker gate.
       harness.pollPages.add(
         FakeHarness.page(13, [
-          BridgeEvent.forTest('done'),
+          BridgeEvent.forTest('done', turn: harness.foreignTurn),
           BridgeEvent.forTest(
             'tool',
             toolName: 'queued',
@@ -1137,6 +1177,7 @@ void main() {
             toolName: 'started',
             detail: 'status please',
             toolKind: 'background',
+            turn: harness.lastTurnId,
           ),
         ], first: 11),
       );
@@ -1149,7 +1190,7 @@ void main() {
       // frozen pump used to strand unheard behind the foreign done.
       harness.pollPages.add(
         FakeHarness.page(14, [
-          BridgeEvent.forTest('say', text: 'All green.'),
+          const BridgeEvent.forTest('say', text: 'All green.', mid: 900),
         ], first: 14),
       );
       time.advance(const Duration(milliseconds: 300));
@@ -1160,7 +1201,9 @@ void main() {
         reason: 'own-turn frames after the marker reach the pump alive',
       );
       harness.pollPages.add(
-        FakeHarness.page(15, [BridgeEvent.forTest('done')], first: 15),
+        FakeHarness.page(15, [
+          BridgeEvent.forTest('done', turn: harness.lastTurnId),
+        ], first: 15),
       );
       time.advance(const Duration(milliseconds: 300));
       await settle();
@@ -1961,70 +2004,90 @@ void main() {
       },
     );
 
-    test(
-      'a wire death withdraws unheard commits from the bubble (+114)',
-      () async {
-        await withBridge();
-        harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
-        unawaited(a.runQuickCommand('go'));
-        await settle();
-        harness.emit(BridgeEvent.forTest('say', text: 'Heard, this one.'));
-        await settle(); // fake synth plays at once: this one AIRED
-        expect(a.chat.last.blocks, contains('Heard, this one.'));
+    test('a wire death withdraws unheard commits from the bubble — and '
+        'the ack keeps them out of the speaker for good (v2: dropped '
+        'is dropped)', () async {
+      await withBridge();
+      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'Heard, this one.', mid: 90),
+      );
+      await settle(); // fake synth plays at once: this one AIRED
+      expect(a.chat.last.blocks, contains('Heard, this one.'));
 
-        final gate = Completer<void>();
-        engine.holdChunks = gate.future; // next paragraph enters the
-        // speaker's flight but its audio is frozen before the first chunk
-        harness.emit(BridgeEvent.forTest('say', text: 'Never aired.'));
-        await settle();
-        expect(
-          a.chat.last.blocks,
-          isNot(contains('Never aired.')),
-          reason:
-              '+116: no block without sound — and nothing to '
-              'retract later either, the lie was never written',
-        );
+      final gate = Completer<void>();
+      engine.holdChunks = gate.future; // next paragraph enters the
+      // speaker's flight but its audio is frozen before the first chunk
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'Never aired.', mid: 91),
+      );
+      await settle();
+      expect(
+        a.chat.last.blocks,
+        isNot(contains('Never aired.')),
+        reason:
+            '+116: no block without sound — and nothing to '
+            'retract later either, the lie was never written',
+      );
 
-        harness.finishView(); // the wire dies mid-synth: no done frame
-        await settle();
-        // A newer turn takes the ear (the field shape: the user's next
-        // press arrives while the unheard paragraph is still frozen in
-        // synth): the dead turn's chunks drop on its alive-guard, and its
-        // teardown retracts what never aired.
-        unawaited(a.runQuickCommand('next'));
-        gate.complete();
-        await settle();
-        expect(
-          a.chat.first.blocks,
-          isNot(contains('Never aired.')),
-          reason:
-              'never heard, so never owed: withdrawn, and the '
-              'bridge copy stays replayable for a fresh view',
-        );
-        expect(
-          a.chat.first.blocks,
-          contains('Heard, this one.'),
-          reason: 'heard text is heard history',
-        );
+      harness.finishView(); // the wire dies mid-synth: no done frame
+      await settle();
+      // A newer turn takes the ear (the field shape: the user's next
+      // press arrives while the unheard paragraph is still frozen in
+      // synth): the dead turn's chunks drop on its alive-guard, and its
+      // teardown retracts what never aired.
+      unawaited(a.runQuickCommand('next'));
+      gate.complete();
+      await settle();
+      expect(
+        a.chat.first.blocks,
+        isNot(contains('Never aired.')),
+        reason:
+            'never heard, so the bubble withholds it — but the '
+            'TAKE was acked: v2 drops, it does not re-owe',
+      );
+      expect(
+        a.chat.first.blocks,
+        contains('Heard, this one.'),
+        reason: 'heard text is heard history',
+      );
 
-        // The retract must be RECOVERY, not deletion: the chain's attach
-        // view (health said turnOpen) meets the same paragraph on the
-        // replay stream and must VOICE it — no ledger entry, no flight
-        // claim, so dedup bows out of the way.
-        harness.emitAttach(BridgeEvent.forTest('say', text: 'Never aired.'));
-        await settle();
-        expect(
-          engine.synthesized.any((t) => t.contains('Never aired')),
-          isTrue,
-          reason: '+115: the tail the old process never said is said now',
-        );
-        expect(
-          a.chat.first.blocks,
-          isNot(contains('Never aired.')),
-          reason: 'it belongs to the NEW bubble, not the dead turn',
-        );
-      },
-    );
+      // v2, the user's dictum ('for barge in just drop'): give the
+      // replay a live ear — the next turn closes honestly while the
+      // bridge still holds an unheard frame (missed=1), the teardown
+      // drains via reattach, and the attach view meets the SAME
+      // message (the bridge's copy keeps its _mid). The taken id
+      // files it silently: no retraction dance, no airborne set, no
+      // second air — dropped is dropped, exactly once.
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': true,
+        'missed': 1,
+      };
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      time.advance(const Duration(seconds: 1)); // the chain's first probe
+      await settle();
+      harness.emitAttach(
+        const BridgeEvent.forTest('say', text: 'Never aired.', mid: 91),
+      );
+      await settle();
+      expect(
+        engine.synthesized.where((t) => t.contains('Never aired')).length,
+        1,
+        reason:
+            'the one frozen synth attempt from the dead view is all '
+            'it ever gets: taken = acked = dropped, no second air',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('dup by id #91')),
+        isTrue,
+        reason: 'and the journal says why',
+      );
+    });
 
     test('an old unheard paragraph is logged, never re-voiced', () async {
       await withBridge();
@@ -2044,6 +2107,7 @@ void main() {
           'say',
           text: 'Something from before',
           wireMs: ancient,
+          mid: 61,
         ),
       );
       await settle();
@@ -2056,6 +2120,13 @@ void main() {
         engine.synthesized.any((t) => t.contains('Something from before')),
         isFalse,
         reason: '…but the user already heard it; never re-voice',
+      );
+      expect(
+        harness.heardBatches.expand((b) => b).toList(),
+        contains(61),
+        reason:
+            'v2: the silent log still ACKS — the backlog trims it '
+            'and the old paragraph is asked nowhere ever again',
       );
     });
   });

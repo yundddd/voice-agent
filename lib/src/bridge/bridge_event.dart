@@ -23,6 +23,8 @@ class BridgeEvent {
     this.thought = '',
     this.draft = '',
     this.wireMs = 0,
+    this.mid = 0,
+    this.turn = 0,
   });
 
   /// Test seam: build frames verbatim without inventing wire payloads.
@@ -40,6 +42,8 @@ class BridgeEvent {
     this.thought = '',
     this.draft = '',
     this.wireMs = 0,
+    this.mid = 0,
+    this.turn = 0,
   });
 
   /// 'say' | 'tool' | 'context' | 'done' | 'error'.
@@ -82,6 +86,15 @@ class BridgeEvent {
   /// ignored), so the chat bubble simply stays on the working line.
   final String draft;
 
+  /// wire v2 identity: the message id the bridge stamped at relay
+  /// (`_mid` — the phone's heard-ledger key), and the id of the turn
+  /// that owns this frame (`_turn` — reserved at POST time, echoed as
+  /// the 'turn' meta event, worn by every frame the turn relays).
+  /// Zero on either means a frame predates v2: it is treated as news
+  /// (never ledger-skipped) and, for farewells, as this view's own.
+  final int mid;
+  final int turn;
+
   /// The bridge's wall-clock milliseconds at the moment this frame
   /// crossed the wire (`_ts` on every SSE frame; 0 from older bridges).
   /// The assistant subtracts its /health-calibrated clock skew and logs
@@ -98,6 +111,8 @@ class BridgeEvent {
   static BridgeEvent parseMap(String event, Map<Object?, Object?> data) =>
       parse(event, jsonEncode(data));
 
+  static int _int(Object? v) => v is num ? v.toInt() : 0;
+
   static BridgeEvent parse(String event, String dataJson) {
     final decoded = tryJson(dataJson);
     if (decoded is! Map) {
@@ -113,7 +128,9 @@ class BridgeEvent {
         return BridgeEvent._(
           'say',
           text: '${data['text'] ?? ''}',
-          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
+          wireMs: _int(data['_ts']),
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
         );
       case 'tool':
         final n = data['in'];
@@ -127,7 +144,9 @@ class BridgeEvent {
           toolKind: '${data['kind'] ?? ''}',
           thought: '${data['thought'] ?? ''}',
           draft: '${data['draft'] ?? ''}',
-          wireMs: data['_ts'] is num ? (data['_ts'] as num).toInt() : 0,
+          wireMs: _int(data['_ts']),
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
         );
       case 'context':
         final n = data['in'], w = data['window'];
@@ -135,9 +154,22 @@ class BridgeEvent {
           'context',
           inputTokens: n is num ? n.toInt() : 0,
           contextWindow: w is num ? w.toInt() : 0,
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
         );
+      case 'turn':
+        // The transport's meta frame: the id POST /talk reserved for
+        // THIS prompt (not relayed, so it carries no _turn of its own
+        // — it IS the turn). Every later frame the pump sees may
+        // finally be attributed; see BridgeTransport and BridgeTurn.
+        return BridgeEvent._('turn', turn: _int(data['turn']));
       case 'done':
-        return BridgeEvent._('done', isError: data['isError'] == true);
+        return BridgeEvent._(
+          'done',
+          isError: data['isError'] == true,
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
+        );
       default:
         return BridgeEvent._(
           'error',

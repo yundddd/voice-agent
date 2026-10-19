@@ -61,6 +61,11 @@ class EnvProbe {
   >
   arms = [];
   final List<(int, int)> drains = [];
+
+  /// wire v2: the loop's heard-ledger seam — what it skipped as a dup
+  /// (isHeard input) and what it acked (commitHeard input).
+  final Set<int> alreadyHeard = {};
+  final List<int> took = [];
   int repaints = 0, firstWords = 0, audioActivity = 0, refreshes = 0;
   bool dropMarkCleared = false, idled = false;
 
@@ -122,6 +127,8 @@ class EnvProbe {
     turnOpenOnWire: () async => turnOpen,
     notePickup: () => pickups++,
     awaitingPickup: () => false,
+    isHeard: alreadyHeard.contains,
+    commitHeard: took.add,
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);
@@ -236,7 +243,8 @@ void main() {
         log: (_) {},
       ),
       scheduler: time,
-      inFlight: {},
+      // (v2: the in-process airborne set retired — the loop dedups
+      // by mid through the env recorder above.)
       gen: gen,
       mySeq: mySeq,
       turnBubble: bubble,
@@ -599,6 +607,7 @@ void main() {
           'say',
           text: 'Something from before',
           wireMs: ancient,
+          mid: 42,
         ),
       );
       wire.add(BridgeEvent.forTest('done'));
@@ -607,19 +616,27 @@ void main() {
       expect(engine.synthesized, isEmpty);
       expect(bubble.blocks, contains('Something from before.'));
       expect(probe.logs, contains(contains('logged silently, not spoken')));
+      expect(probe.took, contains(42)); // the ack rides even for old text
     });
 
-    test('a paragraph already in the ledger is deduped — matched AFTER '
-        'cleaning, like it is stored', () async {
+    test('v2: a redelivered mid is deduped by ID — text plays no part '
+        '(not even after cleaning: there is nothing left to match)', () async {
       mkTurn(origin: BridgeTurnOrigin.attach);
-      chat.addBlock(bubble, 'Already heard.');
+      probe.alreadyHeard.add(5); // taken by a view this loop never saw
       final r = turnLoop.run(wire.stream);
-      wire.add(BridgeEvent.forTest('say', text: '**Already heard**.'));
+      wire.add(
+        const BridgeEvent.forTest('say', text: '**Already heard**.', mid: 5),
+      );
+      // Identical TEXT but a fresh id: a stranger, and it speaks.
+      wire.add(
+        const BridgeEvent.forTest('say', text: 'Already heard.', mid: 6),
+      );
       wire.add(BridgeEvent.forTest('done'));
       await r;
       await settle();
-      expect(engine.synthesized, isEmpty);
-      expect(probe.logs, contains(contains('replay dedup')));
+      expect(engine.synthesized, ['Already heard.']);
+      expect(probe.logs, contains(contains('dup by id #5')));
+      expect(probe.took, contains(6));
     });
 
     test('nothing narrates and no pulse beats on a replay view', () async {

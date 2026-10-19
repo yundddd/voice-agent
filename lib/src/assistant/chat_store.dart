@@ -71,17 +71,12 @@ class ChatStore {
   /// [AssistantView.showWorkingRow]), so drains, placeholders and pins
   /// have nothing left to steal.
 
-  /// Is this exact reply block already in the (disk-persisted) log?
-  /// The reattach replay consults this so paragraphs the user heard
-  /// before the app died are never read aloud a second time; scans the
-  /// WHOLE log (capped at [cap] entries), whitespace-normalised, exact
-  /// match. The first cut stopped after three assistant bubbles — a
-  /// restart-time backlog burst spans a dozen turns (2000 ring events),
-  /// and field journal 22:31: every paragraph inside the three-bubble
-  /// window deduped cleanly while older-but-still-under-two-minutes
-  /// ones sailed past and got re-voiced: "replaying previous messages"
-  /// heard exactly as described. The cap is small and this runs per
-  /// replayed frame; a full scan is noise.
+  /// Is this exact text already a block in the log (whitespace-
+  /// normalised, whole scan)? wire v2 retired this as the HEARD-LEDGER
+  /// (delivery dedup is the HeardLedger's id set — text plays no part);
+  /// one honest use remains: [_retireBgWork]'s banner note must not
+  /// stamp 'Bash npm test finished.' twice when the receipt rides two
+  /// transports. The scan is render-side and rare.
   bool containsBlock(String text) => chatContainsBlock(_entries, text);
 
   void addUser(String text, {bool queued = false}) {
@@ -124,8 +119,9 @@ class ChatStore {
   /// ADJACENCY: the poll transport can deliver the same disposition
   /// notice twice (enqueue ring copy + flush re-announce), and one
   /// event is one bubble — but a legitimately repeated verdict much
-  /// later still gets its own fresh card (containsBlock would swallow
-  /// every second tool-cut with the same wording).
+  /// later still gets its own fresh card (a text ledger would swallow
+  /// every second tool-cut with the same wording — the lesson v2 took
+  /// to heart: TEXT is never an identity).
   void addSystemNote(String text) {
     if (_entries.isNotEmpty) {
       final last = _entries.last;

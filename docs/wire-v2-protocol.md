@@ -103,10 +103,12 @@ mids per POST and re-sends its small pending-ack list after a network miss
    `_beforeEvent`'s parked check becomes `ev.turn < myTurn` (the waited
    turn's frames keep the grey; my frames take the floor) — a comparison,
    not a law.
-6. **Chat log**: blocks gain the committing `_mid` (debug/forensics only);
-   `ChatStore.containsBlock` and the JSON migration path deleted — a fresh
-   empty ledger meets a fresh empty backlog (the bridge restart at upgrade
-   zeroes the backlog, so mixed-version history cannot exist).
+6. **Chat log** (as shipped): the journal line carries the mid, bubbles do
+   not. `ChatStore.containsBlock` survives ONE honest render-side use —
+   the banner note's adjacency guard (one event, one bubble). The delivery
+   ledger is `HeardLedger` alone; a fresh empty ledger meets a fresh
+   empty backlog (the bridge restart at upgrade zeroes the backlog, so
+   mixed-version history cannot exist).
 7. `debugDetachUnheard`, view projections, spinner/banner/stop laws: untouched
    — this is the delivery layer only.
 
@@ -128,6 +130,20 @@ mids per POST and re-sends its small pending-ack list after a network miss
   CLI gains a "repeat a previously used paragraph" mode (the field's trick).
 - Existing queue/pin/banner/stop suites must pass untouched — they pin the UX
   layer this change must not move.
+
+## Shipped as (0.1.0+158)
+
+- `proto: 2` + `turn` on /health; `_mid`/`_turn` on every frame; JSON
+  receipt on polled POSTs, `turn` SSE event first on pushed; `/heard`
+  trims; `/attach` replays without consuming. Wire suite 12 green.
+- App: `HeardLedger` (lib/src/assistant/heard_ledger.dart) — lazy
+  in-memory until the disk copy loads, acks batched, retried from every
+  `_refreshSession` and every commit; `_onSay` is the set lookup + the
+  one age line; the poll pump attributes farewells by `_turn` (+131's
+  armour and +157's marker gate retire into one comparison); the
+  started marker is queue UX only; barge-ins drop. Dart suite 310 green.
+- The proto gate refuses sends (`Bridge too old — install the new
+  claude_bridge.mjs`) once a /health has answered non-2.
 
 ## Rollout (lockstep, no fallback)
 

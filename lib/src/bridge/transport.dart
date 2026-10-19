@@ -37,6 +37,7 @@ class BridgeTransport {
   final Duration pollDeadline;
 
   int _skewMs = 0; // phone-minus-bridge clock, calibrated per /health
+  int _proto = 0; // v2 handshake: /health's `proto` (0 = never seen)
   bool _pollCapable = false;
   int _ringCursor = -1; // -1 = unseeded; else: last ring seq consumed
   bool _turnViaPoll = false;
@@ -45,6 +46,13 @@ class BridgeTransport {
   int get skewMs => _skewMs;
   bool get pollCapable => _pollCapable;
   int get ringCursor => _ringCursor;
+
+  /// The wire v2 handshake: ids are law only on a proto-2 bridge. Until
+  /// the first /health answer there is no verdict (0); anything else is
+  /// a bridge the app must not silently mis-deliver against — the
+  /// assistant shows one honest banner instead of guessing.
+  int get proto => _proto;
+  bool get protoV2 => _proto == 2;
 
   /// Whether the CURRENT turn's events came from GET /poll (set in
   /// [turn]). On the shared ring, frames of whatever turn was already
@@ -59,6 +67,8 @@ class BridgeTransport {
   /// a desktop triage read shows WHY the app chose attach/idle/retry).
   String noteHealth(Map<String, Object>? h) {
     if (h != null && h['now'] is num) {
+      final pr = h['proto'];
+      if (pr is num) _proto = pr.toInt();
       final skew = clock().millisecondsSinceEpoch - (h['now'] as num).toInt();
       // Absurd skew = a stalled probe answer or a wild phone clock; keep
       // the last sane value rather than poison the latency column.
@@ -101,17 +111,14 @@ class BridgeTransport {
   /// backgrounding flavour — polite towards thinking, cut-through for a
   /// running tool (see the bridge's talk()).
   ///
-  /// +157: on the shared ring EVERY poll pump waits for its OWN
-  /// started marker before honouring any farewell. The bridge files one
-  /// marker per turn — idle or flushed — as the turn's first frame, and
-  /// the ring can lag (a previous view's cursor stopped before an old
-  /// `done`: field journal 23:52, 'Hello?' whose pump died on a farewell
-  /// from the turn BEFORE its own, stranding the answer behind a drain
-  /// that could not re-establish the ledger boundary without the
-  /// marker). So while unseen: done and error frames are swallowed
-  /// (journalled), and only a marker NAMING THIS PROMPT opens the gate —
-  /// stale markers pass through for the loop to file as stale. The
-  /// deadline still guards a silent ring.
+  /// wire v2: the POST /talk receipt NAMES this pump's turn, and every
+  /// farewell says whose it is (`_turn`). A poll pump honours done and
+  /// error only when they name its own turn; every other farewell is
+  /// journalled and skipped — the +157 dance of swallowing-until-marker
+  /// was inference about exactly this fact, and the shared ring's lag
+  /// (field journal 23:52, 'Hello?') was its failure mode. The loop
+  /// downstream learns the same id from the first yielded `turn` event.
+  /// The deadline still guards a silent ring.
   Stream<BridgeEvent> turn(
     HarnessGateway gw,
     String text,
@@ -155,10 +162,14 @@ class BridgeTransport {
       if (head is num && head.toInt() > _ringCursor) _ringCursor = head.toInt();
     }
     if (_ringCursor < 0) _ringCursor = 0;
-    // +157: every poll pump is born awaiting its own marker (+131's
-    // parked-only law generalised — see the doc on [turn]).
-    var awaitPickup = true;
-    await gw.talkPoll(text, interrupt: interrupt, cutTool: cutTool);
+    // v2: the receipt names our turn BEFORE the first poll; the loop
+    // learns it from the same event the other transports get first.
+    final myTurn = await gw.talkPoll(
+      text,
+      interrupt: interrupt,
+      cutTool: cutTool,
+    );
+    yield BridgeEvent.parse('turn', '{"turn":$myTurn}');
     var deadline = clock().add(pollDeadline);
     var misses = 0;
     while (true) {
@@ -203,28 +214,22 @@ class BridgeTransport {
                 ? f['data'] as Map<Object?, Object?>
                 : const <String, Object>{},
           );
-          final ownMarker =
-              ev.kind == 'tool' &&
-              ev.toolName == 'started' &&
-              (ev.detail.isEmpty ||
-                  ev.detail ==
-                      (text.length > 60 ? text.substring(0, 60) : text));
-          if (ownMarker) {
-            // The hand-over marker — ours, by its own name. From the
-            // next frame on, the ring carries OUR turn.
-            awaitPickup = false;
-          } else if (awaitPickup && (ev.isDone || ev.kind == 'error')) {
-            // Not ours yet — this farewell belongs to the turn the
-            // prompt parked behind (bridge ring order: done, queued,
-            // started). Handing it over would break the event pump
-            // before the pickup, fossilise the pin, and strand the
-            // flushed answer with no listener. Eat it and keep polling;
-            // if the flush never comes, the deadline below still says
-            // so, and a superseding press cancels this whole stream.
+          final foreign =
+              (ev.isDone || ev.kind == 'error') &&
+              myTurn != 0 &&
+              ev.turn != 0 &&
+              ev.turn != myTurn;
+          if (foreign) {
+            // Someone else's funeral: the turn this prompt parked
+            // behind (or any farewell the lagging ring still carries).
+            // Honouring it would break the pump before our pickup,
+            // fossilise the pin and strand the flushed answer — skip
+            // it and keep polling; if the flush never comes the
+            // deadline below still says so, and a superseding press
+            // cancels this whole stream.
             log(
-              'poll: ${ev.isDone ? 'done' : 'error'} of ANOTHER turn '
-              'swallowed pre-pickup (seq $seq) — pump survives for its '
-              'own marker',
+              'poll: ${ev.isDone ? 'done' : 'error'} of turn ${ev.turn} '
+              '(ours is $myTurn) — not ours, pump survives',
             );
             continue;
           }
