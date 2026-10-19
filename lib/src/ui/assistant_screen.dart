@@ -438,8 +438,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                         }
                       },
                     ),
-                    const SizedBox(height: 8),
-                    Text(hint, style: Theme.of(context).textTheme.labelLarge),
+                    // The push-to-talk panel shed its caption (field
+                    // dictate): the armed slide bands already name what
+                    // releasing NOW does while a hold is down, and the
+                    // static line beneath was clutter. Conversation
+                    // mode keeps its start/stop label — a tap-toggle
+                    // with no hold bands lives or dies by its words.
+                    if (v.mode == InteractionMode.conversation) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        hint,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ],
                     if (_debugMode)
                       Text(
                         'hold edges: ${_assistant.pttEdgeCount}  '
