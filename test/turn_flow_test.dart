@@ -1945,6 +1945,66 @@ void main() {
       );
     });
 
+    test('+171: the natural end under a folded turn leaves the box '
+        "lit and the caption on duty — no 'Ready' for the churn", () async {
+      // The 12:30 field tape: the agent routed /compact through its
+      // own wire (curl), the notice parked politely behind the still
+      // running tool, the phone's sentence finished its natural end
+      // — and _handleNaturalEnd idled the PHASE while the heard
+      // turn's claim stayed alive. Result: a lit box captioned
+      // 'Ready. Hold the button…' for two minutes of churn. The
+      // sentence ending is not the turn ending. (PTT world — the
+      // conversation branch's 'Listening' is honest: that mic is
+      // really open, and barge-in is the mode's contract.)
+      a.setMode(InteractionMode.pushToTalk);
+      await withBridge();
+      unawaited(a.runQuickCommand('compact context'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'Sure — queueing it.', mid: 4),
+      );
+      await settle();
+      expect(out.playing, isTrue);
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'queued',
+          detail: 'a tool call is running; your message will steer '
+              'the turn at its next pause',
+          mid: 5,
+        ),
+      );
+      await settle();
+      out.complete(); // the sentence ends on its own terms — no done
+      await settle();
+      time.advance(Duration.zero);
+      await settle();
+      expect(
+        a.view.agentWorking,
+        isTrue,
+        reason: 'the heard turn is still OPEN (the fold has not fired)',
+      );
+      expect(a.view.showWorkingRow, isTrue);
+      expect(
+        a.status,
+        isNot(startsWith('Ready')),
+        reason: 'the phase stays non-idle while the claim lives',
+      );
+      expect(
+        a.activityLabel,
+        isNot(startsWith('Ready')),
+        reason: 'and the lit box never wears the at-rest caption',
+      );
+      harness.emit(BridgeEvent.forTest('done')); // the re-stamped farewell
+      await settle();
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason: 'the fold closed the heard turn: idle is honest again',
+      );
+      expect(a.status, startsWith('Ready'));
+    });
+
     test('the tail of our own echo is rejected before it ever sends', () async {
       engine.transcripts = ['hello there', 'hello there again'];
       await a.toggle();

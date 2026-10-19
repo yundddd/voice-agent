@@ -1492,11 +1492,24 @@ function foldPending() {
   // would die with its stream): everything the host turn says from
   // here — the corrected continuation — goes to the phone that
   // steered it. The prior listener (often long dead) is closed.
-  if (curRes) endTurn();
-  if (p.poll || p.res.writableEnded) {
-    // +104's law holds at the fold: a dead stream decides the
-    // TRANSPORT, not the message — the frames simply ring, and the
-    // phone's reattach replay catches the continuation.
+  if (p.noSeat) {
+    // +171: a housekeeping fold moves NO seat — the current listener
+    // keeps the host turn (the compact boundary and the agent's own
+    // 'compacting' narration are its continuation), and the re-stamped
+    // done closes the pump of whoever spoke /compact as clean as any
+    // steer. The caller's keep-alive dies with its answered notice.
+    endKeep(p);
+  } else if (curRes) {
+    endTurn();
+    if (p.poll || p.res.writableEnded) {
+      // +104's law holds at the fold: a dead stream decides the
+      // TRANSPORT, not the message — the frames simply ring, and the
+      // phone's reattach replay catches the continuation.
+      endKeep(p);
+    } else {
+      curRes = { res: p.res, keep: p.keep, turnStart: turnStartAt };
+    }
+  } else if (p.poll || p.res.writableEnded) {
     endKeep(p);
   } else {
     curRes = { res: p.res, keep: p.keep, turnStart: turnStartAt };
@@ -1677,6 +1690,15 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     const cut = interrupt || (cutTool && openTools.size > 0);
     pending = {
       res, text, keep, poll, interrupt, turnId: t,
+      // +171: /compact is HOUSEKEEPING, not conversation: it must
+      // never hold a seat. The field deadlock: an agent queued
+      // /compact via curl inside its own turn — the fold waited for
+      // that tool's result, the tool (curl, streaming) waited for
+      // the fold's stream — and only the Bash timeout broke the
+      // circle two minutes of silence later. An answered notice
+      // closes the caller's stream at once, so the caller's
+      // tool_result IS the next boundary.
+      noSeat: /^\/compact(\s|$)/i.test(String(text).trim()),
       // +163: a prompt that cut NOTHING is a STEER: the fold site in
       // the tool_result branch hands it to the running turn at the
       // first pause between calls. `cut`'s inverses (slide-up, cuttool
@@ -1729,6 +1751,16 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     } else {
       sse(res, 'turn', {turn: t, queued: true});
       sse(res, 'tool', note);
+      // +171: the seatless caller is DONE being a stream — the notice
+      // is the whole answer (/compact reports through the host turn's
+      // frames, not its own body). Closing here is what dissolves the
+      // curl deadlock: the response ending is the tool completing,
+      // which is the boundary the fold was waiting for.
+      if (pending.noSeat) {
+        endKeep(pending); // interval first (a tick must not write an
+        // ended stream); foldPending's endKeep is idempotent.
+        try { res.end(); } catch {}
+      }
     }
     // +99 (supersedes the +33 rule): the interrupt gesture cuts the
     // TURN even with a tool in flight — the field spec: 'put the

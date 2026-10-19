@@ -1002,6 +1002,80 @@ test('a politely parked prompt folds into the running turn at the next ' +
   }
 });
 
+// +171: /compact arrives WITHOUT a seat — the field deadlock where an
+// agent's own curl holding both the tool boundary and the parked
+// stream could never fold. The notice answers and the caller's stream
+// CLOSES; the fold then rides the caller's own tool_result, the
+// current view keeps the seat (the host turn is still its stream),
+// and the re-stamped done closes the pump of whoever asked.
+const PORT17 = PORT1 + 42;
+
+test('a queued /compact folds without ever holding a stream (+171)',
+  async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT17, FOLD_ENV);
+  try {
+    await up(PORT17);
+    const a = await call(PORT17, `/talk?token=${TOKEN}`,
+      { body: 'the host ask', method: 'POST' });
+    await until('host turn open', async () =>
+      (await health(PORT17)).turnOpen === true);
+    await until('tool 1 is open', async () =>
+      a.text.includes('"name":"Bash"'));
+
+    // The agent routes /compact through its own wire. The response
+    // must END at the notice — while the host turn churns (its
+    // boundary at 1200 ms, its result at 4000 ms — 1000 ms here can
+    // only mean 'closed at the notice').
+    const bT0 = Date.now();
+    const b = await new Promise((resolve, reject) => {
+      const rq = http.request(
+        `http://127.0.0.1:${PORT17}/talk?token=${TOKEN}&interrupt=0`,
+        { method: 'POST' }, (rs) => {
+        let t = '';
+        rs.setEncoding('utf8');
+        rs.on('data', (c) => { t += c; });
+        rs.on('end', () => resolve({ ms: Date.now() - bT0, text: t }));
+      });
+      rq.on('error', reject);
+      rq.write('/compact');
+      rq.end();
+    });
+    assert.ok(b.ms < 1000,
+      `the seatless caller is released at its notice (${b.ms} ms) — ` +
+      'curl returns, so its tool_result CAN be the boundary');
+    assert.ok(b.text.includes('"name":"queued"'), 'the notice is the answer');
+    assert.ok(!b.text.includes('event: done'),
+      'the caller never waits for the turn its own housekeeping folded into');
+    const tB = Number(b.text.match(/"turn":(\d+),"queued":true/)?.[1]);
+    assert.ok(Number.isFinite(tB), 'the receipt names the parked turn');
+
+    // The boundary arrives (tool 2 closes): the fold fires, the
+    // marker rides, and it rides to the CURRENT listener — the seat
+    // never moved.
+    await until('fold at the tool boundary, seat unmoved', async () =>
+      a.text.includes('"kind":"steered"'), 4000);
+    const frames = sseEvents(a.text);
+    const marker = frames.find((e) => e.ev === 'tool' &&
+      e.data?.name === 'started' && e.data?.kind === 'steered');
+    assert.equal(marker.data._turn, tB,
+      'the pickup carries the reserved /compact id');
+    assert.ok(seen(stubLog).includes('/compact'),
+      'the housekeeping line reached the harness stdin');
+
+    // The host turn closes: the farewell re-stamped to tB goes to the
+    // listener that kept the seat.
+    await until('host turn closes', async () =>
+      (await health(PORT17)).turnOpen === false, 15000);
+    const done = sseEvents(a.text).find((e) => e.ev === 'done');
+    assert.ok(done, 'the current view gets its funeral, not a corpse-frame');
+    assert.equal(done.data._turn, tB,
+      'the done re-stamp closes the steered turn clean');
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
 test('a park after the last boundary waits for the flush — the old law ' +
     'is the floor (+163)', async () => {
   const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');

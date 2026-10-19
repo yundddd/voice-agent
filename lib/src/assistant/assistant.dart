@@ -931,7 +931,22 @@ class VoiceAssistant extends ChangeNotifier {
   String get tokenThought => _ticker.thought;
   String get tokenDraft => _ticker.draft;
   bool get turnSettled => _ticker.settled;
-  String get activityLabel => _ticker.activityLabel(status);
+  String get activityLabel {
+    final l = _ticker.activityLabel(status);
+    // +171 belt: a LIT box never speaks the at-rest caption. Behind
+    // the natural-end guard there are still paths that idle the phase
+    // while a claim lives (the 12:31:20 error-frame close with a
+    // backgrounded shell running — spinner lit, caption 'Ready. Hold
+    // the button…' side by side). Where the box stands, the words
+    // must say work-in-progress, so the fallback changes costume.
+    if (l.startsWith('Ready.') &&
+        ((_bridgeBusy && !_drainReading) ||
+            _harnessBackgrounded ||
+            showsBackgroundedWork)) {
+      return 'On the bridge…';
+    }
+    return l;
+  }
   String get tokenTickerLabel => _ticker.label;
   int get tokensOut => _ticker.tokensOut;
   int get tokensIn => _ticker.tokensIn;
@@ -3249,7 +3264,18 @@ class VoiceAssistant extends ChangeNotifier {
       // A bench echo behaves the same: its mic was closed at release, and
       // the panel (not auto-listening) is what invites the next hold.
       if (_mode == InteractionMode.pushToTalk || _benchBusy) {
-        _idleReady();
+        // +171: 'the reply ended' is only the whole truth when the TURN
+        // ended with it. A polite park behind a running tool (the agent
+        // routing /compact through its own wire) keeps the heard turn
+        // open while the speaker falls silent — idling the phase there
+        // left the box LIT (the claim was honest) but captioned
+        // 'Ready' for two minutes (the caption lied): the field tape
+        // at 12:30. The caption belongs to the claim, not to the
+        // speaker; any phase other than idle keeps the verdict's own
+        // wording — 'a tool call is running…' — on the row.
+        if (!(_bridgeBusy || _turn.backgrounded || _bgWork.isNotEmpty)) {
+          _idleReady();
+        }
       } else {
         _phase = AssistantPhase.listening;
         _activity = const ListeningHint();
