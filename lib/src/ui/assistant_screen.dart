@@ -208,7 +208,11 @@ class _AssistantScreenState extends State<AssistantScreen>
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          // Bottom ZERO: the talk panel sits flush with the screen's
+          // bottom edge (the inner bottom SafeArea still lifts it past
+          // the navigation-gesture strip, where a hold would die in
+          // the system's hands).
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
           child: Column(
             children: [
               Expanded(
@@ -408,6 +412,18 @@ class _AssistantScreenState extends State<AssistantScreen>
                     if (v.bridgeConfigured &&
                         (v.context.tokensIn > 0 || v.bridgeBusy))
                       ContextBar(view: v.context, busy: v.bridgeBusy),
+                    // Conversation mode's label rides ABOVE the panel
+                    // (the field asked the button itself to sit at the
+                    // screen's bottom edge — a label under it would
+                    // lift it off again; the label is gone entirely in
+                    // PTT mode, the slide bands say it all).
+                    if (v.mode == InteractionMode.conversation) ...[
+                      Text(
+                        hint,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     // The whole bottom panel IS the talk button (see
                     // talk_surface.dart): press anywhere and the hold
                     // records (same PttHold edges, same release
@@ -416,8 +432,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // release slides appear as WIDE bands — top edge =
                     // interrupt, right edge = discard. Conversation
                     // mode: a tap anywhere toggles, exactly as the old
-                    // FAB, but without aiming.
+                    // FAB, but without aiming. SHORTER (128 vs the old
+                    // 208): the chat owns more of the screen; the press
+                    // area and both edge bands stay wide enough to hit
+                    // with a thumb.
                     TalkSurface(
+                      height: 128,
                       source: () => a.view,
                       icon: icon,
                       color: color,
@@ -438,19 +458,6 @@ class _AssistantScreenState extends State<AssistantScreen>
                         }
                       },
                     ),
-                    // The push-to-talk panel shed its caption (field
-                    // dictate): the armed slide bands already name what
-                    // releasing NOW does while a hold is down, and the
-                    // static line beneath was clutter. Conversation
-                    // mode keeps its start/stop label — a tap-toggle
-                    // with no hold bands lives or dies by its words.
-                    if (v.mode == InteractionMode.conversation) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        hint,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ],
                     if (_debugMode)
                       Text(
                         'hold edges: ${_assistant.pttEdgeCount}  '
@@ -468,7 +475,8 @@ class _AssistantScreenState extends State<AssistantScreen>
                           fontFamily: 'monospace',
                         ),
                       ),
-                    const SizedBox(height: 8),
+                    // No trailing spacer: the panel is the last word at
+                    // the bottom edge.
                   ],
                 ),
               ),
