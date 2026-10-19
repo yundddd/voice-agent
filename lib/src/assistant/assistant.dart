@@ -1047,7 +1047,15 @@ class VoiceAssistant extends ChangeNotifier {
   /// works through the Bridge screen's typed input), and the Stop chip
   /// is no longer in this list — it lives beside it, permanently, grey
   /// or lit by [AssistantView.agentBusy].
-  static const controlChips = <String>['/new'];
+  /// Session housekeeping chips, in row order: they render before the
+  /// permanent Stop chip, so this list is the 'in-between' the screen's
+  /// row shows (+178, by dictate: the compact button sits between
+  /// /new and Stop). /compact retired from the row at +154 because it
+  /// parked an ordinary stream mid-turn and the ack was wordless; the
+  /// +171 seatless fold (the notice IS the answer) and the typed
+  /// slash's ack made it chip-worthy again — and the fold it rides is
+  /// the very machinery the field deadlock proved.
+  static const controlChips = <String>['/new', '/compact'];
 
   /// Saves bridge settings (empty url disables the feature entirely).
   Future<void> setBridge({required String url, required String token}) async {

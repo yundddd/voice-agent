@@ -440,6 +440,24 @@ void main() {
       );
       expect(a.status, contains('nothing to say'));
     });
+
+    test('+178: the row order is /new, /compact, then the permanent '
+        'Stop — the compact chip is back between them', () {
+      // The chips render in LIST order and the Stop chip is appended
+      // after the loop (assistant_screen), so this pair pins the
+      // dictate 'a compact button in-between new and stop': the list
+      // names the two before Stop, in that order.
+      expect(
+        VoiceAssistant.controlChips,
+        ['/new', '/compact'],
+        reason: 'dictate +178. Stop is not in the list — it is the '
+            "row's permanent tail (+154), never a controlChips member.",
+      );
+      expect(
+        VoiceAssistant.controlChips.every((c) => c.startsWith('/')),
+        isTrue,
+      );
+    });
   });
 
   group('the live token ticker (0.1.0+77, +84, +85, +93)', () {

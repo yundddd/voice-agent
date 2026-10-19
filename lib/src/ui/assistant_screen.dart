@@ -27,6 +27,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     with WidgetsBindingObserver {
   static const _chipIcons = {
     '/new': Icons.restart_alt, // same glyph as the settings-page reset
+    '/compact': Icons.compress,
   };
 
   final VoiceAssistant _assistant = VoiceAssistant();
@@ -313,13 +314,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ),
               ),
               if (v.bridgeConfigured) ...[
-                // Session housekeeping: /new (see
-                // VoiceAssistant.bridgeControl for what it does on the
+                // Session housekeeping: /new and /compact (see
+                // VoiceAssistant.bridgeControl for what they do on the
                 // wire). Taps deliberately interrupt any voice reply
                 // mid-flight (runQuickCommand supersedes), which is the
-                // right feel: a chip press means "do THIS now". +154:
-                // /compact retired from the row (its slash still works
-                // typed on the Bridge screen), and Stop is PERMANENT —
+                // right feel: a chip press means "do THIS now". /compact
+                // left the row at +154 because mid-turn it parked an
+                // ordinary stream and died wordless; +171's seatless
+                // fold made it chip-safe (the notice answers, the CLI
+                // relays a live 'tool compact' line, the re-stamped
+                // done closes the pump) — so +178 brought it back, BY
+                // DICTATE, between /new and Stop (the list order is the
+                // row order, and the Stop chip sits after them all).
+                // Stop itself is PERMANENT —
                 // greyed while the agent is idle, lit the moment any
                 // work is in flight, heard or backgrounded. A control
                 // that only exists when active teaches nothing; this
