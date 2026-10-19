@@ -916,3 +916,128 @@ test('GET /dirs lists only folders inside --dir-root, /dir moves the agent there
     await stopBridge(proc);
   }
 });
+
+// ── +163 THE FOLD ──────────────────────────────────────────────────────
+// The plain release no longer waits for the whole turn: the parked
+// prompt is handed to the RUNNING turn at the first tool_result
+// boundary after it parks (probe on the real CLI 2.1.296: stdin user
+// messages fold into the live conversation at the next API call). It
+// gets a 'started kind:steered' pickup marker carrying its RESERVED
+// turn id, takes the stream seat from the old view, and the host's
+// done is re-stamped to its id. A turn with no boundary left (or a
+// park after the last one) still falls through to the result-time
+// flush — delivery is never later than the old law.
+const PORT15 = PORT1 + 40;
+const PORT16 = PORT1 + 41;
+const FOLD_ENV = {
+  // A multi-step turn: foreground tool 1 opens at 50 ms and survives
+  // to the result (open while the prompt parks → the notice says so);
+  // tool 2 opens and CLOSES at 1330 ms — the boundary the fold rides;
+  // the turn itself settles at 4000 ms.
+  STUB_TOOL: 'sleep 60', STUB_TOOL_START_MS: '50',
+  STUB_TOOL2_MS: '1200', STUB_RESULT_MS: '4000', STUB_SAYS: 'Answered.',
+};
+
+test('a politely parked prompt folds into the running turn at the next ' +
+    'tool result (+163)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT15, FOLD_ENV);
+  try {
+    await up(PORT15);
+    const a = await call(PORT15, `/talk?token=${TOKEN}`,
+      { body: 'the first ask', method: 'POST' });
+    await until('host turn open', async () =>
+      (await health(PORT15)).turnOpen === true);
+    await until('tool 1 is open', async () =>
+      a.text.includes('"name":"Bash"')); // parked while a tool runs
+
+    // Park politely WHILE the first tool is open, before tool 2 gives
+    // the turn its first boundary.
+    const b = await call(PORT15, `/talk?token=${TOKEN}&interrupt=0`,
+      { body: 'the steer', method: 'POST' });
+    await until('b queued notice', async () =>
+      b.text.includes('"name":"queued"'));
+    assert.ok(b.text.includes('steer the turn'),
+      'the notice words the NEW promise (steer at the next pause)');
+    const tB = Number(b.text.match(/"turn":(\d+),"queued":true/)?.[1]);
+    assert.ok(Number.isFinite(tB), 'the receipt names the parked turn');
+    // The fold happens MID-TURN: the queue drains while the host is
+    // still open — the old law could only empty `queued` at `result`.
+    await until('fold at the tool boundary', async () => {
+      const h = await health(PORT15);
+      return h.queued === false && h.turnOpen === true;
+    }, 4000);
+
+    // The marker: its own id, the steered kind, an id of its own.
+    await until('the steered pickup rides the parked stream', async () =>
+      b.text.includes('"kind":"steered"'));
+    const frames = sseEvents(b.text);
+    const marker = frames.find((e) => e.ev === 'tool' &&
+      e.data?.name === 'started');
+    assert.equal(marker.data._turn, tB,
+      'the pickup marker carries the RESERVED id — the phone names its own turn');
+
+    // The host turn closes: the continuation is spoken to the STEERER
+    // (b), and the farewell re-stamped to b's id. (The stub treats the
+    // folded stdin line as ITS new turn — its gen-guard delays the
+    // result one full cycle; the bridge never learned: its turn stays
+    // open until that result lands. The contract assertions below are
+    // the same either way.)
+    await until('host turn closes', async () =>
+      (await health(PORT15)).turnOpen === false, 15000);
+    const closed = sseEvents(b.text);
+    const done = closed.find((e) => e.ev === 'done');
+    assert.ok(done, 'the parked stream got its farewell');
+    assert.equal(done.data._turn, tB,
+      'the done re-stamp closes the steered turn — the pump ends clean');
+    assert.ok(closed.some((e) => e.ev === 'say' &&
+      e.data?.text === 'Answered.'),
+      'the host turn\u2019s continuation speaks to the phone that steered it');
+    assert.ok(seen(stubLog).includes('the steer'),
+      'the prompt reached the harness stdin');
+    assert.ok(!sseEvents(a.text).some((e) => e.ev === 'done'),
+      'the superseded first view never gets a funeral done — it made room');
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+test('a park after the last boundary waits for the flush — the old law ' +
+    'is the floor (+163)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT16, FOLD_ENV);
+  try {
+    await up(PORT16);
+    await call(PORT16, `/talk?token=${TOKEN}`,
+      { body: 'the first ask', method: 'POST' });
+    await until('host turn open', async () =>
+      (await health(PORT16)).turnOpen === true);
+    // Park AFTER tool 2 closed (1330 ms) — no boundary remains before
+    // the result at 4000 ms: the prompt must ride to the flush. (Tool
+    // 1 is still open, so the notice still promises a steer — what it
+    // learns is that the turn settles first: delivery falls through to
+    // the old law, never later.)
+    await sleep(1800);
+    const b = await call(PORT16, `/talk?token=${TOKEN}&interrupt=0`,
+      { body: 'too late to steer', method: 'POST' });
+    await until('b queued notice', async () =>
+      b.text.includes('"name":"queued"'));
+    await sleep(600); // past where a tool-2 boundary would have folded it
+    assert.equal((await health(PORT16)).queued, true,
+      'a park with no boundary left is NOT retro-folded');
+    await until('the turn closes and flushes it as its own', async () => {
+      if ((await health(PORT16)).queued !== false) return false;
+      const m = sseEvents(b.text).find((e) => e.ev === 'tool' &&
+        e.data?.name === 'started');
+      return !!m && m.data.kind === undefined;
+    });
+    const marker = sseEvents(b.text).find((e) => e.ev === 'tool' &&
+      e.data?.name === 'started');
+    assert.ok(marker,
+      'a real turn handover, not a fold: the bare started marker');
+    await until('its own done', async () =>
+      sseEvents(b.text).some((e) => e.ev === 'done'));
+  } finally {
+    await stopBridge(proc);
+  }
+});

@@ -43,6 +43,10 @@
 //   STUB_BG_BEAT_MS    pause inside the report turn (default 300) — the
 //                      window during which /health shows it open; raise
 //                      it to watch a phone wake mid-report
+//   STUB_TOOL2_MS      +163: a SECOND tool round (tool_use + tool_result)
+//                      this long into the turn — the fold boundary a
+//                      politely queued prompt waits for. Pairs with
+//                      STUB_TOOL/STUB_TOOL_BG to model a multi-step turn.
 import { appendFileSync } from 'node:fs';
 
 // STUB_CWD_LOG: also record the WORKING DIRECTORY of every spawn — one
@@ -61,6 +65,7 @@ const toolDoneMs = Number(process.env.STUB_TOOL_DONE_MS ?? 0);
 const toolDoneText = process.env.STUB_TOOL_DONE_TEXT ??
   'Bash finished — its output is in the log.';
 const toolBg = process.env.STUB_TOOL_BG === '1';
+const tool2Ms = Number(process.env.STUB_TOOL2_MS ?? 0);
 const bgDoneMs = Number(process.env.STUB_BG_DONE_MS ?? 0);
 const bgNotifyMs = Number(process.env.STUB_BG_NOTIFY_MS ?? 0);
 const bgBeat = Number(process.env.STUB_BG_BEAT_MS ?? 300);
@@ -236,6 +241,31 @@ process.stdin.on('data', (b) => {
           }
         }
       }, toolStartMs);
+      if (tool2Ms) {
+        // +163: the second boundary of a multi-step turn — another
+        // foreground tool opens and closes mid-turn. A politely parked
+        // prompt folds HERE, not at the turn's end.
+        setTimeout(() => {
+          if (gen !== turnSeq) return;
+          out({
+            type: 'assistant', session_id: 'stub-session',
+            message: { role: 'assistant', content: [{
+              type: 'tool_use', id: `tool2-${gen}`, name: 'Bash',
+              input: { command: 'echo second', description: 'step two' },
+            }] },
+          });
+          setTimeout(() => {
+            if (gen !== turnSeq) return;
+            out({
+              type: 'user', session_id: 'stub-session',
+              message: { role: 'user', content: [{
+                type: 'tool_result', tool_use_id: `tool2-${gen}`,
+                content: 'second',
+              }] },
+            });
+          }, 80);
+        }, toolStartMs + tool2Ms);
+      }
       setTimeout(() => finishTurn(gen), delay);
       return;
     }

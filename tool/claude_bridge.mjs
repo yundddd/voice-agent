@@ -301,6 +301,13 @@ let proactiveTurn = false; // +133: this turn is the harness speaking
 const bgTools = new Map();    // tool_use ids launched run_in_background
 const agentTasks = new Map(); // background task id -> {label, outPath}
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
+// +163: the id of a PARKED prompt that was folded (steered) into the
+// running turn at a tool-result boundary instead of waiting for the
+// turn to close. It has no turn of its own — its pickup rode the
+// 'started kind:steered' marker stamped with this id, and its farewell
+// is the host turn's `done` re-stamped to it, so the phone's pump ends
+// exactly as cleanly as on a real turn handover. 0 = no fold open.
+let foldedTurnId = 0;
 // Tool calls an interrupt (or a cuttool queue) orphaned: tool_use id →
 // the step label the phone put on its banner. Their late tool_results
 // relay a `tool finished` frame — the banner's retirement word — and
@@ -762,6 +769,7 @@ function spawnClaude(resume) {
     detached.clear(); // a dead process retires no tool: no tool_result
                       // will ever land to say 'finished' — the receipts
                       // are gone, and /health honestly drops to 0
+    foldedTurnId = 0; // +163: no result will ever come to re-stamp it
     agentTasks.clear();
     bgTools.clear();
     heldFinished.length = 0; // no flush will ever come to owe them
@@ -923,6 +931,7 @@ function handleEvent(line) {
         }
       }
     }
+    let sawToolResult = false; // +163: the fold trigger — a round-trip closed
     for (const c of content) {
       if (c.type === 'tool_use' && c.id) {
         // Map, not set: the value is the step label ('Bash npm test') —
@@ -957,6 +966,7 @@ function handleEvent(line) {
           }
         }
       } else if (c.type === 'tool_result' && c.tool_use_id) {
+        sawToolResult = true;
         openTools.delete(c.tool_use_id);
         // The start receipt of the agent's own background shell: the
         // CLI names a task id and an output file — register the debt.
@@ -1006,6 +1016,21 @@ function handleEvent(line) {
           else relay('tool', frame);
         }
       }
+    }
+    // +163 THE FOLD: a polite park (plain release) steers the RUNNING
+    // turn the first moment the harness is between calls — the tool
+    // that was chewing when the prompt parked has just reported. The
+    // CLI folds stdin user messages into the live conversation at the
+    // next API call (probe-verified on 2.1.296: a message written
+    // mid-tool came back acknowledged inside the SAME turn), so the
+    // prompt needs no turn of its own: it gets its pickup marker by
+    // its reserved id, the parked stream takes the view seat, and the
+    // host turn's done closes it (see foldedTurnId). A turn with no
+    // tool round-trip has no boundary: the prompt rides to `result`
+    // and flushes as a turn of its own — the old polite behavior is
+    // the guaranteed floor, never a regression.
+    if (sawToolResult && turnOpen && pending && pending.polite) {
+      foldPending();
     }
     // A tool output is the next call's newest read: preview its weight
     // the moment it crosses the stream, so the bar grows WHILE the
@@ -1133,7 +1158,17 @@ function handleEvent(line) {
             : `ended after ${ran}s unheard`,
         });
       }
-      relay('done', { costUsd: m.total_cost_usd, isError: m.is_error });
+      // +163: a fold gave this farewell TWO owners — the host turn and
+      // the steered prompt whose continuation it closed. The phone's
+      // pump ends on its own id, so the re-stamp is its done; the host
+      // turn's own pump was superseded the moment its phone parked a
+      // new press (single-listener architecture).
+      relay('done', {
+        costUsd: m.total_cost_usd,
+        isError: m.is_error,
+        ...(foldedTurnId ? {_turn: foldedTurnId} : {}),
+      });
+      foldedTurnId = 0;
     }
     if (curRes) endTurn();
     flushPending();
@@ -1381,6 +1416,8 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   // The id the POST promised this prompt; every frame relayed from here
   // on wears it (proactive turns invent their own — no echo, no queue).
   curTurnId = turnId ?? ++nextTurnId;
+  foldedTurnId = 0; // +163: a fresh turn's farewell closes its OWN id —
+  // a stale fold id must never re-stamp a later done.
   turnStartAt = Date.now() - 5000; // slack: clock skew
   turnBeganAt = Date.now(); // the receipt's honest duration clock
   curRes = { res, keep, turnStart: turnStartAt };
@@ -1431,6 +1468,47 @@ function beginTurn(text, res, keep, markerKind, turnId) {
 // A queued prompt got its slot: hand over the floor the moment the
 // backgrounded turn released it (its `result` event, or a process death
 // — beginTurn respawns with --resume).
+function foldPending() {
+  // +163: hand the parked POLITE prompt to the running turn (see the
+  // fold site in the tool_result branch). One slot, one fold: pending
+  // empties here, so the result-time flushPending finds nothing and the
+  // prompt is never also run as its own turn.
+  const p = pending;
+  pending = null;
+  foldedTurnId = p.turnId; // the host's `done` will carry this id
+  // The view seat moves FIRST (a marker relayed to the old listener
+  // would die with its stream): everything the host turn says from
+  // here — the corrected continuation — goes to the phone that
+  // steered it. The prior listener (often long dead) is closed.
+  if (curRes) endTurn();
+  if (p.poll || p.res.writableEnded) {
+    // +104's law holds at the fold: a dead stream decides the
+    // TRANSPORT, not the message — the frames simply ring, and the
+    // phone's reattach replay catches the continuation.
+    endKeep(p);
+  } else {
+    curRes = { res: p.res, keep: p.keep, turnStart: turnStartAt };
+  }
+  // The pickup, by reserved id — the phone's pump ends its wait
+  // exactly here (marker-first law, +81/+155/+157). kind='steered'
+  // is neither 'background' (nothing was cut: no banner promise) nor
+  // a bare pickup: the phone reads it as 'my prompt joined the live
+  // turn'. Rides the ring and the backlog copy like every marker — a
+  // phone whose park stream died meets it through the drain.
+  relay('tool', {
+    name: 'started',
+    detail: String(p.text).slice(0, 60),
+    kind: 'steered',
+    _turn: p.turnId,
+  });
+  // Receipts after their explanation (the heldFinished order, mirrored
+  // from flushPending): a backgrounded tool's outcome never outruns the
+  // notice that backgrounded it.
+  for (const f of heldFinished.splice(0)) relay('tool', f);
+  writeUserMsg(p.text);
+  console.error(`  [steer] parked prompt folded into the running turn ` +
+    `(id ${p.turnId})`);
+}
 function flushPending() {
   if (!pending) return;
   const p = pending;
@@ -1528,12 +1606,19 @@ function flushPending() {
 // when the turn settles), but the moment the agent is chewing on a TOOL
 // CALL it is backgrounded the same way — a queue press during a build
 // means "I need the agent now", and the tool's result lands whenever it
-// wants (the +99 detached-tool contract). false/false (PTT slide-right,
-// the pure polite queue) lets the in-flight turn run to its natural end
-// first. Whether the tool's own OS process survives the abort is the
-// harness's call — detached tool modes survive, plain foreground waits
-// may end with the turn; the phone's notice words stay honest either
-// way, and /stop remains the hard flavour it always was.
+// wants (the +99 detached-tool contract). false/false (the PLAIN
+// release, and slide-right) is +163's STEER: over a running tool it is
+// folded into the turn at the tool's RESULT — heard at the harness's
+// next pause, shaping the work in flight (see foldPending) — and
+// behind mere thinking (no pause to fold into) it keeps the old
+// promise: the turn runs to its natural end, then the prompt flushes
+// as a turn of its own. Delivery is never LATER than the old law, and
+// a prompt can never strand: a turn with no remaining tool boundary
+// falls through to the result-time flush. Whether the tool's own OS
+// process survives the abort is the harness's call — detached tool
+// modes survive, plain foreground waits may end with the turn; the
+// phone's notice words stay honest either way, and /stop remains the
+// hard flavour it always was.
 function talk(text, res, interrupt = true, poll = false, cutTool = false) {
   // SSE comment pinger + quiet-token heartbeat (see startKeep): a
   // 3-minute gradle build emits nothing, and idle-detection on the link
@@ -1574,30 +1659,38 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // the queue; whichever event frees the floor (the attached turn's
     // `result` closes its stream, or the backgrounded one's) flushes it.
     if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); }
-    pending = {
-      res, text, keep, poll, interrupt, turnId: t,
-      // Remember what the cut decision saw, so the flush can re-announce
-      // both the notice wording and the background promise (see above).
-      hadTools: openTools.size > 0,
-      backgrounded:
-        (interrupt || (cutTool && openTools.size > 0)) && openTools.size > 0,
-    };
     // The cut decision, once: an interrupt always cuts; a cutTool queue
     // cuts ONLY a running tool (behaviour 2: polite towards thinking,
     // the agent is freed the moment it is chewing on a command).
     const cut = interrupt || (cutTool && openTools.size > 0);
+    pending = {
+      res, text, keep, poll, interrupt, turnId: t,
+      // +163: a prompt that cut NOTHING is a STEER: the fold site in
+      // the tool_result branch hands it to the running turn at the
+      // first pause between calls. `cut`'s inverses (slide-up, cuttool
+      // over a tool) keep the old immediate behaviour — they already
+      // freed the floor, there is nothing to steer.
+      polite: !cut,
+      // Remember what the cut decision saw, so the flush can re-announce
+      // both the notice wording and the background promise (see above).
+      hadTools: openTools.size > 0,
+      backgrounded: cut && openTools.size > 0,
+    };
     const note = {
       name: 'queued',
       // +98: the notice names the OUTCOME the interrupt gesture caused
       // — the phone shows this line verbatim and the field report
       // asked to read exactly this: was my interrupt an abort or a
       // backgrounding? A polite queue (interrupt=0, no cuttool)
-      // promises neither.
+      // promises neither — and since +163 it promises MORE: over a
+      // running tool it will steer the turn at the tool's result, not
+      // wait for the turn to settle.
       detail: openTools.size
         ? cut
           ? 'the running call was interrupted — the agent is freed to '
             + 'answer you now; the tool outcome reports on its own'
-          : 'a tool call is running; your message goes next when it settles'
+          : 'a tool call is running; your message will steer the turn '
+            + 'at its next pause'
         : cut
           ? 'the thinking was interrupted and aborted; '
             + 'your message goes next'

@@ -292,6 +292,73 @@ void main() {
       expect(probe.drains, [(1, mySeq)], reason: 'every heard turn end drains');
     });
 
+    test('+163: a steered pickup makes the turn heard and promises no '
+        'banner — the fold law on the phone side', () async {
+      // The bridge folded this prompt into the RUNNING turn at a tool
+      // boundary: the pickup arrives as a marker tagged kind='steered'
+      // carrying OUR reserved id. Neither arm of the old started
+      // branch fits it: not 'background' (nothing was cut — no
+      // promise, no banner debt), not a bare idle-bridge pickup (the
+      // turn was already working). It must simply make the turn heard.
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'queued',
+          detail: 'a tool call is running; your message will steer the '
+              'turn at its next pause',
+          turn: 77,
+          mid: 10,
+        ),
+      );
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'started',
+          detail: 'the steer',
+          toolKind: 'steered',
+          turn: 77,
+          mid: 11,
+        ),
+      );
+      wire.add(
+        const BridgeEvent.forTest('say', text: 'Steered answer.', mid: 12),
+      );
+      wire.add(const BridgeEvent.forTest('done', turn: 77, mid: 13));
+      final outcome = await r;
+      out.complete();
+      await settle();
+      expect(outcome.sawDone, isTrue);
+      expect(
+        probe.pickups,
+        1,
+        reason: 'the steered marker IS the pickup: the wait ends there',
+      );
+      expect(probe.logs, contains(contains('queue picked up: "the steer"')));
+      expect(
+        turn.detachedPromise,
+        isFalse,
+        reason: 'nothing was cut — no banner promise rides a steer',
+      );
+      expect(
+        turn.bgWork,
+        isEmpty,
+        reason: 'and the bottom line owes the host turn nothing either',
+      );
+      expect(
+        engine.synthesized,
+        contains('Steered answer.'),
+        reason: 'the host turn\u2019s continuation is spoken to the steerer',
+      );
+      expect(
+        bubble.blocks,
+        contains('Steered answer.'),
+        reason: 'and shown (+161), the moment it lands',
+      );
+    });
+
     test('+159: consumption IS the ack — every non-say frame the pump '
         'digests is committed, or the bridge backlog never drains', () async {
       // The 0.1.0+159 field loop: the phone digested the replayed

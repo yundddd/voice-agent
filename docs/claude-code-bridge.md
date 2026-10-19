@@ -39,14 +39,24 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   dropped, and the session's next `result` frees the slot. The next
   `/talk` while a turn is in flight (heard or backgrounded) is QUEUED
   (never refused): it gets a `tool queued` progress line, then its turn
-  arrives. If the open turn has a tool call, the queue waits for it
-  either way (Claude Code's "background the long job, type the next
-  thing"). If it was only thinking, the `interrupt` flag decides: `1`
+  arrives. If it was only thinking, the `interrupt` flag decides: `1`
   (the default — typed text, spoken barge-in, push-to-talk slide-UP)
   cuts the thinking turn with an IN-BAND interrupt (a `control_request`
   on the CLI's stdin control protocol) and the queue flushes in a
-  heartbeat; `0` (push-to-talk slide-right, the polite queue) lets the
-  turn in flight run to its natural end first. `/stop` hard-stops an open turn either
+  heartbeat; `0` (the PLAIN release) is a STEER since +163: over an
+  open tool call it does not wait for the turn — it FOLDS into it at
+  the tool's `result` (the harness reads stdin between API calls;
+  probe-verified on 2.1.296 that a mid-turn user message lands in the
+  SAME conversation and the model re-plans around it). The fold relays
+  `tool started` tagged `kind: "steered"` and stamped with the parked
+  prompt's RESERVED turn id, moves the SSE view seat to the parking
+  stream (the host's continuation is spoken to the phone that steered),
+  and the host's `done` re-stamps to that id so the phone's pump ends
+  exactly as cleanly as on a real handover. No boundary left (pure
+  thinking, or a park after the last tool result) falls through to the
+  original law: the turn runs to its natural end, then the prompt
+  flushes as a turn of its own — delivery is never LATER than before.
+  `/stop` hard-stops an open turn either
   way (attached or backgrounded); a queued prompt then takes over on its
   result. `context {in,window}` frames ride the same stream: exact at
   every API call start and authoritative before `done`, plus PREVIEW
@@ -271,8 +281,11 @@ the Bridge screen. Notes that matter when touching this code:
    keeps working, output dropped) and opens the mic; a slide-UP release
    sends the new prompt with `interrupt=1` (a mere thinking turn is cut,
    an open tool still finishes first — the prompt goes next either way);
-   a plain or slide-RIGHT release sends with `interrupt=0` (polite
-   queue: the turn in flight completes, then the prompt is processed);
+   a plain or slide-RIGHT release sends with `interrupt=0` (the +163
+   STEER: over a running tool the prompt folds into that turn at the
+   tool's result and shapes the work in flight; behind thinking, or
+   when the turn has no boundary left, the turn completes first and
+   the prompt processes after — the old promise as the floor);
    a quick tap stays the hard stop (detach + `/stop`). The terminal-icon
    badge stays lit while a detached turn works unheard
    (`harnessBackgrounded`).

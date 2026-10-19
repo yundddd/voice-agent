@@ -492,8 +492,9 @@ String hintFor({
       },
     AssistantPhase.transcribing || AssistantPhase.speaking =>
       // A press now records over the harness too: short tap = hard
-      // stop, a hold queues (slide up cuts a thinking turn; an open
-      // tool always finishes first — your message goes next).
+      // stop, a hold queues (slide up cuts a thinking turn; over an
+      // open tool a plain release STEERS the turn at its next pause —
+      // +163 — and behind thinking it still just goes next).
       bridgeBusy
           ? 'Working — press and hold to steer'
           : 'Interrupt — press and talk',

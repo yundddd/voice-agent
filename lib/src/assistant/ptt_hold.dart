@@ -12,9 +12,13 @@
 /// release to INTERRUPT: a mere thinking turn is cut short in-band (
 /// bridge `interrupt=1`, the process survives) so your prompt starts in a
 /// heartbeat; an open tool still can't be cut and your prompt queues
-/// behind it. Release in place or slide RIGHT to QUEUE politely: the
-/// turn in flight finishes its work first, then your prompt goes next
-/// (`interrupt=0`). A quick tap (< tap threshold) is the old hard stop:
+/// behind it. Release in place or slide RIGHT to QUEUE politely
+/// (`interrupt=0`) — since +163 that queue is a STEER: over a running
+/// tool the prompt is folded into that very turn at the tool's result
+/// (the bridge's foldPending), heard at the harness's next pause;
+/// behind mere thinking, or when no boundary is left in the turn, it
+/// keeps the old promise: the turn finishes its work first, then your
+/// prompt goes next. A quick tap (< tap threshold) is the old hard stop:
 /// detach + /stop. With no harness turn in flight every release is the
 /// plain send-to-local-reply path, exactly as before.
 ///
