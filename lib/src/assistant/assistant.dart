@@ -956,6 +956,29 @@ class VoiceAssistant extends ChangeNotifier {
       } catch (e) {
         _fail('Voice could not be loaded: $e');
       }
+    } else {
+      // +166: a mute press is SILENCE NOW, and it must also close the
+      // debt the +164 law projects through the brake and the row: a
+      // parked drain verdict (+124) is resolved by the speaker's
+      // natural end — the one event a TTS-off world never promises.
+      // Stop the on-air voice, then hand any parked verdict its
+      // re-check: with no audio pending it drains via reattach at
+      // once (the frames file as text; a mute phone hears nothing
+      // either way). Without this, toggling off — or muting
+      // mid-sentence — left the Stop chip lit forever over a reply
+      // whose ear had just been switched off, and the press read as
+      // the cause.
+      _reply.stopPlayback();
+      final parked = _drainAfterSpeech;
+      if (parked != null) {
+        _drainAfterSpeech = null;
+        unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq));
+      }
+      if (_phase == AssistantPhase.speaking &&
+          !_bridgeBusy &&
+          !_turn.backgrounded) {
+        _idleReady(); // the voice died by the switch, not a natural end
+      }
     }
     _logDebug('tts ${on ? 'on' : 'off'}');
     notifyListeners();
@@ -1390,7 +1413,18 @@ class VoiceAssistant extends ChangeNotifier {
     final h = await _gateway?.healthInfo();
     if (h == null) return;
     final missed = (h['missed'] as num?)?.toInt() ?? 0;
-    if (missed < 1) return;
+    if (missed < 1) {
+      // +166: nothing unheard any more — whatever parked promise this
+      // turn left (or a fatter one it re-formed) is PROVEN paid. An
+      // early return that left it standing stranded the lit brake
+      // whenever another listener (the resume probe, the bg-probe
+      // chain) drained the backlog out from under it.
+      if (_drainAfterSpeech != null) {
+        _drainAfterSpeech = null;
+        notifyListeners();
+      }
+      return;
+    }
     if (gen != _generation || _bridgeTurnSeq != mySeq) return;
     // +124: the field's last mid-word cut. The bridge's `missed` is the
     // backlog LENGTH — a replayable history that only the heard-dedup

@@ -296,6 +296,57 @@ void main() {
       expect(a.phase, AssistantPhase.idle);
     });
 
+    test('+166: muting TTS closes the drain debt — the brake is '
+        'independent of the voice switch, it never waits on it', () async {
+      // The field report: 'when I press TTS, the Stop chip lights up —
+      // the chips should be independent of the TTS button.' The press
+      // was not the cause; the +164 projection exposed the culprit.
+      // A parked drain (+124) resolves at the speaker's NATURAL END,
+      // and a TTS-off world has no speaker — the owed reply could
+      // never arrive, and the brake stayed lit forever over work with
+      // no ear. Mute must now mean: silence, and settle the debt via
+      // the silent drain.
+      await withBridge();
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2,
+      };
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'On the speaker when you muted.',
+          mid: 42,
+        ),
+      );
+      await settle();
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      expect(a.view.drainOwed, isTrue, reason: 'parked behind live audio');
+      a.setBridgeTts(false);
+      await settle(); // let the unawaited drain reach _chain.start
+      time.advance(const Duration(milliseconds: 100)); // the chain's
+      // zero-delay first probe rides the fake clock, not microtasks
+      await settle();
+      expect(
+        out.stopCount,
+        greaterThan(0),
+        reason: 'mute means silence NOW — the on-air chunk dies',
+      );
+      expect(
+        a.view.drainOwed,
+        isFalse,
+        reason: 'the debt is CLOSED by the press, not orphaned by it',
+      );
+      expect(
+        harness.attachCount,
+        greaterThan(0),
+        reason: 'and honoured: the mute world drains via reattach at '
+            'once (frames file as text; the lit brake is now the real '
+            'reattach, not a stranded promise)',
+      );
+    });
+
     test('+165: a settled turn hides the row — rendering audio is not '
         'agent status — and the owed drain re-lights it after the close',
         () async {
