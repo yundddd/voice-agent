@@ -225,6 +225,22 @@ class FakeHarness implements HarnessGateway {
   @override
   Future<bool> pushJournal(Map<String, Object> envelope) async => true;
 
+  /// Folder-picker behaviour: dirs() answers this (null = none), setDir()
+  /// records picks and fails with setDirError. Tests that exercise the
+  /// picker read [dirPicks].
+  Map<String, Object>? dirsInfo;
+  String? setDirError;
+  final List<String> dirPicks = [];
+
+  @override
+  Future<Map<String, Object>?> dirs({String? path}) async => dirsInfo;
+
+  @override
+  Future<String?> setDir(String path) async {
+    dirPicks.add(path);
+    return setDirError;
+  }
+
   void emit(BridgeEvent ev) {
     if (ev.isDone) turnOpenOnServer = false; // the result closed the turn
     view?.add(ev);

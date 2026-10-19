@@ -1028,6 +1028,24 @@ class VoiceAssistant extends ChangeNotifier {
   Future<Map<String, Object>?> bridgeHealth() async =>
       await _gateway?.healthInfo();
 
+  /// One folder level of the bridge's working-folder picker (GET /dirs):
+  /// [path] null = the bridge's allowlisted root. Null = unreachable,
+  /// refused, or a harness with no folder browser at all.
+  Future<Map<String, Object>?> bridgeDirs({String? path}) async =>
+      await _gateway?.dirs(path: path);
+
+  /// Move the harness to another working folder (POST /dir): an honest
+  /// /new there — the conversation is dropped and the next utterance
+  /// spawns the agent inside the picked directory. Returns the failure
+  /// reason (shown as-is), null on success.
+  Future<String?> setBridgeDir(String path) async {
+    final g = _gateway;
+    if (g == null) return 'bridge not configured';
+    final err = await g.setDir(path);
+    if (err == null) unawaited(_refreshSession()); // the dir row re-reads /health
+    return err;
+  }
+
   // ── The harness turn (see bridge_turn.dart for the loop itself) ────────
 
   /// Runs one harness turn: utterance -> /talk (or a caller-supplied

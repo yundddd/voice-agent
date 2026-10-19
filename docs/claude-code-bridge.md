@@ -28,7 +28,7 @@ works too (token still required; traffic is cleartext on the LAN).
 Zero-dependency Node bridge (no npm install): holds one long-lived
 `claude -p` child, exposes voice-shaped **SSE** events to callers.
 
-    node tool/claude_bridge.mjs --dir ~/some-project --token SECRET [--port 8732]
+    node tool/claude_bridge.mjs --dir ~/some-project --token SECRET [--port 8732] [--dir-root ~]
 
 - `POST /talk?token=…&interrupt=1` — body = the utterance text → SSE
   stream: `say` {text} (a complete assistant message, speak it), `tool`
@@ -155,7 +155,24 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   request from this CLI — see the latency bullet).
 - `POST /new` — forget the conversation (also clears a background turn,
   a queued prompt, AND the replay backlog — a later attach must not
-  resurrect a discarded conversation's tail); `GET /health` — liveness +
+  resurrect a discarded conversation's tail).
+- `POST /dir` — body `{"path": …}`: move the working folder the agent
+  runs in (the project `/talk` answers come from). A move is an honest
+  `/new` at the destination: the same reset (child killed, so the next
+  utterance respawns `claude` INSIDE the picked folder with a fresh
+  conversation) minus the sid-file unlink — the OLD project keeps its
+  resume pointer for a later move back. `{"ok":true,"dir":abs}` on
+  success; `400 not a folder…` if the path is outside `--dir-root`,
+  missing, or not a directory. The initial `--dir` is never policed
+  (an operator can start anywhere); only moves are.
+- `GET /dirs?in=rel` — the phone's folder browser: one level under
+  `--dir-root` (default: the operator's home). `{dir, in, parent,
+  dirs:[{name,path}]}`, `path`s root-relative so a move answers the
+  same string a listing emitted; dot-folders, `node_modules` and
+  `build` are never offered. `parent` is the up-arrow: null at the
+  root, `''` one under it.
+- `GET /health` — liveness + `dir` (the live working folder, the picker's
+  source of truth) +
   `turnOpen` / `backgrounded` / `queued` flags + `context` (last known
   EXACT tokens-in-context and the model's window, snapshotted at every
   result; zeroed by `/new`, previews never enter the snapshot) + `appLog`

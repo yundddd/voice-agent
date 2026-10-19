@@ -83,6 +83,17 @@ abstract class HarnessGateway {
   /// Deliver a journal envelope out-of-band (push transport for phones
   /// that cannot be dialled back); true = acknowledged.
   Future<bool> pushJournal(Map<String, Object> envelope);
+
+  /// The harness's working-folder listing for the picker: one directory
+  /// level under the bridge's allowlisted root ([path] null = the root).
+  /// Payload: `{dir, in, parent, dirs: [{name, path}]}` — null when
+  /// unreachable or the harness has no folder browser. Defaults to
+  /// unsupported so a harness without folders keeps compiling.
+  Future<Map<String, Object>?> dirs({String? path}) async => null;
+
+  /// Move the harness's working folder (a fresh session starts there).
+  /// Returns the failure reason, null on success/unsupported.
+  Future<String?> setDir(String path) async => null;
 }
 
 class BridgeException implements Exception {

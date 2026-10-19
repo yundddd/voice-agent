@@ -14,9 +14,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import http from 'node:http';
 
 const HERE = new URL('.', import.meta.url).pathname;
@@ -37,9 +37,11 @@ function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
   const proc = spawn(
     process.execPath,
-    [join(HERE, 'claude_bridge.mjs'), '--dir', dir, '--token', TOKEN,
+    // extraArgs FIRST: arg() reads the first occurrence of a flag, so a
+    // test's own --dir/--dir-root override the scratch defaults.
+    [join(HERE, 'claude_bridge.mjs'), ...extraArgs, '--token', TOKEN,
       '--port', String(port), '--claude', join(HERE, 'bridge_stub_claude.mjs'),
-      ...extraArgs],
+      '--dir', dir],
     { env: { ...process.env, STUB_LOG: stubLog, STUB_RESULT_MS: '1500',
       ...extraEnv } },
   );
@@ -837,6 +839,79 @@ test('an unheard turn backs up memory, never counters (+159)', async () => {
     await until('backlog drained by ack', async () =>
       (await health(PORT12)).missed === 0);
     at.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// ── the working-folder picker: POST /dir + GET /dirs ──────────────────────
+// The phone's Bridge screen moves the agent between projects. The laws
+// under test: /dirs offers only real folders inside --dir-root (never
+// dot-folders, node_modules or build); /dir refuses anything outside the
+// root (or a file) with an honest reason; a move is an honest /new AT
+// the destination — the child dies and the next utterance respawns it
+// INSIDE the picked folder (cwd.log is the proof the agent cannot fake).
+const PORT13 = PORT1 + 40;
+
+test('GET /dirs lists only folders inside --dir-root, /dir moves the agent there',
+  async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bridge-dirs-'));
+  for (const d of ['alpha', 'beta', 'beta/sub', 'node_modules', 'build', '.venv'])
+    mkdirSync(join(root, d), { recursive: true });
+  writeFileSync(join(root, 'file.txt'), 'x'); // not a folder: never offered
+  const stubLog = join(root, 'stub.log');
+  const cwdLog = join(root, 'cwd.log');
+  const proc = startBridge(stubLog, PORT13, { STUB_CWD_LOG: cwdLog },
+    ['--dir', join(root, 'alpha'), '--dir-root', root]);
+  try {
+    await up(PORT13);
+    assert.equal((await health(PORT13)).dir, resolve(join(root, 'alpha')));
+
+    const list = JSON.parse((await call(PORT13, `/dirs?token=${TOKEN}`)).text);
+    assert.deepEqual(list.dirs.map((d) => d.name), ['alpha', 'beta']);
+    assert.equal(list.parent, null); // the root has nothing above it
+
+    // A sublevel names its parent for the up-arrow, and paths ride the
+    // listing's own root-relative form.
+    const sub = JSON.parse(
+      (await call(PORT13, `/dirs?token=${TOKEN}&in=beta`)).text);
+    assert.deepEqual(sub.dirs.map((d) => d.path), ['beta/sub']);
+    assert.equal(sub.parent, '', 'one under root: the up-arrow goes to the root');
+    const deep = JSON.parse(
+      (await call(PORT13, `/dirs?token=${TOKEN}&in=beta/sub`)).text);
+    assert.equal(deep.parent, 'beta');
+    assert.deepEqual(deep.dirs, []);
+
+    // Refusals: outside the root, and not a folder. (call() resolves on
+    // headers, so the 400's reason arrives as the body text.)
+    const out = await call(PORT13, `/dir?token=${TOKEN}`,
+      { body: JSON.stringify({ path: resolve(dirname(root), 'elsewhere') }),
+        method: 'POST' });
+    assert.ok(out.text.startsWith('not a folder'), '/dir accepted an escape');
+    const file = await call(PORT13, `/dir?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'file.txt' }), method: 'POST' });
+    assert.ok(file.text.startsWith('not a folder'), '/dir accepted a file');
+    assert.equal((await health(PORT13)).dir, resolve(join(root, 'alpha')),
+      'a refused move still moved the agent');
+
+    // The move: an honest /new at beta — child dead, dir changed, and
+    // the next utterance spawns INSIDE beta (cwd.log line 2).
+    const mv = await call(PORT13, `/dir?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'beta' }), method: 'POST' });
+    assert.deepEqual(JSON.parse(mv.text), { ok: true, dir: resolve(join(root, 'beta')) });
+    await until('the move lands in health', async () => {
+      const h = await health(PORT13);
+      return h.dir === resolve(join(root, 'beta')) && h.claudeUp === false;
+    });
+    await call(PORT13, `/talk?token=${TOKEN}`,
+      { body: 'where are we', method: 'POST' });
+    await until('respawn inside beta', async () => {
+      try {
+        return readFileSync(cwdLog, 'utf8').trim().split('\n').at(-1) ===
+          resolve(join(root, 'beta'));
+      } catch { return false; }
+    });
+    assert.ok(seen(stubLog).includes('where are we'));
   } finally {
     await stopBridge(proc);
   }

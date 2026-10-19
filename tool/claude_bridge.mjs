@@ -113,6 +113,12 @@
 //                PROCESS stays alive. No-op while idle.
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
+//   POST /dir    {"path": …}: move the working folder — an honest /new at
+//                the destination. The path must be a directory inside
+//                --dir-root (default: the user's home tree); outside it
+//                the answer is a 400. /health's `dir` names the live one.
+//   GET  /dirs   the picker's listing: one folder level inside --dir-root
+//                (?in=relative). Skips dot-folders, node_modules, build.
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
 //                / detached (the cut-tool receipts still owed a
 //                `finished`, + the agent's own run_in_background shells).
@@ -193,9 +199,9 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { relaySentences as cutSentences, settleOwed, fmtTok } from './sentence_relay.mjs';
 
 
@@ -204,7 +210,31 @@ const arg = (name, dflt) => {
   const i = argv.indexOf('--' + name);
   return i >= 0 ? argv[i + 1] : dflt;
 };
-const dir = arg('dir', process.cwd());
+// The folder the claude child is spawned IN — the project the voice
+// works on. Mutable at runtime (POST /dir, GET /dirs below): the phone's
+// Bridge screen browses inside dir-root and moves the agent between
+// folders. --dir-root (default: the home tree) is the allowlist: the
+// agent can work in a folder, never in a filesystem.
+let dir = resolve(arg('dir', process.cwd()));
+const dirRoot = resolve(arg('dir-root', homedir()));
+
+// Resolve a picker path to a real directory inside dirRoot ('~' and
+// paths relative to the root are fine — the /dirs listing emits the
+// same relative form it returns, and /dir accepts both). Null = refused:
+// outside the root, missing, or not a directory. The initial --dir is
+// NOT policed (an operator can start anywhere); the rule guards moves.
+function resolveInRoot(p) {
+  if (typeof p !== 'string' || !p) return null;
+  const q = resolve(p === '~' || p.startsWith('~/')
+    ? join(homedir(), p.slice(2)) : resolve(dirRoot, p));
+  if (relative(dirRoot, q).startsWith('..')) return null;
+  try {
+    if (!statSync(q).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return q;
+}
 const token = arg('token', process.env.BRIDGE_TOKEN);
 const claudeBin = arg('claude', join(homedir(), '.local/bin/claude'));
 const port = Number(arg('port', 8732));
@@ -259,7 +289,9 @@ const dumpDir = arg('dump-requests', null);
 let child = null;       // claude process
 let childDead = true;   // needs respawn?
 let sessionId = null;   // for --resume after a bridge restart
-const sidFile = join(dir, '.claude_bridge_session');
+// A function of the LIVE dir: each project remembers its own voice
+// session, and POST /dir moving the agent moves the pointer with it.
+const sidFile = () => join(dir, '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let proactiveTurn = false; // +133: this turn is the harness speaking
@@ -1013,7 +1045,7 @@ function handleEvent(line) {
     // give the floor to a queued prompt.
     turnOpen = false;
     openTools.clear();
-    if (sessionId) { try { writeFileSync(sidFile, sessionId); } catch {} }
+    if (sessionId) { try { writeFileSync(sidFile(), sessionId); } catch {} }
     // Post-turn context snapshot: the LAST API call's input already
     // carries the whole history (earlier outputs included), so the next
     // prompt's size is that input plus the final message's output. The
@@ -1752,6 +1784,36 @@ async function pumpAppLog() {
 }
 setInterval(pumpAppLog, appLogEveryMs || 3600000).unref(); // cheap when off
 
+// Drop the conversation: the teardown /new performs (in-flight turn,
+// background ledger, queued prompt, replay backlog, context snapshot,
+// the child itself) — everything EXCEPT the sid-file unlink, so /dir can
+// move the agent without destroying the old project's resume pointer.
+// No respawn here: /new leaves the child dead and the next beginTurn
+// respawns lazily (/dir relies on the same law).
+function resetConversation() {
+  sessionId = null;
+  turnOpen = false;
+  openTools.clear();
+  agentTasks.clear();
+  bgTools.clear();
+  proactiveTurn = false;
+  detached.clear(); // a fresh conversation inherits no banner promise
+  heldFinished.length = 0; // …nor a receipt still owed one
+  // A reset conversation has nothing unheard: drop the replay backlog
+  // or the next /attach (a later cold start, a respawned app) dutifully
+  // re-speaks the dead conversation's tail as if it still mattered.
+  backlog.length = 0;
+  // The dead conversation's size is not the fresh one's: drop the
+  // context snapshot (and any preview run) so the bar goes blank
+  // instead of wearing old numbers. /health reports in:0 from now
+  // on until the new session's first message_start proves itself.
+  lastCtx = { in: 0, window: ctxWindow };
+  estIn = estSentIn = 0;
+  if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
+  endTurn();
+  child?.kill('SIGTERM'); child = null; childDead = true;
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname !== '/health' && url.searchParams.get('token') !== token) {
@@ -1822,6 +1884,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true, claudeUp: !childDead, sessionId,
+      // The folder the agent works in (mutable via POST /dir): the
+      // Bridge screen shows it and the picker moves it.
+      dir,
       // Bridge wall clock: the phone calibrates its skew against this
       // (on every /health probe) so frame stamps become honest latencies.
       now: Date.now(),
@@ -1875,6 +1940,38 @@ const server = http.createServer((req, res) => {
         poll: {ring: ringSeq, min: ring.length ? ring[0].seq : ringSeq},
       }),
     }));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/dirs') {
+    // The phone's folder browser: one directory level inside --dir-root.
+    // ?in= is a root-relative path from the previous listing (absent or
+    // empty = the root itself). Dot-folders, node_modules and build are
+    // noise for a working folder and never offered. `parent` navigates
+    // up: '' = the root is above this, null = already at the root.
+    const q = url.searchParams.get('in');
+    const base = q ? resolveInRoot(q) : dirRoot;
+    if (!base) { res.writeHead(400).end('not a folder inside --dir-root\n'); return; }
+    let entries;
+    try { entries = readdirSync(base, { withFileTypes: true }); }
+    catch { res.writeHead(400).end('cannot read that folder\n'); return; }
+    const relBase = relative(dirRoot, base);
+    res.writeHead(200, { 'content-type': 'application/json' })
+      .end(JSON.stringify({
+        ok: true,
+        dir: base,
+        in: relBase === '' ? null : relBase,
+        parent: relBase === '' ? null
+          : relBase.includes('/') ? relBase.slice(0, relBase.lastIndexOf('/')) : '',
+        dirs: entries
+          .filter((e) => e.isDirectory() && !e.name.startsWith('.') &&
+            e.name !== 'node_modules' && e.name !== 'build')
+          .map((e) => e.name)
+          .sort((a, b) => a.localeCompare(b))
+          .map((name) => ({
+            name,
+            path: relative(dirRoot, join(base, name)),
+          })),
+      }));
     return;
   }
   if (req.method === 'GET' && url.pathname === '/poll') {
@@ -1960,30 +2057,29 @@ const server = http.createServer((req, res) => {
       if (turnOpen) interruptTurn();
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
-      try { rmSync(sidFile); } catch {}
-      sessionId = null;
-      turnOpen = false;
-      openTools.clear();
-      agentTasks.clear();
-      bgTools.clear();
-      proactiveTurn = false;
-      detached.clear(); // a fresh conversation inherits no banner promise
-      heldFinished.length = 0; // …nor a receipt still owed one
-      // A reset conversation has nothing unheard: drop the replay backlog
-      // or the next /attach (a later cold start, a respawned app) dutifully
-      // re-speaks the dead conversation's tail as if it still mattered.
-      backlog.length = 0;
-      // The dead conversation's size is not the fresh one's: drop the
-      // context snapshot (and any preview run) so the bar goes blank
-      // instead of wearing old numbers. /health reports in:0 from now
-      // on until the new session's first message_start proves itself.
-      lastCtx = { in: 0, window: ctxWindow };
-      estIn = estSentIn = 0;
-      if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
-      heldFinished.length = 0; // the flush that owed them is gone
-      endTurn();
-      child?.kill('SIGTERM'); child = null; childDead = true;
+      try { rmSync(sidFile()); } catch {}
+      resetConversation();
       res.writeHead(200).end('ok\n');
+    } else if (url.pathname === '/dir') {
+      // Move the working folder: an honest /new at the destination — the
+      // conversation drops and the next utterance spawns the agent inside
+      // the picked directory. The OLD project keeps its resume pointer
+      // on disk (its own /new or the next bridge restart may still use
+      // it); the new dir's stale pointer is simply overwritten when the
+      // fresh session names itself.
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const target = resolveInRoot(j?.path);
+      if (!target) {
+        res.writeHead(400)
+          .end('not a folder inside the bridge\'s --dir-root\n');
+      } else {
+        resetConversation(); // kills the child: claudeUp false till next talk
+        dir = target;
+        console.error('  [dir] moved the agent to ' + dir);
+        res.writeHead(200, {'content-type': 'application/json'})
+          .end(JSON.stringify({ok: true, dir}));
+      }
     } else if (url.pathname === '/heard') {
       // v2: the phone's commit ack. A mid leaves the unheard backlog
       // the moment the phone TAKES the paragraph (speak-path or chat
@@ -2018,6 +2114,6 @@ const server = http.createServer((req, res) => {
 // no claude yet until first spawn
 if (!existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
 if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
-try { sessionId = readFileSync(sidFile, 'utf8').trim(); } catch {}
+try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
 spawnClaude(sessionId || undefined);
 server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} dir=${dir} sid=${sessionId ?? 'new'}`));

@@ -45,6 +45,13 @@
 //                      it to watch a phone wake mid-report
 import { appendFileSync } from 'node:fs';
 
+// STUB_CWD_LOG: also record the WORKING DIRECTORY of every spawn — one
+// line per process start. This is how the /dir test proves the agent
+// was respawned INSIDE the picked folder, not merely told about it.
+if (process.env.STUB_CWD_LOG) {
+  appendFileSync(process.env.STUB_CWD_LOG, process.cwd() + '\n');
+}
+
 const log = process.env.STUB_LOG;
 const delay = Number(process.env.STUB_RESULT_MS ?? 1500);
 const thinkMs = Number(process.env.STUB_THINK_MS ?? 0);

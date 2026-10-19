@@ -214,6 +214,45 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
+  /// The bridge's folder listing (GET /dirs?in=rel) for the working-
+  /// folder picker; null = unreachable, refused or pre-picker bridge.
+  @override
+  Future<Map<String, Object>?> dirs({String? path}) async {
+    try {
+      final res = await HttpClient()
+          .getUrl(_u('/dirs', {if (path != null && path.isNotEmpty) 'in': path}))
+          .then((r) => r.close())
+          .timeout(const Duration(seconds: 6));
+      final text = await res.transform(utf8.decoder).join();
+      if (res.statusCode != 200) return null;
+      final j = BridgeEvent.tryJson(text);
+      return j is Map ? j.cast<String, Object>() : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Move the working folder (POST /dir): an honest /new at the
+  /// destination. Any non-2xx (or a body-less 400) comes back as the
+  /// one-line reason the Bridge screen can show.
+  @override
+  Future<String?> setDir(String path) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/dir'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'path': path})));
+      final res = await req.close();
+      final body = (await res.transform(utf8.decoder).join()).trim();
+      if (res.statusCode == 200) return null;
+      return body.isEmpty ? 'HTTP ${res.statusCode}' : body;
+    } on Object catch (e) {
+      return '$e';
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<({Map<String, Object>? body, String? why})> _healthRaw() async {
     try {
       final res = await HttpClient()

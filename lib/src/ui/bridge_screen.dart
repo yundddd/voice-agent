@@ -59,6 +59,26 @@ class _BridgeScreenState extends State<BridgeScreen> {
     if (mounted) setState(() => _checking = false);
   }
 
+  /// The folder browser: browse the bridge's allowlisted tree, then move
+  /// the agent there (POST /dir). Errors surface as a snack; on success
+  /// the /health re-read repaints the row.
+  Future<void> _pickFolder() async {
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _FolderBrowser(assistant: widget.assistant),
+    );
+    if (chosen == null) return;
+    final err = await widget.assistant.setBridgeDir(chosen);
+    await _refreshHealth();
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not move the folder: $err')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = widget.assistant;
@@ -200,6 +220,43 @@ class _BridgeScreenState extends State<BridgeScreen> {
                         context,
                       ).textTheme.labelSmall?.copyWith(color: scheme.primary),
                     ),
+                ],
+              ),
+              const Divider(height: 28),
+              // Where the agent works: the folder the harness is spawned
+              // IN (the bridge's /health `dir`). The icon browses inside
+              // the bridge's --dir-root; picking is an honest /new there —
+              // the conversation drops and the next utterance runs in the
+              // picked project.
+              Row(
+                children: [
+                  Text(
+                    'Working folder',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SelectableText(
+                      _health == null
+                          ? 'no /health reply — Save & check first'
+                          : _health?['dir'] is String &&
+                                    _health!['dir'] != ''
+                          ? _health!['dir'] as String
+                          : 'unknown (bridge too old for /dir)',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Change the working folder',
+                    onPressed: a.bridgeConfigured &&
+                                    _health?['dir'] is String
+                        ? _pickFolder
+                        : null,
+                    icon: const Icon(Icons.folder_open),
+                  ),
                 ],
               ),
               // Context consumption, straight from the same numbers the
@@ -355,6 +412,130 @@ class _BridgeScreenState extends State<BridgeScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// One level of the bridge's allowlisted folder tree (GET /dirs): tap a
+/// folder to browse into it, up-arrow to retreat, and 'Work here' hands
+/// the current directory back to BridgeScreen, which POSTs /dir. The
+/// listing is relative to the bridge's root — the phone never learns
+/// (or can name) anything outside it.
+class _FolderBrowser extends StatefulWidget {
+  const _FolderBrowser({required this.assistant});
+  final VoiceAssistant assistant;
+
+  @override
+  State<_FolderBrowser> createState() => _FolderBrowserState();
+}
+
+class _FolderBrowserState extends State<_FolderBrowser> {
+  /// Root-relative path of the level shown ('' = the root itself).
+  String _in = '';
+  Map<String, Object>? _listing;
+  bool _busy = true;
+  String? _why; // honest empty state: unreachable or too-old bridge
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _busy = true);
+    final l = await widget.assistant.bridgeDirs(
+      path: _in.isEmpty ? null : _in,
+    );
+    if (!mounted) return;
+    setState(() {
+      _listing = l;
+      _why = l == null
+          ? 'the bridge answered no folder listing — unreachable, or too '
+                'old to have /dirs'
+          : null;
+      _busy = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final l = _listing;
+    final here = l?['dir'] as String?;
+    final parent = l?['parent'];
+    final dirs = (l?['dirs'] as List?) ?? const [];
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Up one folder',
+                  onPressed: parent is String
+                      ? () {
+                          setState(() => _in = parent);
+                          _load();
+                        }
+                      : null,
+                  icon: const Icon(Icons.arrow_upward),
+                ),
+                Expanded(
+                  child: Text(
+                    here ?? 'Loading…',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: here == null
+                      ? null
+                      : () => Navigator.of(context).pop(here),
+                  child: const Text('Work here'),
+                ),
+              ],
+            ),
+            const Divider(),
+            Flexible(
+              child: _busy
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: CircularProgressIndicator(),
+                      ),
+                    )
+                  : _why != null
+                  ? Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        _why!,
+                        style: TextStyle(color: scheme.error),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: dirs.length,
+                      itemBuilder: (context, i) {
+                        final d = (dirs[i] as Map).cast<String, Object>();
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.folder_outlined),
+                          title: Text(d['name'] as String),
+                          onTap: () {
+                            setState(() => _in = d['path'] as String);
+                            _load();
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
