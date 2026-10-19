@@ -111,6 +111,8 @@ void main() {
     ); // tolerant
   });
 
+  fileBubbleTests();
+
   test('formatBubbleClock / formatWait render compactly', () {
     final t = DateTime(2026, 10, 17, 9, 5, 3);
     expect(formatBubbleClock(t.millisecondsSinceEpoch), '09:05:03');
@@ -119,5 +121,43 @@ void main() {
     expect(formatWait(47_500), '47s');
     expect(formatWait(125_000), '2m05s');
     expect(formatWait(7_260_000), '2h01m');
+  });
+}
+
+// (appended with the file bubble) ─────────────────────────────────────────
+void fileBubbleTests() {
+  test('a file bubble round-trips: name, path, size — and the saved stamp',
+      () {
+    final e = ChatEntry.file('app-release.apk', 'dist/app-release.apk', 99,
+        createdMs: 111)
+      ..savedMs = 222
+      ..savedPath = '/data/user/0/com.voiceagent/files/received/app-release.apk';
+    final back = decodeChatLog(encodeChatLog([e])).single;
+    expect(back.isFile, isTrue);
+    expect(back.fileName, 'app-release.apk');
+    expect(back.filePath, 'dist/app-release.apk');
+    expect(back.fileSize, 99);
+    expect(back.createdMs, 111);
+    expect(back.savedMs, 222,
+        reason: 'a fetched file stays Saved across a restart — history');
+    expect(back.savedPath, contains('received/app-release.apk'));
+    // The live download state is memory-only: a reload never shows a
+    // frozen percentage from a wire that died with the process.
+    expect(back.downloading, isFalse);
+  });
+
+  test('a prose entry decodes with the file fields empty', () {
+    final back = decodeChatLog(
+      encodeChatLog([ChatEntry.assistant(createdMs: 5)..blocks.add('hi')]),
+    ).single;
+    expect(back.isFile, isFalse);
+    expect(back.fileName, '');
+    expect(back.savedMs, 0);
+  });
+
+  test('formatBytes renders the delivery slip', () {
+    expect(formatBytes(512), '512 B');
+    expect(formatBytes(2048), '2 KB');
+    expect(formatBytes(34567890), '33.0 MB');
   });
 }

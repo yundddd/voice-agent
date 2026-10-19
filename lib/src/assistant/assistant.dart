@@ -44,6 +44,7 @@ import 'dart:ui'
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import './activity.dart';
 import './bridge_turn.dart';
@@ -1069,6 +1070,48 @@ class VoiceAssistant extends ChangeNotifier {
     final err = await g.setDir(path);
     if (err == null) unawaited(_refreshSession()); // the dir row re-reads /health
     return err;
+  }
+
+  // ── Files relayed from the bridge (POST /send -> 'file' frames) ────────
+
+  /// Fetch a delivered file's bytes — the file bubble's tap. Saves
+  /// under app support/received/`name` (a .part from an interrupted
+  /// transfer resumes where the wire died) and stamps the bubble saved
+  /// on success. Progress mutates the entry's memory-only fields, so
+  /// the channel repaints the percentage without touching disk.
+  Future<void> fetchChatFile(ChatEntry e) async {
+    final g = _gateway;
+    if (g == null || e.filePath.isEmpty || e.downloading) return;
+    e.downloading = true;
+    e.totalBytes = e.fileSize;
+    notifyListeners();
+    var ok = false;
+    var dest = '';
+    try {
+      final support = await getApplicationSupportDirectory();
+      final dir = Directory(p.join(support.path, 'received'));
+      await dir.create(recursive: true);
+      dest = p.join(dir.path, p.basename(e.fileName));
+      ok = await g.downloadFile(
+        e.filePath,
+        dest,
+        onProgress: (done, total) {
+          e.downloadBytes = done;
+          if (total > 0) e.totalBytes = total;
+          notifyListeners();
+        },
+      );
+    } on Object catch (err) {
+      _logDebug('file fetch "${e.fileName}" failed: $err');
+    }
+    e.downloading = false;
+    if (ok) {
+      e.savedMs = DateTime.now().millisecondsSinceEpoch;
+      e.savedPath = dest;
+      _chat.touch(); // persist the saved stamp (and repaint)
+    } else {
+      notifyListeners();
+    }
   }
 
   // ── The harness turn (see bridge_turn.dart for the loop itself) ────────

@@ -7,6 +7,7 @@ library;
 /// [VoiceAssistant] lifecycle runs in milliseconds on the VM — no
 /// isolate, no socket, no device.
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:voice_agent/src/bridge/bridge_event.dart';
@@ -239,6 +240,25 @@ class FakeHarness implements HarnessGateway {
   Future<String?> setDir(String path) async {
     dirPicks.add(path);
     return setDirError;
+  }
+
+  /// downloadFile(): writes [downloadBytes] to the destination when
+  /// downloadOk, records the wire path, and reports progress once.
+  List<int> downloadBytes = const [1, 2, 3];
+  bool downloadOk = true;
+  final List<String> downloadPaths = [];
+
+  @override
+  Future<bool> downloadFile(
+    String path,
+    String destPath, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    downloadPaths.add(path);
+    if (!downloadOk) return false;
+    await File(destPath).writeAsBytes(downloadBytes);
+    onProgress?.call(downloadBytes.length, downloadBytes.length);
+    return true;
   }
 
   void emit(BridgeEvent ev) {

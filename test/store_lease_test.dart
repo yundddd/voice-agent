@@ -84,6 +84,22 @@ void main() {
       expect(store.entries.last.blocks.single, contains('was interrupted'));
     });
 
+    test('a relayed file is its own bubble; one event, one card', () {
+      store.addFile(name: 'app-release.apk', path: 'dist/a.apk', size: 123);
+      final e = store.entries.last;
+      expect(e.isFile, isTrue);
+      expect(e.fileName, 'app-release.apk');
+      expect(e.filePath, 'dist/a.apk');
+      expect(e.fileSize, 123);
+      // Adjacency idempotence (the poll transport's double delivery):
+      // the same path back-to-back files ONE bubble.
+      store.addFile(name: 'app-release.apk', path: 'dist/a.apk', size: 123);
+      expect(store.entries.length, 1);
+      // …and a different file (or the same one later) is a new card.
+      store.addFile(name: 'notes.txt', path: 'dist/n.txt', size: 7);
+      expect(store.entries.length, 2);
+    });
+
     test('a block can be withdrawn; the rest of the bubble stays (+114)', () {
       final t = store.beginTurn();
       store.addBlock(t, 'heard fully');

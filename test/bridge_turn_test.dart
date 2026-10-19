@@ -808,6 +808,52 @@ void main() {
       },
     );
   });
+
+  group('file frames (bridge -> app deliveries)', () {
+    test('a fresh mid files one bubble and commits its id', () async {
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(BridgeEvent.forTest(
+        'file',
+        fileName: 'app-release.apk',
+        filePath: 'dist/app-release.apk',
+        fileSize: 12345,
+        mid: 78,
+      ));
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      await settle();
+      final filed = chat.entries.where((e) => e.isFile).toList();
+      expect(filed, hasLength(1));
+      expect(filed.single.fileName, 'app-release.apk');
+      expect(filed.single.fileSize, 12345);
+      expect(probe.took, contains(78)); // consumption IS the ack
+    });
+
+    test('a replay of an already-taken file id is silently skipped', () async {
+      probe.alreadyHeard.add(77); // taken by a view this loop never saw
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(BridgeEvent.forTest(
+        'file',
+        fileName: 'stale.apk',
+        filePath: 'dist/stale.apk',
+        fileSize: 1,
+        mid: 77,
+      ));
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      await settle();
+      expect(chat.entries.any((e) => e.isFile), isFalse,
+          reason: 'the ledger says this phone has the bubble — no second card');
+      expect(
+        probe.logs.any((l) => l.contains('file dup by id #77')),
+        isTrue,
+      );
+    });
+  });
 }
 
 extension on ChatStore {

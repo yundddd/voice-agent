@@ -31,6 +31,7 @@ class ChatBubble extends StatelessWidget {
     required this.entry,
     required this.maxWidthFrac,
     required this.source,
+    this.onFileTap,
   });
 
   final ChatEntry entry;
@@ -39,6 +40,10 @@ class ChatBubble extends StatelessWidget {
   /// Live re-projection for the in-flight spinner (its token estimate
   /// moves on the widget's own tick, not on notifications).
   final ViewSource source;
+
+  /// A file bubble's tap (fetch/inspect): wired to the assistant in
+  /// production, null in a bare render test.
+  final void Function(ChatEntry)? onFileTap;
 
   @override
   Widget build(BuildContext context) {
@@ -71,30 +76,49 @@ class ChatBubble extends StatelessWidget {
                   // no injected 'One moment' — the message itself
                   // waits in plain sight.
                   opacity: entry.fromUser && entry.queued ? 0.42 : 1.0,
-                  child: Card(
-                    color: entry.fromUser
-                        ? scheme.primaryContainer
-                        // +168: a cancelled background receipt is an
-                        // acknowledgement, not prose — outline card,
-                        // warning ink. It never dresses in the clothes
-                        // of a spoken reply.
-                        : entry.cancelled
-                        ? Colors.transparent
-                        : scheme.secondaryContainer,
-                    shape: entry.cancelled
-                        ? RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: scheme.error.withValues(alpha: 0.6),
-                            ),
-                          )
+                  child: GestureDetector(
+                    // A file bubble is a button: tap pulls the bytes.
+                    onTap: entry.isFile && !entry.downloading
+                        ? () => onFileTap?.call(entry)
                         : null,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      child: entry.fromUser
+                    child: Card(
+                      color: entry.fromUser
+                          ? scheme.primaryContainer
+                          // +168: a cancelled background receipt is an
+                          // acknowledgement, not prose — outline card,
+                          // warning ink. It never dresses in the clothes
+                          // of a spoken reply.
+                          : entry.cancelled
+                          ? Colors.transparent
+                          // A relayed file is NEITHER prose nor receipt:
+                          // its own surface, outlined in the tertiary
+                          // hue — a different style, by dictate.
+                          : entry.isFile
+                          ? scheme.surfaceContainerHighest
+                          : scheme.secondaryContainer,
+                      shape: entry.cancelled
+                          ? RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: scheme.error.withValues(alpha: 0.6),
+                              ),
+                            )
+                          : entry.isFile
+                          ? RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: scheme.tertiary.withValues(alpha: 0.6),
+                              ),
+                            )
+                          : null,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        child: entry.isFile
+                            ? _FileBody(entry: entry, scheme: scheme)
+                            : entry.fromUser
                           ? Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
@@ -169,12 +193,13 @@ class ChatBubble extends StatelessWidget {
                                 ),
                               ],
                             ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -356,6 +381,66 @@ class _BackgroundedWorkCardState extends State<BackgroundedWorkCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The file bubble's body: a delivery slip, not a paragraph. Icon by
+/// extension, monospace name, and ONE honest status line — the size and
+/// the offer before the tap, a live percentage while the bytes ride,
+/// the saved moment once they are on this device.
+class _FileBody extends StatelessWidget {
+  const _FileBody({required this.entry, required this.scheme});
+
+  final ChatEntry entry;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = entry.fileName;
+    final isApk = name.toLowerCase().endsWith('.apk');
+    final status = entry.downloading
+        ? (entry.totalBytes > 0 && entry.downloadBytes > 0
+              ? 'Receiving ${entry.downloadBytes * 100 ~/ entry.totalBytes}%'
+              : 'Receiving…')
+        : entry.savedMs != 0
+        ? 'Saved on this device'
+              '${formatBubbleClock(entry.savedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.savedMs)}'}'
+        : '${formatBytes(entry.fileSize)} · tap to receive';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          isApk
+              ? Icons.android
+              : Icons.description_outlined,
+          size: 28,
+          color: scheme.tertiary,
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(
+                name,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontFamily: 'monospace',
+                  color: scheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                status,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

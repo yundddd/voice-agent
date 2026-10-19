@@ -438,6 +438,24 @@ class BridgeTurn {
     // steals the view, replays the backlog it already ate, dies on its
     // own farewell, and the thinking box flashes on a 10 s cadence
     // while the banner can never retire (0.1.0+159 field report).
+    if (ev.kind == 'file') {
+      // A file frame is a delivery, like a say — so it gets the same
+      // ledger FIRST: news unless this phone already took its id (a
+      // drain replay would otherwise file the same APK bubble every
+      // attach). Unlike a stale paragraph, it is never demoted to
+      // silent-text: the bytes are still on the desktop to fetch, so
+      // even archaeology lands as a tappable bubble.
+      if (ev.mid != 0 && env.isHeard(ev.mid)) {
+        env.log('file dup by id #${ev.mid} — skipped');
+        return;
+      }
+      if (ev.mid != 0) env.commitHeard(ev.mid);
+      chat.addFile(name: ev.fileName, path: ev.filePath, size: ev.fileSize);
+      env.log(
+        'file relayed: "${ev.fileName}"${transport.wireTag(ev)}',
+      );
+      return;
+    }
     if (ev.kind != 'turn' && !ev.isSay && ev.mid != 0) {
       env.commitHeard(ev.mid);
     }

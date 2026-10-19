@@ -25,6 +25,9 @@ class BridgeEvent {
     this.wireMs = 0,
     this.mid = 0,
     this.turn = 0,
+    this.fileName = '',
+    this.filePath = '',
+    this.fileSize = 0,
   });
 
   /// Test seam: build frames verbatim without inventing wire payloads.
@@ -44,9 +47,12 @@ class BridgeEvent {
     this.wireMs = 0,
     this.mid = 0,
     this.turn = 0,
+    this.fileName = '',
+    this.filePath = '',
+    this.fileSize = 0,
   });
 
-  /// 'say' | 'tool' | 'context' | 'done' | 'error'.
+  /// 'say' | 'tool' | 'context' | 'done' | 'error' | 'file'.
   final String kind;
   final String text;
   final String toolName;
@@ -85,6 +91,14 @@ class BridgeEvent {
   /// Empty on bridges too old to send it (unknown frame keys are
   /// ignored), so the chat bubble simply stays on the working line.
   final String draft;
+
+  /// For 'file' (POST /send relayed): the display name, the root-
+  /// relative path to fetch from GET /file, and the size in bytes. A
+  /// bridge too old to have /send never emits the frame, so these stay
+  /// empty on every other kind.
+  final String fileName;
+  final String filePath;
+  final int fileSize;
 
   /// wire v2 identity: the message id the bridge stamped at relay
   /// (`_mid` — the phone's heard-ledger key), and the id of the turn
@@ -154,6 +168,16 @@ class BridgeEvent {
           'context',
           inputTokens: n is num ? n.toInt() : 0,
           contextWindow: w is num ? w.toInt() : 0,
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
+        );
+      case 'file':
+        return BridgeEvent._(
+          'file',
+          fileName: '${data['name'] ?? ''}',
+          filePath: '${data['path'] ?? ''}',
+          fileSize: _int(data['size']),
+          wireMs: _int(data['_ts']),
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );

@@ -142,6 +142,28 @@ class ChatStore {
     touch();
   }
 
+  /// A bridge-relayed file lands as its own bubble — like a system
+  /// note, its own card, not a block inside whichever turn happens to
+  /// be open (the bytes outlive the conversation). Idempotent by
+  /// ADJACENCY like addSystemNote: the poll transport can hand the same
+  /// frame twice, and one delivery is one bubble (the pump's heard-
+  /// ledger already dedups by _mid; this is the belt).
+  void addFile({
+    required String name,
+    required String path,
+    required int size,
+  }) {
+    if (_entries.isNotEmpty && _entries.last.isFile &&
+        _entries.last.filePath == path) {
+      return;
+    }
+    _entries.add(
+      ChatEntry.file(name, path, size, createdMs: _nowMs()),
+    );
+    trace?.call('msg file: "$name" ($size bytes)');
+    touch();
+  }
+
   /// Open the assistant bubble for a turn: sections are appended as
   /// each say's audio queues (text follows the voice, never leads it).
   /// An interrupted turn keeps the sections actually spoken — that IS

@@ -31,6 +31,22 @@ class ChatEntry {
       queued = false,
       interrupted = false;
 
+  /// A file the bridge delivered (POST /send relayed as a `file`
+  /// frame): a RECEIPT of bytes on the desktop, not prose — the
+  /// renderer gives it the file-card style and a tap fetches them from
+  /// GET /file. Like the cancelled flag, it is history: it survives a
+  /// reload, and so does the moment the bytes landed on this device.
+  ChatEntry.file(
+    this.fileName,
+    this.filePath,
+    this.fileSize, {
+    this.createdMs = 0,
+  }) : fromUser = false,
+       blocks = <String>[],
+       queued = false,
+       interrupted = false,
+       cancelled = false;
+
   final bool fromUser;
   final List<String> blocks;
 
@@ -78,6 +94,21 @@ class ChatEntry {
   /// survives a reload.
   bool cancelled;
 
+  // ── The file bubble (set only when isFile) ─────────────────────────────
+  bool get isFile => filePath.isNotEmpty;
+  String fileName = '';
+  String filePath = '';
+  int fileSize = 0;
+
+  /// When the bytes landed on THIS device (epoch ms; 0 = never fetched).
+  int savedMs = 0;
+  String savedPath = '';
+
+  /// Live download state — memory-only, never persists across a restart.
+  bool downloading = false;
+  int downloadBytes = 0;
+  int totalBytes = 0;
+
   bool get isEmpty => blocks.isEmpty;
 
   Map<String, Object> toJson() => {
@@ -90,10 +121,17 @@ class ChatEntry {
     if (queued) 'queued': true,
     if (interrupted) 'interrupted': true,
     if (cancelled) 'cancelled': true,
+    if (isFile)
+      'file': {'name': fileName, 'path': filePath, 'size': fileSize},
+    if (savedMs != 0) 'saved': savedMs,
+    if (savedPath.isNotEmpty) 'savedTo': savedPath,
   };
 
   static ChatEntry fromJson(Map<String, Object?> j) {
     int? ms(Object? v) => v is num && v.toInt() != 0 ? v.toInt() : null;
+    final f = j['file'] is Map
+        ? (j['file'] as Map).cast<String, Object?>()
+        : null;
     return ChatEntry(
         // Pins deliberately do NOT survive a reload: the pin belongs to a
         // turn this process was watching; after a restart nobody is holding
@@ -109,7 +147,14 @@ class ChatEntry {
       )
       ..pickedUpMs = ms(j['pickedUp']) ?? 0
       ..deliveredMs = ms(j['heard']) ?? 0
-      ..interruptedMs = ms(j['cut']) ?? 0;
+      ..interruptedMs = ms(j['cut']) ?? 0
+      // The file bubble and its delivery record: history, like the
+      // receipt flags — a fetched APK stays 'saved' across a restart.
+      ..fileName = f?['name'] as String? ?? ''
+      ..filePath = f?['path'] as String? ?? ''
+      ..fileSize = f?['size'] is num ? (f!['size'] as num).toInt() : 0
+      ..savedMs = ms(j['saved']) ?? 0
+      ..savedPath = j['savedTo'] as String? ?? '';
   }
 }
 
@@ -134,6 +179,14 @@ String formatWait(int deltaMs) {
 }
 
 String _two(int v) => v.toString().padLeft(2, '0');
+
+/// Human bytes for the file bubble's status line: B under a kilobyte,
+/// KB under one megabyte, MB above (one decimal — a slip, not a spec).
+String formatBytes(int n) {
+  if (n < 1024) return '$n B';
+  if (n < 1048576) return '${(n / 1024).toStringAsFixed(0)} KB';
+  return '${(n / 1048576).toStringAsFixed(1)} MB';
+}
 
 /// Exact-block scan of the assistant side of a chat log, whitespace-
 /// normalized. The reattach replay consults this so paragraphs the

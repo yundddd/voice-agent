@@ -253,6 +253,60 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
+  /// GET /file?path=… into [destPath], streaming to a .part and renaming
+  /// on completion. A `$destPath.part` from an interrupted transfer
+  /// resumes (Range: bytes=N-); a 416 (the file changed under us) starts
+  /// whole. False = failed, and the partial stays for the next attempt.
+  @override
+  Future<bool> downloadFile(
+    String path,
+    String destPath, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final tmp = File('$destPath.part');
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    try {
+      int have = await tmp.exists() ? await tmp.length() : 0;
+      Future<HttpClientResponse> open(int from) async {
+        final req = await client.getUrl(_u('/file', {'path': path}));
+        if (from > 0) req.headers.set('range', 'bytes=$from-');
+        return req.close();
+      }
+
+      var res = await open(have);
+      if (res.statusCode == 416) {
+        have = 0;
+        await tmp.delete();
+        res = await open(0);
+      }
+      if (res.statusCode != 200 && res.statusCode != 206) {
+        await res.drain<void>();
+        return false;
+      }
+      final total = have + (res.contentLength > 0 ? res.contentLength : 0);
+      final sink = tmp.openWrite(
+        mode: have > 0 ? FileMode.append : FileMode.write,
+      );
+      int done = have;
+      try {
+        await for (final chunk in res) {
+          sink.add(chunk);
+          done += chunk.length;
+          onProgress?.call(done, total);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      await tmp.rename(destPath);
+      return true;
+    } on Object {
+      return false; // partial stays; the next tap resumes from the byte
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<({Map<String, Object>? body, String? why})> _healthRaw() async {
     try {
       final res = await HttpClient()

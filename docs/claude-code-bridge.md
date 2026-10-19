@@ -175,6 +175,17 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   success; `400 not a folder…` if the path is outside `--dir-root`,
   missing, or not a directory. The initial `--dir` is never policed
   (an operator can start anywhere); only moves are.
+- `POST /send` — body `{"path": …}`: hand a FILE to the phone (the fresh
+  APK, a report). Same `--dir-root` allowlist; relays a permanent `file`
+  frame `{name, path, size}` — the frame is the delivery, the bytes
+  wait on disk. The app files it as a distinct outlined bubble; the tap
+  pulls the bytes from GET /file (below) with progress on the slip.
+- `GET /file?path=…` — the bytes behind a `file` frame: streams with
+  `content-length` and `accept-ranges`, honours open-ended Range (the
+  app resumes an interrupted APK from the byte its `.part` stopped at),
+  answers 416 when the partial is past the end (file changed under the
+  resume — the downloader restarts whole). Outside the root, missing,
+  or a directory: a plain 400.
 - `GET /dirs?in=rel` — the phone's folder browser: one level under
   `--dir-root` (default: the operator's home). `{dir, in, parent,
   dirs:[{name,path}]}`, `path`s root-relative so a move answers the

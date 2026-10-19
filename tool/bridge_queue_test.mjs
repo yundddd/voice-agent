@@ -1041,3 +1041,68 @@ test('a park after the last boundary waits for the flush — the old law ' +
     await stopBridge(proc);
   }
 });
+
+// ── bridge -> app file delivery: POST /send + GET /file ───────────────────
+// The agent's file-out: /send validates against the same --dir-root
+// allowlist and relays a permanent `file` frame; the phone pulls the
+// bytes from /file, which honours a Range so an interrupted APK resumes.
+// The frame is the delivery; the bytes are patient.
+const PORT14 = PORT1 + 41;
+
+test('POST /send relays a file frame; GET /file streams it (Range included)',
+  async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bridge-files-'));
+  const payload = 'P'.repeat(1000);
+  writeFileSync(join(root, 'payload.bin'), payload);
+  mkdirSync(join(root, 'sub'));
+  const proc = startBridge(join(root, 'stub.log'), PORT14, {},
+    ['--dir', join(root, 'sub'), '--dir-root', root]);
+  try {
+    await up(PORT14);
+
+    const send = await call(PORT14, `/send?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'payload.bin' }), method: 'POST' });
+    assert.deepEqual(JSON.parse(send.text),
+      { ok: true, name: 'payload.bin', size: 1000 });
+
+    // The frame rode the ring (permanent, like a say): name, path, size.
+    const ring = JSON.parse(
+      (await call(PORT14, `/poll?token=${TOKEN}&since=0`)).text);
+    const f = ring.events.find((e) => e.ev === 'file');
+    assert.ok(f, 'no file frame on the ring');
+    assert.equal(f.data.name, 'payload.bin');
+    assert.equal(f.data.path, 'payload.bin');
+    assert.equal(f.data.size, 1000);
+    assert.ok(f.data._mid > 0, 'file frame lacks a _mid (ledger dedup)');
+
+    // Full stream.
+    const full = await fetch(`http://127.0.0.1:${PORT14}/file` +
+      `?token=${TOKEN}&path=payload.bin`);
+    assert.equal(full.status, 200);
+    assert.equal(full.headers.get('accept-ranges'), 'bytes');
+    assert.equal(await full.text(), payload);
+
+    // A resume: bytes=400- pays the tail only, with a content-range.
+    const part = await fetch(`http://127.0.0.1:${PORT14}/file` +
+      `?token=${TOKEN}&path=payload.bin`, { headers: { range: 'bytes=400-' } });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), 'bytes 400-999/1000');
+    assert.equal((await part.text()).length, 600);
+
+    // Past-the-end partial (the file shrank under a resume): 416 says
+    // start whole — the app's downloader restarts on exactly this.
+    const gone = await fetch(`http://127.0.0.1:${PORT14}/file` +
+      `?token=${TOKEN}&path=payload.bin`, { headers: { range: 'bytes=5000-' } });
+    assert.equal(gone.status, 416);
+
+    // Refusals: outside the root (traversal), and a folder, both ways.
+    const esc = await fetch(`http://127.0.0.1:${PORT14}/file` +
+      `?token=${TOKEN}&path=..%2Fetc%2Fpasswd`);
+    assert.equal(esc.status, 400);
+    const dirSend = await call(PORT14, `/send?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'sub' }), method: 'POST' });
+    assert.ok(dirSend.text.startsWith('not a file'), '/send accepted a folder');
+  } finally {
+    await stopBridge(proc);
+  }
+});

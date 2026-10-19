@@ -94,6 +94,15 @@ abstract class HarnessGateway {
   /// Move the harness's working folder (a fresh session starts there).
   /// Returns the failure reason, null on success/unsupported.
   Future<String?> setDir(String path) async => null;
+
+  /// Fetch the bytes behind a relayed `file` frame into [destPath],
+  /// resuming a `$destPath.part` an earlier wire death left short.
+  /// True = the whole file is at [destPath]. Defaults to unsupported.
+  Future<bool> downloadFile(
+    String path,
+    String destPath, {
+    void Function(int done, int total)? onProgress,
+  }) async => false;
 }
 
 class BridgeException implements Exception {

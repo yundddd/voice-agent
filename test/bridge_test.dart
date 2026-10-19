@@ -161,6 +161,26 @@ void main() {
       expect(e.kind, 'say');
       expect(e.wireMs, 0);
     });
+
+    test('file frames carry the delivery slip (name, path, bytes, mid)', () {
+      final e = BridgeEvent.parseMap('file', {
+        'name': 'app-release.apk',
+        'path': 'build/app/outputs/flutter-apk/app-release.apk',
+        'size': 34567890,
+        '_ts': 999,
+        '_mid': 4242,
+      });
+      expect(e.kind, 'file');
+      expect(e.fileName, 'app-release.apk');
+      expect(
+        e.filePath,
+        'build/app/outputs/flutter-apk/app-release.apk',
+        reason: 'the root-relative path is exactly what GET /file wants',
+      );
+      expect(e.fileSize, 34567890);
+      expect(e.mid, 4242); // the ledger dedups replays by this id
+      expect(e.wireMs, 999);
+    });
   });
 
   group('reattach decision', () {

@@ -242,7 +242,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                             ],
                             const SizedBox(height: 16),
                             for (final e in v.chat)
-                              if (e.fromUser || e.blocks.isNotEmpty)
+                              if (e.fromUser ||
+                                          e.blocks.isNotEmpty ||
+                                          // A file bubble has no text
+                                          // blocks — the slip IS the
+                                          // bubble.
+                                          e.isFile)
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
@@ -251,6 +256,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     entry: e,
                                     maxWidthFrac: 0.86,
                                     source: () => a.view,
+                                    onFileTap: a.fetchChatFile,
                                   ),
                                 ),
 

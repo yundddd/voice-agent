@@ -119,6 +119,11 @@
 //                the answer is a 400. /health's `dir` names the live one.
 //   GET  /dirs   the picker's listing: one folder level inside --dir-root
 //                (?in=relative). Skips dot-folders, node_modules, build.
+//   POST /send   {"path": …}: hand a FILE to the phone — relays a
+//                permanent `file` frame {name,path,size} (same allowlist);
+//                the app files it as a chat bubble and pulls the bytes
+//                from GET /file?path=… on tap (Range-honouring, so an
+//                interrupted APK download resumes where the wire died).
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
 //                / detached (the cut-tool receipts still owed a
 //                `finished`, + the agent's own run_in_background shells).
@@ -199,9 +204,9 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync, statSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { basename, extname, join, relative, resolve } from 'node:path';
 import { relaySentences as cutSentences, settleOwed, fmtTok } from './sentence_relay.mjs';
 
 
@@ -218,23 +223,21 @@ const arg = (name, dflt) => {
 let dir = resolve(arg('dir', process.cwd()));
 const dirRoot = resolve(arg('dir-root', homedir()));
 
-// Resolve a picker path to a real directory inside dirRoot ('~' and
-// paths relative to the root are fine — the /dirs listing emits the
+// Resolve a picker path to something that EXISTS inside dirRoot ('~'
+// and paths relative to the root are fine — the /dirs listing emits the
 // same relative form it returns, and /dir accepts both). Null = refused:
-// outside the root, missing, or not a directory. The initial --dir is
+// outside the root or missing. The caller adds the type law: /dir and
+// /dirs want isDir, /send and /file want isFile. The initial --dir is
 // NOT policed (an operator can start anywhere); the rule guards moves.
 function resolveInRoot(p) {
   if (typeof p !== 'string' || !p) return null;
   const q = resolve(p === '~' || p.startsWith('~/')
     ? join(homedir(), p.slice(2)) : resolve(dirRoot, p));
   if (relative(dirRoot, q).startsWith('..')) return null;
-  try {
-    if (!statSync(q).isDirectory()) return null;
-  } catch {
-    return null;
-  }
-  return q;
+  return existsSync(q) ? q : null;
 }
+const isDir = (q) => { try { return statSync(q).isDirectory(); } catch { return false; } };
+const isFile = (q) => { try { return statSync(q).isFile(); } catch { return false; } };
 const token = arg('token', process.env.BRIDGE_TOKEN);
 const claudeBin = arg('claude', join(homedir(), '.local/bin/claude'));
 const port = Number(arg('port', 8732));
@@ -589,6 +592,15 @@ const relay = (ev, data) => {
         backlog.splice(i, 1);
       }
     }
+    backlog.push({ ev, data });
+    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    return;
+  }
+  // A `file` frame is a DELIVERY, like a say: every phone must end up
+  // with it, heard or not, live or replayed — one copy per _mid (the
+  // phone's ledger dedups replays by id; /heard trims this copy the
+  // moment the phone takes it, like any say).
+  if (ev === 'file') {
     backlog.push({ ev, data });
     if (backlog.length > BACKLOG_CAP) backlog.shift();
     return;
@@ -2043,7 +2055,7 @@ const server = http.createServer((req, res) => {
     // up: '' = the root is above this, null = already at the root.
     const q = url.searchParams.get('in');
     const base = q ? resolveInRoot(q) : dirRoot;
-    if (!base) { res.writeHead(400).end('not a folder inside --dir-root\n'); return; }
+    if (!base || !isDir(base)) { res.writeHead(400).end('not a folder inside --dir-root\n'); return; }
     let entries;
     try { entries = readdirSync(base, { withFileTypes: true }); }
     catch { res.writeHead(400).end('cannot read that folder\n'); return; }
@@ -2065,6 +2077,50 @@ const server = http.createServer((req, res) => {
             path: relative(dirRoot, join(base, name)),
           })),
       }));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/file') {
+    // The bytes behind a `file` frame: GET /file?path=<root-relative or
+    // absolute-inside-root>. Same allowlist as /dir — the phone can
+    // fetch what /dirs showed it, nothing else. Streams with
+    // content-length, honours a plain or open-ended Range (the app's
+    // downloader resumes an interrupted APK with exactly that), and
+    // answers 416 when the partial is past the end (the file changed
+    // under a resume — the downloader restarts whole).
+    const f = resolveInRoot(url.searchParams.get('path'));
+    if (!f || !isFile(f)) {
+      res.writeHead(400).end('not a file inside the bridge\'s --dir-root\n');
+      return;
+    }
+    const st = statSync(f);
+    let start = 0, end = st.size - 1;
+    const rh = req.headers.range;
+    if (rh) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(rh);
+      if (m && m[1]) start = Number(m[1]);
+      if (m && m[2]) end = Number(m[2]) - 1; // the header's end is inclusive
+      if (!m || start > end || end >= st.size) {
+        res.writeHead(416, { 'content-range': `bytes */${st.size}` }).end();
+        return;
+      }
+    }
+    const partial = start > 0 || end < st.size - 1;
+    const type = {
+      '.apk': 'application/vnd.android.package-archive',
+      '.zip': 'application/zip',
+      '.txt': 'text/plain',
+      '.log': 'text/plain',
+      '.json': 'application/json',
+      '.pdf': 'application/pdf',
+    }[extname(f).toLowerCase()] ?? 'application/octet-stream';
+    res.writeHead(partial ? 206 : 200, {
+      'content-type': type,
+      'content-length': String(end - start + 1),
+      'accept-ranges': 'bytes',
+      'cache-control': 'no-store',
+      ...(partial ? { 'content-range': `bytes ${start}-${end}/${st.size}` } : {}),
+    });
+    createReadStream(f, { start, end }).pipe(res);
     return;
   }
   if (req.method === 'GET' && url.pathname === '/poll') {
@@ -2163,7 +2219,7 @@ const server = http.createServer((req, res) => {
       let j = null;
       try { j = JSON.parse(body); } catch {}
       const target = resolveInRoot(j?.path);
-      if (!target) {
+      if (!target || !isDir(target)) {
         res.writeHead(400)
           .end('not a folder inside the bridge\'s --dir-root\n');
       } else {
@@ -2172,6 +2228,29 @@ const server = http.createServer((req, res) => {
         console.error('  [dir] moved the agent to ' + dir);
         res.writeHead(200, {'content-type': 'application/json'})
           .end(JSON.stringify({ok: true, dir}));
+      }
+    } else if (url.pathname === '/send') {
+      // The agent's file-out (the fresh APK, a report, anything): the
+      // bridge validates against the same --dir-root allowlist and
+      // relays a permanent `file` frame (name, root-relative path,
+      // bytes). The phone files it as a bubble; the bytes ride GET
+      // /file when the listener taps. Delivery is the FRAME, not the
+      // bytes — a phone that hears about the file tomorrow can still
+      // fetch it, while the disk holds it.
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const f = resolveInRoot(j?.path);
+      if (!f || !isFile(f)) {
+        res.writeHead(400)
+          .end('not a file inside the bridge\'s --dir-root\n');
+      } else {
+        const st = statSync(f);
+        relay('file', {
+          name: basename(f), path: relative(dirRoot, f), size: st.size,
+        });
+        console.error('  [send] ' + basename(f) + ' (' + st.size + ' B)');
+        res.writeHead(200, {'content-type': 'application/json'})
+          .end(JSON.stringify({ ok: true, name: basename(f), size: st.size }));
       }
     } else if (url.pathname === '/heard') {
       // v2: the phone's commit ack. A mid leaves the unheard backlog
