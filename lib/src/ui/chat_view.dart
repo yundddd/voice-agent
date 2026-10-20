@@ -318,12 +318,16 @@ class ChatBubble extends StatelessWidget {
   }
 }
 
-/// +188: the transcribing pulse — four dots crossed by a travelling
-/// wave, shown inside a user bubble between the button release and the
-/// transcript (+sub-one-second on the field's wire). It says "the mic
-/// heard you and the network is reading" without faking a word of the
-/// sentence before it exists. Sized to a single text line so the card
-/// does not resize when the fill replaces it.
+/// +188, redrawn by +189: the transcribing animation is a SIMPLIFIED
+/// NEURAL NETWORK propagating — three layers of nodes (3-4-2, the
+/// classic textbook silhouette) wired edge to edge, with a Gaussian
+/// activation wave sweeping left to right: each layer ignites as the
+/// signal reaches it, the connections light just between them, and a
+/// low floor keeps the whole net dimly alive between sweeps. It says
+/// "the mic heard you and the network is reading" by showing the
+/// reading. Sized to a text line so the card never resizes when the
+/// fill replaces it (the field judged +188's four dots too simple for
+/// the moment they animate).
 class _TranscribePulse extends StatefulWidget {
   const _TranscribePulse();
 
@@ -333,10 +337,9 @@ class _TranscribePulse extends StatefulWidget {
 
 class _TranscribePulseState extends State<_TranscribePulse>
     with SingleTickerProviderStateMixin {
-  static const _dots = 4;
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1100),
+    duration: const Duration(milliseconds: 1300),
   )..repeat();
 
   @override
@@ -349,37 +352,81 @@ class _TranscribePulseState extends State<_TranscribePulse>
   Widget build(BuildContext context) {
     final ink = Theme.of(context).colorScheme.onPrimaryContainer;
     return SizedBox(
-      height: 22,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < _dots; i++)
-            AnimatedBuilder(
-              animation: _c,
-              builder: (context, _) {
-                // A sine wave crossing the row, phase-shifted per dot:
-                // the far end never goes fully dark (25% floor), so
-                // the row reads as ALIVE rather than blinking.
-                final wave =
-                    math.sin(_c.value * 2 * math.pi - i * (math.pi / 3));
-                final lit = 0.25 + 0.75 * ((wave + 1) / 2);
-                return Padding(
-                  padding: EdgeInsets.only(right: i == _dots - 1 ? 0 : 6),
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: ink.withValues(alpha: lit),
-                    ),
-                  ),
-                );
-              },
+      height: 24,
+      width: 52,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder:
+            (context, _) => CustomPaint(
+              painter: _NetPaint(
+                ink: ink,
+                // The wave's position in LAYER units, eased across the
+                // net with half a layer of lead-in and run-off so the
+                // glow fades before it loops — a sweep, not a blink.
+                wave: _c.value * (_NetPaint.layers.length + 1) - 0.5,
+              ),
             ),
-        ],
       ),
     );
   }
+}
+
+class _NetPaint extends CustomPainter {
+  _NetPaint({required this.ink, required this.wave});
+
+  static const layers = [3, 4, 2];
+
+  final Color ink;
+  final double wave;
+
+  double _glow(double centre, double width) {
+    final d = wave - centre;
+    return math.exp(-(d * d) / width).clamp(0.0, 1.0);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = layers.length;
+    final xs = [
+      for (var i = 0; i < n; i++)
+        7.0 + (size.width - 14) * (i / (n - 1)),
+    ];
+    final cols = [
+      for (final count in layers)
+        [
+          for (var j = 0; j < count; j++)
+            size.height / 2 +
+                (j - (count - 1) / 2) * (size.height - 10) / (count - 1),
+        ],
+    ];
+    final p = Paint()..strokeWidth = 1.0;
+    // Edges first: a connection lights as the signal crosses the gap
+    // between its two layers.
+    for (var i = 0; i < n - 1; i++) {
+      p.color = ink.withValues(alpha: 0.08 + 0.5 * _glow(i + 0.5, 0.18));
+      for (final y1 in cols[i]) {
+        for (final y2 in cols[i + 1]) {
+          canvas.drawLine(Offset(xs[i], y1), Offset(xs[i + 1], y2), p);
+        }
+      }
+    }
+    // Nodes on top: each layer's activation is a wide Gaussian around
+    // the wave, and the ignition grows the dot — energy, not just
+    // brightness.
+    final fill = Paint();
+    for (var i = 0; i < n; i++) {
+      final glow = _glow(i.toDouble(), 0.30);
+      fill.color = ink.withValues(alpha: 0.15 + 0.8 * glow);
+      final r = 1.8 + 1.2 * glow;
+      for (final y in cols[i]) {
+        canvas.drawCircle(Offset(xs[i], y), r, fill);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_NetPaint oldDelegate) =>
+      oldDelegate.wave != wave || oldDelegate.ink != ink;
 }
 
 /// The compact HH:MM:SS caption at the bottom of a bubble — dimmed,
