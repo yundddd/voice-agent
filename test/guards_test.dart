@@ -363,6 +363,16 @@ void main() {
       expect(ui, contains("'fps chase: n"));
       // The window is bounded no matter how chatty frames get.
       expect(ui, contains('_timings.length > 240'));
+      // +204: timings arrive late; the bill must file anyway — an
+      // empty window reports its lag, it never goes silent (the +203
+      // tape chased in vain because the inline summary found no
+      // numbers yet and returned without a word).
+      expect(ui, contains('fps chase: timings lag'));
+      expect(
+        ui,
+        contains('_chaseEndUs'),
+        reason: 'the summary is deferred, not inline',
+      );
     });
   });
 

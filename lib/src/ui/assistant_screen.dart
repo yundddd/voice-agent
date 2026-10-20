@@ -113,13 +113,29 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
-  /// Summarize the frames a chase rode, and forget the window.
+  /// +204: when the chase landed (µs). The scheduler delivers timing
+  /// batches LATE — tens to hundreds of ms behind the frames they
+  /// measure — so the landing tick usually has no numbers yet, and
+  /// +203's summarize-inline filed nothing but silence for a chase
+  /// the tape can plainly see. The report therefore waits: a chase
+  /// ends by recording its closing moment, and any follow tick half a
+  /// second later files the summary, by which time the batch has
+  /// almost certainly arrived. If it hasn't, the line still files —
+  /// 'timings lag' is itself the answer to a question we asked.
+  int _chaseEndUs = 0;
+
+  /// Summarize the frames a chase rode, and forget the window. Called
+  /// from the tick loop once the timings have had time to arrive.
   void _logChaseCost() {
     if (_timingsMark < 0) return;
     final mark = _timingsMark.clamp(0, _timings.length);
     _timingsMark = -1;
+    _chaseEndUs = 0;
     final window = _timings.sublist(mark);
-    if (window.isEmpty) return;
+    if (window.isEmpty) {
+      _assistant.logFollow('fps chase: timings lag (none delivered)');
+      return;
+    }
     final b = <double>[];
     final r = <double>[];
     for (final t in window) {
@@ -149,6 +165,13 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _followTick() {
     if (mounted && _scroll.hasClients) {
       final pos = _scroll.position;
+      // +204: file a finished chase's frame bill once the scheduler's
+      // late batch has had time to land.
+      if (_timingsMark >= 0 &&
+          _chaseEndUs != 0 &&
+          DateTime.now().microsecondsSinceEpoch - _chaseEndUs > 600000) {
+        _logChaseCost();
+      }
       // +196 stick algebra, in the order the truth allows: resting at
       // the CURRENT tail says stick (and re-arms a reader who scrolled
       // back down); pixels still exactly on LAST frame's tail while
@@ -185,6 +208,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           _pinGliding = false;
           _lastPinUs = 0;
           _timingsMark = -1; // a snap is one frame; no window to weigh
+          _chaseEndUs = 0;
         } else if (delta > 0.5) {
           // Cover ~1 - e^(-dt/65ms) of the remaining gap this frame:
           // a 90 px arrival lands inside a handful of visible frames,
@@ -203,13 +227,17 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (!_pinGliding) _timingsMark = _timings.length; // +203: mark
           _pinGliding = true;
         } else {
-          if (_pinGliding) _logChaseCost(); // +203: who ate the frames
+          // +204: the bill files itself when the timings arrive.
+          if (_pinGliding) {
+            _chaseEndUs = DateTime.now().microsecondsSinceEpoch;
+          }
           _pinGliding = false; // landed (or nothing ever opened)
           _lastPinUs = 0;
         }
       } else {
         if (_pinGliding) {
-          _logChaseCost(); // +203: even a cancelled chase reports
+          // +204: even a cancelled chase reports.
+          _chaseEndUs = DateTime.now().microsecondsSinceEpoch;
           // The hand outranks the pin: a touch (or a scroll-away)
           // mid-chase stops it where it stands. The chase owns no
           // driven activity — nothing to quench, only the verdict
