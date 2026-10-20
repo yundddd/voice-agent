@@ -298,6 +298,49 @@ const dumpDir = arg('dump-requests', null);
 // and a rollback is one POST, not an edit to the unit file.
 let harness = arg('harness', null);
 const harnessFile = join(homedir(), '.claude_bridge_harness');
+// +214: the ERA TIMELINE. The phone's chat split needs more than the
+// CURRENT harness to migrate its pre-split history: it needs to know
+// WHO HELD THE PEN AT EACH BUBBLE'S BIRTH. The bridge is the only
+// witness — every boot and every /harness flip appends one line here,
+// and /health serves the tail as harnessHistory so the phone can
+// place each legacy timestamp in an era instead of guessing.
+const harnessHistoryFile = join(homedir(), '.claude_bridge_harness_history');
+function noteHarnessEra(name) {
+  try {
+    // Reboots on an unchanged choice are noise, not news: the era at
+    // that timestamp is what the file's last line already says. (A
+    // missing file is the NORM on first note, not a reason to skip —
+    // the empty read here is why the very first era ever recorded
+    // once vanished into a catch.)
+    const tail = (existsSync(harnessHistoryFile)
+      ? readFileSync(harnessHistoryFile, 'utf8') : '')
+      .split('\n').filter(Boolean).pop();
+    if (tail) {
+      try { if (JSON.parse(tail).harness === name) return; } catch {}
+    }
+    appendFileSync(harnessHistoryFile,
+      JSON.stringify({ ts: Date.now(), harness: name }) + '\n');
+    // A decade of flips is still tiny; a chatty script POSTing
+    // /harness in a loop is not — keep the file's tail, not its all.
+    const lines = readFileSync(harnessHistoryFile, 'utf8').split('\n')
+      .filter(Boolean).slice(-500);
+    writeFileSync(harnessHistoryFile, lines.join('\n') + '\n');
+  } catch {}
+}
+function harnessHistory() {
+  try {
+    return readFileSync(harnessHistoryFile, 'utf8').split('\n')
+      .filter(Boolean).slice(-100)
+      .map((l) => {
+        try {
+          const j = JSON.parse(l);
+          return Number.isFinite(j.ts) &&
+            (j.harness === 'claude' || j.harness === 'opencode')
+            ? { since: j.ts, harness: j.harness } : null;
+        } catch { return null; }
+      }).filter(Boolean);
+  } catch { return []; }
+}
 if (harness !== 'claude' && harness !== 'opencode') {
   // An explicit --claude NAMES the binary, and naming the binary is
   // choosing the harness: the persisted runtime flip must not hijack a
@@ -307,6 +350,7 @@ if (harness !== 'claude' && harness !== 'opencode') {
   else { try { harness = readFileSync(harnessFile, 'utf8').trim(); } catch {} }
 }
 if (harness !== 'opencode') harness = 'claude';
+noteHarnessEra(harness); // the era the boot found (or was pinned to)
 // The opencode CLI: where the npm global install lands on THIS box
 // (nvm-managed node, so the systemd PATH has no idea) with sane fallbacks.
 const opencodeBin = arg('opencode', [
@@ -2399,6 +2443,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true, claudeUp: !childDead, sessionId, harness,
+      // +214: who held the pen WHEN — the phone's one-time chat
+      // migration matches each legacy bubble's timestamp into an era
+      // with this instead of guessing one label for the whole past.
+      harnessHistory: harnessHistory(),
       // The folder the agent works in (mutable via POST /dir): the
       // Bridge screen shows it and the picker moves it.
       dir,
@@ -2622,6 +2670,7 @@ const server = http.createServer((req, res) => {
         if (to !== harness) {
           harness = to;
           try { writeFileSync(harnessFile, to); } catch {}
+          noteHarnessEra(to); // the flip's instant is the era's start
           resetConversation();
           // The new harness resumes ITS OWN remembered conversation
           try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}

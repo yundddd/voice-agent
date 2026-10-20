@@ -830,6 +830,32 @@ class VoiceAssistant extends ChangeNotifier {
       _bridgeHarness = eraNow;
       notifyListeners();
     }
+    // +214: the one-time chat migration. A pre-split log is all
+    // un-era'd, which the split reads as SHARED PROLOGUE — so right
+    // after installing, every era's thread shows every harness's
+    // history (the field complaint this answers). The first /health
+    // that names an era stamps the legacy bubbles ONCE: each by its
+    // own birth time against the bridge's harnessHistory when the
+    // bridge is new enough to keep one, else wearing the observed
+    // era. The flag lives in prefs, so a legitimately un-era'd bubble
+    // made LATER (no bridge at all, the offline prologue) is never
+    // re-stamped by a returning guess.
+    if (eraNow != null && !_bridgePrefs.eraBackfilled) {
+      _bridgePrefs.eraBackfilled = true;
+      unawaited(_saveBridgePrefs());
+      _chat.migrateUnera(
+        eraNow,
+        timeline: [
+          for (final row in (h?['harnessHistory'] as List? ?? const []))
+            if (row is Map && row['since'] is num &&
+                (row['harness'] == 'claude' || row['harness'] == 'opencode'))
+              (
+                since: (row['since'] as num).toInt(),
+                harness: row['harness'] as String,
+              ),
+        ],
+      );
+    }
     final ctx = h?['context'];
     if (ctx is Map) {
       final i = ctx['in'], w = ctx['window'];

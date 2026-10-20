@@ -178,6 +178,14 @@ test('/harness flips both ways, persists, and each harness keeps its own pointer
     assert.equal((await health(w.port)).harness, 'claude');
     assert.equal(readFileSync(join(w.home, '.claude_bridge_harness'), 'utf8'), 'claude');
 
+    // +214: the era TIMELINE — every flip the bridge performed (and the
+    // era its boot found) is on the record, so the phone's chat
+    // migration can place legacy bubbles by birth time instead of
+    // guessing one label for the whole past.
+    const hist = (await health(w.port)).harnessHistory;
+    assert.deepEqual(hist.map((h) => h.harness), ['opencode', 'claude']);
+    assert.ok(hist[1].since >= hist[0].since, 'eras are ordered');
+
     const r2 = await full(w.port, `/harness?token=${TOKEN}`,
       { method: 'POST', body: '{"to":"opencode"}' });
     assert.equal(r2.status, 200);
@@ -186,6 +194,9 @@ test('/harness flips both ways, persists, and each harness keeps its own pointer
     // The flip-back resumed ITS OWN conversation, untouched by the
     // detour through the other harness.
     assert.equal(h.sessionId, 'soc-1');
+    // …and the timeline says so, in order, with the detour named.
+    assert.deepEqual((await health(w.port)).harnessHistory.map(
+      (x) => x.harness), ['opencode', 'claude', 'opencode']);
 
     const bad = await full(w.port, `/harness?token=${TOKEN}`,
       { method: 'POST', body: '{"to":"pi"}' });

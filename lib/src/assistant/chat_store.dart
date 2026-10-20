@@ -60,6 +60,41 @@ class ChatStore {
   /// The era a bubble born THIS mutation wears (see [ChatStore.harness]).
   String? get _era => harness?.call();
 
+  /// +214: the one-time migration of the PRE-SPLIT log. Every un-era'd
+  /// legacy bubble gets its era from its own birth timestamp against
+  /// the bridge's harnessHistory (the last flip at or before the
+  /// birth); a bubble older than the whole timeline, or a bridge with
+  /// no timeline to give, wears [fallbackEra] — the era the phone
+  /// first saw the pen held in. Returns how many bubbles took a stamp.
+  int migrateUnera(
+    String fallbackEra, {
+    List<({int since, String harness})> timeline = const [],
+  }) {
+    String eraFor(int bornMs) {
+      if (timeline.isEmpty || bornMs == 0) return fallbackEra;
+      var era = timeline.first.harness; // older than the first line:
+      // the best witness left is the era that line itself records.
+      for (final t in timeline) {
+        if (t.since <= bornMs) era = t.harness;
+      }
+      return era;
+    }
+
+    var n = 0;
+    for (final e in _entries) {
+      if (e.harness == null) {
+        e.harness = eraFor(e.createdMs);
+        n++;
+      }
+    }
+    if (n != 0) {
+      trace?.call('msg migration: $n legacy bubbles era\u2019d '
+          '(${timeline.length} timeline lines read)');
+      touch();
+    }
+    return n;
+  }
+
   /// The conversation log, oldest first (user / assistant bubbles).
   List<ChatEntry> get entries => _entries;
 

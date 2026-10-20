@@ -262,6 +262,77 @@ void main() {
       expect(ChatEntry.user('x').toJson().containsKey('h'), isFalse);
     });
 
+    test('+214 migration: legacy bubbles take their era from the bridge\u2019s '
+        'timeline, once, and never from a returning guess', () async {
+      // The store-level law first: each birth lands between timeline
+      // lines, so each gets the era that line opened. A wound clock
+      // places the births; the entries keep their stamps final.
+      var clock = 0;
+      // harness: null — these births replay the PRE-SPLIT app: no era
+      // known, so every entry lands un-era and the migration is the
+      // first thing to name one.
+      final store = ChatStore(
+        persist: (_) async {}, repaint: () {}, harness: () => null,
+        nowMs: () => clock,
+      );
+      store.addUser('prehistory'); // born 0 = older than the record
+      clock = 2000; // born while opencode held the pen
+      store.beginTurn();
+      clock = 3500; // born after the flip back to claude
+      store.addSystemNote('x');
+      final n = store.migrateUnera('opencode', timeline: const [
+        (since: 1000, harness: 'opencode'),
+        (since: 3000, harness: 'claude'),
+      ]);
+      expect(n, 3);
+      expect(store.entries.map((e) => e.harness),
+          ['opencode', 'opencode', 'claude']);
+      // A bridge with no timeline (pre-+214): every legacy bubble
+      // wears the fallback — the observed era, the best witness left.
+      final bare = ChatStore(
+        persist: (_) async {}, repaint: () {}, harness: () => null,
+      );
+      bare.addUser('legacy');
+      expect(bare.migrateUnera('claude'), 1);
+      expect(bare.entries.single.harness, 'claude');
+    });
+
+    test('the migration fires once: a later un-era bubble keeps its null',
+        () async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'sessionId': 'ses_cl',
+        'harnessHistory': [
+          {'since': 1, 'harness': 'opencode'},
+          {'since': 5000, 'harness': 'claude'},
+        ],
+      };
+      a.chat.add(ChatEntry.user('born before the split', createdMs: 2000));
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      // The first era glance migrated the past: the legacy bubble is
+      // opencode's now (it was born between the lines), hidden from
+      // the claude thread it used to clutter.
+      expect(a.chat.single.harness, 'opencode');
+      expect(a.view.chat, isEmpty,
+          reason: 'the claude thread no longer wears opencode\u2019s history');
+      // A bubble made un-era LATER (bridge torn down → offline
+      // prologue) must NOT be re-stamped by the flag-guarded
+      // migration: the flag is spent, the prologue stays shared.
+      a.chat.add(ChatEntry.user('later offline turn', createdMs: 9000));
+      await a.setBridgeHarness('opencode');
+      harness.healthState = {
+        ...harness.healthState!, 'harness': 'opencode',
+      };
+      await a.setBridgeHarness('claude');
+      await settle();
+      final offline = a.chat.firstWhere(
+          (e) => e.blocks.contains('later offline turn'));
+      expect(offline.harness, isNull,
+          reason: 'the migration flag is spent: the shared prologue '
+              'stays shared, never re-stamped by a returning guess');
+    });
+
     test('flipping harnesses splits the transcript and keeps the log', () async {
       harness.healthState = {
         'ok': true, 'claudeUp': true, 'harness': 'claude',

@@ -650,6 +650,17 @@ and the receipt-by-id law keep scanning everything — a task finished
 under claude stays finished when opencode replays it. Each flip files
 its own signpost note, worn by the era it announces, so every thread
 opens by explaining itself.
+**The migration (+214):** a pre-split log is all un-era'd, which the
+split first reads as one giant prologue — the install-day complaint of
+"still seeing the other harness's bubbles." The bridge now keeps an
+ERA TIMELINE (`~/.claude_bridge_harness_history`, one line per boot
+that found a different harness and per `/harness` flip, served in
+`/health` as `harnessHistory`), and the phone's first era-naming
+glance stamps every legacy bubble ONCE by its own birth timestamp
+against that timeline — older than the record, or a bridge with none,
+wears the era observed then. A prefs flag spends the migration so a
+bubble legitimately born un-era'd later (true offline turns) is never
+re-stamped by a returning guess.
 **The bridge now has a second harness (+211):** `--harness opencode` (or
 a runtime `POST /harness {"to":"opencode"}`, persisted so the trial
 survives restarts) points the same voice events, sentence relay, queue

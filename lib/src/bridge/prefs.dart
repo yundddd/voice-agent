@@ -26,9 +26,19 @@ class BridgePrefs {
     this.narrate = false,
     this.tts = true,
     this.mode = 'conversation',
+    this.eraBackfilled = false,
   });
   String url, token;
   bool voice;
+
+  /// +214: the one-time chat migration's mark. The first /health that
+  /// names an era files the harness of every UN-ERA'D legacy bubble
+  /// (by its own timestamp against the bridge's harnessHistory when it
+  /// can, by the observed era otherwise) and sets this — so the split
+  /// happens once, not every launch, and so a bubble legitimately
+  /// created un-era later (no bridge, offline prologue) is never
+  /// re-stamped by a returning guess.
+  bool eraBackfilled;
 
   /// The remembered interaction-mode tab: 'conversation' or 'pushToTalk'
   /// (the InteractionMode enum names). The app reopens the way the user
@@ -60,6 +70,7 @@ class BridgePrefs {
     'narrate': narrate,
     'tts': tts,
     'mode': mode,
+    'eraBackfilled': eraBackfilled,
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
@@ -70,6 +81,7 @@ class BridgePrefs {
     // Only the two real tabs; anything else (an enum rename, a hand
     // edit) falls back to the factory default.
     mode: j['mode'] == 'pushToTalk' ? 'pushToTalk' : 'conversation',
+    eraBackfilled: j['eraBackfilled'] == true,
   );
 }
 
