@@ -45,6 +45,23 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// measured against, so one frame of growth can never fool it.
   double _lastMax = -1;
 
+  /// +196: the sticky STATE, not a per-frame geometry comparison. The
+  /// +192 test (pixels ≥ LAST frame's max − 2) died quietly: any
+  /// content SHRINK (a bubble settling, a caption reflow — the file
+  /// slip's 'Receiving 45%' relabels itself shorter every update)
+  /// clamps pixels down to the new max, and the clamp is invisible to
+  /// the loop — from the next frame on, pixels sat below the old
+  /// _lastMax, the view read as 'user scrolled away', the follow
+  /// retired itself mid-conversation, and every arrival after filed
+  /// below the fold (field: 'whenever the file transfer bubble shows
+  /// up, the weird scrolling happens', tape: 'grew +N UNPINNED, pixels
+  /// 23812 last 24178' forever). Stick now means: at the tail NOW
+  /// (within 2 px of the CURRENT max), or still exactly where last
+  /// frame's tail was while growth alone is the distance; a real
+  /// scroll-away is the only thing that clears it, and returning to
+  /// the bottom re-arms it.
+  bool _stick = true;
+
   /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
   /// events: every frame, if the view was resting at the tail (within
   /// 2 px of last frame's maximum) it re-pins — so ANY growth below
@@ -59,8 +76,18 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _followTick() {
     if (mounted && _scroll.hasClients) {
       final pos = _scroll.position;
-      final atTail = _lastMax < 0 || pos.pixels >= _lastMax - 2.0;
-      if (!_userTouch && atTail) {
+      // +196 stick algebra, in the order the truth allows: resting at
+      // the CURRENT tail says stick (and re-arms a reader who scrolled
+      // back down); pixels still exactly on LAST frame's tail while
+      // the tail moved says growth-only — stick unchanged; anything
+      // else means the distance was made by a hand, and stick yields.
+      final atTailNow = pos.pixels >= pos.maxScrollExtent - 2.0;
+      if (atTailNow) {
+        _stick = true;
+      } else if (pos.pixels < _lastMax - 2.0) {
+        _stick = false;
+      }
+      if (!_userTouch && _stick) {
         final delta = pos.maxScrollExtent - pos.pixels;
         if (delta > 8) {
           _assistant.logFollow(
@@ -71,11 +98,11 @@ class _AssistantScreenState extends State<AssistantScreen>
           );
         }
         pos.jumpTo(pos.maxScrollExtent);
-      } else if (_lastMax >= 0) {
+      } else if (!_stick) {
         // The crime-scene camera: growth that went UNPINNED is exactly
         // the 'new message below the fold' the field keeps seeing.
         final grew = pos.maxScrollExtent - _lastMax;
-        if (grew > 8 && _lastMax - pos.pixels > 2) {
+        if (grew > 8) {
           _assistant.logFollow(
             'grew +${grew.round()} UNPINNED (pixels ${pos.pixels.round()} '
             'last ${_lastMax.round()} touch=$_userTouch '
