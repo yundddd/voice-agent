@@ -202,6 +202,12 @@ class BridgeEvent {
         return BridgeEvent._(
           'done',
           isError: data['isError'] == true,
+          // +219: an error's REASON rides the done frame (the field
+          // tape: the provider's 403 died in the bridge's stderr and
+          // the phone closed the turn 'done clean'). The text lands in
+          // `text` so the pump's error path and the journal share one
+          // carrier.
+          text: data['error'] is String ? data['error'] as String : '',
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );

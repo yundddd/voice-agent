@@ -37,6 +37,7 @@ const says = (process.env.STUB_OC_SAYS ?? 'The stub sees you.').split('\n')
 const stepMs = Number(process.env.STUB_OC_MS ?? 20);
 const wantPermission = process.env.STUB_OC_PERMISSION === '1';
 const stall = process.env.STUB_OC_STALL === '1';
+const fail = process.env.STUB_OC_FAIL === '1';
 const note = (s) => appendFileSync(log, s + '\n');
 
 // The state file the real service maintains — the bridge re-reads it per
@@ -177,7 +178,16 @@ const server = http.createServer(async (req, res) => {
     push('session.usage.updated',
       { cost: 0, tokens: { input: 1234, output: 42, cache: { read: 0, write: 0 } } }, at());
     push('session.step.ended', {}, at());
-    if (!stall) push('session.execution.succeeded', {}, at());
+    // STUB_OC_FAIL models the field's 'picked a model the provider
+    // refuses': the turn closes FAILED and the error rides as the
+    // service really sends it ({type, message, status}). STALL leaves
+    // it open for the cut test.
+    if (stall) { /* the turn waits to be cut */ }
+    else if (fail) push('session.execution.failed', {
+      error: { type: 'provider.auth',
+        message: 'Access to model denied.', status: 403 },
+    }, at());
+    else push('session.execution.succeeded', {}, at());
     res.writeHead(204).end(); return;
   }
   res.writeHead(404).end('stub: no route ' + req.method + ' ' + p + '\n');

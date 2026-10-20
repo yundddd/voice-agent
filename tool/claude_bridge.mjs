@@ -8,7 +8,11 @@
 //
 // Endpoints (all except /health require ?token=):
 //   POST /talk   body: plain text utterance -> SSE stream of voice events
-//                (event: say / tool / progress / done / error). Progress
+//                (event: say / tool / progress / done / error). A turn
+//                that ENDED FAILED closes with done {isError:true,
+//                error} — +219: the harness's own reason rides the
+//                frame (a provider 403 that only lived in the bridge's
+//                stderr surfaced on the phone as 'done clean'). Progress
 //                is designed never to read as "ignored": the turn's very
 //                first frame is a `tool {name:"tokens", kind:"thinking"}`
 //                tally (out 0, in = best known: exact message_start once
@@ -1132,6 +1136,13 @@ function ocTranslate(j) {
     console.error(`  [oc] auto-approving permission ${reqID}`);
     ocReq(`/api/session/${oc.sid}/permission/${reqID}/reply`,
       { decision: 'always' }).catch(() => {});
+  } else if (t === 'session.model.selected') {
+    // +219: the service CONFIRMS a model change on its own bus — the
+    // picker's optimistic current goes proven at the moment of the
+    // pick, not only when a step next runs.
+    if (d.model?.id && d.model?.providerID) {
+      oc.model = `${d.model.providerID}/${d.model.id}`;
+    }
   } else if (t === 'session.execution.succeeded') {
     ocEmit({ type: 'result', subtype: 'success', is_error: false,
       session_id: oc.sid, duration_ms: 0, num_turns: 1,
@@ -1145,7 +1156,7 @@ function ocTranslate(j) {
   } else if (t.startsWith('session.') && !t.startsWith('session.inbox.')
              && !['session.created', 'session.step.streamed',
                   'session.tool.input.ended',
-                  'session.tool.progress',
+                  'session.tool.progress', 'session.step.failed',
                   'session.instructions.updated', 'session.execution.started',
                   'session.updated'].includes(t)) {
     // Name the gaps once each, not once each per frame: the tape should
@@ -1674,6 +1685,8 @@ function handleEvent(line) {
           : 'NO LIVE EVENTS: upstream buffers SSE (OpenAI-style or '
             + 'worse); phone gets thinking/heartbeat + elapsed only') +
       ' | ' + cacheVerdict);
+    // +219: hoisted — the done below reads it whatever the branch took.
+    let errText = null;
     if (m.is_error) {
       // The reason, not just the flag: result carries errors[] / result
       // text on error_during_execution — previously discarded, leaving
@@ -1683,6 +1696,14 @@ function handleEvent(line) {
       const why = m.errors ?? m.result ?? m.api_error_status ?? '(no detail)';
       console.error('  [result-error] ' +
         JSON.stringify(why).slice(0, 300).replace(/\\n/g, ' '));
+      // +219: the same words ride the wire (the field tape: a picked
+      // model the provider REFUSED surfaced on the phone as 'done
+      // clean' — the log knew, the ear did not). Strings speak; the
+      // v2 event objects give their message; anything else is JSON.
+      errText = [why].flat(9)
+        .map((v) => typeof v === 'string' ? v
+          : (v && (v.message ?? v.msg)) || JSON.stringify(v))
+        .filter(Boolean).join('; ').slice(0, 300) || null;
     }
     // +106: a turn the phone CUT to make room for its own waiting
     // prompt gets no funeral notice. The +99 interrupt path always
@@ -1699,6 +1720,8 @@ function handleEvent(line) {
     // in). The queued turn's own frames — and the +81 'started' marker
     // on the ring transport — say everything that needs saying.
     if (!(pending && cutForPrompt)) {
+      // +219: an error's REASON rides the done frame now (declared
+      // where the result branch built it; a clean turn never sets it).
       // The lifecycle receipt for a turn that is ending with NO ear on
       // it — backgrounded by a press, a hide, a dead socket, or the
       // poll transport's mute floor. A HEARD turn's phone holds its own
@@ -1729,6 +1752,7 @@ function handleEvent(line) {
       relay('done', {
         costUsd: m.total_cost_usd,
         isError: m.is_error,
+        ...(errText ? {error: errText} : {}),
         ...(foldedTurnId ? {_turn: foldedTurnId} : {}),
       });
       foldedTurnId = 0;

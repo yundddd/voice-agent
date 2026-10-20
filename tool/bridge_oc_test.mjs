@@ -341,3 +341,23 @@ test('a refused set_model rolls the current back', async () => {
       (await health(port)).model === 'default', 4000); // …and was walked back
   } finally { bridge.kill(); }
 });
+
+test('+219 a failed turn carries the provider\u2019s reason to the phone', async () => {
+  const w = await world({ stubEnv: { STUB_OC_FAIL: '1' } });
+  try {
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'answer me' });
+    await until('done', async () => a.text.includes('event: done'));
+    assert.ok(a.text.includes('"isError":true'),
+      'the done frame lost the error flag');
+    // The field bug +219 exists for: the 403 died in the bridge's
+    // stderr while the phone closed the turn 'done clean'. The
+    // provider's own words must ride the frame.
+    assert.ok(a.text.includes('Access to model denied'),
+      'the reason never reached the wire');
+    assert.ok(!w.logs().includes('unhandled bus event session.step.failed'),
+      'step.failed no longer clutters the tape — it speaks via the done');
+    await until('turn closed', async () =>
+      (await health(w.port)).turnOpen === false);
+  } finally { w.stop(); }
+});

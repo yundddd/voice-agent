@@ -30,6 +30,7 @@ class PumpOutcome {
     required this.stale,
     required this.sawDone,
     required this.sawErrorFrame,
+    this.doneError,
     required this.streamError,
     required this.detached,
   });
@@ -43,6 +44,13 @@ class PumpOutcome {
 
   /// The bridge's `error` frame closed the loop: also a clean end.
   final bool sawErrorFrame;
+
+  /// +219: when the turn closed on a done that SAID error, the reason
+  /// the harness gave (null on a clean done and on an error FRAME,
+  /// which carries its own text elsewhere). Journal and status line
+  /// read this so a refused provider speaks for itself instead of
+  /// dying in a server's stderr.
+  final String? doneError;
 
   /// The socket died (error or EOF) — null unless it died badly.
   final Object? streamError;
@@ -93,6 +101,7 @@ class BridgeTurnPump {
   Object? _streamError;
   bool _sawDone = false;
   bool _sawErrorFrame = false;
+  String? _doneError; // +219: the REASON an error-done carried
 
   void _wakeNow() {
     final w = _wake;
@@ -133,6 +142,9 @@ class BridgeTurnPump {
           continue; // a history lesson, not a period
         }
         _sawDone = true;
+        // '' (a flag-only done from an old bridge) is NOT a reason:
+        // the journal must not read 'done error:' with nothing after.
+        _doneError = ev.isError && ev.text.isNotEmpty ? ev.text : null;
         break;
       }
       if (ev.kind == 'error') {
@@ -146,6 +158,7 @@ class BridgeTurnPump {
       stale: isStale(),
       sawDone: _sawDone,
       sawErrorFrame: _sawErrorFrame,
+      doneError: _doneError,
       streamError: _streamError,
       detached: _detached,
     );

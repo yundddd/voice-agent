@@ -48,6 +48,7 @@ class EnvProbe {
   int generation = 1;
   int seq = 1;
   bool busy = true, badge = false, errored = false;
+  String? errorWhy; // +219: the reason the wire carried must arrive
 
   final List<Activity> statuses = [];
   final List<AssistantPhase> phases = [];
@@ -88,7 +89,10 @@ class EnvProbe {
     markSpeaking: () => phase = AssistantPhase.speaking,
     idleReady: () => idled = true,
     fail: fails.add,
-    noteHarnessError: () => errored = true,
+    noteHarnessError: (why) {
+      errored = true;
+      errorWhy = why;
+    },
     noteReplyText: replyTexts.add,
     noteUnheardSay: unheardSays.add,
     noteSpoken: spoke.add,
@@ -717,6 +721,24 @@ void main() {
       await r;
       await settle();
       expect(probe.errored, isTrue);
+      expect(probe.errorWhy, isNull,
+          reason: 'an old bridge sends the flag alone — no reason, no lie');
+      expect(probe.logs.any((l) => l.contains('done clean')), isTrue,
+          reason: 'flag-only still journals as the clean-done shape it is');
+    });
+
+    test('+219: a REASONED error-done travels the wire into the status '
+        'line and the journal', () async {
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      wire.add(BridgeEvent.forTest('done',
+          isError: true, text: 'Access to model denied.'));
+      await r;
+      await settle();
+      expect(probe.errored, isTrue);
+      expect(probe.errorWhy, 'Access to model denied.');
+      expect(probe.logs.any((l) =>
+          l.contains('done error: Access to model denied.')), isTrue);
     });
   });
 

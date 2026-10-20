@@ -126,7 +126,7 @@ final class BridgeTurnEnv {
   final void Function(String message) fail;
 
   /// A `done` frame carrying the harness's own error flag.
-  final void Function() noteHarnessError;
+  final void Function(String? why) noteHarnessError;
 
   /// Hide/resume bookkeeping (see HideResume): the newest block fed to
   /// the speaker, a say that landed unheard while hidden, the drop
@@ -479,7 +479,12 @@ class BridgeTurn {
     } else if (ev.kind == 'tool') {
       await _onTool(ev);
     } else if (ev.isDone) {
-      if (ev.isError && gen == env.generation()) env.noteHarnessError();
+      if (ev.isError && gen == env.generation()) {
+        // +219: the wire's reason, not a generic one — the status line
+        // says WHAT the harness said ('Access to model denied…'), the
+        // fallback only when an old bridge sent the flag alone.
+        env.noteHarnessError(ev.text.isEmpty ? null : ev.text);
+      }
     } else if (ev.kind == 'error') {
       // a relayed bridge error IS the turn's end
       env.fail('Bridge: ${ev.text}');
@@ -979,7 +984,9 @@ class BridgeTurn {
         : outcome.sawErrorFrame
         ? 'bridge error frame'
         : outcome.sawDone
-        ? 'done clean'
+        ? (outcome.doneError == null
+              ? 'done clean'
+              : 'done error: ${_trunc(outcome.doneError!, 90)}')
         : 'CLOSED WITHOUT DONE';
     final why = wireOrphan
         ? isAttach

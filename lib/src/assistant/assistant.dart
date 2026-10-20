@@ -1591,7 +1591,8 @@ class VoiceAssistant extends ChangeNotifier {
     markSpeaking: () => _phase = AssistantPhase.speaking,
     idleReady: _idleReady,
     fail: _fail,
-    noteHarnessError: () => _error = 'the harness reported an error',
+    noteHarnessError: (why) => _error =
+        why ?? 'the harness reported an error',
     noteReplyText: _hide.noteReplyText,
     noteUnheardSay: _hide.noteUnheardSay,
     noteSpoken: (s) => _lastSpoken = s,
