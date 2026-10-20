@@ -33,34 +33,39 @@ class _AssistantScreenState extends State<AssistantScreen>
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
-  int _seenChatVersion = 0; // drives auto-follow while chat grows
-  // +187: while this deadline is live the follow re-pins EVERY frame
-  // (see _followTick) — an entrance is opening and the bottom edge is
-  // moving under the pin.
-  DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
-
-  /// +190: a finger DOWN on the channel outranks the follow for the
-  // whole window — tracked by pointer, not by activity: DrivenScroll-
-  // Activity (what animateTo drives) also reports isScrolling, so the
-  // +187 guard made the glide's own existence a reason to skip its
-  // next re-pin, every glide aimed at a stale extent, and the last one
-  // died short of a tail still growing (field: 'it scrolls up and I
-  // can't see anything until I scroll down — by then the animation is
-  // done').
+  /// +190: a finger DOWN on the channel outranks the follow — tracked
+  /// by pointer, not by activity: DrivenScrollActivity (what animateTo
+  /// drives) also reports isScrolling, so the +187 guard made the
+  /// glide's own existence a reason to skip its next re-pin, every
+  /// glide aimed stale, and the last died short of a tail still
+  /// growing (field, twice: 'I think I see the scroll bug again').
   bool _userTouch = false;
 
+  /// The extent as of the previous tick — what 'was at the tail' is
+  /// measured against, so one frame of growth can never fool it.
+  double _lastMax = -1;
+
+  /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
+  /// events: every frame, if the view was resting at the tail (within
+  /// 2 px of last frame's maximum) it re-pins — so ANY growth below
+  /// the fold keeps the newest bubble in view, whatever its cause:
+  /// entrances opening, the recording panel collapsing, a band
+  /// reflowing, the keyboard stealing height. Away from the tail the
+  /// reader's position is sacred: re-reading history now survives
+  /// every new event, and the follow returns the moment the hand
+  /// brings the view back to the bottom. +190's event window relapsed
+  /// because it only knew about LOG growth; the layout itself grows
+  /// too, and layout does not file events.
   void _followTick() {
-    if (!mounted || !_scroll.hasClients) return;
-    final pos = _scroll.position;
-    // +190: jumpTo per frame, not animateTo. jumpTo answers to nobody
-    // and never aims stale — each frame takes the extent the content
-    // has reached RIGHT NOW, so the per-frame delta is exactly the
-    // slice the entrance animation grew this frame, and the motion is
-    // as smooth as the growth itself. The finger outranks the follow.
-    if (!_userTouch && pos.pixels < pos.maxScrollExtent) {
-      pos.jumpTo(pos.maxScrollExtent);
+    if (mounted && _scroll.hasClients) {
+      final pos = _scroll.position;
+      if (!_userTouch &&
+          (_lastMax < 0 || pos.pixels >= _lastMax - 2.0)) {
+        pos.jumpTo(pos.maxScrollExtent);
+      }
+      _lastMax = pos.maxScrollExtent;
     }
-    if (DateTime.now().isBefore(_followUntil)) {
+    if (mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
     }
   }
@@ -69,6 +74,9 @@ class _AssistantScreenState extends State<AssistantScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // +192: the sticky-bottom follow — one loop for the life of the
+    // screen, re-pinning frames, not events.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
     _assistant
       ..addListener(() => setState(() {}))
       ..init();
@@ -122,34 +130,18 @@ class _AssistantScreenState extends State<AssistantScreen>
     final v = a.view;
     final scheme = Theme.of(context).colorScheme;
 
-    // Auto-follow the conversation: when the log grows (new bubble or a
-    // new spoken section), pin the scroll to the bottom (post-frame: the
-    // new height exists only after layout). A deliberate scroll-up to
-    // re-read history stops the follow until the next stream event.
+    // +192: the auto-follow is no longer an event hook at all — the
+    // sticky-bottom loop (_followTick, started in initState) answers
+    // to the LAYOUT every frame, which is the only honest witness of
+    // how tall the conversation has become. The old event-gated pin
+    // relapsed twice for the same reason: growth that comes from
+    // anywhere but the log itself (panel collapse, band reflow, the
+    // keyboard) files no event, and a view pinned against yesterday's
+    // extent shows the newest bubble below the fold — where the
+    // animation plays for nobody. jumpTo on maxScrollExtent is always
+    // in range; the tail's own presence is now what decides to follow,
+    // and a scroll-up to re-read holds until the hand returns.
     //
-    // The pin is unconditional. It used to skip when the position read
-    // as outOfRange — but out-of-range is precisely the case whose tail
-    // it owed: the viewport shrinking under a settled bubble (keyboard
-    // animating in, the status line or metrics row growing a line)
-    // lowers maxScrollExtent below the current offset, leaving the
-    // bottom of the newest message cut off with no further events left
-    // to re-pin it, and the user scrolling by hand. jumpTo on
-    // maxScrollExtent is always in range, and the chatVersion gate
-    // above is what honors a scroll-up to re-read: no event, no pin.
-    if (v.chatVersion != _seenChatVersion) {
-      _seenChatVersion = v.chatVersion;
-      // +187: the follow is a WINDOW, not a moment. Entrances now
-      // animate their layout height, so maxScrollExtent grows during
-      // the 240 ms a bubble or segment opens — a single post-frame
-      // jump would pin the position the content had NOT yet reached
-      // and leave the newest line's bottom cut off. Re-pin every
-      // frame through the entrance window; each frame's delta is a
-      // couple of pixels, which reads as the tail gliding into view
-      // rather than being yanked.
-      _followUntil = DateTime.now().add(const Duration(milliseconds: 300));
-      WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
-    }
-
     // +151: the working line rides NO bubble — it owns the channel's
     // bottom row (WorkingRowCard, below), so the flow shows only what
     // has been said. Empty assistant entries (a turn still thinking, a
