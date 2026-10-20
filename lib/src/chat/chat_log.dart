@@ -13,6 +13,7 @@ class ChatEntry {
     this.queued = false,
     this.interrupted = false,
     this.cancelled = false,
+    this.receipt = false,
     this.createdMs = 0,
   }) : blocks = blocks ?? <String>[];
 
@@ -21,15 +22,19 @@ class ChatEntry {
     this.queued = false,
     this.interrupted = false,
     this.cancelled = false,
+    this.receipt = false,
     this.createdMs = 0,
   }) : fromUser = true,
        blocks = [text];
 
-  ChatEntry.assistant({this.createdMs = 0, this.cancelled = false})
-    : fromUser = false,
-      blocks = <String>[],
-      queued = false,
-      interrupted = false;
+  ChatEntry.assistant({
+    this.createdMs = 0,
+    this.cancelled = false,
+    this.receipt = false,
+  }) : fromUser = false,
+       blocks = <String>[],
+       queued = false,
+       interrupted = false;
 
   /// A file the bridge delivered (POST /send relayed as a `file`
   /// frame): a RECEIPT of bytes on the desktop, not prose — the
@@ -45,7 +50,8 @@ class ChatEntry {
        blocks = <String>[],
        queued = false,
        interrupted = false,
-       cancelled = false;
+       cancelled = false,
+       receipt = false;
 
   final bool fromUser;
   final List<String> blocks;
@@ -94,6 +100,16 @@ class ChatEntry {
   /// survives a reload.
   bool cancelled;
 
+  /// +184: the receipt law widened to EVERY tool-finish note. +168
+  /// dressed only the CANCELLED receipt distinct; the field tape shows
+  /// the happy 'X finished.' note arriving in ordinary chat-bubble
+  /// clothes, and two of them in a row read like spoken prose the agent
+  /// never said. A receipt now means receipt: outline card, italic
+  /// line, small status glyph. [cancelled] picks the ink — warning for
+  /// the cut, calm outline ink for the completed. History, not
+  /// machinery: survives a reload like every flag here.
+  bool receipt;
+
   // ── The file bubble (set only when isFile) ─────────────────────────────
   bool get isFile => filePath.isNotEmpty;
   String fileName = '';
@@ -126,6 +142,7 @@ class ChatEntry {
     if (queued) 'queued': true,
     if (interrupted) 'interrupted': true,
     if (cancelled) 'cancelled': true,
+    if (receipt) 'receipt': true,
     if (isFile)
       'file': {'name': fileName, 'path': filePath, 'size': fileSize},
     if (savedMs != 0) 'saved': savedMs,
@@ -148,6 +165,7 @@ class ChatEntry {
         ],
         interrupted: j['interrupted'] == true,
         cancelled: j['cancelled'] == true,
+        receipt: j['receipt'] == true,
         createdMs: ms(j['t']) ?? 0,
       )
       ..pickedUpMs = ms(j['pickedUp']) ?? 0

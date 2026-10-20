@@ -198,6 +198,39 @@ void main() {
       expect(seg(1), 1.0);
     });
 
+    testWidgets('a finish receipt wears the outline, not the reply card '
+        '(+184: receipts are receipts, finished included)', (tester) async {
+      final entry = ChatEntry.assistant(createdMs: 1, receipt: true)
+        ..blocks.add('Bash sleep 10 finished.');
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final card = tester.widget<Card>(find.byType(Card));
+      expect(card.color, Colors.transparent,
+          reason: 'no secondaryContainer fill — it is not a spoken reply');
+      expect(card.shape, isA<RoundedRectangleBorder>(),
+          reason: 'the outline card law of +168, widened');
+      expect(find.byIcon(Icons.check_circle_outline), findsOne);
+      expect(find.text('Bash sleep 10 finished.'), findsOne);
+    });
+
+    testWidgets('a cancelled receipt keeps the warning ink and the pan '
+        '(+168 law untouched, glyph added)', (tester) async {
+      final entry = ChatEntry.assistant(createdMs: 1, cancelled: true)
+        ..blocks.add('Bash sleep 60 cancelled.');
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.pan_tool_outlined), findsOne);
+      expect(find.text('Bash sleep 60 cancelled.'), findsOne);
+    });
+
     testWidgets('a file bubble renders the slip AND its tap receives '
         '(the field report: tap to receive did nothing — SelectableText '
         'was eating it)', (tester) async {

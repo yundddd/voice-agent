@@ -56,16 +56,30 @@ void main() {
   });
 
   test('+168: a cancelled receipt stamp survives a reload too', () {
-    final note = ChatEntry.assistant(cancelled: true)
+    final note = ChatEntry.assistant(cancelled: true, receipt: true)
       ..blocks.add('Bash sleep 10 cancelled.');
     final json = encodeChatLog([note]);
     expect(json.contains('"cancelled":true'), isTrue);
     final back = decodeChatLog(json);
     expect(back.single.cancelled, isTrue); // the receipt stays a receipt
+    expect(back.single.receipt, isTrue);
+  });
+
+  test('+184: a COMPLETED receipt carries its stamp too — the field '
+      'tape showed two happy "finished." notes arriving in plain prose '
+      'clothes', () {
+    final json = encodeChatLog([
+      ChatEntry.assistant(receipt: true)..blocks.add('Bash x finished.'),
+    ]);
+    expect(json.contains('"receipt":true'), isTrue);
+    final back = decodeChatLog(json);
+    expect(back.single.receipt, isTrue, reason: 'history, not machinery');
+    expect(back.single.cancelled, isFalse,
+        reason: 'finished is not cancelled — the ink says which');
     expect(
-      encodeChatLog([ChatEntry.assistant()..blocks.add('Bash x finished.')]),
-      isNot(contains('cancelled')),
-      reason: 'a completed receipt carries nothing — plain prose',
+      encodeChatLog([ChatEntry.assistant()..blocks.add('spoken prose')]),
+      isNot(contains('receipt')),
+      reason: 'an ordinary reply bubble carries nothing',
     );
   });
 

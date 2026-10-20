@@ -62,6 +62,15 @@ class ChatBubble extends StatelessWidget {
           ? entry.deliveredMs
           : entry.createdMs,
     );
+    // +184 (widening +168): a receipt is a receipt — the outline card,
+    // the italic line, the small status glyph. +168 dressed only the
+    // CUT receipt distinct; the field tape shows two happy 'X finished.'
+    // notes arriving in ordinary reply clothes, reading like prose the
+    // agent never spoke. [cancelled] still picks the ink — warning for
+    // the cut, calm outline ink for the completed — and the glyph says
+    // which at a glance.
+    final isReceipt = entry.receipt || entry.cancelled;
+    final receiptInk = entry.cancelled ? scheme.error : scheme.onSurfaceVariant;
     return LayoutBuilder(
       builder: (context, constraints) => Row(
         children: [
@@ -98,11 +107,12 @@ class ChatBubble extends StatelessWidget {
                     child: Card(
                       color: entry.fromUser
                           ? scheme.primaryContainer
-                          // +168: a cancelled background receipt is an
-                          // acknowledgement, not prose — outline card,
-                          // warning ink. It never dresses in the clothes
+                          // +168/+184: a receipt is an acknowledgement,
+                          // not prose — outline card, ink by outcome
+                          // (warning for the cut, quiet for the
+                          // completed). It never dresses in the clothes
                           // of a spoken reply.
-                          : entry.cancelled
+                          : isReceipt
                           ? Colors.transparent
                           // A relayed file is NEITHER prose nor receipt:
                           // its own surface, outlined in the tertiary
@@ -110,11 +120,11 @@ class ChatBubble extends StatelessWidget {
                           : entry.isFile
                           ? scheme.surfaceContainerHighest
                           : scheme.secondaryContainer,
-                      shape: entry.cancelled
+                      shape: isReceipt
                           ? RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                               side: BorderSide(
-                                color: scheme.error.withValues(alpha: 0.6),
+                                color: receiptInk.withValues(alpha: 0.6),
                               ),
                             )
                           : entry.isFile
@@ -208,23 +218,46 @@ class ChatBubble extends StatelessWidget {
                                           CrossAxisAlignment.start,
                                       children: [
                                         if (i > 0) const Divider(height: 24),
-                                        SelectableText(
-                                          s,
-                                          // +168: receipt italic in warning
-                                          // ink (see the outline card).
-                                          style: entry.cancelled
-                                              ? Theme.of(context)
-                                                    .textTheme
-                                                    .bodyMedium
-                                                    ?.copyWith(
-                                                      fontStyle:
-                                                          FontStyle.italic,
-                                                      color: scheme.error,
-                                                    )
-                                              : Theme.of(
-                                                  context,
-                                                ).textTheme.bodyLarge,
-                                        ),
+                                        // +184: the receipt line — italic
+                                        // in its outcome's ink, led by
+                                        // the glyph that says which at a
+                                        // glance (check for finished, the
+                                        // same pan the interrupted stamp
+                                        // uses for cancelled).
+                                        if (isReceipt)
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                entry.cancelled
+                                                    ? Icons.pan_tool_outlined
+                                                    : Icons
+                                                          .check_circle_outline,
+                                                size: 14,
+                                                color: receiptInk,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Expanded(
+                                                child: SelectableText(
+                                                  s,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                        fontStyle:
+                                                            FontStyle.italic,
+                                                        color: receiptInk,
+                                                      ),
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        else
+                                          SelectableText(
+                                            s,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodyLarge,
+                                          ),
                                       ],
                                     ),
                                   ),

@@ -122,7 +122,7 @@ class ChatStore {
   /// later still gets its own fresh card (a text ledger would swallow
   /// every second tool-cut with the same wording — the lesson v2 took
   /// to heart: TEXT is never an identity).
-  void addSystemNote(String text, {bool cancelled = false}) {
+  void addSystemNote(String text, {bool cancelled = false, bool receipt = false}) {
     if (_entries.isNotEmpty) {
       final last = _entries.last;
       if (!last.fromUser &&
@@ -133,10 +133,15 @@ class ChatStore {
     }
     // +168: a cancelled receipt is a RECEIPT — flagged for the outline
     // style, so the acknowledgement of a cut never dresses in the
-    // clothes of spoken prose.
+    // clothes of spoken prose. +184: EVERY tool-finish note gets the
+    // same courtesy — the happy 'X finished.' line was still wearing
+    // the reply card.
     _entries.add(
-      ChatEntry.assistant(createdMs: _nowMs(), cancelled: cancelled)
-        ..blocks.add(text),
+      ChatEntry.assistant(
+        createdMs: _nowMs(),
+        cancelled: cancelled,
+        receipt: receipt,
+      )..blocks.add(text),
     );
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
