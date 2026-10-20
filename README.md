@@ -640,6 +640,17 @@ switch to the other one — each harness keeps its own conversation, so
 flipping is a step sideways, and flipping back resumes. The switch
 rests while a turn is open (a flip is an honest `/new` for whoever holds
 the seat) and lies dead on pre-switch bridges.
+**Transient failure is progress, not silence (+221):** when the
+harness's API call fails and it backs off — a claude `api_retry`
+system frame or an opencode failed step — the phone gets a `retry`
+tool step naming the status and the attempt ('429: rate limited ·
+attempt 2/5 in 1200ms'); a blipped opencode event bus says `wire ·
+reconnecting` (the replay + dedup belt makes the 'drop' lose nothing).
+Under Narrate these are spoken; otherwise they rewrite the spinner
+line, which beats a frozen counter through a rate-limit storm. The
+QUIET heartbeat (no deltas from upstream) and the failed-turn card
+(+220) close the spectrum: silent-but-alive, retrying, and refused
+each say their own piece.
 **The model picker (+216, +218):** the Bridge screen's Model row shows
 the current model (from `/health`) and opens a menu (`GET /models`) —
 claude's list is the operator's `--model(s)` config (the CLI has no

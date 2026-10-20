@@ -164,8 +164,25 @@ const server = http.createServer(async (req, res) => {
     }
     note(`prompt ${j.text}`);
     const gen = ++turnSeq;
+    // +221: STUB_OC_DROP=1 blips the SSE link mid-turn (one subscriber
+    // destroyed). The bridge's reconnect + ring replay + id-dedup must
+    // hand the phone a WHOLE turn anyway — say once, done clean.
+    if (process.env.STUB_OC_DROP === '1' && subs.size) {
+      setTimeout(() => {
+        const s = [...subs][0];
+        subs.delete(s);
+        try { s.destroy(); } catch {}
+      }, stepMs * 2);
+    }
     let t = 0;
     const at = () => (t += stepMs);
+    // +221: STUB_OC_RETRY=1 fails the first step, then runs the turn
+    // as if the service backed off and dialed again — the shape a
+    // transient upstream error actually takes on the bus.
+    if (process.env.STUB_OC_RETRY === '1') {
+      push('session.step.failed', { error: { type: 'provider.rate',
+        message: 'Too many requests.', status: 429 } }, at());
+    }
     push('session.step.started',
       { model: { providerID: curModel.split('/')[0],
                  id: curModel.split('/').slice(1).join('/') } }, at());

@@ -361,3 +361,65 @@ test('+219 a failed turn carries the provider\u2019s reason to the phone', async
       (await health(w.port)).turnOpen === false);
   } finally { w.stop(); }
 });
+
+// ── +221: transient failures speak ───────────────────────────────────
+test('a claude api_retry surfaces as retry progress, not a frozen spinner', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'oc-dir-'));
+  writeFileSync(join(home, 'stub.log'), '');
+  const port = PORT + 93;
+  const bridge = spawn(process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--token', TOKEN,
+      '--port', String(port), '--dir', dir,
+      '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, HOME: home, STUB_LOG: join(home, 'stub.log'),
+      STUB_RETRY: '1', STUB_RESULT_MS: '900' } });
+  bridge.stderr.resume();
+  try {
+    await until('bridge up', async () => {
+      try { return (await health(port)).ok; } catch { return false; }
+    });
+    const a = await call(port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'go' });
+    await until('done', async () => a.text.includes('event: done'));
+    assert.ok(a.text.includes('"name":"retry"'),
+      'the api_retry frame never reached the wire');
+    assert.ok(a.text.includes('429') && a.text.includes('attempt 2/5'),
+      'the retry frame said nothing about why or how far');
+    assert.ok(!a.text.includes('"isError":true'),
+      'a recovered retry must not poison the done');
+  } finally { bridge.kill(); }
+});
+
+test('an opencode step failure says RETRYING while the turn lives', async () => {
+  const w = await world({ stubEnv: { STUB_OC_RETRY: '1' } });
+  try {
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'go' });
+    await until('done', async () => a.text.includes('event: done'));
+    assert.ok(a.text.includes('"name":"retry"') &&
+      a.text.includes('Too many requests.'),
+      'the failed step stayed between the service and the bridge');
+    assert.ok(!a.text.includes('"isError":true'),
+      'the turn recovered — the done stays clean');
+    assert.ok(a.text.includes('The stub sees you.'),
+      'a retried turn must still deliver its answer');
+  } finally { w.stop(); }
+});
+
+test('a dropped event bus mid-turn says reconnecting and loses nothing', async () => {
+  const w = await world({ stubEnv: { STUB_OC_DROP: '1', STUB_OC_MS: '200' } });
+  try {
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'go' });
+    await until('done', async () => a.text.includes('event: done'), 8000);
+    assert.ok(a.text.includes('reconnecting'),
+      'the phone deserved to know the wire blipped');
+    // The ring replay + id-dedup belt: the answer survives the drop
+    // EXACTLY once (the replay of a spoken delta must not re-speak).
+    const said = a.text.split('\n')
+      .filter((l) => l.startsWith('data: {"text":"The stub sees you."'))
+      .length;
+    assert.equal(said, 1, 'the dropped-and-replayed turn spoke twice');
+  } finally { w.stop(); }
+});

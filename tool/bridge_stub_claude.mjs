@@ -193,6 +193,16 @@ process.stdin.on('data', (b) => {
     appendFileSync(log, text + '\n');
     const gen = ++turnSeq;
     openToolId = null;
+    // +221: STUB_RETRY=1 re-enacts a rate-limited API call: the CLI's
+    // own system/api_retry frame before the answer, so the bridge's
+    // relay ('retry' tool progress) is testable end to end.
+    if (process.env.STUB_RETRY === '1') {
+      setTimeout(() => out({
+        type: 'system', subtype: 'api_retry',
+        attempt: 2, max_retries: 5, retry_delay_ms: 1200,
+        error_status: 429, error: 'rate limited',
+      }), Math.max(10, delay >> 2));
+    }
     if (toolCmd) {
       setTimeout(() => {
         if (gen !== turnSeq) return;

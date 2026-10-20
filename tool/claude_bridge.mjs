@@ -8,7 +8,13 @@
 //
 // Endpoints (all except /health require ?token=):
 //   POST /talk   body: plain text utterance -> SSE stream of voice events
-//                (event: say / tool / progress / done / error). A turn
+//                (event: say / tool / progress / done / error).
+//                Transient harness pain is its own tool vocabulary
+//                (+221): {name:'retry'} (a failed API call / step the
+//                harness is backing off and re-dialing — claude's own
+//                api_retry system frames and opencode's step.failed
+//                both speak it) and {name:'wire'} (the opencode event
+//                bus blipped; reconnect + replay loses nothing). A turn
 //                that ENDED FAILED closes with done {isError:true,
 //                error} — +219: the harness's own reason rides the
 //                frame (a provider 403 that only lived in the bridge's
@@ -1136,6 +1142,17 @@ function ocTranslate(j) {
     console.error(`  [oc] auto-approving permission ${reqID}`);
     ocReq(`/api/session/${oc.sid}/permission/${reqID}/reply`,
       { decision: 'always' }).catch(() => {});
+  } else if (t === 'session.step.failed') {
+    // +221: a failed STEP while the turn still lives is the harness
+    // breathing between attempts — say so, in the same retry frame
+    // the claude CLI's own api_retry system event earns. If this
+    // failure IS the turn's last word, the execution.failed result
+    // follows and the +220 card files the verdict; until then the
+    // spinner at least knows why it spins.
+    const e = d.error ?? {};
+    ocEmit({ type: 'system', subtype: 'api_retry',
+      error_status: e.type ?? 'step.failed',
+      error: typeof e.message === 'string' ? e.message : '' });
   } else if (t === 'session.model.selected') {
     // +219: the service CONFIRMS a model change on its own bus — the
     // picker's optimistic current goes proven at the moment of the
@@ -1156,7 +1173,7 @@ function ocTranslate(j) {
   } else if (t.startsWith('session.') && !t.startsWith('session.inbox.')
              && !['session.created', 'session.step.streamed',
                   'session.tool.input.ended',
-                  'session.tool.progress', 'session.step.failed',
+                  'session.tool.progress',
                   'session.instructions.updated', 'session.execution.started',
                   'session.updated'].includes(t)) {
     // Name the gaps once each, not once each per frame: the tape should
@@ -1271,10 +1288,20 @@ async function ocListen(gen) {
       }
     } catch (e) {
       if (oc.disposed || gen !== oc.gen) return;
-      // First drop while a turn is open gets one loud line; after that
-      // the retries are quiet (the heartbeat frames already tell the
-      // phone the truth: quiet, not lost).
-      if (backoff === 500) console.error('  [oc] event stream dropped: ' + e);
+      // First drop while a turn is open gets one loud line — and
+      // +221: while a turn is OPEN the phone is hearing that line too
+      // (the service replays the tail on reconnect, so the words are
+      // 'reconnecting', truthfully, not 'lost'). After the first the
+      // retries are quiet; the heartbeat already says quiet-not-gone.
+      if (backoff === 500) {
+        console.error('  [oc] event stream dropped: ' + e);
+        if (turnOpen) {
+          relay('tool', {
+            name: 'wire',
+            detail: 'harness event stream dropped — reconnecting',
+          });
+        }
+      }
       await new Promise(r => setTimeout(r, backoff));
       backoff = Math.min(8000, backoff * 2);
     }
@@ -1877,6 +1904,32 @@ function handleEvent(line) {
         relay('tool', {
           name: 'compact',
           detail: 'condensed conversation summary',
+        });
+      } else if (m.subtype === 'api_retry' ||
+                 m.subtype === 'api_retry_after_too_long') {
+        // +221: the CLI SAYS when an API call fails and it backs off —
+        // a system frame most bridges swallow, leaving the phone's
+        // spinner frozen through a rate-limit storm. Relay it: the
+        // retry attempt is progress, and under Narrate the ear hears
+        // it too ('thinking · retry: 429, attempt 2 of 5' beats
+        // silence-then-answer two minutes late). The opencode adapter
+        // translates session.step.failed INTO this same frame, so the
+        // phone learns one shape for 'the harness is retrying'.
+        const give = m.subtype === 'api_retry_after_too_long';
+        const why = typeof m.error === 'string' ? m.error
+          : (m.error && m.error.message) || '';
+        const bits = [`${m.error_status ?? 'upstream error'}` +
+          (why ? ': ' + String(why).slice(0, 120) : '')];
+        if (m.attempt != null) {
+          bits.push(`attempt ${m.attempt}/${m.max_retries ?? '?'} ` +
+            `in ${m.retry_delay_ms ?? '?'}ms`);
+        }
+        console.error('  -> tool retry' + (give ? ' (gave up)' : ''));
+        relay('tool', {
+          name: 'retry',
+          detail: give
+            ? 'upstream slow — retry deferred too long, failing the call'
+            : bits.join(' · '),
         });
       }
       break;
