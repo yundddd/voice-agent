@@ -1591,8 +1591,21 @@ class VoiceAssistant extends ChangeNotifier {
     markSpeaking: () => _phase = AssistantPhase.speaking,
     idleReady: _idleReady,
     fail: _fail,
-    noteHarnessError: (why) => _error =
-        why ?? 'the harness reported an error',
+    // +219 showed the provider's words to the STATUS LINE — and Tim's
+    // eye, on the CHAT WINDOW, still saw nothing: an assistant bubble
+    // that never spoke is hidden by design, and the caption row is
+    // not history. +110 already has the law for turn verdicts: the
+    // verdict gets its OWN card. The error-done now files one — the
+    // provider's own sentence (the bridge's words when an old wire
+    // sent only the flag), in the receipt outline (+184: a receipt
+    // reads as a receipt, not as prose the agent said), stamped with
+    // the era that heard it, so each thread keeps its own failures.
+    // Adjacency-idempotent like every note: a replay of one error-done
+    // files one card.
+    noteHarnessError: (why) {
+      _chat.addSystemNote(
+        _error = why ?? 'the harness reported an error', receipt: true);
+    },
     noteReplyText: _hide.noteReplyText,
     noteUnheardSay: _hide.noteUnheardSay,
     noteSpoken: (s) => _lastSpoken = s,

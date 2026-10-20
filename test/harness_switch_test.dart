@@ -523,7 +523,51 @@ void modelPickerTests() {
           reason: 'a REFUSED pick does not rewrite the memory');
     });
 
-    test('+218 memory is per era: claude remembers its alias, opencode '
+    test('+220: an error-done files its reason as a card in the '
+        'channel, era-stamped — the status line is not history', () async {
+      harness.healthState = <String, Object?>{
+        'ok': true, 'claudeUp': true, 'harness': 'opencode',
+        'dir': '/x', 'model': null,
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      unawaited(a.runQuickCommand('answer me', bubble: 'answer me'));
+      await settle();
+      // The provider refuses the picked model — +219's frame, end to end.
+      harness.emit(BridgeEvent.forTest('done',
+          isError: true, text: 'Access to model denied.'));
+      await settle();
+      final card = a.chat.where((e) => e.receipt).toList();
+      expect(card, hasLength(1));
+      expect(card.single.blocks.single, 'Access to model denied.',
+          reason: 'the chat window must say WHAT happened — the caption '
+              'row flickers and forgets');
+      expect(card.single.harness, 'opencode',
+          reason: 'the failure belongs to the era that heard it');
+      expect(card.single.fromUser, isFalse);
+      // And the bubble the dead turn opened leaves no corpse: an
+      // empty shell is swept at the done, the CARD is the verdict.
+      expect(a.chat.where((e) => !e.fromUser && e.blocks.isEmpty), isEmpty,
+          reason: 'no ghost bubble beside the card');
+    });
+
+    test('+220: a flag-only error-done (old bridge) still files a card '
+        'with the bridge\u2019s own words', () async {
+      harness.healthState = <String, Object?>{
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'model': 'default',
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      unawaited(a.runQuickCommand('go', bubble: 'go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done', isError: true));
+      await settle();
+      expect(a.chat.any((e) => e.receipt &&
+          e.blocks.contains('the harness reported an error')), isTrue);
+    });
+
+        test('+218 memory is per era: claude remembers its alias, opencode '
         'its provider path', () async {
       harness.healthState = {
         'ok': true, 'claudeUp': true, 'harness': 'claude',
