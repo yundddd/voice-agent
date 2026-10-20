@@ -214,6 +214,38 @@ void main() {
     });
   });
 
+  group('the bubble key rides the Column child (+197)', () {
+    // The chat list pairs its children POSITIONALLY (a plain Column):
+    // with the 80-entry cap live, every arrival evicts the oldest and
+    // shifts the whole list one slot — so the identity key MUST be on
+    // the Padding the Column sees. +175 had it on the FadeInBubble one
+    // level down, the cap turned the pairing into a mass re-mount, and
+    // every send replayed all eighty entrances at once (the scroll bug
+    // the field reported four times). Pinned at the source: the screen
+    // builds the wrapper, and no device harness reaches this layout.
+    final ui = File(
+      'lib/src/ui/assistant_screen.dart',
+    ).readAsStringSync();
+    test('ObjectKey(e) keys the Padding, not the FadeInBubble', () {
+      final at = ui.indexOf('key: ObjectKey(e),');
+      expect(at, greaterThan(-1), reason: 'the key exists');
+      // Between the key and the entrance wrapper: the padding argument
+      // and comments (this file narrates) — but no CHILD, which would
+      // mean the key drifted below the widget the Column pairs.
+      final between = ui.substring(
+        at + 'key: ObjectKey(e),'.length,
+        ui.indexOf('FadeInBubble(', at),
+      );
+      expect(between, isNot(contains('child:')), reason: 'key BEFORE child');
+      // The old shape (key inside FadeInBubble) must be gone.
+      expect(
+        RegExp(r'FadeInBubble\(\s*(//[^\n]*\n\s*)*key:\s*ObjectKey\(e\)')
+            .hasMatch(ui),
+        isFalse,
+      );
+    });
+  });
+
   group('event parsing (0.1.0+81/+84: started and settled frames)', () {
     test('started marker parses as a tool event with the prompt detail', () {
       final ev = BridgeEvent.parse(

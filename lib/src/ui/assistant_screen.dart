@@ -370,18 +370,33 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     // bubble.
                                     e.isFile)
                                   Padding(
+                                    // +197: the key LIVES HERE, on the
+                                    // Column's actual child. The
+                                    // ObjectKey used to sit on the
+                                    // FadeInBubble one level DOWN —
+                                    // invisible to the Column, which
+                                    // pairs children by POSITION: the
+                                    // moment the 80-entry cap evicts
+                                    // the oldest bubble, every entry
+                                    // shifts one slot, the position
+                                    // pairing hands each old Padding a
+                                    // new entry, the inner key mismatch
+                                    // re-mounts every State, and all
+                                    // eighty bubbles replay their
+                                    // entrance at once — the collapse-
+                                    // and-regrow the scroll telemetry
+                                    // caught (n 80, content −4600 and
+                                    // back) and the field felt as the
+                                    // scrolling bug every send since
+                                    // the log filled up.
+                                    key: ObjectKey(e),
                                     padding: const EdgeInsets.symmetric(
                                       vertical: 4,
                                     ),
-                                    // ObjectKey = the entry's identity:
-                                    // the fade fires once per bubble, not
-                                    // on every streamed section added to
-                                    // an open one.
                                     // A whole bubble opening is also a
                                     // height arrival (+187): grow with
                                     // the same ease the segments use.
                                     child: FadeInBubble(
-                                      key: ObjectKey(e),
                                       grow: true,
                                       child: ChatBubble(
                                         entry: e,
