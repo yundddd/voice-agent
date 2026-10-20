@@ -185,25 +185,49 @@ class ChatBubble extends StatelessWidget {
                           : Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                for (final (i, s) in entry.blocks.indexed) ...[
-                                  if (i > 0) const Divider(height: 24),
-                                  SelectableText(
-                                    s,
-                                    // +168: receipt italic in warning
-                                    // ink (see the outline card).
-                                    style: entry.cancelled
-                                        ? Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                fontStyle: FontStyle.italic,
-                                                color: scheme.error,
-                                              )
-                                        : Theme.of(
-                                            context,
-                                          ).textTheme.bodyLarge,
+                                // One [FadeInBubble] PER SEGMENT, keyed
+                                // by position (+181): the bubble's own
+                                // entrance (+175) fades the whole card
+                                // once, but the blocks stream in AFTER
+                                // that — and un-wrapped they popped at
+                                // full opacity beside settled text, the
+                                // segment-level flicker this ends. Keyed
+                                // by index, an
+                                // append can only animate the NEW tail:
+                                // every already-spoken segment keeps its
+                                // completed state and never re-fades. At
+                                // boot the whole row of wrappers mounts
+                                // on the bubble's first frame — one
+                                // group, one settle, as the restored
+                                // log always arrived.
+                                for (final (i, s) in entry.blocks.indexed)
+                                  FadeInBubble(
+                                    key: ValueKey(i),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (i > 0) const Divider(height: 24),
+                                        SelectableText(
+                                          s,
+                                          // +168: receipt italic in warning
+                                          // ink (see the outline card).
+                                          style: entry.cancelled
+                                              ? Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      fontStyle:
+                                                          FontStyle.italic,
+                                                      color: scheme.error,
+                                                    )
+                                              : Theme.of(
+                                                  context,
+                                                ).textTheme.bodyLarge,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ],
                                 if (entry.interrupted) ...[
                                   // +108: a cut turn says so — the
                                   // sections above it are what the speaker

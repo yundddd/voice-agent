@@ -159,6 +159,45 @@ void main() {
       expect(find.textContaining('interrupted'), findsOne);
     });
 
+    testWidgets('a newly streamed segment eases in while the spoken one '
+        'holds still — the segment-level flicker +181 ends', (tester) async {
+      final entry = ChatEntry.assistant(createdMs: 1)
+        ..blocks.add('First spoken section.');
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+        ),
+      );
+      await tester.pumpAndSettle(); // the birth fade of the one segment lands
+      double seg(int i) => tester
+          .widget<FadeTransition>(
+            find
+                .descendant(
+                  of: find.byKey(ValueKey(i)),
+                  matching: find.byType(FadeTransition),
+                )
+                .first,
+          )
+          .opacity
+          .value;
+      expect(seg(0), 1.0);
+      // The second spoken paragraph arrives at the open bubble: the new
+      // tail rides its own one-shot ease; the already-heard segment
+      // must NOT replay its entrance (that replay was the flicker).
+      entry.blocks.add('Second spoken section.');
+      await tester.pumpWidget(
+        _host(
+          ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(seg(0), 1.0, reason: 'settled text never re-fades');
+      expect(seg(1), lessThan(1.0), reason: 'the new segment eases in');
+      await tester.pumpAndSettle();
+      expect(seg(0), 1.0);
+      expect(seg(1), 1.0);
+    });
+
     testWidgets('a file bubble renders the slip AND its tap receives '
         '(the field report: tap to receive did nothing — SelectableText '
         'was eating it)', (tester) async {
