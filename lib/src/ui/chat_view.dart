@@ -682,13 +682,16 @@ class _FileBody extends StatelessWidget {
   }
 }
 
-/// New bubbles FADE and RISE into the channel (field dictate: they used
-/// to just flicker onto the screen). One-shot by construction: the
-/// animation belongs to the element's first build, so an already-open
-/// bubble that merely grows a streamed section never re-animates —
-/// give each entry a stable ObjectKey and only genuinely-new cards
-/// slide in. A boot-reload fades the restored log in as a group, which
-/// reads as the screen settling, not strobing.
+/// New bubbles RISE into the channel (field dictate: they used to just
+/// flicker onto the screen). One-shot by construction: the animation
+/// belongs to the element's first build, so an already-open bubble
+/// that merely grows a streamed section never re-animates — give each
+/// entry a stable ObjectKey and only genuinely-new cards rise in.
+/// Since +208 the CHANNEL entrance is height-only (no opacity — the
+/// compositing it needs costs a layer upload and a dropped frame per
+/// arrival); the fade survives only for plain (grow: false) uses,
+/// where the boot-reload settle of the restored log as a group reads
+/// as the screen settling, not strobing.
 class FadeInBubble extends StatefulWidget {
   const FadeInBubble({super.key, required this.child, this.grow = false});
 
@@ -728,6 +731,26 @@ class _FadeInBubbleState extends State<FadeInBubble>
   @override
   Widget build(BuildContext context) {
     final t = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    if (widget.grow) {
+      // +208: height alone. The ink-fade (with its 6-per-cent slide)
+      // was the one reason an arriving card needs a COMPOSITED layer:
+      // animating opacity saves the child out, and that layer's first
+      // upload to the GPU is the fifty-millisecond hitch the frame
+      // bill found in every entrance — the last blemish on an
+      // otherwise sixty-frame glide. Height by itself (clip and
+      // SizeTransition) re-rasters only the opening band and uploads
+      // nothing new: the travelling bottom edge does the entire
+      // storytelling, and the hitch leaves with the fade that caused
+      // it. Top-anchored, so lines above never move — only the card
+      // opens downward.
+      return ClipRect(
+        child: SizeTransition(
+          sizeFactor: t,
+          alignment: const Alignment(0, -1),
+          child: widget.child,
+        ),
+      );
+    }
     Widget w = FadeTransition(
       opacity: t,
       child: SlideTransition(
@@ -738,17 +761,8 @@ class _FadeInBubbleState extends State<FadeInBubble>
         child: widget.child,
       ),
     );
-    if (widget.grow) {
-      // Top-anchored: the bottom edge travels, so lines above the new
-      // segment never move — only the card opens downward.
-      w = ClipRect(
-        child: SizeTransition(
-          sizeFactor: t,
-          alignment: const Alignment(0, -1),
-          child: w,
-        ),
-      );
-    }
+    // (grow entrances returned above, height-only, since +208 — the
+    // fade below serves only the plain (grow: false) arrival.)
     return w;
   }
 }

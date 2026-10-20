@@ -156,8 +156,8 @@ void main() {
       expect(find.textContaining('interrupted'), findsOne);
     });
 
-    testWidgets('a newly streamed segment eases in while the spoken one '
-        'holds still — the segment-level flicker +181 ends', (tester) async {
+    testWidgets('a newly streamed segment opens by height, not ink — the '
+        'flicker +181 ended, the layer upload +208 ended', (tester) async {
       final entry = ChatEntry.assistant(createdMs: 1)
         ..blocks.add('First spoken section.');
       await tester.pumpWidget(
@@ -165,22 +165,12 @@ void main() {
           ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
         ),
       );
-      await tester.pumpAndSettle(); // the birth fade of the one segment lands
-      double seg(int i) => tester
-          .widget<FadeTransition>(
-            find
-                .descendant(
-                  of: find.byKey(ValueKey(i)),
-                  matching: find.byType(FadeTransition),
-                )
-                .first,
-          )
-          .opacity
-          .value;
-      expect(seg(0), 1.0);
-      // The second spoken paragraph arrives at the open bubble: the new
-      // tail rides its own one-shot ease; the already-heard segment
-      // must NOT replay its entrance (that replay was the flicker).
+      await tester.pumpAndSettle(); // the birth entrance lands
+      final spoken = tester.getTopLeft(find.byKey(ValueKey(0)));
+      final spokenHeight = tester.getSize(find.byKey(ValueKey(0))).height;
+      // The second spoken paragraph arrives at the open bubble: the
+      // new tail rides its own one-shot ease; the already-heard
+      // segment must NOT replay (that replay was the flicker).
       entry.blocks.add('Second spoken section.');
       await tester.pumpWidget(
         _host(
@@ -188,17 +178,34 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 60));
-      expect(seg(0), 1.0, reason: 'settled text never re-fades');
-      expect(seg(1), lessThan(1.0), reason: 'the new segment eases in');
+      // +208: the arriving segment carries NO opacity animation at
+      // all. The fade's composited layer costs an upload and one
+      // dropped frame per arrival (the frame bill saw it every time);
+      // this entrance is height-only, so there is nothing to upload.
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey(1)),
+          matching: find.byType(FadeTransition),
+        ),
+        findsNothing,
+      );
+      // Mid-open: its box is under the final height (+187's law —
+      // the slot travels, it does not pop), yet not slammed shut
+      // either — the ease is already partway.
+      final mid = tester.getSize(find.byKey(ValueKey(1))).height;
+      expect(mid, greaterThan(0), reason: 'the ease opens, it does not slam');
       await tester.pumpAndSettle();
-      expect(seg(0), 1.0);
-      expect(seg(1), 1.0);
-      // +187: the entrance also animates LAYOUT — the new segment was
-      // mid-open (its measured height under the final one) while the
-      // spoken segment's box never moved, and it settles at full
-      // height. The slot appearing instantly is the snap this ends.
-      final settledHeight = tester.getSize(find.byKey(ValueKey(1))).height;
-      expect(settledHeight, greaterThan(0));
+      final full = tester.getSize(find.byKey(ValueKey(1))).height;
+      expect(mid, lessThan(full), reason: 'the height travels — no pop');
+      // And the spoken segment above never moved, at all: the card
+      // opened DOWNWARD (top-anchored growth), which the old fade
+      // era could only claim via opacity.
+      expect(tester.getTopLeft(find.byKey(ValueKey(0))), spoken);
+      expect(
+        tester.getSize(find.byKey(ValueKey(0))).height,
+        spokenHeight,
+        reason: 'settled text never re-animates',
+      );
     });
 
     testWidgets('a grow entrance opens the layout, not just the ink '
@@ -222,6 +229,17 @@ void main() {
         reason: 'the height travels with the fade — no layout pop',
       );
       expect(mid, greaterThan(0), reason: 'the ease opens, it does not slam');
+      // +208: and there is NO opacity in this entrance at all. The
+      // fade's composited layer costs an upload and one dropped frame
+      // per arrival (the frame bill saw it every time); the height
+      // alone re-rasters only the opening band.
+      expect(
+        find.descendant(
+          of: find.byType(FadeInBubble),
+          matching: find.byType(FadeTransition),
+        ),
+        findsNothing,
+      );
     });
 
     testWidgets('a finish receipt wears the outline, not the reply card '
