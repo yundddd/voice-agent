@@ -3,6 +3,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/chat_store.dart';
+import 'package:voice_agent/src/chat/chat_log.dart';
 import 'package:voice_agent/src/bridge/wire_lease.dart';
 import 'package:voice_agent/src/common/sinks.dart';
 
@@ -172,6 +173,29 @@ void main() {
       s.load(persisted.last);
       expect(s.hasReceiptFor('aaa'), isTrue);
       expect(s.hasReceiptFor('bbb'), isTrue);
+    });
+
+    test('+188: the release opens the bubble at once, the transcript '
+        'fills it in place; an unfilled placeholder never reloads', () {
+      final ph = store.addUserTranscribing();
+      expect(ph.transcribing, isTrue);
+      expect(store.entries.single.fromUser, isTrue);
+      expect(store.entries.single.blocks.single, isEmpty);
+      // The words land: same entry, same position, pulse off.
+      store.fillUser(ph, 'weather in the morning', queued: true);
+      expect(ph.transcribing, isFalse);
+      expect(ph.blocks.single, 'weather in the morning');
+      expect(ph.queued, isTrue);
+      expect(store.queuedText, 'weather in the morning');
+      // Machinery like the pin: an unfilled placeholder does not
+      // survive the reload (the decoder drops blank user entries).
+      final raw = encodeChatLog([
+        store.addUserTranscribing(), // nobody ever fills this one
+      ]);
+      store.load(raw);
+      expect(store.entries, isEmpty,
+          reason: 'a dead mid-ASR bubble reloads as nothing, not as a '
+              'blank card');
     });
 
     test('containsBlock matches how the log stores (whitespace, not case)', () {

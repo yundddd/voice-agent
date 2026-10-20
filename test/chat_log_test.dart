@@ -116,7 +116,13 @@ void main() {
   test('garbage or newer-format files start a fresh log, never throw', () {
     expect(decodeChatLog('not json at all'), isEmpty);
     expect(decodeChatLog('{"objects":"instead of lists"}'), isEmpty);
-    expect(decodeChatLog('[{"user":true},{"nope":1}]').length, 2); // tolerant
+    expect(
+      decodeChatLog('[{"user":true,"blocks":["x"]},{"nope":1}]').length,
+      2,
+    ); // tolerant
+    expect(decodeChatLog('[{"user":true,"blocks":[""]}]'), isEmpty,
+        reason: '+188: a blank user entry is a dead transcribe '
+            'placeholder — machinery, dropped on load');
     expect(decodeChatLog('[]'), isEmpty);
   });
 

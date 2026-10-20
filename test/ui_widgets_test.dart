@@ -257,6 +257,23 @@ void main() {
       expect(find.text('Bash sleep 60 cancelled.'), findsOne);
     });
 
+    testWidgets('a transcribing bubble pulses with no words, and the '
+        'fill replaces the pulse with the text (+188)', (tester) async {
+      final entry = ChatEntry.user('', createdMs: 1)..transcribing = true;
+      Widget bubble() => _host(
+        ChatBubble(entry: entry, maxWidthFrac: 0.86, source: () => _view()),
+      );
+      await tester.pumpWidget(bubble());
+      expect(find.text(''), findsNothing);
+      expect(find.byType(SelectableText), findsNothing,
+          reason: 'no words yet — the pulse speaks instead');
+      entry.blocks[0] = 'weather in the morning';
+      entry.transcribing = false;
+      await tester.pumpWidget(bubble());
+      expect(find.text('weather in the morning'), findsOne);
+      expect(find.byType(SelectableText), findsOne);
+    });
+
     testWidgets('a file bubble renders the slip AND its tap receives '
         '(the field report: tap to receive did nothing — SelectableText '
         'was eating it)', (tester) async {

@@ -96,6 +96,16 @@ class ChatEntry {
   /// cut is history, not live machinery.
   bool interrupted;
 
+  /// +188: LIVE machinery, never persisted — this user bubble is a
+  /// placeholder opened the moment the push-to-talk button released,
+  /// and the words are still being found by ASR. The renderer shows
+  /// the transcribing pulse in its place; the fill replaces it with
+  /// the text. A process death mid-transcribe must not leave a blank
+  /// speech bubble standing in the reloaded log, so the flag never
+  /// reaches disk AND the decoder drops user entries whose blocks are
+  /// all empty.
+  bool transcribing = false;
+
   /// +168: a background process this phone cut reports
   /// 'X cancelled.' — a RECEIPT, not a reply. It wears the same bubble
   /// as spoken prose today and reads as though the agent said it; the
@@ -273,6 +283,15 @@ bool chatContainsBlock(List<ChatEntry> entries, String text) {
 String encodeChatLog(List<ChatEntry> entries) =>
     jsonEncode([for (final e in entries) e.toJson()]);
 
+/// +188: a USER entry with no words is a transcribing placeholder whose
+/// process died mid-ASR — machinery, not history: it is dropped on load
+/// rather than reloaded as a blank bubble forever.
+bool _isDeadTranscribePlaceholder(Map<String, Object?> j) =>
+    j['user'] == true &&
+    ((j['blocks'] as List? ?? const <Object>['']).every(
+      (b) => '$b'.isEmpty,
+    ));
+
 /// Tolerant decode: any broken chat file (or a future format we do not
 /// understand) starts the log fresh rather than blocking app init.
 List<ChatEntry> decodeChatLog(String raw) {
@@ -281,7 +300,9 @@ List<ChatEntry> decodeChatLog(String raw) {
     if (j is! List) return const [];
     return [
       for (final e in j)
-        if (e is Map) ChatEntry.fromJson(e.cast<String, Object?>()),
+        if (e is Map &&
+            !_isDeadTranscribePlaceholder(e.cast<String, Object?>()))
+          ChatEntry.fromJson(e.cast<String, Object?>()),
     ];
   } on FormatException {
     return const [];

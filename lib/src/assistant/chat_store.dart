@@ -98,6 +98,37 @@ class ChatStore {
     withinMs: withinMs,
   );
 
+  /// +188: open a user bubble while the words are still in ASR — the
+  /// push-to-talk release moment, answered to the speaker with a
+  /// transcribing pulse inside the bubble. Machinery like the pin:
+  /// an unfilled placeholder never survives a reload, and the
+  /// renderer knows the state from the entry itself.
+  ChatEntry addUserTranscribing() {
+    final entry = ChatEntry.user('', createdMs: _nowMs())
+      ..transcribing = true;
+    _entries.add(entry);
+    trace?.call('msg phone: user (transcribing…)');
+    touch();
+    return entry;
+  }
+
+  /// The ASR verdict for a [+addUserTranscribing] placeholder: the
+  /// pulse gives way to the words, in the same bubble, at the same
+  /// place in the log. Takes the same queued semantics [addUser] had
+  /// at this moment (the pin and the grey ride the fill, because the
+  /// queue verdict is only decided with the text).
+  void fillUser(ChatEntry entry, String text, {bool queued = false}) {
+    entry.blocks[0] = text;
+    entry.transcribing = false;
+    if (queued) {
+      unpinQueued();
+      entry.queued = true;
+      _queued = entry;
+    }
+    trace?.call('msg phone: user "${_abbrev(text)}" queued=${queued ? 1 : 0}');
+    touch();
+  }
+
   void addUser(String text, {bool queued = false}) {
     // One pin at a time: a newer queued press outranks the old one,
     // whose turn is by definition dead (superseded on the wire).

@@ -1512,6 +1512,21 @@ class VoiceAssistant extends ChangeNotifier {
   /// release applies the trace, or drops it and the bubble with it.
   ChatEntry? _pttCutTrace;
 
+  /// +188: the user bubble opened at the release moment, pulsing while
+  /// ASR finds the words. Filled when the transcript lands; withdrawn
+  /// (removeEmptyTurn) on every path that never sends — superseded,
+  /// discarded, empty, echo, or a failed transcribe.
+  ChatEntry? _transcribeBubble;
+
+  void _withdrawTranscribe(String why) {
+    final b = _transcribeBubble;
+    _transcribeBubble = null;
+    if (b != null) {
+      _chat.removeEmptyTurn(b);
+      _logDebug('transcribe bubble withdrawn ($why)');
+    }
+  }
+
   /// The release decided: this turn WAS cut — file the +110 trace it
   /// owed from press time (a withdrawn-empty bubble comes back wearing
   /// it; a partly-spoken one only gets the ✋ mark).
@@ -3169,6 +3184,7 @@ class VoiceAssistant extends ChangeNotifier {
       final text = (await _worker!.transcribe(samples, 16000)).trim();
       swAsr.stop();
       if (gen != _generation) {
+        _withdrawTranscribe('superseded during ASR');
         _logDebug(
           'message SWALLOWED: superseded during ASR (gen $gen → $_generation)'
           ' — transcript "${text.substring(0, text.length < 40 ? text.length : 40)}" '
@@ -3184,6 +3200,7 @@ class VoiceAssistant extends ChangeNotifier {
       );
 
       if (text.isEmpty) {
+        _withdrawTranscribe('empty transcript');
         _activity = const StatusText("Didn't catch that — try again?");
         _phase = _mode == InteractionMode.pushToTalk
             ? AssistantPhase.idle
@@ -3193,6 +3210,7 @@ class VoiceAssistant extends ChangeNotifier {
       }
       if (_segEchoRisk && _looksLikeEcho(text, _lastSpoken)) {
         _segEchoRisk = false;
+        _withdrawTranscribe('own voice');
         _logDebug('asr result rejected as TTS echo — nothing sent');
         _activity = const StatusText("That was my own voice — I'm listening.");
         _phase = AssistantPhase.listening;
@@ -3209,17 +3227,30 @@ class VoiceAssistant extends ChangeNotifier {
       // the pin instead: the card sits at the bottom of the channel
       // until the harness begins this turn, then the message joins the
       // flow right where its answer will follow.
-      _chat.addUser(
-        text,
-        // _bridgeBusy alone lies here: the DOWN-time detach cleared it
-        // while the bridge turn lives on (badge = _harnessBackgrounded)
-        // — behind THAT is what a polite release queues.
-        // +149: the press's detach zeroed _bridgeBusy and the queue
-        // release retired the badge BEFORE this re-add — reading only
-        // those two made every voice queue silently grey (journal
-        // 22:50: queued=0). The release already decided: parkBehind.
-        queued: !interrupt && (parkBehind || _bridgeBusy),
-      );
+      // +188: a release that opened its bubble at the button-up moment
+      // FILLS that bubble (pulse gives way to the words, same card,
+      // same place); every other route (conversation VAD, typed, chip)
+      // keeps adding the bubble here as it always did.
+      final queuedFlavour = !interrupt && (parkBehind || _bridgeBusy);
+      final bubble = _transcribeBubble;
+      _transcribeBubble = null;
+      if (bubble != null) {
+        _chat.fillUser(bubble, text, queued: queuedFlavour);
+      } else {
+        _chat.addUser(
+          text,
+          // _bridgeBusy alone lies here: the DOWN-time detach cleared
+          // it while the bridge turn lives on (badge =
+          // _harnessBackgrounded) — behind THAT is what a polite
+          // release queues.
+          // +149: the press's detach zeroed _bridgeBusy and the queue
+          // release retired the badge BEFORE this re-add — reading
+          // only those two made every voice queue silently grey
+          // (journal 22:50: queued=0). The release already decided:
+          // parkBehind.
+          queued: queuedFlavour,
+        );
+      }
 
       if (_gateway != null && _bridgePrefs.voice) {
         // Voice -> Claude Code: the utterance becomes a harness turn, and
@@ -3289,6 +3320,9 @@ class VoiceAssistant extends ChangeNotifier {
       );
       await _reply.runPump(isStale: () => gen != _generation);
     } catch (e) {
+      // +188: a transcribe that threw never fills its bubble — take
+      // the pulsing shell back rather than leave it beating on screen.
+      _withdrawTranscribe('round trip failed');
       _fail('Round trip failed: $e');
     }
   }
@@ -3515,6 +3549,11 @@ class VoiceAssistant extends ChangeNotifier {
     }
     _chunks.clear();
     _logDebug('release → denoise+ASR: ${total}B held ${heldMs}ms');
+    // +188: the bubble arrives NOW — the release is news, the words
+    // are still being computed. Inside it, the transcribe pulse; the
+    // fill replaces the pulse with the transcript a heartbeat later.
+    _withdrawTranscribe('superseded at new release');
+    _transcribeBubble = _chat.addUserTranscribing();
     // Offline cleanup (high-pass + frame noise gate) using the live noise
     // floor — safe here: the user already finished speaking, so gating can
     // never clip utterance onsets, only quiet fill between words.
@@ -3535,6 +3574,7 @@ class VoiceAssistant extends ChangeNotifier {
       debugPrint('denoise failed, using raw audio: $e');
     }
     if (gen != _generation) {
+      _withdrawTranscribe('superseded during cleanup');
       // The button was pressed again mid-cleanup: that hold owns the mic
       // (and the reply is abandoned); don't resurrect this turn.
       _logDebug(

@@ -18,6 +18,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -146,15 +147,23 @@ class ChatBubble extends StatelessWidget {
                           ? Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                // While GREY the bubble is a button,
-                                // so it renders its words as plain
-                                // Text: the same tap-thief law that
-                                // killed the file bubble's receive —
-                                // a SelectableText inside would win
-                                // the arena and the interrupt tap
-                                // would look dead. Once taken, the
-                                // selectability comes back.
-                                if (entry.queued)
+                                // +188: the release opened this bubble
+                                // at the button-up moment; while ASR
+                                // is still finding the words the card
+                                // pulses instead of pretending to be
+                                // empty. The fill replaces the pulse
+                                // with the text in the same place.
+                                if (entry.transcribing)
+                                  const _TranscribePulse()
+                                else if (entry.queued)
+                                  // While GREY the bubble is a button,
+                                  // so it renders its words as plain
+                                  // Text: the same tap-thief law that
+                                  // killed the file bubble's receive —
+                                  // a SelectableText inside would win
+                                  // the arena and the interrupt tap
+                                  // would look dead. Once taken, the
+                                  // selectability comes back.
                                   Text(
                                     entry.blocks.join(' '),
                                     style: Theme.of(
@@ -302,6 +311,70 @@ class ChatBubble extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// +188: the transcribing pulse — four dots crossed by a travelling
+/// wave, shown inside a user bubble between the button release and the
+/// transcript (+sub-one-second on the field's wire). It says "the mic
+/// heard you and the network is reading" without faking a word of the
+/// sentence before it exists. Sized to a single text line so the card
+/// does not resize when the fill replaces it.
+class _TranscribePulse extends StatefulWidget {
+  const _TranscribePulse();
+
+  @override
+  State<_TranscribePulse> createState() => _TranscribePulseState();
+}
+
+class _TranscribePulseState extends State<_TranscribePulse>
+    with SingleTickerProviderStateMixin {
+  static const _dots = 4;
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Theme.of(context).colorScheme.onPrimaryContainer;
+    return SizedBox(
+      height: 22,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < _dots; i++)
+            AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) {
+                // A sine wave crossing the row, phase-shifted per dot:
+                // the far end never goes fully dark (25% floor), so
+                // the row reads as ALIVE rather than blinking.
+                final wave =
+                    math.sin(_c.value * 2 * math.pi - i * (math.pi / 3));
+                final lit = 0.25 + 0.75 * ((wave + 1) / 2);
+                return Padding(
+                  padding: EdgeInsets.only(right: i == _dots - 1 ? 0 : 6),
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: ink.withValues(alpha: lit),
+                    ),
+                  ),
+                );
+              },
             ),
         ],
       ),
