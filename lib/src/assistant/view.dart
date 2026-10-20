@@ -243,39 +243,42 @@ final class AssistantView {
   /// of a GENERATING turn (turnOpen=true at the probe) is real work
   /// and spins.
   ///
-  /// +170 names the arm the detach badge never covered: work the agent
-  /// backgrounded ITSELF (14:20 field: 'Let's do the bridge to app' —
-  /// the agent launched `Bash sleep 300` with run_in_background, the
-  /// `backgrounded` frame armed the banner, `done clean` landed 31 ms
-  /// later, and the box stayed dark for the ENTIRE 13 s the shell ran
-  /// — 'even after more than 4 seconds the box did not reappear').
-  /// harnessBackgrounded is the DETACH badge (+133 pinned the
-  /// distinction: an agent-initiated frame never lights it) — so the
-  /// box was blind to the one warrant the banner row already stands
-  /// for. [outOfEarshotWork] is that warrant set, and the box and the
-  /// banner must answer the same question.
-  bool get agentWorking => (bridgeBusy && !drainReading) || outOfEarshotWork;
+  /// +170 named the arm the detach badge never covered and made the box
+  /// follow the banner (14:20 field: the agent launched `Bash sleep 300`
+  /// run_in_background and the box stayed dark for its whole 13 s run).
+  /// +182 REVISES that marriage for the box alone: the field's new word
+  /// is that a shell the agent backgrounded by itself — with the turn
+  /// closed — means the agent is FREE to answer, and a spinning box
+  /// then performs a thinking the agent is not doing. The box asks one
+  /// question now: is a TURN open? Heard or streaming that is
+  /// [bridgeBusy]; a turn the press detached keeps generating on the
+  /// bridge, which is what the detach badge [harnessBackgrounded]
+  /// marks — honest motion either way. Out-of-ear SHELL work keeps the
+  /// banner (its own row, with name, age and since-clock) and the Stop
+  /// brake; it no longer owns the box.
+  bool get agentWorking => (bridgeBusy && !drainReading) || harnessBackgrounded;
 
-  /// +170: a live promise of work outside the ear's reach — the
-  /// detach badge, the cut-tool promise, or the agent's own backgrounded
-  /// shell. Precisely the [backgrounded] row's warrants (a queue pin is
-  /// NOT one: a parked notice is an intention, and the turn it waits
-  /// behind is bridgeBusy anyway). Out-of-earshot work also VOIDS a
-  /// `settled` verdict for the box: message_stop's 'settled' is
-  /// per-MESSAGE truth — the words are final — while a running shell
-  /// proves the agent is not done. The veto that hid the box behind
-  /// the sleep belongs to the words, not to the agent's ledger.
+  /// A live promise of work outside the ear's reach — the detach badge,
+  /// the cut-tool promise, or the agent's own backgrounded shell.
+  /// Precisely the [backgrounded] row's warrants (a queue pin is NOT
+  /// one: a parked notice is an intention, and the turn it waits
+  /// behind is bridgeBusy anyway). +182: this set no longer reaches the
+  /// box — [agentWorking] keeps only the badge arm; the banner and the
+  /// brake answer to the whole of it.
   bool get outOfEarshotWork => harnessBackgrounded || backgrounded.visible;
 
   /// Any bridge work in flight — heard, unheard, or owed. The Stop
   /// chip's enablement (+154): grey when nothing can be stopped, lit
   /// when something can — INCLUDING a parked drain, whose silencing
-  /// the lit brake now performs (+166), and including a mail fetch,
-  /// whose replay a press may still cut. The box itself asks the
-  /// narrower [agentWorking]; the owed reply (+164) keeps the brake
-  /// honest without making the agent look busy while the phone is
-  /// only talking.
-  bool get agentBusy => agentWorking || bridgeBusy || drainOwed;
+  /// the lit brake now performs (+166), a mail fetch whose replay a
+  /// press may still cut, and (+182, explicit since the box stopped
+  /// covering it) the agent's own backgrounded shell: a press on the
+  /// brake kills that task even while the agent itself sits free.
+  /// The box asks the narrower [agentWorking]; the owed reply (+164)
+  /// keeps the brake honest without making the agent look busy while
+  /// the phone is only talking.
+  bool get agentBusy =>
+      agentWorking || bridgeBusy || drainOwed || backgrounded.visible;
 
   /// +168: the current view is an /attach drain (claimed while
   /// turnOpen=false) — replay only, no generating turn. Projected
@@ -298,10 +301,14 @@ final class AssistantView {
   /// ([spinnerVisible]), and a settled turn — text final, only the
   /// phone's TTS pipeline remaining — hides it too (the +165 retire-
   /// ment of 'Rendering audio…', the +83 draft preview superseded by
-  /// +161's take-time bubbles). A turn's own bubble appears in the
-  /// flow the moment it has something to say.
+  /// +161's take-time bubbles). +182 narrows the settled veto to the
+  /// detach badge: only a turn still GENERATING on the bridge can
+  /// outvote a per-message `settled` — an agent free to answer, with
+  /// just a shell churning out of earshot, sits quiet in the box while
+  /// the banner row names that work. A turn's own bubble appears in
+  /// the flow the moment it has something to say.
   bool get showWorkingRow =>
-      agentWorking && spinnerVisible && (!token.settled || outOfEarshotWork);
+      agentWorking && spinnerVisible && (!token.settled || harnessBackgrounded);
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

@@ -248,11 +248,9 @@ void main() {
       expect(
         a.view.agentWorking,
         isTrue,
-        reason:
-            '+170: the box follows the banner — this walk once pinned '
-            'the blindness (agent-initiated frames lit the row but NOT '
-            'the box; harnessBackgrounded is the detach badge, and the '
-            '14:20 field proved a running shell IS agent status)',
+        reason: 'the turn is still OPEN here — the box rides the turn, '
+            'not the shell (+182 revised +170: agent-initiated frames '
+            'light the banner; the box spins for open turns only)',
       );
       harness.emit(
         const BridgeEvent.forTest(
@@ -466,8 +464,9 @@ void main() {
       expect(a.view.showWorkingRow, isTrue);
     });
 
-    test('+170: a backgrounded agent shell IS agent status — the '
-        '13-second blackout ends', () async {
+    test('+170 as revised by +182: a backgrounded shell keeps the '
+        'banner and the brake — but a FREE agent sits quiet in the box',
+        () async {
       // The field tape (14:20:33, 'Let's do the bridge to app'): the
       // agent launched `Bash sleep 300` run_in_background; the
       // backgrounded frame armed the banner and `done clean` landed
@@ -478,6 +477,10 @@ void main() {
       // harnessBackgrounded, and that badge is the DETACH mark. The
       // two rows must answer the same question: out-of-earshot work
       // is agent status, and a per-message `settled` cannot veto it.
+      // +182 UNMARRIES the box from the banner: the field's newer word
+      // is that with the turn closed the agent is free to answer, and
+      // a spinning box performs a thinking that is not happening. The
+      // banner row keeps naming the shell; the box waits for a turn.
       await withBridge();
       // /health's real word while the shell runs: no turn, no queue,
       // nothing unheard — but detached counts the agentTasks ledger
@@ -504,13 +507,15 @@ void main() {
       expect(a.view.bridgeBusy, isFalse, reason: 'the turn closed');
       expect(a.view.harnessBackgrounded, isFalse,
           reason: '+133 unchanged: the badge stays the detach mark');
-      expect(a.view.agentWorking, isTrue,
-          reason: 'a running shell is the agent — the banner says so, '
-              'and the box must agree');
-      expect(a.view.showWorkingRow, isTrue,
-          reason: 'the sleep spins in the box for its whole run');
+      expect(a.view.agentWorking, isFalse,
+          reason: '+182: the turn closed — no box while the agent is '
+              'free to answer');
+      expect(a.view.showWorkingRow, isFalse,
+          reason: 'the sleep keeps its name, age and clock in the '
+              'banner row — the box no longer rents itself out');
       expect(a.view.agentBusy, isTrue,
-          reason: 'and the lit brake means a press kills the task (+154)');
+          reason: 'and the lit brake means a press kills the task '
+              '(+154, +182: the brake still answers to the shell)');
       harness.emit(
         const BridgeEvent.forTest(
           'tool',
