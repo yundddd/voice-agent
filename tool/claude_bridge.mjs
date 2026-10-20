@@ -915,7 +915,8 @@ function handleEvent(line) {
   // Tool-lifecycle bookkeeping runs BEFORE any listener gate: a
   // backgrounded (detached) turn still opens and closes tools, and the
   // open count is what lets a later /talk decide queue-vs-interrupt.
-  if (m.type === 'assistant' || m.type === 'user') {
+  if (m.type === 'assistant' || m.type === 'user' ||
+      (m.type === 'system' && m.subtype === 'task_notification')) {
     const content = Array.isArray(m.message?.content) ? m.message.content : [];
     // +159: the harness's OWN task notification ("…task b3xyz has been
     // completed… output written to …b3xyz.output") arrives as a plain
@@ -929,10 +930,20 @@ function handleEvent(line) {
     // itself at birth. (The tool_use scan below stays the precise
     // trigger for the Read-the-output shape; this is the notification
     // shape.)
-    if (m.type === 'user' && agentTasks.size) {
+    // +182: the production notification is a SYSTEM event
+    // (system/task_notification, tape 15:51:04 — the user-text shape
+    // was the stub's imagination), and it is the ONLY system subtype
+    // scanned: background_tasks_changed and task_started NAME every
+    // live task at launch — paying off those would murder each shell
+    // at its own birth. The launch ordering proves the scan safe in
+    // both directions: those events precede the tool_result that
+    // REGISTERS the debt, so a just-launched task cannot be seen,
+    // let alone paid, by them.
+    if ((m.type === 'user' || m.subtype === 'task_notification') &&
+        agentTasks.size) {
       const hay = typeof m.message?.content === 'string'
         ? m.message.content
-        : JSON.stringify(m.message?.content ?? '');
+        : JSON.stringify(m.message?.content ?? m);
       for (const [id, t] of agentTasks) {
         if ((t.outPath && hay.includes(t.outPath)) ||
             hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
@@ -1068,11 +1079,25 @@ function handleEvent(line) {
     // must not drain tasks whose shells are still sleeping. The
     // app's receipt note dedups, so an over-eager payment is free.
     if (proactiveTurn) {
-      for (const [, t] of agentTasks) {
-        console.error(`  -> finished "${t.label}" (drained at report)`);
-        relay('tool', { name: 'finished', detail: t.label });
+      // +182: the belt stopped clearing the ledger. The tape (15:51:06):
+      // two shells owed, the TEN-second one's report came in, and this
+      // drain paid BOTH — the sixty had 24 seconds still to sleep and
+      // its banner went dark fifteen seconds early, silently. A report
+      // may pay only the work it NAMES: the notification scan above
+      // (user text or the production system/task_notification) is the
+      // precise trigger; this belt covers only the shape the comment
+      // always described — the model answering straight from the
+      // notification, output path quoted in its own words — and leaves
+      // every still-sleeping sibling's debt for its own report turn.
+      const hay = JSON.stringify(m);
+      for (const [id, t] of agentTasks) {
+        if ((t.outPath && hay.includes(t.outPath)) ||
+            hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
+          agentTasks.delete(id);
+          console.error(`  -> finished "${t.label}" (named in report)`);
+          relay('tool', { name: 'finished', detail: t.label });
+        }
       }
-      agentTasks.clear();
       proactiveTurn = false;
     }
     bgTools.clear(); // an unpaired launch receipt dies with its turn

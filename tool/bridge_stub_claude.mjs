@@ -40,6 +40,19 @@
 //                      the model never Reads the file: the bridge must
 //                      pay the debt off THIS message, not wait for a
 //                      proactive report turn.
+//   STUB_BG_NOTIFY_SYSTEM  +182: emit that notification as the
+//                      PRODUCTION shape instead — a system event
+//                      (type 'system', subtype 'task_notification').
+//   STUB_BG_NOTIFY_REPORT  +182: follow the notification with an
+//                      unprompted report turn (STUB_BG_SAYS + result,
+//                      no Read, no path quoted) — the tape shape in
+//                      which a drain-at-report that pays everything
+//                      murders a sibling shell still sleeping.
+//   STUB_TOOL2_BG      +182: a SECOND backgrounded Bash in the same
+//                      turn (own id tbg<gen>b, own launch receipt) —
+//                      the owed sibling the report must not pay for.
+//   STUB_BG_NOTIFY2_MS +182: the second task's notification, landing
+//                      between turns (names only its own task).
 //   STUB_BG_BEAT_MS    pause inside the report turn (default 300) — the
 //                      window during which /health shows it open; raise
 //                      it to watch a phone wake mid-report
@@ -68,6 +81,10 @@ const toolBg = process.env.STUB_TOOL_BG === '1';
 const tool2Ms = Number(process.env.STUB_TOOL2_MS ?? 0);
 const bgDoneMs = Number(process.env.STUB_BG_DONE_MS ?? 0);
 const bgNotifyMs = Number(process.env.STUB_BG_NOTIFY_MS ?? 0);
+const bgNotifySystem = process.env.STUB_BG_NOTIFY_SYSTEM === '1';
+const bgNotifyReport = process.env.STUB_BG_NOTIFY_REPORT === '1';
+const tool2BgCmd = process.env.STUB_TOOL2_BG ?? '';
+const bgNotify2Ms = Number(process.env.STUB_BG_NOTIFY2_MS ?? 0);
 const bgBeat = Number(process.env.STUB_BG_BEAT_MS ?? 300);
 const bgSays = (process.env.STUB_BG_SAYS ??
   'The background command finished. It printed:\n\nBGOUT-hello\n\n(exit code 0)')
@@ -155,12 +172,21 @@ process.stdin.on('data', (b) => {
         openToolId = 'tool-' + gen;
         out({
           type: 'assistant', session_id: 'stub-session',
-          message: { role: 'assistant', content: [{
-            type: 'tool_use', id: openToolId, name: 'Bash',
-            input: toolBg
-              ? { command: toolCmd, run_in_background: true }
-              : { command: toolCmd },
-          }] },
+          message: { role: 'assistant', content: [
+            {
+              type: 'tool_use', id: openToolId, name: 'Bash',
+              input: toolBg
+                ? { command: toolCmd, run_in_background: true }
+                : { command: toolCmd },
+            },
+            // +182: the owed sibling — a second backgrounded shell in
+            // the same turn, so a report for one has something of the
+            // other's to wrongly pay.
+            ...(toolBg && tool2BgCmd ? [{
+              type: 'tool_use', id: `tool2b-${gen}`, name: 'Bash',
+              input: { command: tool2BgCmd, run_in_background: true },
+            }] : []),
+          ] },
         });
         if (toolBg) {
           // The start receipt the real CLI answers a backgrounded
@@ -168,35 +194,76 @@ process.stdin.on('data', (b) => {
           // output file. The tool CLOSES here; the work does not.
           setTimeout(() => {
             if (gen !== turnSeq) return;
+            const receipts = [{
+              type: 'tool_result', tool_use_id: openToolId,
+              content: `Command running in background with ID: tbg${gen}. ` +
+                `Output is being written to: ` +
+                `/tmp/stub-tasks/tbg${gen}.output. You will be notified ` +
+                `when it completes.`,
+            }];
+            if (tool2BgCmd) {
+              receipts.push({
+                type: 'tool_result', tool_use_id: `tool2b-${gen}`,
+                content: `Command running in background with ID: tbg${gen}b. ` +
+                  `Output is being written to: ` +
+                  `/tmp/stub-tasks/tbg${gen}b.output. You will be notified ` +
+                  `when it completes.`,
+              });
+            }
             out({
               type: 'user', session_id: 'stub-session',
-              message: { role: 'user', content: [{
-                type: 'tool_result', tool_use_id: openToolId,
-                content: `Command running in background with ID: tbg${gen}. ` +
-                  `Output is being written to: ` +
-                  `/tmp/stub-tasks/tbg${gen}.output. You will be notified ` +
-                  `when it completes.`,
-              }] },
+              message: { role: 'user', content: receipts },
             });
           }, 80);
-          if (bgNotifyMs) {
-            // The +159 shape: the plain-text task notification the
-            // real CLI injects as a USER message when the shell ends —
-            // often long after the launching turn closed, with no
-            // listener on the wire. The bridge must pay the tracked
-            // debt off this message alone.
+          // The +159 shape: the task notification the real CLI emits
+          // when the shell ends — often long after the launching turn
+          // closed, with no listener on the wire. The bridge must pay
+          // the tracked debt off THIS message alone. +182: the
+          // production carrier is a SYSTEM event (task_notification);
+          // the user-text form stays available (the +159 walk pins the
+          // bridge against BOTH shapes), and a following report turn
+          // (bgNotifyReport) replays the tape where the drain-at-report
+          // killed a sleeping sibling.
+          const notify = (tid, ms, withReport) => {
+            if (!ms) return;
             setTimeout(() => {
               if (gen !== turnSeq) return;
-              out({
-                type: 'user', session_id: 'stub-session',
-                message: { role: 'user',
-                  content: `<task-notification>Bash command ` +
-                    `(id: tbg${gen}) completed (exit code 0). Output ` +
-                    `written to /tmp/stub-tasks/tbg${gen}.output.` +
-                    `</task-notification>` },
-              });
-            }, toolStartMs + bgNotifyMs);
-          }
+              const text = `Bash command (id: ${tid}) completed ` +
+                `(exit code 0). Output written to ` +
+                `/tmp/stub-tasks/${tid}.output.`;
+              out(bgNotifySystem
+                ? {
+                    type: 'system', subtype: 'task_notification',
+                    session_id: 'stub-session', content: text,
+                  }
+                : {
+                    type: 'user', session_id: 'stub-session',
+                    message: { role: 'user',
+                      content: `<task-notification>${text}` +
+                        `</task-notification>` },
+                  });
+              if (withReport) {
+                setTimeout(() => {
+                  if (gen !== turnSeq) return;
+                  for (const t of bgSays) {
+                    out({
+                      type: 'assistant', session_id: 'stub-session',
+                      message: { role: 'assistant',
+                        content: [{ type: 'text', text: t }] },
+                    });
+                  }
+                  out({
+                    type: 'result', subtype: 'success',
+                    session_id: 'stub-session', is_error: false,
+                    total_cost_usd: 0,
+                    usage: { input_tokens: 100, output_tokens: 42 },
+                  });
+                }, bgBeat);
+              }
+            }, toolStartMs + ms);
+          };
+          notify(`tbg${gen}`, bgNotifyMs, bgNotifyReport);
+          notify(`tbg${gen}b`, bgNotify2Ms, false);
           if (bgDoneMs) {
             // The UNPROMPTED report turn (probe-verified shapes): Read
             // of the output, its content, the model's answer, result.

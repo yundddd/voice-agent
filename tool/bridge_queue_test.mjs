@@ -32,6 +32,8 @@ const PORT9 = PORT1 + 8;
 // +159: the debt-payment and transients-not-memory ports.
 const PORT11 = PORT1 + 30;
 const PORT12 = PORT1 + 31;
+// +182: the sibling-not-murdered port.
+const PORT18 = PORT1 + 32;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -781,6 +783,64 @@ test('a background task notification pays the agent’s background debt ' +
     assert.ok(mids.includes(fin.data._mid), 'the receipt carries an id');
     await until('backlog drained', async () =>
       (await health(PORT11)).missed === 0);
+    a.kill();
+    at.kill();
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// The tape (15:51:06): two shells owed, the ten-second one's report
+// came in, and the drain at result paid BOTH — the sixty had 24 seconds
+// still to sleep and its banner went dark fifteen seconds early,
+// silently. The field report this walk pins: "the 60 second banner did
+// not show up" — gone by a false proof of nothing-open, not by a death.
+test('two shells owed; one report pays only its own (+182)', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');
+  const proc = startBridge(stubLog, PORT18, {
+    STUB_TOOL: 'sleep 10', STUB_TOOL_BG: '1', STUB_TOOL2_BG: 'sleep 60',
+    STUB_TOOL_START_MS: '100', STUB_RESULT_MS: '300', STUB_SAYS: 'Launched.',
+    // The production notification shape, its own report turn behind it,
+    // and the SIBLING's notification landing later, between turns.
+    STUB_BG_NOTIFY_MS: '500', STUB_BG_NOTIFY_SYSTEM: '1',
+    STUB_BG_NOTIFY_REPORT: '1', STUB_BG_SAYS: 'The short one finished.',
+    STUB_BG_NOTIFY2_MS: '1400',
+  });
+  try {
+    await up(PORT18);
+    const a = await call(PORT18, `/talk?token=${TOKEN}`,
+      { body: 'launch both', method: 'POST' });
+    await until('launch turn closes', async () =>
+      (await health(PORT18)).turnOpen === false);
+    assert.equal((await health(PORT18)).detached, 2,
+      'both shells are owed at launch');
+    // The short one completes: a system/task_notification naming only
+    // it, then a report turn answering straight from the notification
+    // (no Read, no path in the text). The notification scan pays the
+    // named task; the report's close must NOT reach the sleeping
+    // sibling — the old drain-at-report did, and that is the murder.
+    await until('the notification pays its own task', async () =>
+      (await health(PORT18)).detached === 1, 4000);
+    await until('the report turn closes', async () =>
+      (await health(PORT18)).turnOpen === false, 4000);
+    assert.equal((await health(PORT18)).detached, 1,
+      'the still-sleeping sibling survives its neighbour’s farewell');
+    // The sibling reports in later, between turns: its own
+    // notification pays its own debt.
+    await until('the second notification pays the sibling', async () =>
+      (await health(PORT18)).detached === 0, 5000);
+    const at = await call(PORT18, `/attach?token=${TOKEN}`);
+    await sleep(200);
+    // The +128 turn-lifecycle farewell (detail 'ended after …') also
+    // rides a finished frame; this walk counts the SHELL receipts.
+    const fins = sseEvents(at.text).filter((e) => e.ev === 'tool' &&
+      e.data?.name === 'finished' &&
+      !String(e.data?.detail).includes('ended after'));
+    assert.equal(fins.length, 2, 'one receipt per shell, never shared');
+    assert.ok(fins[0].data.detail.includes('sleep 10'),
+      'the reported task paid first');
+    assert.ok(fins[1].data.detail.includes('sleep 60'),
+      'the sibling paid by its own notification, not the report');
     a.kill();
     at.kill();
   } finally {
