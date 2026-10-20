@@ -363,20 +363,31 @@ void main() {
       };
       await a.setBridgeHarness('opencode');
       await settle();
+      // A real opencode turn, so the thread has something of ITS OWN
+      // (a flip files nothing — the thread's content is conversations,
+      // not announcements).
+      unawaited(a.runQuickCommand('opencode only', bubble: 'opencode only'));
+      await settle();
+      harness.finishView();
+      await settle();
       // The log keeps EVERYTHING — the split is render-side only.
       expect(
         a.chat.map((e) => e.harness),
         containsAll(<String?>[null, 'claude', 'opencode']),
       );
-      // The thread now shows only the shared prologue + the new signpost.
+      // The thread is the flip's whole statement: prologue and this
+      // era's turn in, the other era's bubbles out, no narration
+      // filed (+215 — the signpost bubble explained a fact the screen
+      // already showed and repeated itself every flip).
       final onThread = a.view.chat.map((e) => e.blocks.join(' ')).join();
       expect(onThread, contains('the shared prologue'));
-      expect(onThread, contains('OpenCode holds the pen now'));
+      expect(onThread, contains('opencode only'));
       expect(onThread, isNot(contains('claude only')));
+      expect(onThread, isNot(contains('holds the pen')),
+          reason: 'the flip files no signpost bubble');
 
-      // Flip BACK: the claude-era bubbles were never gone — only the
-      // opencode signpost is hidden now, and the claude thread shows
-      // its own arrival signpost, not opencode's.
+      // Flip BACK: the claude-era bubbles were never gone — they were
+      // only on the other thread.
       harness.healthState = {
         'ok': true, 'claudeUp': true, 'harness': 'claude',
         'dir': '/x', 'sessionId': 'ses_cl',
@@ -385,8 +396,8 @@ void main() {
       await settle();
       final back = a.view.chat.map((e) => e.blocks.join(' ')).join();
       expect(back, contains('claude only'));
-      expect(back, contains('Claude Code holds the pen now'));
-      expect(back, isNot(contains('OpenCode holds the pen now')));
+      expect(back, isNot(contains('opencode only')));
+      expect(back, isNot(contains('holds the pen')));
     });
   });
 }

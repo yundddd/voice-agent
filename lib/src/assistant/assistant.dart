@@ -1257,18 +1257,13 @@ class VoiceAssistant extends ChangeNotifier {
     if (g == null) return 'bridge not configured';
     final err = await g.setHarness(to);
     if (err == null) {
-      // AWAITED: the era tracker must move before the boundary note is
-      // filed, or the note wears the wrong era and vanishes into the
-      // thread it just left.
+      // AWAITED: the era tracker (and with it the chat thread and the
+      // Bridge row) must move BEFORE this call returns — the switch's
+      // own reply is that the screen it left is gone. No channel note
+      // is filed (+215): the thread changing under your eyes IS the
+      // verdict; a bubble explaining it cluttered the log the split
+      // exists to clean, and repeated itself on every flip.
       await _refreshSession();
-      // +213: each thread opens with its own signpost — the flip's
-      // verdict reads as news in the era it announces, and the old
-      // thread keeps the signpost of ITS arrival.
-      _chat.addSystemNote(
-        '${to == 'opencode' ? 'OpenCode' : 'Claude Code'} holds the pen '
-        'now — the channel shows this harness\u2019s thread; the other '
-        'one waits behind the switch.',
-      );
     }
     return err;
   }

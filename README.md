@@ -647,9 +647,10 @@ history from before the split, or a bridge too old to name its era:
 those show everywhere). The filter is render-side only: the log on disk
 stays one append-only truth, so the heard-ledger, the reattach dedup
 and the receipt-by-id law keep scanning everything — a task finished
-under claude stays finished when opencode replays it. Each flip files
-its own signpost note, worn by the era it announces, so every thread
-opens by explaining itself.
+under claude stays finished when opencode replays it. The flip itself
+files no bubble (+215): the thread changing under your eyes is the
+whole announcement; the signpost note explained what the screen
+already showed and repeated itself every flip.
 **The migration (+214):** a pre-split log is all un-era'd, which the
 split first reads as one giant prologue — the install-day complaint of
 "still seeing the other harness's bubbles." The bridge now keeps an
