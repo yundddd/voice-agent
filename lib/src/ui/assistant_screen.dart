@@ -67,7 +67,7 @@ class _AssistantScreenState extends State<AssistantScreen>
             'pin +${delta.round()} to ${pos.maxScrollExtent.round()} '
             '(vp ${pos.viewportDimension.round()} '
             'cont ${(pos.maxScrollExtent + pos.viewportDimension).round()} '
-            'n ${a.chat.length})',
+            'n ${_assistant.chat.length})',
           );
         }
         pos.jumpTo(pos.maxScrollExtent);
@@ -81,7 +81,7 @@ class _AssistantScreenState extends State<AssistantScreen>
             'last ${_lastMax.round()} touch=$_userTouch '
             'vp ${pos.viewportDimension.round()} '
             'cont ${(pos.maxScrollExtent + pos.viewportDimension).round()} '
-            'n ${a.chat.length})',
+            'n ${_assistant.chat.length})',
           );
         }
       }
