@@ -255,6 +255,27 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
+  /// Switch the harness the bridge speaks (POST /harness {"to":…}).
+  /// Any non-2xx comes back as the one-line reason the Bridge screen
+  /// can show; success simply re-filters what /health says next.
+  @override
+  Future<String?> setHarness(String to) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/harness'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'to': to})));
+      final res = await req.close();
+      final body = (await res.transform(utf8.decoder).join()).trim();
+      if (res.statusCode == 200) return null;
+      return body.isEmpty ? 'HTTP ${res.statusCode}' : body;
+    } on Object catch (e) {
+      return '$e';
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   /// GET /file?path=… into [destPath], streaming to a .part and renaming
   /// on completion. A `$destPath.part` from an interrupted transfer
   /// resumes (Range: bytes=N-); a 416 (the file changed under us) starts

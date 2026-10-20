@@ -79,6 +79,25 @@ class _BridgeScreenState extends State<BridgeScreen> {
     }
   }
 
+  /// The harness row's switch: flip the bridge between claude and
+  /// opencode (POST /harness). Each harness keeps its own pointer, so
+  /// the flip is a step sideways, not a deletion — flipping back
+  /// resumes. Errors surface as a snack; on success the /health
+  /// re-read repaints the row.
+  Future<void> _switchHarness() async {
+    final cur = _health?['harness'];
+    if (cur != 'claude' && cur != 'opencode') return;
+    final err = await widget.assistant.setBridgeHarness(
+      cur == 'claude' ? 'opencode' : 'claude',
+    );
+    await _refreshHealth();
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not switch the harness: $err')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = widget.assistant;
@@ -254,6 +273,52 @@ class _BridgeScreenState extends State<BridgeScreen> {
                         ? _pickFolder
                         : null,
                     icon: const Icon(Icons.folder_open),
+                  ),
+                ],
+              ),
+              // Which harness this bridge speaks (POST /harness): the
+              // switch steps sideways to the other one — an honest /new
+              // for whoever holds the seat, but each harness remembers
+              // ITS OWN conversation, so flipping back resumes where
+              // that one stopped. Pre-switch bridges carry no `harness`
+              // field: those are claude-only and the switch lies dead.
+              Row(
+                children: [
+                  Text(
+                    'Harness',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _health == null
+                          ? 'no /health reply — Save & check first'
+                          : _health!['harness'] == 'opencode'
+                          ? 'OpenCode'
+                          : _health!['harness'] == 'claude'
+                          ? 'Claude Code'
+                          : 'Claude Code (bridge too old to switch)',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: switch (_health?['harness']) {
+                      'claude' => 'Switch to OpenCode — each harness keeps '
+                          'its own conversation',
+                      'opencode' => 'Switch to Claude Code — each harness '
+                          'keeps its own conversation',
+                      _ => 'This bridge is too old to switch harnesses',
+                    },
+                    onPressed: a.bridgeConfigured &&
+                        (_health?['harness'] == 'claude' ||
+                            _health?['harness'] == 'opencode') &&
+                        !a.bridgeBusy &&
+                        !working
+                        ? _switchHarness
+                        : null,
+                    icon: const Icon(Icons.swap_horiz),
                   ),
                 ],
               ),

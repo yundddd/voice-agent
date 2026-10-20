@@ -1188,6 +1188,20 @@ class VoiceAssistant extends ChangeNotifier {
     return err;
   }
 
+  /// The Bridge screen's harness row: switch which harness the bridge
+  /// speaks (claude ↔ opencode). The switch drops the LIVE conversation
+  /// the way /new does, but the pointers are per-harness — flipping
+  /// back resumes exactly where that harness stopped.
+  Future<String?> setBridgeHarness(String to) async {
+    final g = _gateway;
+    if (g == null) return 'bridge not configured';
+    final err = await g.setHarness(to);
+    if (err == null) {
+      unawaited(_refreshSession()); // the harness row re-reads /health
+    }
+    return err;
+  }
+
   /// The grey queue bubble's tap: cut the in-flight turn so the parked
   /// prompt starts NOW. Just a /stop — NOT the Stop chip's full
   /// bridgeStop: no detach, no supersede, no speaker silencing. This

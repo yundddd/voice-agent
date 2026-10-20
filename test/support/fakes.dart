@@ -243,6 +243,18 @@ class FakeHarness implements HarnessGateway {
     return setDirError;
   }
 
+  /// Harness-switch behaviour: setHarness() records the names and fails
+  /// with setHarnessError. The CURRENT harness is scripted through
+  /// healthState['harness'] — the row renders /health, never a cache.
+  String? setHarnessError;
+  final List<String> harnessSwitches = [];
+
+  @override
+  Future<String?> setHarness(String to) async {
+    harnessSwitches.add(to);
+    return setHarnessError;
+  }
+
   /// downloadFile(): writes [downloadBytes] to the destination when
   /// downloadOk, records the wire path, and reports progress once.
   List<int> downloadBytes = const [1, 2, 3];

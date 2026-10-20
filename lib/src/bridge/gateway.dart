@@ -95,6 +95,15 @@ abstract class HarnessGateway {
   /// Returns the failure reason, null on success/unsupported.
   Future<String?> setDir(String path) async => null;
 
+  /// Switch WHICH harness the bridge speaks (POST /harness {"to":…}).
+  /// The switch is an honest /new at the seam, but each harness keeps
+  /// its OWN resume pointer — flipping back resumes that conversation
+  /// where it stopped. The current value rides /health as `harness`
+  /// (absent on pre-switch bridges: the row then reads 'Claude Code'
+  /// and the switch is dead). Returns the failure reason, null on
+  /// success/unsupported.
+  Future<String?> setHarness(String to) async => null;
+
   /// Fetch the bytes behind a relayed `file` frame into [destPath],
   /// resuming a `$destPath.part` an earlier wire death left short.
   /// True = the whole file is at [destPath]. Defaults to unsupported.

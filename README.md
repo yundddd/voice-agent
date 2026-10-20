@@ -634,6 +634,12 @@ no route at all, so the phone POSTs its journal outbound (batched,
 acked, deduped by seq) and the bridge mirrors the latest envelope:
 `/applogs` answers from the mirror with `source:'push'`, and
 `appLog.mode` in `/health` reads push / pull / silent.
+**The harness row (UI for +211's endpoint):** the Bridge screen shows
+which harness the bridge currently speaks (from `/health`) and carries a
+switch to the other one — each harness keeps its own conversation, so
+flipping is a step sideways, and flipping back resumes. The switch
+rests while a turn is open (a flip is an honest `/new` for whoever holds
+the seat) and lies dead on pre-switch bridges.
 **The bridge now has a second harness (+211):** `--harness opencode` (or
 a runtime `POST /harness {"to":"opencode"}`, persisted so the trial
 survives restarts) points the same voice events, sentence relay, queue
