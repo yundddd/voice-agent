@@ -19,11 +19,21 @@ class FilePlayerAudioOutput implements AudioOutput {
   FilePlayerAudioOutput({
     AudioPlayer? player,
     Future<Directory> Function()? tempDir,
+    this.note,
   }) : _player = player ?? AudioPlayer(),
        _tempDir = tempDir ?? getTemporaryDirectory;
 
   final AudioPlayer _player;
   final Future<Directory> Function() _tempDir;
+
+  /// +209: the audio seam's own witness. The frame bill says every
+  /// entrance loses one fifty-to-sixty-millisecond frame even after
+  /// the fade (and its layer upload) died — and the gap lands on the
+  /// moment a section's VOICE is queued. audioplayers does its native
+  /// work on the platform's main thread, the very thread the UI draws
+  /// on, so every stage here (file write, delete, play round trip)
+  /// is timed and reported before we accuse the right one.
+  final void Function(String)? note;
   final StreamController<void> _ended = StreamController<void>.broadcast();
   String? _file;
   bool _cutting = false;
@@ -39,6 +49,7 @@ class FilePlayerAudioOutput implements AudioOutput {
     // full-duration plays under a silent speaker smell like a stuck
     // duck in this device's assistant lane. Dedup and ledger fixes
     // stay; the route question gets re-earned with data, not guesses.
+    final seam = Stopwatch()..start();
     final dir = await _tempDir();
     final file = File(
       p.join(
@@ -47,6 +58,7 @@ class FilePlayerAudioOutput implements AudioOutput {
       ),
     );
     await file.writeAsBytes(encodeWav(samples, sampleRate));
+    final wavMs = seam.elapsedMilliseconds;
     final prev = _file;
     _file = file.path;
     if (prev != null) {
@@ -68,6 +80,16 @@ class FilePlayerAudioOutput implements AudioOutput {
     _listenOnce(minAge);
     _cutting = false;
     await _player.play(DeviceFileSource(file.path));
+    // The round trip returned — anything past the async handoffs is
+    // time the platform's main thread spent ON the player's behalf,
+    // and that thread is the one the channel draws on.
+    final playMs = seam.elapsedMilliseconds - wavMs;
+    if (note != null && (playMs >= 8 || wavMs >= 8)) {
+      note!(
+        'audio seam: wav ${wavMs}ms play ${playMs}ms'
+        ' (${samples.length ~/ sampleRate}s of ${tag ?? 'say'})',
+      );
+    }
   }
 
   void _listenOnce(Duration minAge) {

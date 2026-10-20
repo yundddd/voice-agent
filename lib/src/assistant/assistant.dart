@@ -180,7 +180,7 @@ class VoiceAssistant extends ChangeNotifier {
       onQuiet: _wireQuietFired,
     );
     _reply = ReplyPipeline(
-      output: audioOutput ?? FilePlayerAudioOutput(),
+      output: audioOutput ?? FilePlayerAudioOutput(note: _logDebug),
       worker: () => _worker,
       clock: _clock,
       scheduler: _scheduler,
