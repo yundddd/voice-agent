@@ -6,6 +6,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -57,7 +58,20 @@ class FilePlayerAudioOutput implements AudioOutput {
         'reply_${tag ?? DateTime.now().millisecondsSinceEpoch}.wav',
       ),
     );
-    await file.writeAsBytes(encodeWav(samples, sampleRate));
+    // +210: an eight-second section is 384 000 float samples, and the
+    // float-to-PCM loop measured THIRTY-THREE MILLISECONDS on the
+    // seam witness — on the platform thread, which in this app is
+    // the thread the channel draws on. Big clips encode on a worker
+    // isolate now (the message copy is a memcpy; the loop is not our
+    // frame's problem anymore); small ones stay inline, because
+    // spawning a worker is not free below a tenth of a second of
+    // audio.
+    if (samples.length >= 24000) {
+      final bytes = await Isolate.run(() => encodeWav(samples, sampleRate));
+      await file.writeAsBytes(bytes);
+    } else {
+      await file.writeAsBytes(encodeWav(samples, sampleRate));
+    }
     final wavMs = seam.elapsedMilliseconds;
     final prev = _file;
     _file = file.path;
