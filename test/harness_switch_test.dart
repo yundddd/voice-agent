@@ -7,12 +7,14 @@
 // and the SCREEN half pumps the real widget: the row renders /health,
 // the switch aims at the OTHER harness, an open turn parks it, and a
 // pre-switch bridge shows a dead one.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/assistant.dart';
+import 'package:voice_agent/src/assistant/chat_store.dart';
 import 'package:voice_agent/src/bridge/client.dart';
 import 'package:voice_agent/src/common/sinks.dart';
 import 'package:voice_agent/src/platform/audio_output.dart';
@@ -193,6 +195,127 @@ void main() {
       expect(find.textContaining('too old to switch'), findsOneWidget);
       final swap = find.widgetWithIcon(IconButton, Icons.swap_horiz);
       expect(tester.widget<IconButton>(swap).onPressed, isNull);
+    });
+  });
+
+  group('chat split', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+
+    setUp(() {
+      harness = FakeHarness();
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+    });
+
+    tearDown(() => a.dispose());
+
+    test('every ChatStore mutator stamps the era the provider reports', () {
+      final store = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => 'opencode',
+      );
+      store.addUser('hello');
+      store.addUserTranscribing();
+      store.addSystemNote('note');
+      store.addFile(name: 'x', path: '/tmp/x', size: 1);
+      store.beginTurn();
+      expect(store.entries, hasLength(5),
+          reason: 'five mutators, five entries');
+      expect(
+        store.entries.map((e) => e.harness),
+        everyElement('opencode'),
+        reason: 'EVERY birth stamps the era — one missed mutator is a '
+            'bubble invisible under exactly one harness',
+      );
+      // A bridge with no switch answer (null provider): every entry is
+      // un-era, and un-era means SHARED — the row's whole point is
+      // those bubbles show under every thread.
+      final legacy = ChatStore(
+        persist: (_) async {}, repaint: () {}, harness: () => null,
+      );
+      legacy.addUser('un-era\u2019d');
+      expect(legacy.entries.single.harness, isNull);
+    });
+
+    test('the era round-trips through disk; a legacy line decodes un-era',
+        () async {
+      final store = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => 'claude',
+      );
+      store.addUser('under claude');
+      final back = ChatEntry.fromJson(store.entries.single.toJson());
+      expect(back.harness, 'claude');
+      // A pre-split JSON line carries no 'h' — it must decode un-era
+      // (shared), not as any particular era.
+      final legacy = ChatEntry.fromJson({'user': true, 'blocks': ['old']});
+      expect(legacy.harness, isNull);
+      expect(ChatEntry.user('x').toJson().containsKey('h'), isFalse);
+    });
+
+    test('flipping harnesses splits the transcript and keeps the log', () async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'sessionId': 'ses_cl',
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      // A shared prologue (a legacy/pre-split line): null = every thread.
+      a.chat.add(ChatEntry.user('the shared prologue', createdMs: 1));
+      // One Claude turn: a user bubble + its assistant reply block.
+      // The send rides an open view until the fake closes it — the
+      // turn-flow tests' dance, not an await-through-done.
+      unawaited(a.runQuickCommand('claude only', bubble: 'claude only'));
+      await settle();
+      harness.finishView();
+      await settle();
+      expect(
+        a.view.chat.where((e) => e.blocks.contains('claude only')),
+        hasLength(1),
+        reason: 'the claude-era bubble is not on the claude thread',
+      );
+
+      // The real bridge's /health names the new era the instant
+      // /harness answers — the fake moves its answer along too.
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'opencode',
+        'dir': '/x', 'sessionId': 'ses_oc',
+      };
+      await a.setBridgeHarness('opencode');
+      await settle();
+      // The log keeps EVERYTHING — the split is render-side only.
+      expect(
+        a.chat.map((e) => e.harness),
+        containsAll(<String?>[null, 'claude', 'opencode']),
+      );
+      // The thread now shows only the shared prologue + the new signpost.
+      final onThread = a.view.chat.map((e) => e.blocks.join(' ')).join();
+      expect(onThread, contains('the shared prologue'));
+      expect(onThread, contains('OpenCode holds the pen now'));
+      expect(onThread, isNot(contains('claude only')));
+
+      // Flip BACK: the claude-era bubbles were never gone — only the
+      // opencode signpost is hidden now, and the claude thread shows
+      // its own arrival signpost, not opencode's.
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'sessionId': 'ses_cl',
+      };
+      await a.setBridgeHarness('claude');
+      await settle();
+      final back = a.view.chat.map((e) => e.blocks.join(' ')).join();
+      expect(back, contains('claude only'));
+      expect(back, contains('Claude Code holds the pen now'));
+      expect(back, isNot(contains('OpenCode holds the pen now')));
     });
   });
 }

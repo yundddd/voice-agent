@@ -170,6 +170,12 @@ class VoiceAssistant extends ChangeNotifier {
       persist: _persistChat,
       repaint: notifyListeners,
       trace: _logDebug,
+      // +213: the era a new bubble wears. Null with no bridge at all
+      // (the offline demo belongs to every thread) and until /health
+      // first names an era; typed sends count — they reach the harness
+      // even with the voice toggle off, so the gate is the gateway,
+      // not the speaker.
+      harness: () => _gateway == null ? null : _bridgeHarness,
     );
     _lease = WireLease(
       scheduler: _scheduler,
@@ -387,7 +393,15 @@ class VoiceAssistant extends ChangeNotifier {
     mode: _mode,
     activity: _activity,
     error: _error,
-    chat: _chat.entries,
+    // +213: the channel shows ONE THREAD: this era's bubbles plus the
+    // un-era'd prologue (offline turns, pre-split history). The FILTER
+    // IS RENDER-SIDE ONLY — the store underneath stays the whole
+    // append-only log, so the reattach dedup, the receipt-by-id law,
+    // and the heard ledger keep scanning everything: a task finished
+    // under claude is still finished when opencode's replay shows up.
+    chat: _chat.entries
+        .where((e) => e.harness == null || e.harness == _bridgeHarness)
+        .toList(growable: false),
     chatVersion: _chat.version,
     queued: queuedBubble == null
         ? null
@@ -752,6 +766,16 @@ class VoiceAssistant extends ChangeNotifier {
   String? _sessionId;
   String? get sessionId => _sessionId;
 
+  /// +213: which harness /health last said holds the pen ('claude' |
+  /// 'opencode'; null = a bridge too old to name one, or none seen
+  /// yet). The chat split is keyed on this: every bubble stamps its
+  /// era at birth (see ChatStore.harness) and the projected channel
+  /// shows only the current era's thread plus the un-era'd prologue.
+  /// Read by _refreshSession — every glance at the bridge updates it,
+  /// including the bridge's own out-of-band flips.
+  String? _bridgeHarness;
+  String? get bridgeHarness => _bridgeHarness;
+
   // Context consumption for the bar above the talk button: fed by
   // `context` events mid-turn/at turn end and by every /health read
   // (_refreshSession runs at startup, after setBridge, and in
@@ -794,6 +818,16 @@ class VoiceAssistant extends ChangeNotifier {
     final s = (sid is String && sid.isNotEmpty) ? sid : null;
     if (s != _sessionId) {
       _sessionId = s;
+      notifyListeners();
+    }
+    // +213: the era tracker. The harness may flip while this screen is
+    // open (the Bridge row's switch, a curl, a restart's persisted
+    // choice) — any /health glance re-arms the thread, and the notify
+    // repaints the channel onto the new one.
+    final hm = h?['harness'];
+    final eraNow = hm == 'claude' || hm == 'opencode' ? hm as String : null;
+    if (eraNow != _bridgeHarness) {
+      _bridgeHarness = eraNow;
       notifyListeners();
     }
     final ctx = h?['context'];
@@ -1197,7 +1231,18 @@ class VoiceAssistant extends ChangeNotifier {
     if (g == null) return 'bridge not configured';
     final err = await g.setHarness(to);
     if (err == null) {
-      unawaited(_refreshSession()); // the harness row re-reads /health
+      // AWAITED: the era tracker must move before the boundary note is
+      // filed, or the note wears the wrong era and vanishes into the
+      // thread it just left.
+      await _refreshSession();
+      // +213: each thread opens with its own signpost — the flip's
+      // verdict reads as news in the era it announces, and the old
+      // thread keeps the signpost of ITS arrival.
+      _chat.addSystemNote(
+        '${to == 'opencode' ? 'OpenCode' : 'Claude Code'} holds the pen '
+        'now — the channel shows this harness\u2019s thread; the other '
+        'one waits behind the switch.',
+      );
     }
     return err;
   }

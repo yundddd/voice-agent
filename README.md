@@ -640,6 +640,16 @@ switch to the other one — each harness keeps its own conversation, so
 flipping is a step sideways, and flipping back resumes. The switch
 rests while a turn is open (a flip is an honest `/new` for whoever holds
 the seat) and lies dead on pre-switch bridges.
+**The split transcript (+213):** every bubble now carries the harness
+era it was born under, and the chat channel renders ONE THREAD — the
+current harness's bubbles plus the un-era'd prologue (the offline demo,
+history from before the split, or a bridge too old to name its era:
+those show everywhere). The filter is render-side only: the log on disk
+stays one append-only truth, so the heard-ledger, the reattach dedup
+and the receipt-by-id law keep scanning everything — a task finished
+under claude stays finished when opencode replays it. Each flip files
+its own signpost note, worn by the era it announces, so every thread
+opens by explaining itself.
 **The bridge now has a second harness (+211):** `--harness opencode` (or
 a runtime `POST /harness {"to":"opencode"}`, persisted so the trial
 survives restarts) points the same voice events, sentence relay, queue

@@ -265,6 +265,11 @@ shared machinery, not a second implementation.
   (`.claude_bridge_session` / `.opencode_bridge_session` in the work
   dir): flipping away and back resumes each conversation exactly where
   it stopped.
+- **Per-harness thread (+213, phone side).** The app stamps every chat
+  bubble with the era `/health` reported at its birth and shows only
+  the current era's bubbles (plus un-era history, which belongs to
+  every thread); the store itself stays the whole log, so replay and
+  receipt dedup never go era-blind.
 - **The backend joins, not owns.** The adapter finds the service via
   `~/.local/state/opencode/service.json` (url + rotating basic-auth
   password, re-read per call) — the same file the desktop TUI uses —

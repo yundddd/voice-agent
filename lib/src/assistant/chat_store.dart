@@ -20,7 +20,15 @@ class ChatStore {
     this.cap = 80, // entries kept on screen and on disk
     int Function()? nowMs,
     this.trace,
+    this.harness,
   }) : _nowMs = nowMs ?? _wallNowMs;
+
+  /// +213: who the phone believes is holding the pen THIS very moment
+  /// ('claude' | 'opencode' | null = offline, not yet seen, or a
+  /// harness with no switch). Every entry-creating mutator stamps the
+  /// born bubble with it — the split view filters on the stamp, the
+  /// log itself stays one append-only truth.
+  final String? Function()? harness;
 
   /// Hand a snapshot of the whole (capped) log to storage. Must never
   /// throw: chat history must never break a conversation. +205: the
@@ -48,6 +56,9 @@ class ChatStore {
   final List<ChatEntry> _entries = <ChatEntry>[];
   int _version = 0; // bumped on every mutation: drives auto-scroll
   ChatEntry? _queued; // the user entry currently wearing the pin
+
+  /// The era a bubble born THIS mutation wears (see [ChatStore.harness]).
+  String? get _era => harness?.call();
 
   /// The conversation log, oldest first (user / assistant bubbles).
   List<ChatEntry> get entries => _entries;
@@ -102,7 +113,9 @@ class ChatStore {
   /// an unfilled placeholder never survives a reload, and the
   /// renderer knows the state from the entry itself.
   ChatEntry addUserTranscribing() {
-    final entry = ChatEntry.user('', createdMs: _nowMs())..transcribing = true;
+    final entry = ChatEntry.user('', createdMs: _nowMs())
+      ..transcribing = true
+      ..harness = _era;
     _entries.add(entry);
     trace?.call('msg phone: user (transcribing…)');
     touch();
@@ -131,7 +144,8 @@ class ChatStore {
     // One pin at a time: a newer queued press outranks the old one,
     // whose turn is by definition dead (superseded on the wire).
     if (queued) unpinQueued();
-    final entry = ChatEntry.user(text, queued: queued, createdMs: _nowMs());
+    final entry = ChatEntry.user(text, queued: queued, createdMs: _nowMs())
+      ..harness = _era;
     _entries.add(entry);
     if (queued) _queued = entry;
     trace?.call('msg phone: user "${_abbrev(text)}" queued=${queued ? 1 : 0}');
@@ -211,7 +225,9 @@ class ChatStore {
         cancelled: cancelled,
         receipt: receipt,
         receiptId: receiptId,
-      )..blocks.add(text),
+      )
+        ..blocks.add(text)
+        ..harness = _era,
     );
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
@@ -233,7 +249,8 @@ class ChatStore {
         _entries.last.filePath == path) {
       return;
     }
-    _entries.add(ChatEntry.file(name, path, size, createdMs: _nowMs()));
+    _entries.add(ChatEntry.file(name, path, size, createdMs: _nowMs())
+      ..harness = _era);
     trace?.call('msg file: "$name" ($size bytes)');
     touch();
   }
@@ -244,7 +261,7 @@ class ChatStore {
   /// what the conversation was. A turn that never spoke is removed at
   /// the end (see [removeEmptyTurn]).
   ChatEntry beginTurn() {
-    final turn = ChatEntry.assistant(createdMs: _nowMs());
+    final turn = ChatEntry.assistant(createdMs: _nowMs())..harness = _era;
     _entries.add(turn);
     trace?.call('msg turn: assistant bubble open');
     touch();

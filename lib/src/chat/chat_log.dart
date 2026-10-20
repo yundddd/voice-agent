@@ -132,6 +132,18 @@ class ChatEntry {
   /// History, like every flag here: it round-trips.
   String receiptId;
 
+  /// +213: the HARNESS ERA this bubble was born under ('claude' |
+  /// 'opencode') — the stamp that lets the channel show one thread per
+  /// harness while the log underneath stays one honest append-only
+  /// history. Null means NO era: offline parrot turns, and every entry
+  /// written before the split existed — the shared prologue. A
+  /// no-era bubble shows under every thread; an era bubble shows only
+  /// under its own. Stamped at ENTRY BIRTH (the turn's, not the block's:
+  /// a reattach replay that files a late block under the new harness
+  /// still lands in the bubble whose era was true when the turn
+  /// opened). History, like every flag here: it round-trips.
+  String? harness;
+
   // ── The file bubble (set only when isFile) ─────────────────────────────
   bool get isFile => filePath.isNotEmpty;
   String fileName = '';
@@ -178,6 +190,9 @@ class ChatEntry {
     if (cancelled) 'cancelled': true,
     if (receipt) 'receipt': true,
     if (receiptId.isNotEmpty) 'rid': receiptId,
+    // (A local: a public field can't be flow-promoted after the null
+    // check, and 'h' never rides null — absence IS the un-era meaning.)
+    if (harness case final era? when era.isNotEmpty) 'h': era,
     if (isFile) 'file': {'name': fileName, 'path': filePath, 'size': fileSize},
     if (savedMs != 0) 'saved': savedMs,
     if (savedPath.isNotEmpty) 'savedTo': savedPath,
@@ -203,6 +218,9 @@ class ChatEntry {
         receiptId: j['rid'] as String? ?? '',
         createdMs: ms(j['t']) ?? 0,
       )
+      ..harness = j['h'] is String && (j['h'] as String).isNotEmpty
+          ? j['h'] as String
+          : null // legacy lines have no era: they show under every thread
       ..pickedUpMs = ms(j['pickedUp']) ?? 0
       ..deliveredMs = ms(j['heard']) ?? 0
       ..interruptedMs = ms(j['cut']) ?? 0
