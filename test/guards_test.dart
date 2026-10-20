@@ -1,5 +1,7 @@
 // Regression guards for this session's fixes — one test per field
 // report, mirroring tool/sentence_relay.test.mjs on the JS side.
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/bridge/bridge.dart';
 import 'package:voice_agent/src/chat/chat_log.dart';
@@ -133,6 +135,81 @@ void main() {
         stepIsSilentFor('mcp__puppeteer__screenshot'),
         isFalse,
         reason: 'unknown tools are not plumbing by default',
+      );
+    });
+  });
+
+  group('boot restore comes up before the wire (restart keeps the log)', () {
+    // init() runs on device plugins (path_provider, rootBundle) that no
+    // unit harness can fake, so the LAW is pinned at the source: the
+    // history restore and the session-id glance must sit BEFORE the
+    // first network-apt step (a model ensureIn can throw on a dead
+    // wire, and the catch at the bottom of init used to swallow that
+    // into an error banner with NO history and NO session id — while
+    // both sat perfectly intact on disk and on the bridge).
+    final src = File(
+      'lib/src/assistant/assistant.dart',
+    ).readAsStringSync();
+    final init = src.substring(src.indexOf('Future<void> init() async {'));
+    test('_loadChat and the session refresh precede the first ensureIn', () {
+      final load = init.indexOf('_loadChat();');
+      final refresh = init.indexOf('unawaited(_refreshSession());');
+      final ensure = init.indexOf('asr.ensureIn(');
+      expect(load, greaterThan(-1));
+      expect(refresh, greaterThan(-1));
+      expect(load, lessThan(ensure), reason: 'history survives a dead wire');
+      expect(refresh, lessThan(ensure), reason: 'the id survives it too');
+    });
+    test('the log is written atomically (a kill cannot tear it)', () {
+      final fn = src.substring(
+        src.indexOf('Future<void> _persistChat'),
+        src.indexOf('void _loadChat()'),
+      );
+      expect(fn, contains('writeAsString(json, flush: true)'));
+      expect(fn, contains('.rename(_chatPath)'));
+      expect(
+        fn,
+        isNot(contains('File(_chatPath).writeAsString')),
+        reason: 'no in-place rewrite of the live log',
+      );
+    });
+  });
+
+  group('status line rides a static band (no jittering the conversation)', () {
+    // The centered channel column walks the WHOLE conversation whenever
+    // any part of it reflows; the status wording changes HEIGHT as it
+    // changes (the idle two-liner, a bare 'Thinking…', a long 'Bash …'
+    // command), so the line may no longer size itself to its text.
+    // Widget-level layout needs the device harness; the LAW is pinned
+    // at the source.
+    final ui = File(
+      'lib/src/ui/assistant_screen.dart',
+    ).readAsStringSync();
+    test('the band is computed, font-scale-aware, and fixed-height', () {
+      expect(ui, contains('static double _statusBand('));
+      expect(
+        ui,
+        contains('MediaQuery.textScalerOf'),
+        reason: 'a big system font must not overflow the band',
+      );
+      // The render site of the status word: from its band anchor
+      // forward a short window — the two-line promise must be INSIDE
+      // the banded Text itself, not merely somewhere in the file. (The
+      // ellipsis is the promise StepLine always made of "the widget".)
+      final at = ui.indexOf('height: _statusBand(context)');
+      expect(at, greaterThan(-1));
+      final site = ui.substring(at, at + 600);
+      expect(site, contains('v.status'));
+      expect(site, contains('maxLines: 2'));
+      expect(site, contains('TextOverflow.ellipsis'));
+    });
+    test('the screen renders the status in exactly one place', () {
+      // The old bare wrapping Text(v.status) must not return beside
+      // (or instead of) the banded one.
+      expect(
+        RegExp(r'v\.status').allMatches(ui).length,
+        1,
+        reason: 'one banded render site is the whole law',
       );
     });
   });

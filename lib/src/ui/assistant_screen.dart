@@ -70,6 +70,20 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
+  /// The static band the status line rides: two lines of the status
+  /// style at the user's font scale. The 1.45 margin is the slack
+  /// between a declared line height (multiplies exactly) and the font's
+  /// intrinsic metrics when the style declares none (Roboto rides
+  /// ~1.17) — it is what keeps a long 'Bash …' command ellipsized
+  /// INSIDE the band instead of overflowing it.
+  static double _statusBand(BuildContext context) {
+    final ts = Theme.of(context).textTheme.titleMedium;
+    final px = MediaQuery.textScalerOf(
+      context,
+    ).scale(ts?.fontSize ?? 16);
+    return px * (ts?.height ?? 1.0) * 2 * 1.45;
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = _assistant;
@@ -232,10 +246,30 @@ class _AssistantScreenState extends State<AssistantScreen>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              v.status,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.titleMedium,
+                            // The status line rides a STATIC two-line
+                            // band. The wording changes HEIGHT as it
+                            // changes — the idle two-liner, a bare
+                            // 'Thinking…', a long 'Bash …' command
+                            // (StepLine's promise of being "ellipsized
+                            // by the widget", finally kept) — and under
+                            // this centered column every reflow walked
+                            // the whole conversation up and down: the
+                            // jitter the static band kills. Two lines
+                            // reserved at any font scale; more is
+                            // ellipsized, never reflowed.
+                            SizedBox(
+                              height: _statusBand(context),
+                              child: Center(
+                                child: Text(
+                                  v.status,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                              ),
                             ),
                             if (v.error.isNotEmpty) ...[
                               const SizedBox(height: 12),

@@ -637,7 +637,14 @@ class VoiceAssistant extends ChangeNotifier {
   Future<void> _persistChat(String json) async {
     if (_modelsDir.isEmpty) return;
     try {
-      await File(_chatPath).writeAsString(json);
+      // Atomic: write beside the log, then rename over it. An OS kill
+      // mid-write used to leave a half-written chat_log.json, which the
+      // tolerant decoder reads as "no history" — and the next bubble
+      // persisted that emptiness right back over the file, making the
+      // loss real and silent. A rename can't be caught halfway.
+      final tmp = File('$_chatPath.tmp');
+      await tmp.writeAsString(json, flush: true);
+      await tmp.rename(_chatPath);
     } catch (_) {} // chat history must never break a conversation
   }
 
@@ -1700,6 +1707,23 @@ class VoiceAssistant extends ChangeNotifier {
       _modelsDir = modelsDir;
       _prefs = await loadTtsPrefs(modelsDir);
       _asrPrefs = await loadAsrPrefs(modelsDir);
+      _bridgePrefs = await loadBridgePrefs(modelsDir);
+      // The mode tab the user last used — a habit, restored, not reset
+      // to the factory default every cold start.
+      _mode = _bridgePrefs.mode == 'pushToTalk'
+          ? InteractionMode.pushToTalk
+          : InteractionMode.conversation;
+      // The conversation and its fingerprint come up BEFORE anything
+      // that can fail on a network: chat_log.json is a tiny local read
+      // and /health a best-effort glance. A cold start on a dead or
+      // slow wire (the ASR/voice downloads below, the first throw in
+      // this try block) must not cost the user their history and
+      // session id — both are perfectly intact on disk and on the
+      // bridge; the old position after the download only ever LOOKED
+      // like the restart had eaten them.
+      _loadChat(); // restore the on-screen conversation (file read is tiny)
+      _rebuildGateway();
+      unawaited(_refreshSession()); // chat-screen top row knows the id
       // The saved ASR pack must be fully on disk (marker present);
       // otherwise fall back to the default (tiny.en), which downloads on
       // first run just like the voice packs below.
@@ -1710,17 +1734,10 @@ class VoiceAssistant extends ChangeNotifier {
       _asrPrefs.modelId = asr.id;
       _activeAsrId = asr.id;
       await asr.ensureIn(modelsDir, onProgress: _modelProgress);
-      _bridgePrefs = await loadBridgePrefs(modelsDir);
-      // The mode tab the user last used — a habit, restored, not reset
-      // to the factory default every cold start.
-      _mode = _bridgePrefs.mode == 'pushToTalk'
-          ? InteractionMode.pushToTalk
-          : InteractionMode.conversation;
       _heardLedger = await loadHeardLedger(
         modelsDir,
         send: (mids) async => await _gateway?.heard(mids) ?? false,
       );
-      _loadChat(); // restore the on-screen conversation (file read is tiny)
       // The journal comes up BEFORE anything else can go wrong, and it
       // loads its disk mirror first: when Android killed this process
       // mid-turn last time, the events leading up to the kill — and the
@@ -1757,8 +1774,6 @@ class VoiceAssistant extends ChangeNotifier {
       };
       unawaited(j.flushNow()); // a reloaded mirror may still hold events
       // the dying process never managed to deliver
-      _rebuildGateway();
-      unawaited(_refreshSession()); // chat-screen top row knows the id
       // The saved voice must be fully on disk (pack present); otherwise
       // fall back to the default (the students), which downloads on
       // first run just like before.
