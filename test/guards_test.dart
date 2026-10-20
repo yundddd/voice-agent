@@ -147,9 +147,7 @@ void main() {
     // wire, and the catch at the bottom of init used to swallow that
     // into an error banner with NO history and NO session id — while
     // both sat perfectly intact on disk and on the bridge).
-    final src = File(
-      'lib/src/assistant/assistant.dart',
-    ).readAsStringSync();
+    final src = File('lib/src/assistant/assistant.dart').readAsStringSync();
     final init = src.substring(src.indexOf('Future<void> init() async {'));
     test('_loadChat and the session refresh precede the first ensureIn', () {
       final load = init.indexOf('_loadChat();');
@@ -182,9 +180,7 @@ void main() {
     // command), so the line may no longer size itself to its text.
     // Widget-level layout needs the device harness; the LAW is pinned
     // at the source.
-    final ui = File(
-      'lib/src/ui/assistant_screen.dart',
-    ).readAsStringSync();
+    final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
     test('the band is computed, font-scale-aware, and fixed-height', () {
       expect(ui, contains('static double _statusBand('));
       expect(
@@ -223,9 +219,7 @@ void main() {
     // every send replayed all eighty entrances at once (the scroll bug
     // the field reported four times). Pinned at the source: the screen
     // builds the wrapper, and no device harness reaches this layout.
-    final ui = File(
-      'lib/src/ui/assistant_screen.dart',
-    ).readAsStringSync();
+    final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
     test('ObjectKey(e) keys the Padding, not the FadeInBubble', () {
       final at = ui.indexOf('key: ObjectKey(e),');
       expect(at, greaterThan(-1), reason: 'the key exists');
@@ -236,14 +230,53 @@ void main() {
         at + 'key: ObjectKey(e),'.length,
         ui.indexOf('FadeInBubble(', at),
       );
-      expect(between.trimRight(), endsWith('child:'),
-          reason: 'the ONLY child: between key and entrance — the key '
-              'is a sibling argument of the paired Padding, not below');
+      expect(
+        between.trimRight(),
+        endsWith('child:'),
+        reason:
+            'the ONLY child: between key and entrance — the key '
+            'is a sibling argument of the paired Padding, not below',
+      );
       // The old shape (key inside FadeInBubble) must be gone.
       expect(
-        RegExp(r'FadeInBubble\(\s*(//[^\n]*\n\s*)*key:\s*ObjectKey\(e\)')
-            .hasMatch(ui),
+        RegExp(
+          r'FadeInBubble\(\s*(//[^\n]*\n\s*)*key:\s*ObjectKey\(e\)',
+        ).hasMatch(ui),
         isFalse,
+      );
+    });
+  });
+
+  group('the push-up glides (+200: the follow animates, never teleports)', () {
+    // 'When a new bubble or segment shows up, the old content gets
+    // pushed up as if scrolled — and that scroll is not smooth.' It
+    // was not a scroll at all: a per-frame jumpTo moved the channel up
+    // by a whole line, instantly, at every streaming arrival. The pin
+    // now rides a re-targeted animateTo for anything near (long
+    // distances still snap — nobody wants to watch a 3000-px commute).
+    final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
+    test('the pinned branch issues an eased animateTo, not a bare jump', () {
+      expect(ui, contains('pos.animateTo('), reason: 'the chase exists');
+      expect(ui, contains('Curves.easeOutCubic'));
+      expect(
+        RegExp(
+          r'animateTo\([\s\S]{0,120}Duration\(milliseconds: \d+\)',
+        ).hasMatch(ui),
+        isTrue,
+        reason: 'a bounded glide — an unbounded one is a runaway',
+      );
+      // The hand must be able to kill it (goIdle is @protected; a
+      // zero-distance jump is the public retirement).
+      expect(ui, contains('pos.jumpTo(pos.pixels);'));
+    });
+    test('the +190 trap stays dead: no isScrollingNotifier anywhere', () {
+      // +190 died because its guard skipped re-pins while the view was
+      // 'already scrolling' — which its own glide always was. The pin
+      // may only ask the touch and the stick STATE.
+      expect(
+        ui,
+        isNot(contains('isScrollingNotifier')),
+        reason: 'the geometry proxy that sank +190 must not return',
       );
     });
   });

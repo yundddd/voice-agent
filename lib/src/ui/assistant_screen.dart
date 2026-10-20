@@ -63,6 +63,21 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// the bottom re-arms it.
   bool _stick = true;
 
+  /// +200: the eased chase. +196 made stickiness a STATE, which retires
+  /// the only reason +190 could not animate: its guard consulted the
+  /// scrolling notifier — true for the glide's own DrivenScrollActivity
+  /// — so every re-pin saw 'scroll in progress', skipped itself, and the
+  /// glide aimed stale forever. The guard is _userTouch now, and the
+  /// chase re-targets every frame, so a mid-glide touch or scroll-away
+  /// updates the verdict at once (the hand outranks the pin, and the
+  /// hand cancels the chase). Without this, every growth — a streaming
+  /// section's new line, a file slip's relabel, a receipt landing —
+  /// moved the whole channel up by a LINE in one teleporting jumpTo
+  /// (field: 'the old segment gets pushed up as if it's getting scrolled
+  /// up, and that scroll is not very smooth'). The push stays mandatory
+  /// and the distance stays honest; only the step becomes a glide.
+  bool _pinGliding = false;
+
   /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
   /// events: every frame, if the view was resting at the tail (within
   /// 2 px of last frame's maximum) it re-pins — so ANY growth below
@@ -85,7 +100,13 @@ class _AssistantScreenState extends State<AssistantScreen>
       final atTailNow = pos.pixels >= pos.maxScrollExtent - 2.0;
       if (atTailNow) {
         _stick = true;
-      } else if (pos.pixels < _lastMax - 2.0) {
+      } else if (pos.pixels < _lastMax - 2.0 && !_pinGliding) {
+        // +200 caveat: a chase in flight owns pixels — a content SHRINK
+        // mid-glide clamps the extent down under us with no hand
+        // involved, and that clamp must not retire the stick (it is
+        // +196's quiet killer, re-armable only by reaching the tail).
+        // The chase itself is cancelled the moment stick or touch
+        // changes, so this exemption can never outlive its reason.
         _stick = false;
       }
       if (!_userTouch && _stick) {
@@ -98,8 +119,40 @@ class _AssistantScreenState extends State<AssistantScreen>
             'n ${_assistant.chat.length})',
           );
         }
-        pos.jumpTo(pos.maxScrollExtent);
-      } else if (!_stick) {
+        // +200: short distances glide (an arrival's push-up reads as a
+        // scroll), long ones snap (a keyboard leaving, a panel
+        // collapsing — no reader wants to watch a 3000-pixel commute,
+        // and the chase would look like losing control).
+        if (delta > 160) {
+          pos.jumpTo(pos.maxScrollExtent);
+          _pinGliding = false;
+        } else if (delta > 0.5) {
+          // Re-targeted every frame while the tail grows underneath
+          // us: the gap decays toward zero as fast as the entrance
+          // opens, so the newest bubble rides the bottom edge of the
+          // screen the whole way in.
+          unawaited(
+            pos.animateTo(
+              pos.maxScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+            ),
+          );
+          _pinGliding = true;
+        } else {
+          _pinGliding = false; // landed (or nothing ever opened)
+        }
+      } else {
+        if (_pinGliding) {
+          // The hand outranks the pin: a touch (or a scroll-away)
+          // mid-glide stops the chase dead, wherever the finger is.
+          // (jumpTo to the SAME pixels is the public way to retire a
+          // driven activity — goIdle itself is @protected.)
+          pos.jumpTo(pos.pixels);
+          _pinGliding = false;
+        }
+      }
+      if (!_stick) {
         // The crime-scene camera: growth that went UNPINNED is exactly
         // the 'new message below the fold' the field keeps seeing.
         final grew = pos.maxScrollExtent - _lastMax;
