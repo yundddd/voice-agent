@@ -93,18 +93,45 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// distance per millisecond.
   int _lastPinUs = 0;
 
-  /// +203: frame-cost forensics. +202 cut the rebuild tax and the
-  /// chase still runs at ~30 fps on the tape, so the remaining thief
-  /// is either the Dart side (build+layout) or the GPU side (raster)
-  /// — and the screen could not tell them apart until now. The
-  /// scheduler reports both halves for every frame; the chase marks
-  /// where a push began and, when it lands, files one line: n frames,
-  /// median and worst build ms, median and worst raster ms. One line
-  /// per push, zero cost between pushes, and the field report writes
-  /// itself: 'build' heavy is OUR code, 'raster' heavy is the
-  /// entrance's fade-clip-card on this phone's GPU.
+  /// +203/206: frame-cost forensics, now with honest instrumentation.
+  /// +203 billed the chase from the scheduler's FrameTiming and it
+  /// named the thief (a 71 ms build spike — the history encode), but
+  /// +205's tape then went blind: 'timings lag (none delivered)'
+  /// every chase, because Android delivers those batches whenever the
+  /// platform thread feels like it — the one batch that did arrive
+  /// carried 43 frames and landed LONG after the entrance it
+  /// described. A witness that testifies minutes after the crime
+  /// testifies about nothing. The bill is therefore paid from two
+  /// purses: the frame PERIOD and the UI-side time (frame start to
+  /// this frame's post-frame tick — every callback, build, layout,
+  /// and paint dispatch lives in that span) are measured on the spot
+  /// from the scheduler's own callbacks, zero batching, and they are
+  /// exactly the half we can fix in our code; the GPU's raster half
+  /// rides the late FrameTiming ring and is quoted whenever it
+  /// happens to be present ('raster pending' means the batch, not
+  /// the frames, is behind).
+  final List<(int, int)> _frames = []; // (period µs, UI µs) per frame
+  int _fStartUs = 0;
+  int _fPeriodUs = 0;
+  int _framesMark = -1;
   final List<FrameTiming> _timings = [];
   int _timingsMark = -1;
+
+  /// Persistent (every-frame, START-of-frame) callback: stamps the
+  /// frame's arrival and the distance since the last one — the true
+  /// period, measured where no platform batching can hide it.
+  /// Persistent callbacks can never be removed (the scheduler offers
+  /// no removePersistentFrameCallback), so the witness disarms itself
+  /// on dispose: the callback survives, sees the flag down, and costs
+  /// one branch forever.
+  bool _framesAlive = true;
+
+  void _onFrameStart(Duration _) {
+    if (!_framesAlive) return;
+    final now = DateTime.now().microsecondsSinceEpoch;
+    _fPeriodUs = _fStartUs == 0 ? 0 : now - _fStartUs;
+    _fStartUs = now;
+  }
 
   void _onFrameTimings(List<FrameTiming> batch) {
     _timings.addAll(batch);
@@ -113,42 +140,44 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
-  /// +204: when the chase landed (µs). The scheduler delivers timing
-  /// batches LATE — tens to hundreds of ms behind the frames they
-  /// measure — so the landing tick usually has no numbers yet, and
-  /// +203's summarize-inline filed nothing but silence for a chase
-  /// the tape can plainly see. The report therefore waits: a chase
-  /// ends by recording its closing moment, and any follow tick half a
-  /// second later files the summary, by which time the batch has
-  /// almost certainly arrived. If it hasn't, the line still files —
-  /// 'timings lag' is itself the answer to a question we asked.
+  /// +204: when the chase landed (µs), so the bill files after the
+  /// dust rather than mid-glide.
   int _chaseEndUs = 0;
 
-  /// Summarize the frames a chase rode, and forget the window. Called
-  /// from the tick loop once the timings have had time to arrive.
+  /// Summarize the frames a chase rode. The period/UI halves come
+  /// from the on-the-spot ring (always present by flush time); the
+  /// raster half quotes whatever the late FrameTiming ring has for
+  /// the window, and says 'pending' when the batch is still traveling.
   void _logChaseCost() {
-    if (_timingsMark < 0) return;
-    final mark = _timingsMark.clamp(0, _timings.length);
-    _timingsMark = -1;
+    if (_framesMark < 0) return;
+    final fMark = _framesMark.clamp(0, _frames.length);
+    _framesMark = -1;
     _chaseEndUs = 0;
-    final window = _timings.sublist(mark);
+    final window = _frames.sublist(fMark);
     if (window.isEmpty) {
-      _assistant.logFollow('fps chase: timings lag (none delivered)');
+      _assistant.logFollow('fps chase: no frames in window');
       return;
     }
-    final b = <double>[];
-    final r = <double>[];
-    for (final t in window) {
-      b.add(t.buildDuration.inMicroseconds / 1000.0);
-      r.add(t.rasterDuration.inMicroseconds / 1000.0);
-    }
-    b.sort();
-    r.sort();
-    _assistant.logFollow(
+    final p = window.map((f) => f.$1 / 1000.0).toList()..sort();
+    final u = window.map((f) => f.$2 / 1000.0).toList()..sort();
+    final line = StringBuffer(
       'fps chase: n ${window.length} '
-      'build ${b[b.length ~/ 2].toStringAsFixed(1)}/${b.last.toStringAsFixed(1)} '
-      'raster ${r[r.length ~/ 2].toStringAsFixed(1)}/${r.last.toStringAsFixed(1)} ms',
+      'period ${p[p.length ~/ 2].toStringAsFixed(1)}/${p.last.toStringAsFixed(1)} '
+      'ui ${u[u.length ~/ 2].toStringAsFixed(1)}/${u.last.toStringAsFixed(1)}',
     );
+    final tMark = _timingsMark.clamp(0, _timings.length);
+    _timingsMark = -1;
+    final tw = _timings.sublist(tMark);
+    if (tw.isEmpty) {
+      line.write(' raster pending');
+    } else {
+      final r = tw.map((t) => t.rasterDuration.inMicroseconds / 1000.0).toList()
+        ..sort();
+      line.write(
+        ' raster ${r[r.length ~/ 2].toStringAsFixed(1)}/${r.last.toStringAsFixed(1)}',
+      );
+    }
+    _assistant.logFollow('$line ms');
   }
 
   /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
@@ -165,6 +194,20 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _followTick() {
     if (mounted && _scroll.hasClients) {
       final pos = _scroll.position;
+      // +206: this tick IS the end of a frame — the span from the
+      // persistent callback (frame start) to here is every callback,
+      // build, layout, and paint dispatch this frame ran, measured
+      // with no platform in the loop. And the distance between frame
+      // starts is the period the eye actually got.
+      if (_fStartUs != 0) {
+        _frames.add((
+          _fPeriodUs,
+          DateTime.now().microsecondsSinceEpoch - _fStartUs,
+        ));
+        if (_frames.length > 240) {
+          _frames.removeRange(0, _frames.length - 240);
+        }
+      }
       // +204: file a finished chase's frame bill once the scheduler's
       // late batch has had time to land.
       if (_timingsMark >= 0 &&
@@ -207,7 +250,9 @@ class _AssistantScreenState extends State<AssistantScreen>
           pos.jumpTo(pos.maxScrollExtent);
           _pinGliding = false;
           _lastPinUs = 0;
-          _timingsMark = -1; // a snap is one frame; no window to weigh
+          // a snap is one frame; no window to weigh
+          _timingsMark = -1;
+          _framesMark = -1;
           _chaseEndUs = 0;
         } else if (delta > 0.5) {
           // Cover ~1 - e^(-dt/65ms) of the remaining gap this frame:
@@ -224,7 +269,11 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (step > delta) step = delta;
           if (step < 1) step = 1; // never stall the landing on tiny dt
           pos.jumpTo(pos.pixels + step);
-          if (!_pinGliding) _timingsMark = _timings.length; // +203: mark
+          if (!_pinGliding) {
+            // +203/206: mark where the window opens, in both rings.
+            _timingsMark = _timings.length;
+            _framesMark = _frames.length;
+          }
           _pinGliding = true;
         } else {
           // +204: the bill files itself when the timings arrive.
@@ -344,7 +393,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // +203: the frame-cost witness (see _logChaseCost).
-    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+    SchedulerBinding.instance
+      ..addTimingsCallback(_onFrameTimings)
+      ..addPersistentFrameCallback(_onFrameStart);
     // +192: the sticky-bottom follow — one loop for the life of the
     // screen, re-pinning frames, not events.
     WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
@@ -356,6 +407,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _framesAlive = false; // +206: persistent callbacks are forever; disarm
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _scroll.dispose();
     _assistant.dispose();
