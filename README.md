@@ -640,6 +640,18 @@ switch to the other one — each harness keeps its own conversation, so
 flipping is a step sideways, and flipping back resumes. The switch
 rests while a turn is open (a flip is an honest `/new` for whoever holds
 the seat) and lies dead on pre-switch bridges.
+**The cutter breathes with the prose (+222):** a sentence whose only
+period sits at the very end used to hold ALL its advice for the
+block-close flush — the tape's last bubble was literally 'garbage
+collection.', one and a half seconds after its head. Now a clause
+boundary (comma, semicolon, colon, dash — the places the prose marks
+for itself) cuts on its own once the chunk is a breath's length
+(20 chars), so 'If you want space back,' ships immediately and the
+rest follows. Sentence ENDS keep the old 40 floor (an 'OK.' frame is
+chop noise); commas under the breath floor never carve; the
+word-char anchor still refuses to let 'main.dart:801' or '1,000' fake
+a breath. Each relay is a synthesis of its own, so the floor is what
+stands between grammatical politeness and a robotic stutter.
 **Transient failure is progress, not silence (+221):** when the
 harness's API call fails and it backs off — a claude `api_retry`
 system frame or an opencode failed step — the phone gets a `retry`

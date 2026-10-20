@@ -31,12 +31,38 @@ test('micro-segment floor: "OK." never carves its own frame', () => {
   assert.ok(out[0].endsWith('going.'));
 });
 
-test('300-char ramble cuts at the LAST clause mark, not an arbitrary space', () => {
+test('ramble cuts at the FIRST breath the prose marked, not an arbitrary space '
+    + '(+222: the LAST-mark rule died when clause cuts stood on their own)', () => {
   const head = 'word '.repeat(30).trim(); // 149 chars, no punctuation
   const commaAt = `${head} and the comma lands right here, second half of the clause continues for a while yet past the cap so only the comma can save this seam from a mid-phrase cut`;
   const { out } = run(commaAt);
   assert.ok(out.length >= 1);
   assert.ok(out[0].endsWith('here,'), 'frame must end at the comma');
+});
+
+test('+222: a mid-sentence comma past the breath floor cuts on its own', () => {
+  const t = 'If you want space back, the practical moves are pruning the ' +
+    'ComfyUI folder and running a containerd garbage collection.';
+  const { out } = run(t, { force: true });
+  // The field shape: the advice ships at the comma, the tail rides
+  // with its own head instead of arriving as a two-word funeral.
+  assert.equal(out[0], 'If you want space back,');
+  assert.ok(out[1].startsWith('the practical moves are'),
+    'the rest follows as the next breath');
+});
+
+test('+222: commas under the breath floor never carve', () => {
+  const { out } = run('Yes, we could do that but the early comma must not ' +
+    'cut.', { force: true });
+  assert.equal(out.length, 1,
+    'a 5-char first clause stays fused — the micro-segment lesson holds');
+});
+
+test('+222: path labels and versions do not fake a breath', () => {
+  const { out } = run('Open main.dart:801 first, then read the log line.',
+    { force: true });
+  assert.ok(out[0].endsWith('first,'),
+    'the colon inside main.dart:801 has no trailing space — not a breath');
 });
 
 test('truly unpunctuated ramble still cuts at a word gap under the cap', () => {

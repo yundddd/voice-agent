@@ -6,6 +6,20 @@
 // sentence). Pure: it mutates blk.spoken and calls emit(text) per
 // sentence; no I/O, no ring, no socket — node --test can guard it.
 export const MIN_SENT_CHARS = 40; // never carve micro-segments ("OK.")
+// +222: a comma is where the prose itself would breathe — but a MID-
+// SENTENCE chunk costs more than a whole short one: each relay gets
+// its own synthesis, its own final intonation, its own seam. So a
+// sentence END may not carve below MIN_SENT_CHARS (an "OK." frame is
+// chop noise), while a CLAUSE boundary may cut once the chunk is a
+// breath's length (24) — enough words for the voice to hold a line,
+// short enough that "If you want space back," — 23 chars, the field's
+// own advice, and the reason the floor is 20 and not 24 — ships NOW
+// instead of two seconds later fused to its own tail. The field
+// shape that asked for this: the period's flush arriving as a final
+// two-word bubble ("garbage collection.") one and a half seconds
+// after its head, because the sentence's only comma sat under the 40
+// floor and the ramble cap (300) never came.
+export const MIN_CLAUSE_CHARS = 20;
 export const MAX_SENT_CHARS = 300; // bound first-audio latency unpunctuated
 
 // blk: {buf: string, spoken: number}. Advances blk.spoken past every
@@ -19,7 +33,7 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
     // The micro-segment floor protects mid-stream carving only; on
     // block close there is no 'next sentence' to merge into, and the
     // leftovers — however short — are the end of the answer.
-    if (win.length < MIN_SENT_CHARS && !force) return;
+    if (win.length < MIN_CLAUSE_CHARS && !force) return;
     // A sentence end = a punctuation run (with trailing quotes/brackets)
     // preceded by a word char and followed by whitespace; the word-char
     // anchor keeps 'main.dart:801' and '3.5' from faking periods.
@@ -33,6 +47,19 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
       if (m.index + m[0].length >= MIN_SENT_CHARS) {
         cut = m.index + m[0].length;
         break;
+      }
+    }
+    if (cut < 0 && win.length >= MIN_CLAUSE_CHARS) {
+      // +222: no legal sentence end yet — take the FIRST breath the
+      // prose marked for itself once the chunk is a breath's length.
+      // The same word-char anchor and whitespace lookahead the ramble
+      // path uses keep 'main.dart:801' and 'v1,2' from faking one.
+      const re2 = /[^\s][,;:—–]["')\]]*(?=[ \n])/g;
+      for (let m; (m = re2.exec(win)) !== null;) {
+        if (m.index + m[0].length >= MIN_CLAUSE_CHARS) {
+          cut = m.index + m[0].length;
+          break;
+        }
       }
     }
     if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
