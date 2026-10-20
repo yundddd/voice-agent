@@ -409,6 +409,11 @@ void main() {
       );
       expect(ui, contains('_frames.length > 240'));
       expect(ui, contains('raster pending'));
+      // +207: the window opens by SEQUENCE NUMBER — a list index
+      // into a ring that trims goes stale the moment the cap is hit
+      // and every window slices to nothing.
+      expect(ui, contains('_framesMark = _framesSeen'));
+      expect(ui, contains('mark - (_framesSeen - _frames.length)'));
     });
   });
 

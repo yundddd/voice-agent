@@ -113,8 +113,19 @@ class _AssistantScreenState extends State<AssistantScreen>
   final List<(int, int)> _frames = []; // (period µs, UI µs) per frame
   int _fStartUs = 0;
   int _fPeriodUs = 0;
+
+  /// +207: a ring buffer's indices LIE to a saved mark. +206 marked
+  /// the window by list index and went blind the moment the ring hit
+  /// its 240-frame cap: appends from then on evict from the front,
+  /// the length never grows, and the old index sits at or past the
+  /// end — every window sliced to nothing (the tape: 'no frames in
+  /// window' despite the ring brimming). The honest currency is a
+  /// SEQUENCE NUMBER: it only ever grows, and the window's start
+  /// index is the mark's distance below what has been seen.
+  int _framesSeen = 0;
   int _framesMark = -1;
   final List<FrameTiming> _timings = [];
+  int _timingsSeen = 0;
   int _timingsMark = -1;
 
   /// Persistent (every-frame, START-of-frame) callback: stamps the
@@ -135,6 +146,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   void _onFrameTimings(List<FrameTiming> batch) {
     _timings.addAll(batch);
+    _timingsSeen += batch.length;
     if (_timings.length > 240) {
       _timings.removeRange(0, _timings.length - 240);
     }
@@ -150,10 +162,17 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// the window, and says 'pending' when the batch is still traveling.
   void _logChaseCost() {
     if (_framesMark < 0) return;
-    final fMark = _framesMark.clamp(0, _frames.length);
+    final mark = _framesMark;
     _framesMark = -1;
     _chaseEndUs = 0;
-    final window = _frames.sublist(fMark);
+    // +207: sequence maths, not list indices — the ring's oldest
+    // surviving frame is (seen - length), and the window opens at
+    // however far the mark sits above that.
+    final start = (mark - (_framesSeen - _frames.length)).clamp(
+      0,
+      _frames.length,
+    );
+    final window = _frames.sublist(start);
     if (window.isEmpty) {
       _assistant.logFollow('fps chase: no frames in window');
       return;
@@ -165,9 +184,14 @@ class _AssistantScreenState extends State<AssistantScreen>
       'period ${p[p.length ~/ 2].toStringAsFixed(1)}/${p.last.toStringAsFixed(1)} '
       'ui ${u[u.length ~/ 2].toStringAsFixed(1)}/${u.last.toStringAsFixed(1)}',
     );
-    final tMark = _timingsMark.clamp(0, _timings.length);
+    final tStart = _timingsMark < 0
+        ? _timings.length
+        : (_timingsMark - (_timingsSeen - _timings.length)).clamp(
+            0,
+            _timings.length,
+          );
     _timingsMark = -1;
-    final tw = _timings.sublist(tMark);
+    final tw = _timings.sublist(tStart);
     if (tw.isEmpty) {
       line.write(' raster pending');
     } else {
@@ -204,6 +228,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           _fPeriodUs,
           DateTime.now().microsecondsSinceEpoch - _fStartUs,
         ));
+        _framesSeen++;
         if (_frames.length > 240) {
           _frames.removeRange(0, _frames.length - 240);
         }
@@ -270,9 +295,10 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (step < 1) step = 1; // never stall the landing on tiny dt
           pos.jumpTo(pos.pixels + step);
           if (!_pinGliding) {
-            // +203/206: mark where the window opens, in both rings.
-            _timingsMark = _timings.length;
-            _framesMark = _frames.length;
+            // +203/206/207: mark where the window opens — by
+            // sequence number, immune to the ring evicting under it.
+            _timingsMark = _timingsSeen;
+            _framesMark = _framesSeen;
           }
           _pinGliding = true;
         } else {
