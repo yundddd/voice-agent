@@ -167,12 +167,14 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   a queued prompt, AND the replay backlog — a later attach must not
   resurrect a discarded conversation's tail).
 - `POST /dir` — body `{"path": …}`: move the working folder the agent
-  runs in (the project `/talk` answers come from). A move is an honest
-  `/new` at the destination: the same reset (child killed, so the next
-  utterance respawns `claude` INSIDE the picked folder with a fresh
-  conversation) minus the sid-file unlink — the OLD project keeps its
-  resume pointer for a later move back. `{"ok":true,"dir":abs}` on
-  success; `400 not a folder…` if the path is outside `--dir-root`,
+  runs in (the project `/talk` answers come from). +223 turned the
+  move from "an honest /new at the destination" into "a thread switch":
+  the same reset (child killed) — but the DESTINATION's own resume
+  pointer is then loaded, so the next utterance RESUMES that project's
+  remembered conversation (first visit starts fresh and names itself
+  into the folder). The response carries `{"ok":true,"dir":abs,
+  "sessionId":…}` so the app's session-threaded chat can flip windows
+  in the same breath. `400 not a folder…` if the path is outside `--dir-root`,
   missing, or not a directory. The initial `--dir` is never policed
   (an operator can start anywhere); only moves are.
 - `POST /send` — body `{"path": …}`: hand a FILE to the phone (the fresh

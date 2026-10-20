@@ -27,6 +27,7 @@ class BridgePrefs {
     this.tts = true,
     this.mode = 'conversation',
     this.eraBackfilled = false,
+    this.sessionBackfilled = false,
     Map<String, String>? lastModels,
   }) : lastModels = lastModels ?? {};
   String url, token;
@@ -41,6 +42,13 @@ class BridgePrefs {
   /// harness because eras keep their own habits — last time's claude
   /// model is not this time's opencode suggestion.
   Map<String, String> lastModels;
+
+  /// +223: the one-time session migration's mark — the first /health
+  /// that names a session adopts the pre-law history (era-stamped but
+  /// session-null: born under the split, before the thread law) for
+  /// the session already in use, ONCE. Later session-null arrivals
+  /// are true prologue and must stay shared.
+  bool sessionBackfilled;
 
   /// +214: the one-time chat migration's mark. The first /health that
   /// names an era files the harness of every UN-ERA'D legacy bubble
@@ -82,6 +90,7 @@ class BridgePrefs {
     'tts': tts,
     'mode': mode,
     'eraBackfilled': eraBackfilled,
+    'sessionBackfilled': sessionBackfilled,
     'lastModels': {for (final e in lastModels.entries) e.key: e.value},
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
@@ -94,6 +103,7 @@ class BridgePrefs {
     // edit) falls back to the factory default.
     mode: j['mode'] == 'pushToTalk' ? 'pushToTalk' : 'conversation',
     eraBackfilled: j['eraBackfilled'] == true,
+    sessionBackfilled: j['sessionBackfilled'] == true,
     lastModels: {
       for (final e in (j['lastModels'] as Map? ?? const {}).entries)
         if (e.key is String && e.value is String)

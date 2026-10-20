@@ -2934,12 +2934,14 @@ const server = http.createServer((req, res) => {
       resetConversation();
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/dir') {
-      // Move the working folder: an honest /new at the destination — the
-      // conversation drops and the next utterance spawns the agent inside
-      // the picked directory. The OLD project keeps its resume pointer
-      // on disk (its own /new or the next bridge restart may still use
-      // it); the new dir's stale pointer is simply overwritten when the
-      // fresh session names itself.
+      // Move the working folder. +223 changed the promise: it USED to
+      // be an honest /new at the destination; now the destination's
+      // OWN remembered conversation rides immediately (the same law
+      // /harness shipped) — the pointer file lives inside the project,
+      // so moving back RESUMES that project's thread, and moving away
+      // leaves it on disk for the next return. First visit to a folder
+      // (no pointer) is still a fresh session; the next utterance
+      // names it and the pointer appears there.
       let j = null;
       try { j = JSON.parse(body); } catch {}
       const target = resolveInRoot(j?.path);
@@ -2949,9 +2951,12 @@ const server = http.createServer((req, res) => {
       } else {
         resetConversation(); // kills the child: claudeUp false till next talk
         dir = target;
-        console.error('  [dir] moved the agent to ' + dir);
+        try { sessionId = readFileSync(sidFile(), 'utf8').trim() || null; }
+        catch { sessionId = null; }
+        console.error('  [dir] moved the agent to ' + dir +
+          ' (session ' + (sessionId ?? 'starts fresh on the next word') + ')');
         res.writeHead(200, {'content-type': 'application/json'})
-          .end(JSON.stringify({ok: true, dir}));
+          .end(JSON.stringify({ok: true, dir, sessionId}));
       }
     } else if (url.pathname === '/send') {
       // The agent's file-out (the fresh APK, a report, anything): the

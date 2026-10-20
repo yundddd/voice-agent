@@ -12,7 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -422,4 +422,38 @@ test('a dropped event bus mid-turn says reconnecting and loses nothing', async (
       .length;
     assert.equal(said, 1, 'the dropped-and-replayed turn spoke twice');
   } finally { w.stop(); }
+});
+
+test('+223 moving folders carries the destination\u2019s remembered session', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+  const a = join(home, 'proj-a');
+  const b = join(home, 'proj-b');
+  mkdirSync(a); mkdirSync(b);
+  writeFileSync(join(b, '.claude_bridge_session'), 'ses-B');
+  const argsLog = join(home, 'args.log');
+  const port = PORT + 94;
+  const bridge = spawn(process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--token', TOKEN,
+      '--port', String(port), '--dir', a,
+      '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, HOME: home, STUB_LOG: join(home, 'stub.log'),
+      STUB_ARGS_LOG: argsLog, STUB_RESULT_MS: '200' } });
+  bridge.stderr.resume();
+  try {
+    await until('bridge up', async () => {
+      try { return (await health(port)).ok; } catch { return false; }
+    });
+    const r = await full(port, `/dir?token=${TOKEN}`,
+      { method: 'POST', body: JSON.stringify({path: b}) });
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.text), {ok: true, dir: b, sessionId: 'ses-B'});
+    assert.equal((await health(port)).sessionId, 'ses-B');
+    // The remembered conversation is not merely REPORTED — the next
+    // utterance RESUMES it: the pointer rides --resume into the CLI.
+    const t = await call(port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'resume me' });
+    await until('done', async () => t.text.includes('event: done'));
+    assert.ok(readFileSync(argsLog, 'utf8').includes('--resume ses-B'),
+      'the moved-to session was not resumed');
+  } finally { bridge.kill(); }
 });

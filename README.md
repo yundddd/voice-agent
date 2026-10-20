@@ -694,6 +694,20 @@ under claude stays finished when opencode replays it. The flip itself
 files no bubble (+215): the thread changing under your eyes is the
 whole announcement; the signpost note explained what the screen
 already showed and repeated itself every flip.
+**The channel follows the conversation (+223):** every bubble also
+carries its SESSION id now (the harness conversation it was born
+under; the birth-turn carries a sentinel and adopts the name the
+moment the harness speaks it, and the pre-law history migrated to the
+session already in use — once, prefs-guarded). The window shows the
+CURRENT session's thread plus the true prologue: move the working
+folder and the chat clears to that project's own memory — and moving
+back RESTORES the thread exactly, because nothing was ever deleted,
+only filtered (render-side, like the era split). This required the
+bridge's `/dir` to stop being an honest /new: switching folders now
+LOADS the destination's remembered session (each project keeps its
+own pointer file, per harness) and the next utterance RESUMES it —
+`--resume` on the CLI side, the session id on the service's. Tap a
+folder, pick up the conversation where you left it, weeks later.
 **The migration (+214):** a pre-split log is all un-era'd, which the
 split first reads as one giant prologue — the install-day complaint of
 "still seeing the other harness's bubbles." The bridge now keeps an

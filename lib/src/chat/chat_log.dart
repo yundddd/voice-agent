@@ -144,6 +144,17 @@ class ChatEntry {
   /// opened). History, like every flag here: it round-trips.
   String? harness;
 
+  /// +223: the SESSION (harness conversation id) this bubble belongs
+  /// to — the stamp that makes the channel FOLLOW the conversation:
+  /// switch project or harness and the window shows THAT session's
+  /// bubbles and drops this one's, restored on the way back. The
+  /// [ChatStore.pendingSession] sentinel covers the turn that BIRTHS
+  /// its session (the id is not a name until the harness speaks it at
+  /// the first result); the store adopts those the moment the id is
+  /// known, so no bubble is ever left belonging to nobody. Null = no
+  /// session at all (offline, pre-migration) — the shared prologue.
+  String? session;
+
   // ── The file bubble (set only when isFile) ─────────────────────────────
   bool get isFile => filePath.isNotEmpty;
   String fileName = '';
@@ -193,6 +204,7 @@ class ChatEntry {
     // (A local: a public field can't be flow-promoted after the null
     // check, and 'h' never rides null — absence IS the un-era meaning.)
     if (harness case final era? when era.isNotEmpty) 'h': era,
+    if (session case final s? when s.isNotEmpty) 's': s,
     if (isFile) 'file': {'name': fileName, 'path': filePath, 'size': fileSize},
     if (savedMs != 0) 'saved': savedMs,
     if (savedPath.isNotEmpty) 'savedTo': savedPath,
@@ -221,6 +233,9 @@ class ChatEntry {
       ..harness = j['h'] is String && (j['h'] as String).isNotEmpty
           ? j['h'] as String
           : null // legacy lines have no era: they show under every thread
+      ..session = j['s'] is String && (j['s'] as String).isNotEmpty
+          ? j['s'] as String
+          : null // +223: same for the session thread
       ..pickedUpMs = ms(j['pickedUp']) ?? 0
       ..deliveredMs = ms(j['heard']) ?? 0
       ..interruptedMs = ms(j['cut']) ?? 0

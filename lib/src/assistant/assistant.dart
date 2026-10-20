@@ -176,6 +176,12 @@ class VoiceAssistant extends ChangeNotifier {
       // even with the voice toggle off, so the gate is the gateway,
       // not the speaker.
       harness: () => _gateway == null ? null : _bridgeHarness,
+      // +223: the session a new bubble belongs to. The sentinel is
+      // the birth-turn's honest 'name coming': the id exists first in
+      // the harness's result, and adoptPending names every sentinel
+      // the moment _refreshSession learns it.
+      session: () =>
+          _gateway == null ? null : (_sessionId ?? ChatStore.pendingSession),
     );
     _lease = WireLease(
       scheduler: _scheduler,
@@ -393,14 +399,22 @@ class VoiceAssistant extends ChangeNotifier {
     mode: _mode,
     activity: _activity,
     error: _error,
-    // +213: the channel shows ONE THREAD: this era's bubbles plus the
-    // un-era'd prologue (offline turns, pre-split history). The FILTER
-    // IS RENDER-SIDE ONLY — the store underneath stays the whole
-    // append-only log, so the reattach dedup, the receipt-by-id law,
-    // and the heard ledger keep scanning everything: a task finished
-    // under claude is still finished when opencode's replay shows up.
+    // +213/223: the channel shows ONE THREAD: this session's bubbles
+    // (which, while no id is known yet, also admits the unnamed
+    // birth-turn ones) plus the un-era'd, un-owned prologue. The
+    // FILTER IS RENDER-SIDE ONLY — the store underneath stays the
+    // whole append-only log, so the reattach dedup, the receipt-by-id
+    // law, and the heard ledger keep scanning everything: a task
+    // finished under another project is still finished when this
+    // one's replay arrives. Switch project or harness and the window
+    // follows the conversation — cleared of one thread, restored to
+    // the other's, nothing deleted.
     chat: _chat.entries
-        .where((e) => e.harness == null || e.harness == _bridgeHarness)
+        .where((e) =>
+            (e.harness == null || e.harness == _bridgeHarness) &&
+            (e.session == null ||
+                (e.session == ChatStore.pendingSession && _sessionId == null) ||
+                e.session == _sessionId))
         .toList(growable: false),
     chatVersion: _chat.version,
     queued: queuedBubble == null
@@ -818,6 +832,19 @@ class VoiceAssistant extends ChangeNotifier {
     final s = (sid is String && sid.isNotEmpty) ? sid : null;
     if (s != _sessionId) {
       _sessionId = s;
+      if (s != null) {
+        // +223: the id has a NAME now — every bubble born under the
+        // sentinel (this session's own birth turn) adopts it, and ONCE
+        // the pre-law history adopts the session that was already in
+        // use. Order matters: stamp first, notify after, so no paint
+        // ever shows a thread that just changed owners.
+        _chat.adoptPending(s);
+        if (!_bridgePrefs.sessionBackfilled) {
+          _bridgePrefs.sessionBackfilled = true;
+          unawaited(_saveBridgePrefs());
+          _chat.adoptUnowned(s);
+        }
+      }
       notifyListeners();
     }
     // +213: the era tracker. The harness may flip while this screen is

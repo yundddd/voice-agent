@@ -55,7 +55,7 @@ void main() {
         seen.add('${req.method} ${req.uri}');
         if (req.uri.path == '/harness') {
           final body =
-              jsonDecode(await utf8.decodeStream(req)) as Map<String, Object?>;
+              jsonDecode(await utf8.decodeStream(req)) ;
           if (replyBody != null) {
             req.response.write(replyBody); // the flipped-to name
           } else if (body['to'] != 'claude' && body['to'] != 'opencode') {
@@ -403,6 +403,7 @@ void main() {
   });
 
   modelPickerTests();
+  sessionThreadTests();
 }
 
 // ── +216: the model picker, phone side ───────────────────────────────
@@ -432,7 +433,7 @@ void modelPickerTests() {
             }));
         } else if (req.uri.path == '/model') {
           final body =
-              jsonDecode(await utf8.decodeStream(req)) as Map<String, Object?>;
+              jsonDecode(await utf8.decodeStream(req)) ;
           if (body['id'] == 'pi') {
             req.response.statusCode = HttpStatus.badRequest;
             req.response.write('could not set the model: not in --models: pi');
@@ -708,6 +709,106 @@ void modelPickerTests() {
       await tester.tap(find.text('Acme Gamma'));
       await tester.pumpAndSettle();
       expect(harness.modelPicks.last, 'acme/gamma');
+    });
+  });
+}
+
+// ── +223: the channel follows the conversation ───────────────────────
+void sessionThreadTests() {
+  group('store session law', () {
+    test('every mutator stamps the owner; sentinels adopt; the migration '
+        'adopts the era-stamped past ONCE', () {
+      final store = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => 'claude',
+        session: () => ChatStore.pendingSession,
+      );
+      store.addUser('birth turn');
+      store.beginTurn();
+      expect(store.entries.map((e) => e.session),
+          everyElement(ChatStore.pendingSession));
+      expect(store.adoptPending('ses_A'), 2);
+      expect(store.entries.every((e) => e.session == 'ses_A'), isTrue);
+      // The codec carries it.
+      final back = ChatEntry.fromJson(store.entries.first.toJson());
+      expect(back.session, 'ses_A');
+      // Migration: era-stamped but un-owned history joins the session
+      // already in use; true prologue (no era) never does.
+      final old = ChatStore(
+        persist: (_) async {}, repaint: () {}, harness: () => 'claude',
+      );
+      old.addUser('pre-law memory'); // harness-stamped, session null
+      final raw = ChatEntry.user('offline prologue');
+      old.entries.add(raw); // no era, no session: belongs to everyone
+      expect(old.adoptUnowned('ses_A'), 1);
+      expect(old.entries.first.session, 'ses_A');
+      expect(old.entries.last.session, isNull);
+    });
+  });
+
+  group('channel follows the session', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+
+    setUp(() {
+      harness = FakeHarness();
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+    });
+
+    tearDown(() => a.dispose());
+
+    test('the birth turn is adopted the moment the id is named; switching '
+        'projects clears the window and coming back restores it', () async {
+      // First conversation ever: /health carries NO sessionId yet.
+      harness.healthState = <String, Object?>{
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/proj-a',
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      unawaited(a.runQuickCommand('talk in A', bubble: 'talk in A'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'A answers.'));
+      harness.finishView();
+      await settle();
+      // Born under the sentinel; the thread shows it (no id is known).
+      expect(a.view.chat.any((e) => e.blocks.contains('talk in A')), isTrue);
+      // The id arrives with the result's wake (/health now names ses-A):
+      // the sentinel turns into ownership, visibly unchanged.
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-A'} ;
+      await a.setBridgeDir('/proj-a'); // any awaited refresh path works
+      await settle();
+      expect(a.chat.firstWhere((e) =>
+          e.blocks.contains('talk in A')).session, 'ses-A',
+          reason: 'the birth turn adopted its own session');
+      // MOVE to another project whose remembered session is ses-B:
+      // the window CLEARS (ses-A's bubbles leave the view) …
+      harness.healthState = {
+        ...harness.healthState!, 'dir': '/proj-b', 'sessionId': 'ses-B',
+      } ;
+      await a.setBridgeDir('/proj-b');
+      await settle();
+      expect(a.view.chat.where((e) =>
+          e.blocks.contains('talk in A')), isEmpty);
+      // … the store never forgot a word …
+      expect(a.chat.where((e) =>
+          e.blocks.contains('talk in A')), hasLength(1));
+      // … and MOVING BACK restores the thread exactly.
+      harness.healthState = {
+        ...harness.healthState!, 'dir': '/proj-a', 'sessionId': 'ses-A',
+      } ;
+      await a.setBridgeDir('/proj-a');
+      await settle();
+      expect(a.view.chat.where((e) =>
+          e.blocks.contains('talk in A')), hasLength(1));
     });
   });
 }

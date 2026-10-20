@@ -21,6 +21,7 @@ class ChatStore {
     int Function()? nowMs,
     this.trace,
     this.harness,
+    this.session,
   }) : _nowMs = nowMs ?? _wallNowMs;
 
   /// +213: who the phone believes is holding the pen THIS very moment
@@ -59,6 +60,47 @@ class ChatStore {
 
   /// The era a bubble born THIS mutation wears (see [ChatStore.harness]).
   String? get _era => harness?.call();
+
+  /// +223: the session a bubble born THIS mutation belongs to. The
+  /// sentinel covers the turn whose session has no NAME yet (the id
+  /// first exists in the harness's result); [adoptPending] gives it a
+  /// name the moment the wire speaks it.
+  final String? Function()? session;
+  static const pendingSession = '\u0000pending';
+  String? get _sessionOwner => session?.call();
+
+  /// Name every sentinel-carried bubble (the birth-turn adoption).
+  /// Returns how many took the name.
+  int adoptPending(String id) {
+    var n = 0;
+    for (final e in _entries) {
+      if (e.session == pendingSession) {
+        e.session = id;
+        n++;
+      }
+    }
+    if (n != 0) touch();
+    return n;
+  }
+
+  /// +223 migration: bubbles born under a harness but before the
+  /// session law (harness-stamped, session-null) adopt the id the
+  /// phone first sees — one shared past for the session that was
+  /// already in use. True prologue (no era at all) stays null.
+  int adoptUnowned(String id) {
+    var n = 0;
+    for (final e in _entries) {
+      if (e.session == null && e.harness != null) {
+        e.session = id;
+        n++;
+      }
+    }
+    if (n != 0) {
+      trace?.call('msg migration: $n era-stamped bubbles adopted by $id');
+      touch();
+    }
+    return n;
+  }
 
   /// +214: the one-time migration of the PRE-SPLIT log. Every un-era'd
   /// legacy bubble gets its era from its own birth timestamp against
@@ -150,7 +192,8 @@ class ChatStore {
   ChatEntry addUserTranscribing() {
     final entry = ChatEntry.user('', createdMs: _nowMs())
       ..transcribing = true
-      ..harness = _era;
+      ..harness = _era
+      ..session = _sessionOwner;
     _entries.add(entry);
     trace?.call('msg phone: user (transcribing…)');
     touch();
@@ -180,7 +223,8 @@ class ChatStore {
     // whose turn is by definition dead (superseded on the wire).
     if (queued) unpinQueued();
     final entry = ChatEntry.user(text, queued: queued, createdMs: _nowMs())
-      ..harness = _era;
+      ..harness = _era
+      ..session = _sessionOwner;
     _entries.add(entry);
     if (queued) _queued = entry;
     trace?.call('msg phone: user "${_abbrev(text)}" queued=${queued ? 1 : 0}');
@@ -262,7 +306,8 @@ class ChatStore {
         receiptId: receiptId,
       )
         ..blocks.add(text)
-        ..harness = _era,
+        ..harness = _era
+        ..session = _sessionOwner,
     );
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
@@ -285,7 +330,8 @@ class ChatStore {
       return;
     }
     _entries.add(ChatEntry.file(name, path, size, createdMs: _nowMs())
-      ..harness = _era);
+      ..harness = _era
+      ..session = _sessionOwner);
     trace?.call('msg file: "$name" ($size bytes)');
     touch();
   }
@@ -296,7 +342,9 @@ class ChatStore {
   /// what the conversation was. A turn that never spoke is removed at
   /// the end (see [removeEmptyTurn]).
   ChatEntry beginTurn() {
-    final turn = ChatEntry.assistant(createdMs: _nowMs())..harness = _era;
+    final turn = ChatEntry.assistant(createdMs: _nowMs())
+      ..harness = _era
+      ..session = _sessionOwner;
     _entries.add(turn);
     trace?.call('msg turn: assistant bubble open');
     touch();
