@@ -586,6 +586,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// SECOND hidden that fires on the way back up, and which event wins
   /// the race against a dead socket's error delivery. The flag snapshot
   /// on each line says what the app BELIEVED at that instant.
+  /// +194: the screen's sticky-bottom follow reports its pins here so
+  /// the tape can say what the viewport did around a send (the scroll
+  /// complaint relapsed once already; no more fixing by theory).
+  void logFollow(String line) => _logDebug('follow: $line');
+
   void logLifecycle(String state) => _logDebug(
     'lifecycle $state: busy=$_bridgeBusy hidden=$_backgrounded '
     'detached=$_harnessBackgrounded phase=${_phase.name} '

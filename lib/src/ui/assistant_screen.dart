@@ -59,9 +59,25 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _followTick() {
     if (mounted && _scroll.hasClients) {
       final pos = _scroll.position;
-      if (!_userTouch &&
-          (_lastMax < 0 || pos.pixels >= _lastMax - 2.0)) {
+      final atTail = _lastMax < 0 || pos.pixels >= _lastMax - 2.0;
+      if (!_userTouch && atTail) {
+        final delta = pos.maxScrollExtent - pos.pixels;
+        if (delta > 8) {
+          _assistant.logFollow(
+            'pin +${delta.round()} to ${pos.maxScrollExtent.round()}',
+          );
+        }
         pos.jumpTo(pos.maxScrollExtent);
+      } else if (_lastMax >= 0) {
+        // The crime-scene camera: growth that went UNPINNED is exactly
+        // the 'new message below the fold' the field keeps seeing.
+        final grew = pos.maxScrollExtent - _lastMax;
+        if (grew > 8 && _lastMax - pos.pixels > 2) {
+          _assistant.logFollow(
+            'grew +${grew.round()} UNPINNED (pixels ${pos.pixels.round()} '
+            'last ${_lastMax.round()} touch=$_userTouch)',
+          );
+        }
       }
       _lastMax = pos.maxScrollExtent;
     }
