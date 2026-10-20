@@ -319,8 +319,8 @@ class ChatBubble extends StatelessWidget {
 }
 
 /// +188, redrawn by +189: the transcribing animation is a SIMPLIFIED
-/// NEURAL NETWORK propagating — three layers of nodes (3-4-2, the
-/// classic textbook silhouette) wired edge to edge, with a Gaussian
+/// NEURAL NETWORK propagating — three layers of nodes, the 2-3-2
+/// hourglass the field dictated at +198, wired edge to edge, with a Gaussian
 /// activation wave sweeping left to right: each layer ignites as the
 /// signal reaches it, the connections light just between them, and a
 /// low floor keeps the whole net dimly alive between sweeps. It says
@@ -378,7 +378,9 @@ class _TranscribePulseState extends State<_TranscribePulse>
 class _NetPaint extends CustomPainter {
   _NetPaint({required this.ink, required this.wave});
 
-  static const layers = [3, 4, 2];
+  // +198: the field dictated the silhouette — 2-3-2, symmetric hourglass
+  // instead of the textbook 3-4-2.
+  static const layers = [2, 3, 2];
 
   final Color ink;
   final double wave;
