@@ -39,21 +39,26 @@ class _AssistantScreenState extends State<AssistantScreen>
   // moving under the pin.
   DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// +190: a finger DOWN on the channel outranks the follow for the
+  // whole window — tracked by pointer, not by activity: DrivenScroll-
+  // Activity (what animateTo drives) also reports isScrolling, so the
+  // +187 guard made the glide's own existence a reason to skip its
+  // next re-pin, every glide aimed at a stale extent, and the last one
+  // died short of a tail still growing (field: 'it scrolls up and I
+  // can't see anything until I scroll down — by then the animation is
+  // done').
+  bool _userTouch = false;
+
   void _followTick() {
     if (!mounted || !_scroll.hasClients) return;
     final pos = _scroll.position;
-    // +187: glide, don't yank. A short eased animateTo per tick turns
-    // the frame-quantized creep into one continuous motion toward the
-    // tail, and a live finger (isScrolling) outranks the follow — the
-    // window simply re-pins on the next event once the hand lets go.
-    if (!pos.isScrollingNotifier.value && pos.pixels < pos.maxScrollExtent) {
-      unawaited(
-        pos.animateTo(
-          pos.maxScrollExtent,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOutCubic,
-        ),
-      );
+    // +190: jumpTo per frame, not animateTo. jumpTo answers to nobody
+    // and never aims stale — each frame takes the extent the content
+    // has reached RIGHT NOW, so the per-frame delta is exactly the
+    // slice the entrance animation grew this frame, and the motion is
+    // as smooth as the growth itself. The finger outranks the follow.
+    if (!_userTouch && pos.pixels < pos.maxScrollExtent) {
+      pos.jumpTo(pos.maxScrollExtent);
     }
     if (DateTime.now().isBefore(_followUntil)) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
@@ -103,9 +108,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// INSIDE the band instead of overflowing it.
   static double _statusBand(BuildContext context) {
     final ts = Theme.of(context).textTheme.titleMedium;
-    final px = MediaQuery.textScalerOf(
-      context,
-    ).scale(ts?.fontSize ?? 16);
+    final px = MediaQuery.textScalerOf(context).scale(ts?.fontSize ?? 16);
     return px * (ts?.height ?? 1.0) * 2 * 1.45;
   }
 
@@ -263,119 +266,128 @@ class _AssistantScreenState extends State<AssistantScreen>
             children: [
               Expanded(
                 child: LayoutBuilder(
-                  builder: (context, constraints) => SingleChildScrollView(
-                    controller: _scroll,
-                    // Long harness answers grew the reply card without
-                    // bounds until it smeared over the chips and metrics:
-                    // the text block now scrolls inside this region and
-                    // auto-follows the reply while it streams.
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: constraints.maxHeight,
-                      ),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // The status line rides a STATIC two-line
-                            // band. The wording changes HEIGHT as it
-                            // changes — the idle two-liner, a bare
-                            // 'Thinking…', a long 'Bash …' command
-                            // (StepLine's promise of being "ellipsized
-                            // by the widget", finally kept) — and under
-                            // this centered column every reflow walked
-                            // the whole conversation up and down: the
-                            // jitter the static band kills. Two lines
-                            // reserved at any font scale; more is
-                            // ellipsized, never reflowed.
-                            SizedBox(
-                              height: _statusBand(context),
-                              child: Center(
-                                child: Text(
-                                  v.status,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleMedium,
+                  builder: (context, constraints) => Listener(
+                    // +190: the hand on the channel owns the
+                    // viewport while it's down; the follow resumes
+                    // at the next event once it lets go.
+                    onPointerDown: (_) => _userTouch = true,
+                    onPointerUp: (_) => _userTouch = false,
+                    onPointerCancel: (_) => _userTouch = false,
+                    child: SingleChildScrollView(
+                      controller: _scroll,
+                      // Long harness answers grew the reply card without
+                      // bounds until it smeared over the chips and metrics:
+                      // the text block now scrolls inside this region and
+                      // auto-follows the reply while it streams.
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // The status line rides a STATIC two-line
+                              // band. The wording changes HEIGHT as it
+                              // changes — the idle two-liner, a bare
+                              // 'Thinking…', a long 'Bash …' command
+                              // (StepLine's promise of being "ellipsized
+                              // by the widget", finally kept) — and under
+                              // this centered column every reflow walked
+                              // the whole conversation up and down: the
+                              // jitter the static band kills. Two lines
+                              // reserved at any font scale; more is
+                              // ellipsized, never reflowed.
+                              SizedBox(
+                                height: _statusBand(context),
+                                child: Center(
+                                  child: Text(
+                                    v.status,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
                                 ),
                               ),
-                            ),
-                            if (v.error.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              Text(
-                                v.error,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: scheme.error),
+                              if (v.error.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  v.error,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: scheme.error),
+                                ),
+                              ],
+                              const SizedBox(height: 16),
+                              for (final e in v.chat)
+                                if (e.fromUser ||
+                                    e.blocks.isNotEmpty ||
+                                    // A file bubble has no text
+                                    // blocks — the slip IS the
+                                    // bubble.
+                                    e.isFile)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    // ObjectKey = the entry's identity:
+                                    // the fade fires once per bubble, not
+                                    // on every streamed section added to
+                                    // an open one.
+                                    // A whole bubble opening is also a
+                                    // height arrival (+187): grow with
+                                    // the same ease the segments use.
+                                    child: FadeInBubble(
+                                      key: ObjectKey(e),
+                                      grow: true,
+                                      child: ChatBubble(
+                                        entry: e,
+                                        maxWidthFrac: 0.86,
+                                        source: () => a.view,
+                                        onFileTap: a.fetchChatFile,
+                                        onQueueTap: (_) =>
+                                            a.interruptForQueued(),
+                                      ),
+                                    ),
+                                  ),
+
+                              // The working row: spinner, one-line
+                              // activity, meter — permanently the
+                              // channel's last word while any bridge
+                              // turn runs, heard or unheard (+151).
+                              // +154: the slot is RESERVED always — a
+                              // fixed-height band every professional
+                              // chat footer owns; the row fades in and
+                              // out inside it, and no bubble ever
+                              // slides as the state changes.
+                              SizedBox(
+                                height: WorkingRowCard.reservedHeight,
+                                child: AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 180),
+                                  opacity: v.showWorkingRow ? 1.0 : 0.0,
+                                  child: WorkingRowCard(source: () => a.view),
+                                ),
                               ),
-                            ],
-                            const SizedBox(height: 16),
-                            for (final e in v.chat)
-                              if (e.fromUser ||
-                                          e.blocks.isNotEmpty ||
-                                          // A file bubble has no text
-                                          // blocks — the slip IS the
-                                          // bubble.
-                                          e.isFile)
+
+                              // A backgrounded tool call keeps a permanent
+                              // line at the channel's bottom while it works
+                              // unheard: the badge (detached turn) or a queue
+                              // pin naming the work is its proof-of-life, and
+                              // it dismisses itself the moment the turn is
+                              // heard again, stopped, or proven finished.
+                              if (v.showBackgroundedRow)
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 4,
                                   ),
-                                  // ObjectKey = the entry's identity:
-                                  // the fade fires once per bubble, not
-                                  // on every streamed section added to
-                                  // an open one.
-                                  // A whole bubble opening is also a
-                                  // height arrival (+187): grow with
-                                  // the same ease the segments use.
-                                  child: FadeInBubble(
-                                    key: ObjectKey(e),
-                                    grow: true,
-                                    child: ChatBubble(
-                                      entry: e,
-                                      maxWidthFrac: 0.86,
-                                      source: () => a.view,
-                                      onFileTap: a.fetchChatFile,
-                                      onQueueTap: (_) => a.interruptForQueued(),
-                                    ),
+                                  child: BackgroundedWorkCard(
+                                    source: () => a.view,
                                   ),
                                 ),
-
-                            // The working row: spinner, one-line
-                            // activity, meter — permanently the
-                            // channel's last word while any bridge
-                            // turn runs, heard or unheard (+151).
-                            // +154: the slot is RESERVED always — a
-                            // fixed-height band every professional
-                            // chat footer owns; the row fades in and
-                            // out inside it, and no bubble ever
-                            // slides as the state changes.
-                            SizedBox(
-                              height: WorkingRowCard.reservedHeight,
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 180),
-                                opacity: v.showWorkingRow ? 1.0 : 0.0,
-                                child: WorkingRowCard(source: () => a.view),
-                              ),
-                            ),
-
-                            // A backgrounded tool call keeps a permanent
-                            // line at the channel's bottom while it works
-                            // unheard: the badge (detached turn) or a queue
-                            // pin naming the work is its proof-of-life, and
-                            // it dismisses itself the moment the turn is
-                            // heard again, stopped, or proven finished.
-                            if (v.showBackgroundedRow)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 4,
-                                ),
-                                child: BackgroundedWorkCard(
-                                  source: () => a.view,
-                                ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -501,10 +513,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // lift it off again; the label is gone entirely in
                     // PTT mode, the slide bands say it all).
                     if (v.mode == InteractionMode.conversation) ...[
-                      Text(
-                        hint,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
+                      Text(hint, style: Theme.of(context).textTheme.labelLarge),
                       const SizedBox(height: 8),
                     ],
                     // The whole bottom panel IS the talk button (see
