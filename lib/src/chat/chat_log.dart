@@ -181,6 +181,34 @@ class ChatEntry {
   }
 }
 
+/// Recency-scoped exact-block scan: like [chatContainsBlock] but walking
+/// only the entries newer than [nowMs] minus [withinMs] (an unstamped
+/// entry is legacy history and ends the walk). +185: this is the shape
+/// the receipt dedup needed — the whole-log text scan silently swallowed
+/// the SECOND run of an identical command forever ("Bash sleep 10 &&
+/// echo done finished." filed once at 15:59 killed its twin at 16:02,
+/// field: 'it doesn't show up at all'), making TEXT an identity across
+/// time when the wire v2 lesson says it never is. Inside the window the
+/// law is untouched: one delivery, or a live-plus-replay pair, files
+/// one period; outside it, a repeat is a different completion and earns
+/// its own.
+bool chatRecentlyContains(
+  List<ChatEntry> entries,
+  String text, {
+  required int nowMs,
+  required int withinMs,
+}) {
+  String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final want = norm(text);
+  final cutoff = nowMs - withinMs;
+  for (final e in entries.reversed) {
+    if (e.createdMs == 0 || e.createdMs < cutoff) break;
+    if (e.fromUser) continue;
+    if (e.blocks.any((b) => norm(b) == want)) return true;
+  }
+  return false;
+}
+
 /// Compact bubble clock: local `HH:MM:SS` for a lifecycle stamp, or the
 /// empty string when the stamp is unknown (entries written before
 /// timestamps existed render without a caption rather than a fake one).

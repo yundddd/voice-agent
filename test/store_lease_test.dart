@@ -111,6 +111,33 @@ void main() {
       expect(t.blocks, ['heard fully']);
     });
 
+    test('+185: the receipt dedup EXPIRES — text is never an identity '
+        'across time (field: second identical run went silent)', () {
+      var t = 1000000;
+      final s = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        nowMs: () => t,
+      );
+      s.addSystemNote('Bash sleep 10 && echo done finished.', receipt: true);
+      // A redelivery of the SAME receipt half a minute later (the drain
+      // belt's double transport): the recent scan still fires — one
+      // completion, one period.
+      t += 30 * 1000;
+      expect(s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
+          isTrue);
+      // The NEXT RUN of the same command, twenty minutes later: the old
+      // bubble is in the log, but it belongs to a dead delivery window —
+      // the fresh completion must file its own period (the whole-log
+      // scan used to answer isTrue here forever).
+      t += 20 * 60 * 1000;
+      expect(s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
+          isFalse,
+          reason: 'two runs, two receipts');
+      expect(s.containsBlock('Bash sleep 10 && echo done finished.'), isTrue,
+          reason: 'the whole-log scan is untouched for its own uses');
+    });
+
     test('containsBlock matches how the log stores (whitespace, not case)', () {
       final t = store.beginTurn();
       store.addBlock(t, 'Two   spaces\nand a newline');

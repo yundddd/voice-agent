@@ -79,6 +79,25 @@ class ChatStore {
   /// transports. The scan is render-side and rare.
   bool containsBlock(String text) => chatContainsBlock(_entries, text);
 
+  /// +185: the receipt dedup's window — a live file and its replays all
+  /// land within seconds of each other; two RUNS of the same command
+  /// are minutes apart. Ten minutes is generous for a flaky drain and
+  /// still lets tonight's second build announce itself honestly.
+  static const receiptDedupMs = 10 * 60 * 1000;
+
+  /// Exact-block scan limited to the recent tail (see
+  /// [chatRecentlyContains]): the belt behind the heard-ledger's by-id
+  /// dedup, for the same delivery arriving over two transports.
+  bool containsBlockRecent(
+    String text, {
+    int withinMs = receiptDedupMs,
+  }) => chatRecentlyContains(
+    _entries,
+    text,
+    nowMs: _nowMs(),
+    withinMs: withinMs,
+  );
+
   void addUser(String text, {bool queued = false}) {
     // One pin at a time: a newer queued press outranks the old one,
     // whose turn is by definition dead (superseded on the wire).

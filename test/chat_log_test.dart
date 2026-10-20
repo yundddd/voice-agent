@@ -83,6 +83,36 @@ void main() {
     );
   });
 
+  test('+185: the recent scan walks back to the window and stops — an '
+      'unstamped legacy entry ends it too, so pre-history never dedups '
+      'today', () {
+    ChatEntry note(String b, int t) =>
+        ChatEntry.assistant(createdMs: t)..blocks.add(b);
+    final entries = [
+      note('old echo', 500), // stamp older than any sane window
+      note('Bash x finished.', 1000),
+      note('new echo', 5000),
+    ];
+    expect(
+      chatRecentlyContains(entries, 'Bash x finished.', nowMs: 6000, withinMs: 5000),
+      isTrue,
+    );
+    expect(
+      chatRecentlyContains(entries, 'Bash x finished.', nowMs: 999999, withinMs: 1000),
+      isFalse,
+      reason: 'outside the window: a different completion',
+    );
+    final legacy = [
+      note('new echo', 5000),
+      ChatEntry.assistant()..blocks.add('Bash x finished.'), // createdMs 0
+    ];
+    expect(
+      chatRecentlyContains(legacy, 'Bash x finished.', nowMs: 6000, withinMs: 5000),
+      isFalse,
+      reason: 'an unstamped receipt is older than anything living',
+    );
+  });
+
   test('garbage or newer-format files start a fresh log, never throw', () {
     expect(decodeChatLog('not json at all'), isEmpty);
     expect(decodeChatLog('{"objects":"instead of lists"}'), isEmpty);

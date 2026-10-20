@@ -919,8 +919,14 @@ class VoiceAssistant extends ChangeNotifier {
   /// sleep must not collect 'cancelled.' and 'finished.').
   void _bgFinishedBubble(String who, {bool cancelled = false}) {
     if (who.isEmpty) return;
-    if (_chat.containsBlock('$who finished.') ||
-        _chat.containsBlock('$who cancelled.')) {
+    // +185: the scan is RECENT-only. The whole-log version made text
+    // an identity across time — the second run of an identical command
+    // found the first run's period filed at 15:59 and swallowed the
+    // 16:02 receipt whole (field: 'it doesn't show up at all'). The
+    // dedup's actual enemy is double-DELIVERY, which lands within
+    // seconds; inside the window the law is untouched.
+    if (_chat.containsBlockRecent('$who finished.') ||
+        _chat.containsBlockRecent('$who cancelled.')) {
       _logDebug('msg bg done: "$who" already retired');
       return;
     }
