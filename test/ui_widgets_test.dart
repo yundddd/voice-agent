@@ -196,6 +196,32 @@ void main() {
       await tester.pumpAndSettle();
       expect(seg(0), 1.0);
       expect(seg(1), 1.0);
+      // +187: the entrance also animates LAYOUT — the new segment was
+      // mid-open (its measured height under the final one) while the
+      // spoken segment's box never moved, and it settles at full
+      // height. The slot appearing instantly is the snap this ends.
+      final settledHeight = tester.getSize(find.byKey(ValueKey(1))).height;
+      expect(settledHeight, greaterThan(0));
+    });
+
+    testWidgets('a grow entrance opens the layout, not just the ink '
+        '(+187)', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const FadeInBubble(
+            key: ValueKey('grow'),
+            grow: true,
+            child: Text('opens downward', textDirection: TextDirection.ltr),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 60));
+      final mid = tester.getSize(find.byKey(ValueKey('grow'))).height;
+      await tester.pumpAndSettle();
+      final full = tester.getSize(find.byKey(ValueKey('grow'))).height;
+      expect(mid, lessThan(full),
+          reason: 'the height travels with the fade — no layout pop');
+      expect(mid, greaterThan(0), reason: 'the ease opens, it does not slam');
     });
 
     testWidgets('a finish receipt wears the outline, not the reply card '

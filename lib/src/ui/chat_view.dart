@@ -213,6 +213,7 @@ class ChatBubble extends StatelessWidget {
                                 for (final (i, s) in entry.blocks.indexed)
                                   FadeInBubble(
                                     key: ValueKey(i),
+                                    grow: true,
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
@@ -565,9 +566,17 @@ class _FileBody extends StatelessWidget {
 /// slide in. A boot-reload fades the restored log in as a group, which
 /// reads as the screen settling, not strobing.
 class FadeInBubble extends StatefulWidget {
-  const FadeInBubble({super.key, required this.child});
+  const FadeInBubble({super.key, required this.child, this.grow = false});
 
   final Widget child;
+
+  /// +187: also animate the LAYOUT height (0 → natural) on the same
+  /// ease. Without it the entrance eased only the ink: the slot
+  /// appeared at full height on frame one, so a streaming segment
+  /// snapped the card open and shoved everything below it — the field
+  /// 'it still looks stiff, the segment just flashes in'. Growing the
+  /// row open turns the shove into an opening.
+  final bool grow;
 
   @override
   State<FadeInBubble> createState() => _FadeInBubbleState();
@@ -595,7 +604,7 @@ class _FadeInBubbleState extends State<FadeInBubble>
   @override
   Widget build(BuildContext context) {
     final t = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
-    return FadeTransition(
+    Widget w = FadeTransition(
       opacity: t,
       child: SlideTransition(
         position: Tween<Offset>(
@@ -605,5 +614,17 @@ class _FadeInBubbleState extends State<FadeInBubble>
         child: widget.child,
       ),
     );
+    if (widget.grow) {
+      // Top-anchored: the bottom edge travels, so lines above the new
+      // segment never move — only the card opens downward.
+      w = ClipRect(
+        child: SizeTransition(
+          sizeFactor: t,
+          alignment: const Alignment(0, -1),
+          child: w,
+        ),
+      );
+    }
+    return w;
   }
 }

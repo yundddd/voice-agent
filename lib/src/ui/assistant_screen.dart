@@ -34,6 +34,31 @@ class _AssistantScreenState extends State<AssistantScreen>
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
   int _seenChatVersion = 0; // drives auto-follow while chat grows
+  // +187: while this deadline is live the follow re-pins EVERY frame
+  // (see _followTick) — an entrance is opening and the bottom edge is
+  // moving under the pin.
+  DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _followTick() {
+    if (!mounted || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    // +187: glide, don't yank. A short eased animateTo per tick turns
+    // the frame-quantized creep into one continuous motion toward the
+    // tail, and a live finger (isScrolling) outranks the follow — the
+    // window simply re-pins on the next event once the hand lets go.
+    if (!pos.isScrollingNotifier.value && pos.pixels < pos.maxScrollExtent) {
+      unawaited(
+        pos.animateTo(
+          pos.maxScrollExtent,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
+    if (DateTime.now().isBefore(_followUntil)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
+    }
+  }
 
   @override
   void initState() {
@@ -110,10 +135,16 @@ class _AssistantScreenState extends State<AssistantScreen>
     // above is what honors a scroll-up to re-read: no event, no pin.
     if (v.chatVersion != _seenChatVersion) {
       _seenChatVersion = v.chatVersion;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_scroll.hasClients) return;
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      });
+      // +187: the follow is a WINDOW, not a moment. Entrances now
+      // animate their layout height, so maxScrollExtent grows during
+      // the 240 ms a bubble or segment opens — a single post-frame
+      // jump would pin the position the content had NOT yet reached
+      // and leave the newest line's bottom cut off. Re-pin every
+      // frame through the entrance window; each frame's delta is a
+      // couple of pixels, which reads as the tail gliding into view
+      // rather than being yanked.
+      _followUntil = DateTime.now().add(const Duration(milliseconds: 300));
+      WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
     }
 
     // +151: the working line rides NO bubble — it owns the channel's
@@ -295,8 +326,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                                   // the fade fires once per bubble, not
                                   // on every streamed section added to
                                   // an open one.
+                                  // A whole bubble opening is also a
+                                  // height arrival (+187): grow with
+                                  // the same ease the segments use.
                                   child: FadeInBubble(
                                     key: ObjectKey(e),
+                                    grow: true,
                                     child: ChatBubble(
                                       entry: e,
                                       maxWidthFrac: 0.86,
