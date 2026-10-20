@@ -325,10 +325,10 @@ class ChatBubble extends StatelessWidget {
 /// signal reaches it, the connections light just between them, and a
 /// low floor keeps the whole net dimly alive between sweeps. It says
 /// "the mic heard you and the network is reading" by showing the
-/// reading. Sized to about two text lines so the card barely shifts
-/// when the fill replaces it (the field judged +188's four dots too
-/// simple, then +189's silhouette too small to watch — +191 stretched
-/// it in both axes).
+/// reading. Sized to roughly three text lines so the shift when the
+/// fill replaces it is a nod, not a jump (the field judged +188's four
+/// dots too simple, then +189's silhouette too small to watch — +191
+/// stretched it, +193 stretched it again).
 class _TranscribePulse extends StatefulWidget {
   const _TranscribePulse();
 
@@ -355,8 +355,9 @@ class _TranscribePulseState extends State<_TranscribePulse>
     return SizedBox(
       // +191: stretched at the field's word — the silhouette was
       // painted small enough to miss the very propagation it shows.
-      height: 34,
-      width: 84,
+      // +193: once more in both axes; the wave deserves a wide stage.
+      height: 42,
+      width: 110,
       child: AnimatedBuilder(
         animation: _c,
         builder:
@@ -392,14 +393,14 @@ class _NetPaint extends CustomPainter {
     final n = layers.length;
     final xs = [
       for (var i = 0; i < n; i++)
-        9.0 + (size.width - 18) * (i / (n - 1)),
+        10.0 + (size.width - 20) * (i / (n - 1)),
     ];
     final cols = [
       for (final count in layers)
         [
           for (var j = 0; j < count; j++)
             size.height / 2 +
-                (j - (count - 1) / 2) * (size.height - 14) / (count - 1),
+                (j - (count - 1) / 2) * (size.height - 16) / (count - 1),
         ],
     ];
     final p = Paint()..strokeWidth = 1.2;
@@ -420,7 +421,7 @@ class _NetPaint extends CustomPainter {
     for (var i = 0; i < n; i++) {
       final glow = _glow(i.toDouble(), 0.30);
       fill.color = ink.withValues(alpha: 0.15 + 0.8 * glow);
-      final r = 2.3 + 1.6 * glow;
+      final r = 2.6 + 1.8 * glow;
       for (final y in cols[i]) {
         canvas.drawCircle(Offset(xs[i], y), r, fill);
       }
