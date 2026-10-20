@@ -104,7 +104,13 @@ export './reattach_chain.dart' show ReattachChain, ReattachEnv;
 export './view.dart';
 export '../speech/speech_worker.dart' show SpeechEvent, SpeechWorker, TtsSpec;
 export '../speech/asr_models.dart'
-    show AsrModel, AsrPrefs, loadAsrPrefs, saveAsrPrefs, asrModels, asrModelById;
+    show
+        AsrModel,
+        AsrPrefs,
+        loadAsrPrefs,
+        saveAsrPrefs,
+        asrModels,
+        asrModelById;
 export '../speech/tts_voices.dart'
     show TtsVoice, TtsPrefs, loadTtsPrefs, saveTtsPrefs, ttsVoices, voiceById;
 
@@ -143,7 +149,8 @@ class VoiceAssistant extends ChangeNotifier {
     _opener = opener ?? ChannelFileOpener();
     _receivedDir =
         receivedDir ??
-        () async => p.join((await getApplicationSupportDirectory()).path, 'received');
+        () async =>
+            p.join((await getApplicationSupportDirectory()).path, 'received');
 
     _hops = HopTracker(
       clock: _clock,
@@ -639,8 +646,33 @@ class VoiceAssistant extends ChangeNotifier {
 
   String get _chatPath => p.join(_modelsDir, 'chat_log.json');
 
+  /// +199: persistence is COALESCED. Every mutation used to encode AND
+  /// fsync the whole log right now — a streamed answer paid a full disk
+  /// round trip per spoken section, and the hitch landed exactly on the
+  /// entrances the field is now watching ('the animation is not as
+  /// smooth'). The latest snapshot waits 400 ms behind a restartable
+  /// timer instead: a burst of sections writes ONCE, and the lifecycle
+  /// hook (anything heading for the background flushes first) plus
+  /// dispose keep the crash story no worse than atomic-write territory.
+  Timer? _chatPersistTimer;
+  String? _pendingChatJson;
+
   Future<void> _persistChat(String json) async {
     if (_modelsDir.isEmpty) return;
+    _pendingChatJson = json;
+    _chatPersistTimer?.cancel();
+    _chatPersistTimer = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_flushChatPersist());
+    });
+  }
+
+  /// Write the newest snapshot NOW (lifecycle pause, dispose, tests).
+  Future<void> _flushChatPersist() async {
+    _chatPersistTimer?.cancel();
+    _chatPersistTimer = null;
+    final json = _pendingChatJson;
+    _pendingChatJson = null;
+    if (json == null || _modelsDir.isEmpty) return;
     try {
       // Atomic: write beside the log, then rename over it. An OS kill
       // mid-write used to leave a half-written chat_log.json, which the
@@ -983,6 +1015,7 @@ class VoiceAssistant extends ChangeNotifier {
     }
     return l;
   }
+
   String get tokenTickerLabel => _ticker.label;
   int get tokensOut => _ticker.tokensOut;
   int get tokensIn => _ticker.tokensIn;
@@ -1142,7 +1175,9 @@ class VoiceAssistant extends ChangeNotifier {
     final g = _gateway;
     if (g == null) return 'bridge not configured';
     final err = await g.setDir(path);
-    if (err == null) unawaited(_refreshSession()); // the dir row re-reads /health
+    if (err == null) {
+      unawaited(_refreshSession()); // the dir row re-reads /health
+    }
     return err;
   }
 
@@ -2263,6 +2298,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// and the last one is buffered to be spoken by [resumeConversation].
   /// Any other in-flight reply (local echo TTS mid-synthesis) is abandoned.
   void pauseConversation() {
+    // +199: whatever the rest of the pause decides, the chat log's
+    // coalesced write is NOT left behind in the dying foreground —
+    // flush the newest snapshot before anything else (the OS may stop
+    // our timers the moment this returns).
+    unawaited(_flushChatPersist());
     if (_backgrounded) {
       // Already hidden. The lifecycle fires hidden AND paused on the way
       // down — and hidden AGAIN on the way up (paused → hidden → inactive
@@ -2547,11 +2587,13 @@ class VoiceAssistant extends ChangeNotifier {
     _error = '';
     _ticker.resetForTurn();
     _phase = AssistantPhase.transcribing;
-    _activity = StatusText(_drainReading
-        ? 'Replaying what the wire owed…' // +168: mail fetch — no
-        // turn is generating; the caption says what it is instead of
-        // borrowing the live-turn wording.
-        : 'Reattached — working…');
+    _activity = StatusText(
+      _drainReading
+          ? 'Replaying what the wire owed…' // +168: mail fetch — no
+          // turn is generating; the caption says what it is instead of
+          // borrowing the live-turn wording.
+          : 'Reattached — working…',
+    );
     notifyListeners();
     _reply.warmUpRoute();
     // A fresh bubble continues the story: the pre-drop blocks live in the
@@ -3669,7 +3711,8 @@ class VoiceAssistant extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _hops.dispose();
+    unawaited(_flushChatPersist()); // +199: no pending snapshot dies
+    _hops.dispose(); // with the timer
     _lease.cancel();
     _chain.cancel();
     _bgProbe?.cancel();

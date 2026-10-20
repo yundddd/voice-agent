@@ -33,6 +33,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   final VoiceAssistant _assistant = VoiceAssistant();
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
+
   /// +190: a finger DOWN on the channel outranks the follow — tracked
   /// by pointer, not by activity: DrivenScrollActivity (what animateTo
   /// drives) also reports isScrolling, so the +187 guard made the
@@ -396,15 +397,26 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     // A whole bubble opening is also a
                                     // height arrival (+187): grow with
                                     // the same ease the segments use.
-                                    child: FadeInBubble(
-                                      grow: true,
-                                      child: ChatBubble(
-                                        entry: e,
-                                        maxWidthFrac: 0.86,
-                                        source: () => a.view,
-                                        onFileTap: a.fetchChatFile,
-                                        onQueueTap: (_) =>
-                                            a.interruptForQueued(),
+                                    child: RepaintBoundary(
+                                      // +199: one fence per bubble.
+                                      // Every notification rebuilds
+                                      // the whole log (one view, one
+                                      // truth); without the fence an
+                                      // entrance's opacity frame
+                                      // repainted all eighty cards
+                                      // beside it, and that cost —
+                                      // not the ease — was the lag
+                                      // the field felt on arrivals.
+                                      child: FadeInBubble(
+                                        grow: true,
+                                        child: ChatBubble(
+                                          entry: e,
+                                          maxWidthFrac: 0.86,
+                                          source: () => a.view,
+                                          onFileTap: a.fetchChatFile,
+                                          onQueueTap: (_) =>
+                                              a.interruptForQueued(),
+                                        ),
                                       ),
                                     ),
                                   ),
