@@ -236,7 +236,9 @@ void main() {
         at + 'key: ObjectKey(e),'.length,
         ui.indexOf('FadeInBubble(', at),
       );
-      expect(between, isNot(contains('child:')), reason: 'key BEFORE child');
+      expect(between.trimRight(), endsWith('child:'),
+          reason: 'the ONLY child: between key and entrance — the key '
+              'is a sibling argument of the paired Padding, not below');
       // The old shape (key inside FadeInBubble) must be gone.
       expect(
         RegExp(r'FadeInBubble\(\s*(//[^\n]*\n\s*)*key:\s*ObjectKey\(e\)')
