@@ -64,7 +64,10 @@ class _AssistantScreenState extends State<AssistantScreen>
         final delta = pos.maxScrollExtent - pos.pixels;
         if (delta > 8) {
           _assistant.logFollow(
-            'pin +${delta.round()} to ${pos.maxScrollExtent.round()}',
+            'pin +${delta.round()} to ${pos.maxScrollExtent.round()} '
+            '(vp ${pos.viewportDimension.round()} '
+            'cont ${(pos.maxScrollExtent + pos.viewportDimension).round()} '
+            'n ${a.chat.length})',
           );
         }
         pos.jumpTo(pos.maxScrollExtent);
@@ -75,7 +78,10 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (grew > 8 && _lastMax - pos.pixels > 2) {
           _assistant.logFollow(
             'grew +${grew.round()} UNPINNED (pixels ${pos.pixels.round()} '
-            'last ${_lastMax.round()} touch=$_userTouch)',
+            'last ${_lastMax.round()} touch=$_userTouch '
+            'vp ${pos.viewportDimension.round()} '
+            'cont ${(pos.maxScrollExtent + pos.viewportDimension).round()} '
+            'n ${a.chat.length})',
           );
         }
       }
