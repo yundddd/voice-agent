@@ -22,9 +22,14 @@ class ChatStore {
     this.trace,
   }) : _nowMs = nowMs ?? _wallNowMs;
 
-  /// Hand the whole (capped) log, encoded, to storage. Must never throw:
-  /// chat history must never break a conversation.
-  final Future<void> Function(String json) persist;
+  /// Hand a snapshot of the whole (capped) log to storage. Must never
+  /// throw: chat history must never break a conversation. +205: the
+  /// list, not an encoded string — the old contract made the STORE
+  /// jsonEncode all eighty entries at EVERY touch (the frame bill
+  /// caught it: a 71 ms build spike riding mid-entrance), while the
+  /// coalescing at +199 only saved the disk. Encoding is now the
+  /// persister's side of the seam: once per burst, off the UI isolate.
+  final Future<void> Function(List<ChatEntry> snapshot) persist;
   final void Function() repaint;
   final int cap;
 
@@ -298,7 +303,7 @@ class ChatStore {
   void removeEmptyTurn(ChatEntry turn) {
     if (_entries.remove(turn)) {
       _version++;
-      unawaited(persist(encodeChatLog(_entries)));
+      unawaited(persist(List<ChatEntry>.from(_entries)));
     }
   }
 
@@ -310,7 +315,7 @@ class ChatStore {
     if (!_entries.contains(entry)) {
       _entries.add(entry);
       _version++;
-      unawaited(persist(encodeChatLog(_entries)));
+      unawaited(persist(List<ChatEntry>.from(_entries)));
     }
   }
 
@@ -337,7 +342,7 @@ class ChatStore {
       _entries.removeAt(0);
     }
     _version++;
-    unawaited(persist(encodeChatLog(_entries)));
+    unawaited(persist(List<ChatEntry>.from(_entries)));
     repaint();
   }
 

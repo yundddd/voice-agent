@@ -168,7 +168,7 @@ void main() {
     persisted = [];
     probe = EnvProbe(now: () => time.now);
     chat = ChatStore(
-      persist: (json) async => persisted.add(json),
+      persist: (entries) async => persisted.add(encodeChatLog(entries)),
       repaint: () {},
     );
     turn = TurnCoordinator(

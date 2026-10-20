@@ -346,6 +346,31 @@ void main() {
     });
   });
 
+  group('history encodes off the hot path (+205)', () {
+    // The frame bill said: medians of one and two milliseconds, and
+    // one 71 ms BUILD spike — the entrance paying for someone else's
+    // jsonEncode. The suspect was +199's own compromise: writes were
+    // coalesced but the STORE still encoded all eighty entries on the
+    // UI isolate at every touch. The contract now carries the list;
+    // the encode belongs to the persister, runs once per burst, and
+    // runs on a worker isolate.
+    final store = File('lib/src/assistant/chat_store.dart').readAsStringSync();
+    final asst = File('lib/src/assistant/assistant.dart').readAsStringSync();
+    test('the store no longer encodes at all', () {
+      expect(
+        store,
+        isNot(contains('encodeChatLog')),
+        reason:
+            'touch is every say, every pin, every receipt — it may '
+            'copy a list, it may not mint JSON',
+      );
+    });
+    test('the persister encodes once, on a worker isolate', () {
+      expect(asst, contains('Isolate.run(() => encodeChatLog(entries))'));
+      expect(asst, contains('List<ChatEntry>? _pendingChatEntries'));
+    });
+  });
+
   group('the chase reports its frame cost (+203)', () {
     // Thirty-millisecond frames with eighty rebuilds explained was
     // ONE suspect; with the rebuild tax paid it is a mystery, and

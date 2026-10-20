@@ -16,7 +16,7 @@ void main() {
       persisted = [];
       repaints = 0;
       store = ChatStore(
-        persist: (json) async => persisted.add(json),
+        persist: (entries) async => persisted.add(encodeChatLog(entries)),
         repaint: () => repaints++,
         cap: 4,
       );
@@ -150,7 +150,7 @@ void main() {
         'that task; the stamp round-trips through disk', () {
       var t = 1000000;
       final s = ChatStore(
-        persist: (json) async => persisted.add(json),
+        persist: (entries) async => persisted.add(encodeChatLog(entries)),
         repaint: () {},
         nowMs: () => t,
       );

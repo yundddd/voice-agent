@@ -37,6 +37,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui'
@@ -655,11 +656,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// hook (anything heading for the background flushes first) plus
   /// dispose keep the crash story no worse than atomic-write territory.
   Timer? _chatPersistTimer;
-  String? _pendingChatJson;
+  List<ChatEntry>? _pendingChatEntries;
 
-  Future<void> _persistChat(String json) async {
+  Future<void> _persistChat(List<ChatEntry> snapshot) async {
     if (_modelsDir.isEmpty) return;
-    _pendingChatJson = json;
+    _pendingChatEntries = snapshot;
     _chatPersistTimer?.cancel();
     _chatPersistTimer = Timer(const Duration(milliseconds: 400), () {
       unawaited(_flushChatPersist());
@@ -667,13 +668,19 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   /// Write the newest snapshot NOW (lifecycle pause, dispose, tests).
+  /// +205: the encode crossed the seam with the contract — the store
+  /// hands over a list, and the JSON for eighty entries (a 71 ms build
+  /// spike the frame bill billed straight to the entrance) is minted
+  /// on a worker isolate, once per burst, while the UI thread stays
+  /// free to glide.
   Future<void> _flushChatPersist() async {
     _chatPersistTimer?.cancel();
     _chatPersistTimer = null;
-    final json = _pendingChatJson;
-    _pendingChatJson = null;
-    if (json == null || _modelsDir.isEmpty) return;
+    final entries = _pendingChatEntries;
+    _pendingChatEntries = null;
+    if (entries == null || _modelsDir.isEmpty) return;
     try {
+      final json = await Isolate.run(() => encodeChatLog(entries));
       // Atomic: write beside the log, then rename over it. An OS kill
       // mid-write used to leave a half-written chat_log.json, which the
       // tolerant decoder reads as "no history" — and the next bubble
