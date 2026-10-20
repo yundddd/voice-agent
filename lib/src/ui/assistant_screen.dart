@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../assistant/assistant.dart';
 import 'bridge_screen.dart';
@@ -92,6 +93,48 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// distance per millisecond.
   int _lastPinUs = 0;
 
+  /// +203: frame-cost forensics. +202 cut the rebuild tax and the
+  /// chase still runs at ~30 fps on the tape, so the remaining thief
+  /// is either the Dart side (build+layout) or the GPU side (raster)
+  /// — and the screen could not tell them apart until now. The
+  /// scheduler reports both halves for every frame; the chase marks
+  /// where a push began and, when it lands, files one line: n frames,
+  /// median and worst build ms, median and worst raster ms. One line
+  /// per push, zero cost between pushes, and the field report writes
+  /// itself: 'build' heavy is OUR code, 'raster' heavy is the
+  /// entrance's fade-clip-card on this phone's GPU.
+  final List<FrameTiming> _timings = [];
+  int _timingsMark = -1;
+
+  void _onFrameTimings(List<FrameTiming> batch) {
+    _timings.addAll(batch);
+    if (_timings.length > 240) {
+      _timings.removeRange(0, _timings.length - 240);
+    }
+  }
+
+  /// Summarize the frames a chase rode, and forget the window.
+  void _logChaseCost() {
+    if (_timingsMark < 0) return;
+    final mark = _timingsMark.clamp(0, _timings.length);
+    _timingsMark = -1;
+    final window = _timings.sublist(mark);
+    if (window.isEmpty) return;
+    final b = <double>[];
+    final r = <double>[];
+    for (final t in window) {
+      b.add(t.buildDuration.inMicroseconds / 1000.0);
+      r.add(t.rasterDuration.inMicroseconds / 1000.0);
+    }
+    b.sort();
+    r.sort();
+    _assistant.logFollow(
+      'fps chase: n ${window.length} '
+      'build ${b[b.length ~/ 2].toStringAsFixed(1)}/${b.last.toStringAsFixed(1)} '
+      'raster ${r[r.length ~/ 2].toStringAsFixed(1)}/${r.last.toStringAsFixed(1)} ms',
+    );
+  }
+
   /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
   /// events: every frame, if the view was resting at the tail (within
   /// 2 px of last frame's maximum) it re-pins — so ANY growth below
@@ -141,6 +184,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           pos.jumpTo(pos.maxScrollExtent);
           _pinGliding = false;
           _lastPinUs = 0;
+          _timingsMark = -1; // a snap is one frame; no window to weigh
         } else if (delta > 0.5) {
           // Cover ~1 - e^(-dt/65ms) of the remaining gap this frame:
           // a 90 px arrival lands inside a handful of visible frames,
@@ -156,13 +200,16 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (step > delta) step = delta;
           if (step < 1) step = 1; // never stall the landing on tiny dt
           pos.jumpTo(pos.pixels + step);
+          if (!_pinGliding) _timingsMark = _timings.length; // +203: mark
           _pinGliding = true;
         } else {
+          if (_pinGliding) _logChaseCost(); // +203: who ate the frames
           _pinGliding = false; // landed (or nothing ever opened)
           _lastPinUs = 0;
         }
       } else {
         if (_pinGliding) {
+          _logChaseCost(); // +203: even a cancelled chase reports
           // The hand outranks the pin: a touch (or a scroll-away)
           // mid-chase stops it where it stands. The chase owns no
           // driven activity — nothing to quench, only the verdict
@@ -268,6 +315,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // +203: the frame-cost witness (see _logChaseCost).
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     // +192: the sticky-bottom follow — one loop for the life of the
     // screen, re-pinning frames, not events.
     WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
@@ -279,6 +328,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _scroll.dispose();
     _assistant.dispose();
     super.dispose();

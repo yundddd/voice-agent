@@ -346,6 +346,26 @@ void main() {
     });
   });
 
+  group('the chase reports its frame cost (+203)', () {
+    // Thirty-millisecond frames with eighty rebuilds explained was
+    // ONE suspect; with the rebuild tax paid it is a mystery, and
+    // mysteries get instruments, not guesses. The screen now rides
+    // the scheduler's own timings: one 'fps chase' line per push,
+    // build and raster halves apart — the field report writes itself.
+    final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
+    test('the witness is registered, summarised, and unregistered', () {
+      expect(ui, contains('addTimingsCallback(_onFrameTimings)'));
+      expect(
+        ui,
+        contains('removeTimingsCallback(_onFrameTimings)'),
+        reason: 'a leaked timings callback outlives the screen',
+      );
+      expect(ui, contains("'fps chase: n"));
+      // The window is bounded no matter how chatty frames get.
+      expect(ui, contains('_timings.length > 240'));
+    });
+  });
+
   group('event parsing (0.1.0+81/+84: started and settled frames)', () {
     test('started marker parses as a tool event with the prompt detail', () {
       final ev = BridgeEvent.parse(
