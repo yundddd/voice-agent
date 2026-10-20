@@ -176,7 +176,12 @@ final class BridgeTurnEnv {
   /// frame's kind: the tool did not finish — the cut killed it — and
   /// the chat says so (the field's 'finished AND cancelled AND
   /// backgrounded all at once' contradiction, resolved at the wire).
-  final void Function(String detail, {bool cancelled}) retireBgWork;
+  final void Function(
+    String detail, {
+    bool cancelled,
+    String taskId,
+  })
+  retireBgWork;
 
   /// +132: a push-to-talk PRESS took this turn out of the ear; the
   /// release gesture has not decided its trace yet. Park the bubble's
@@ -604,7 +609,11 @@ class BridgeTurn {
       // (behaviour 2): either way the bottom line dismisses itself,
       // and only a NAMED tool gets its period in the chat (the receipt
       // rule lives behind the env hook, identical for both origins).
-      env.retireBgWork(ev.detail, cancelled: ev.toolKind == 'cancelled');
+      env.retireBgWork(
+        ev.detail,
+        cancelled: ev.toolKind == 'cancelled',
+        taskId: ev.taskId,
+      );
       return;
     }
     if (ev.toolName == 'backgrounded') {

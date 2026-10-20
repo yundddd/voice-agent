@@ -841,6 +841,12 @@ test('two shells owed; one report pays only its own (+182)', async () => {
       'the reported task paid first');
     assert.ok(fins[1].data.detail.includes('sleep 60'),
       'the sibling paid by its own notification, not the report');
+    // +186: every receipt carries the TASK's own stamp — the phone
+    // dedups on identity; identical labels can never collide again.
+    assert.equal(fins[0].data.id, 'tbg1',
+      'the finished frame is stamped with its task id');
+    assert.equal(fins[1].data.id, 'tbg1b',
+      'the sibling receipt carries the sibling’s id');
     a.kill();
     at.kill();
   } finally {

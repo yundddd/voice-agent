@@ -883,7 +883,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// name. With no agent debt it retires the line journal-only,
   /// exactly as before: no process finished, only an unheard turn
   /// closed. (behaviours 2/4)
-  void _retireBgWork(String detail, {bool cancelled = false}) {
+  void _retireBgWork(
+    String detail, {
+    bool cancelled = false,
+    String taskId = '',
+  }) {
     final unnamed = detail.isEmpty || detail.startsWith('ended after');
     if (unnamed && _turn.agentWork) {
       _logDebug(
@@ -905,7 +909,7 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     _turn.payAgentDebt(detail); // no-op for a cut tool's label
-    _bgFinishedBubble(detail, cancelled: cancelled);
+    _bgFinishedBubble(detail, cancelled: cancelled, taskId: taskId);
   }
 
   /// The persistent bubble a finished background process earns — the
@@ -917,21 +921,35 @@ class VoiceAssistant extends ChangeNotifier {
   /// verb the agent itself will use seconds later; the period is
   /// still ONE per name whichever verb arrived first (the killed
   /// sleep must not collect 'cancelled.' and 'finished.').
-  void _bgFinishedBubble(String who, {bool cancelled = false}) {
+  void _bgFinishedBubble(
+    String who, {
+    bool cancelled = false,
+    String taskId = '',
+  }) {
     if (who.isEmpty) return;
-    // +185: the scan is RECENT-only. The whole-log version made text
-    // an identity across time — the second run of an identical command
-    // found the first run's period filed at 15:59 and swallowed the
-    // 16:02 receipt whole (field: 'it doesn't show up at all'). The
-    // dedup's actual enemy is double-DELIVERY, which lands within
-    // seconds; inside the window the law is untouched.
-    if (_chat.containsBlockRecent('$who finished.') ||
-        _chat.containsBlockRecent('$who cancelled.')) {
+    // +186: the strict dedup — the TASK's own id. A task finishes
+    // exactly once, so a receipt carrying an id already on file is a
+    // redelivery by definition, whenever it lands; no window, no text
+    // match, no clock assumptions. +185's RECENT-only text scan stays
+    // as the fallback for id-less frames: a bridge too old to stamp,
+    // or the /health proof draining the ledger by label (the
+    // whole-log version of that scan made text an identity across
+    // time and swallowed the second run of an identical command —
+    // field: 'it doesn't show up at all').
+    if (_chat.hasReceiptFor(taskId) ||
+        (taskId.isEmpty &&
+            (_chat.containsBlockRecent('$who finished.') ||
+                _chat.containsBlockRecent('$who cancelled.')))) {
       _logDebug('msg bg done: "$who" already retired');
       return;
     }
     final note = '$who ${cancelled ? 'cancelled' : 'finished'}.';
-    _chat.addSystemNote(note, cancelled: cancelled, receipt: true);
+    _chat.addSystemNote(
+      note,
+      cancelled: cancelled,
+      receipt: true,
+      receiptId: taskId,
+    );
     _logDebug(
       'msg bg done: "$who" ${cancelled ? 'cancelled' : 'finished'} '
       '— retired the line',

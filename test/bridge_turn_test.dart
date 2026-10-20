@@ -67,6 +67,7 @@ class EnvProbe {
   final Set<int> alreadyHeard = {};
   final List<int> took = [];
   int repaints = 0, firstWords = 0, audioActivity = 0, refreshes = 0;
+  String lastReceiptId = ''; // +186: what the finished frame stamped
   bool dropMarkCleared = false, idled = false;
 
   bool get speaking => phase == AssistantPhase.speaking;
@@ -112,7 +113,8 @@ class EnvProbe {
         )),
     drainBacklog: (gen, seq) async => drains.add((gen, seq)),
     ttsOff: () => ttsOff,
-    retireBgWork: (d, {bool cancelled = false}) {
+    retireBgWork: (d, {bool cancelled = false, String taskId = ''}) {
+      lastReceiptId = taskId; // +186: the frame's task id rides the seam
       retiredBg.add((d, cancelled));
       // The assistant's law (see _retireBgWork): the promise is paid,
       // and a lit badge goes with it.
@@ -599,6 +601,27 @@ void main() {
       );
       expect(turn.since, isNull, reason: 'the badge retired WITH the clock');
       expect(since, isNotNull);
+    });
+
+    test('+186: a finished frame’s TASK ID rides to the receipt seam — '
+        'the dedup’s identity is the stamp, not the text', () async {
+      mkTurn();
+      turn.becomeHeard();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 10 && echo done',
+          taskId: 'bz960t1as',
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      await settle();
+      expect(probe.lastReceiptId, 'bz960t1as',
+          reason: 'the frame’s own stamp survives the loop intact');
     });
 
     test('+110/+146: a queued verdict paints the status line, journals — '

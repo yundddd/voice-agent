@@ -28,6 +28,7 @@ class BridgeEvent {
     this.fileName = '',
     this.filePath = '',
     this.fileSize = 0,
+    this.taskId = '',
   });
 
   /// Test seam: build frames verbatim without inventing wire payloads.
@@ -50,6 +51,7 @@ class BridgeEvent {
     this.fileName = '',
     this.filePath = '',
     this.fileSize = 0,
+    this.taskId = '',
   });
 
   /// 'say' | 'tool' | 'context' | 'done' | 'error' | 'file'.
@@ -91,6 +93,14 @@ class BridgeEvent {
   /// Empty on bridges too old to send it (unknown frame keys are
   /// ignored), so the chat bubble simply stays on the working line.
   final String draft;
+
+  /// +186: for 'tool {name:finished}' — the BACKGROUND TASK's own
+  /// identity (the CLI's task id, or the cut tool's tool_use id),
+  /// carried so the phone dedups receipts by WHAT finished, never by
+  /// the label text or the clock. Empty on the turn-lifecycle farewell
+  /// (which names a turn, not a task) and on bridges too old to send
+  /// it — the receipt then falls back to the +185 delivery window.
+  final String taskId;
 
   /// For 'file' (POST /send relayed): the display name, the root-
   /// relative path to fetch from GET /file, and the size in bytes. A
@@ -161,6 +171,7 @@ class BridgeEvent {
           wireMs: _int(data['_ts']),
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
+          taskId: '${data['id'] ?? ''}',
         );
       case 'context':
         final n = data['in'], w = data['window'];

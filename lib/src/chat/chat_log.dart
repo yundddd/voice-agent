@@ -14,6 +14,7 @@ class ChatEntry {
     this.interrupted = false,
     this.cancelled = false,
     this.receipt = false,
+    this.receiptId = '',
     this.createdMs = 0,
   }) : blocks = blocks ?? <String>[];
 
@@ -23,6 +24,7 @@ class ChatEntry {
     this.interrupted = false,
     this.cancelled = false,
     this.receipt = false,
+    this.receiptId = '',
     this.createdMs = 0,
   }) : fromUser = true,
        blocks = [text];
@@ -31,6 +33,7 @@ class ChatEntry {
     this.createdMs = 0,
     this.cancelled = false,
     this.receipt = false,
+    this.receiptId = '',
   }) : fromUser = false,
        blocks = <String>[],
        queued = false,
@@ -51,7 +54,8 @@ class ChatEntry {
        queued = false,
        interrupted = false,
        cancelled = false,
-       receipt = false;
+       receipt = false,
+       receiptId = '';
 
   final bool fromUser;
   final List<String> blocks;
@@ -110,6 +114,14 @@ class ChatEntry {
   /// machinery: survives a reload like every flag here.
   bool receipt;
 
+  /// +186: the BACKGROUND TASK this receipt answers to (the CLI's task
+  /// id, or a cut tool's tool_use id) — the strict identity the dedup
+  /// reads. A task id is unique per run and never reused, so a second
+  /// run of the identical command files its own period while a
+  /// redelivery of the same task's receipt never files a second.
+  /// History, like every flag here: it round-trips.
+  String receiptId;
+
   // ── The file bubble (set only when isFile) ─────────────────────────────
   bool get isFile => filePath.isNotEmpty;
   String fileName = '';
@@ -143,6 +155,7 @@ class ChatEntry {
     if (interrupted) 'interrupted': true,
     if (cancelled) 'cancelled': true,
     if (receipt) 'receipt': true,
+    if (receiptId.isNotEmpty) 'rid': receiptId,
     if (isFile)
       'file': {'name': fileName, 'path': filePath, 'size': fileSize},
     if (savedMs != 0) 'saved': savedMs,
@@ -166,6 +179,7 @@ class ChatEntry {
         interrupted: j['interrupted'] == true,
         cancelled: j['cancelled'] == true,
         receipt: j['receipt'] == true,
+        receiptId: j['rid'] as String? ?? '',
         createdMs: ms(j['t']) ?? 0,
       )
       ..pickedUpMs = ms(j['pickedUp']) ?? 0

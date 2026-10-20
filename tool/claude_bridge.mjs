@@ -950,7 +950,9 @@ function handleEvent(line) {
           agentTasks.delete(id);
           console.error(`  -> finished "${t.label}" ` +
             `(task notification in stream)`);
-          relay('tool', { name: 'finished', detail: t.label });
+          // +186: the task's own id rides the receipt — the phone
+          // dedups on identity, never on the label text.
+          relay('tool', { name: 'finished', detail: t.label, id });
         }
       }
     }
@@ -985,7 +987,7 @@ function handleEvent(line) {
             agentTasks.delete(id);
             console.error(`  -> finished "${t.label}" ` +
               `(agent's own background task)`);
-            relay('tool', { name: 'finished', detail: t.label });
+            relay('tool', { name: 'finished', detail: t.label, id });
           }
         }
       } else if (c.type === 'tool_result' && c.tool_use_id) {
@@ -1027,6 +1029,9 @@ function handleEvent(line) {
           const frame = {
             name: 'finished',
             detail: label,
+            // +186: a cut tool's receipt is stamped with its tool_use
+            // id — identity, like every other finished frame.
+            id: c.tool_use_id,
             ...(cancelled ? { kind: 'cancelled' } : {}),
           };
           console.error(`  -> ${cancelled ? 'cancelled' : 'finished'} ` +
@@ -1095,7 +1100,7 @@ function handleEvent(line) {
             hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
           agentTasks.delete(id);
           console.error(`  -> finished "${t.label}" (named in report)`);
-          relay('tool', { name: 'finished', detail: t.label });
+          relay('tool', { name: 'finished', detail: t.label, id });
         }
       }
       proactiveTurn = false;

@@ -138,6 +138,42 @@ void main() {
           reason: 'the whole-log scan is untouched for its own uses');
     });
 
+    test('+186: receipts dedup by the TASK ID — forever, and only for '
+        'that task; the stamp round-trips through disk', () {
+      var t = 1000000;
+      final s = ChatStore(
+        persist: (json) async => persisted.add(json),
+        repaint: () {},
+        nowMs: () => t,
+      );
+      s.addSystemNote(
+        'Bash sleep 10 && echo done finished.',
+        receipt: true,
+        receiptId: 'aaa',
+      );
+      expect(s.hasReceiptFor('aaa'), isTrue);
+      expect(s.hasReceiptFor('bbb'), isFalse);
+      // A year later the identical command runs again: new task, new
+      // id — its own period, no window arithmetic involved. (The
+      // adjacency guard must not swallow it: same words, different
+      // identity.)
+      t += 365 * 24 * 3600 * 1000;
+      s.addSystemNote(
+        'Bash sleep 10 && echo done finished.',
+        receipt: true,
+        receiptId: 'bbb',
+      );
+      expect(
+        s.entries.where((e) => e.receiptId.isNotEmpty),
+        hasLength(2),
+        reason: 'two runs, two receipts, ids telling them apart',
+      );
+      // And the identity survives a restart: dedup keeps its memory.
+      s.load(persisted.last);
+      expect(s.hasReceiptFor('aaa'), isTrue);
+      expect(s.hasReceiptFor('bbb'), isTrue);
+    });
+
     test('containsBlock matches how the log stores (whitespace, not case)', () {
       final t = store.beginTurn();
       store.addBlock(t, 'Two   spaces\nand a newline');

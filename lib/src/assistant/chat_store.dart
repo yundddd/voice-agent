@@ -141,12 +141,30 @@ class ChatStore {
   /// later still gets its own fresh card (a text ledger would swallow
   /// every second tool-cut with the same wording — the lesson v2 took
   /// to heart: TEXT is never an identity).
-  void addSystemNote(String text, {bool cancelled = false, bool receipt = false}) {
+  /// Whether THIS task id already owns a filed receipt (whole log —
+  /// an id never dies, so unlike the +185 text window this scan is
+  /// forever, and forever-correct: the same task can only ever be
+  /// finished once). +186.
+  bool hasReceiptFor(String taskId) =>
+      taskId.isNotEmpty &&
+      _entries.any((e) => e.receiptId == taskId);
+
+  void addSystemNote(
+    String text, {
+    bool cancelled = false,
+    bool receipt = false,
+    String receiptId = '',
+  }) {
     if (_entries.isNotEmpty) {
       final last = _entries.last;
       if (!last.fromUser &&
           last.blocks.length == 1 &&
-          last.blocks.single == text) {
+          last.blocks.single == text &&
+          // +186: identity joins the adjacency test — the same words
+          // from a DIFFERENT task are new news (second run of an
+          // identical command), while the same task on two transports
+          // stays one event.
+          last.receiptId == receiptId) {
         return;
       }
     }
@@ -160,6 +178,7 @@ class ChatStore {
         createdMs: _nowMs(),
         cancelled: cancelled,
         receipt: receipt,
+        receiptId: receiptId,
       )..blocks.add(text),
     );
     trace?.call('msg note: "${_abbrev(text)}"');
