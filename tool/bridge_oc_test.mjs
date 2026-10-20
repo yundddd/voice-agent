@@ -233,3 +233,111 @@ test('a persisted opencode choice does not hijack an explicitly named --claude',
     assert.ok(readFileSync(stubLog, 'utf8').includes('still claude'));
   } finally { bridge.kill(); }
 });
+
+// ── +216: the model picker, both dialects ─────────────────────────────
+test('the opencode picker lists the service catalog and moves the session', async () => {
+  const w = await world();
+  try {
+    const menu = JSON.parse((await full(w.port, `/models?token=${TOKEN}`)).text);
+    assert.equal(menu.harness, 'opencode');
+    assert.deepEqual(menu.models, [
+      { id: 'acme/alpha', label: 'Acme Alpha' },
+      { id: 'acme/beta', label: 'Acme Beta' },
+      { id: 'other/gamma', label: 'other/gamma' }, // no name: id stands in
+    ]);
+    const r = await full(w.port, `/model?token=${TOKEN}`,
+      { method: 'POST', body: '{"id":"acme/beta"}' });
+    assert.equal(r.status, 200);
+    assert.equal((await health(w.port)).model, 'acme/beta');
+    // No session yet: the pick must PARK and ride the session's
+    // CREATION, or the first turn would answer in the wrong voice.
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'who answers' });
+    await until('done', async () => a.text.includes('event: done'));
+    assert.ok(w.logs().includes('model-create acme/beta'),
+      'the pick never rode the session creation');
+    // With the session ALIVE, the next pick goes straight to its API…
+    const r2 = await full(w.port, `/model?token=${TOKEN}`,
+      { method: 'POST', body: '{"id":"other/gamma"}' });
+    assert.equal(r2.status, 200);
+    await until('the session-model call lands', async () =>
+      w.logs().includes('model other/gamma'));
+    assert.equal((await health(w.port)).model, 'other/gamma');
+  } finally { w.stop(); }
+});
+
+test('the claude picker serves the menu, the control frame, and the respawn carry', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'oc-dir-'));
+  const stubLog = join(home, 'stub.log');
+  const argsLog = join(home, 'args.log');
+  writeFileSync(stubLog, '');
+  const port = PORT + 91;
+  const bridge = spawn(process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--token', TOKEN,
+      '--port', String(port), '--dir', dir,
+      '--models', 'default,opus',
+      '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, HOME: home, STUB_LOG: stubLog,
+      STUB_ARGS_LOG: argsLog, STUB_RESULT_MS: '200' } });
+  bridge.stderr.resume();
+  try {
+    await until('bridge up', async () => {
+      try { return (await health(port)).ok; } catch { return false; }
+    });
+    const menu = JSON.parse((await full(port, `/models?token=${TOKEN}`)).text);
+    assert.deepEqual(menu.models, [
+      { id: 'default', label: 'default' },
+      { id: 'opus', label: 'opus' },
+    ]);
+    const r = await full(port, `/model?token=${TOKEN}`,
+      { method: 'POST', body: '{"id":"opus"}' });
+    assert.equal(r.status, 200);
+    // The 200 is the WRITE's word; the pipe's word is the next read.
+    await until('the control frame lands', async () =>
+      readFileSync(stubLog, 'utf8').includes('set-model opus'));
+    assert.equal((await health(port)).model, 'opus');
+    // Off-menu is refused at the BRIDGE gate (never the CLI's).
+    const bad = await full(port, `/model?token=${TOKEN}`,
+      { method: 'POST', body: '{"id":"pi"}' });
+    assert.equal(bad.status, 400);
+    assert.ok(bad.text.includes('not in --models'));
+    assert.equal((await health(port)).model, 'opus');
+    // The pick survives the child: /new + a fresh talk respawns WITH
+    // --model in the CLI's face.
+    await full(port, `/new?token=${TOKEN}`, { method: 'POST' });
+    const a = await call(port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'fresh child same model' });
+    await until('done', async () => a.text.includes('event: done'));
+    // A pick is not hostage to the child's lifespan: the respawn line
+    // carries --model (no session to API, so the flag is the carry).
+    await until('the respawn carries the pick', async () =>
+      existsSync(argsLog) &&
+      readFileSync(argsLog, 'utf8').includes('--model opus'));
+  } finally { bridge.kill(); }
+});
+
+test('a refused set_model rolls the current back', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'oc-dir-'));
+  writeFileSync(join(home, 'stub.log'), '');
+  const port = PORT + 92;
+  const bridge = spawn(process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--token', TOKEN,
+      '--port', String(port), '--dir', dir, '--models', 'default,opus',
+      '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, HOME: home,
+      STUB_LOG: join(home, 'stub.log'), STUB_MODEL_FAIL: '1',
+      STUB_RESULT_MS: '300' } });
+  bridge.stderr.resume();
+  try {
+    await until('bridge up', async () => {
+      try { return (await health(port)).ok; } catch { return false; }
+    });
+    const r = await full(port, `/model?token=${TOKEN}`,
+      { method: 'POST', body: '{"id":"opus"}' });
+    assert.equal(r.status, 200); // the WRITE happened…
+    await until('the refusal lands', async () =>
+      (await health(port)).model === 'default', 4000); // …and was walked back
+  } finally { bridge.kill(); }
+});

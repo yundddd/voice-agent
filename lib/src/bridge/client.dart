@@ -276,6 +276,45 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
+  /// The model picker's menu (GET /models): both harnesses answer the
+  /// same shape; null = unreachable or a bridge without the endpoint.
+  @override
+  Future<Map<String, Object>?> models() async {
+    try {
+      final res = await HttpClient()
+          .getUrl(_u('/models'))
+          .then((r) => r.close())
+          .timeout(const Duration(seconds: 6));
+      final text = await res.transform(utf8.decoder).join();
+      if (res.statusCode != 200) return null;
+      final j = BridgeEvent.tryJson(text);
+      return j is Map ? j.cast<String, Object>() : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Apply a model pick (POST /model). Any non-2xx comes back as the
+  /// bridge's one-line reason (an off-menu id is refused at the
+  /// bridge's own gate, before the harness ever sees it).
+  @override
+  Future<String?> setModel(String id) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/model'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'id': id})));
+      final res = await req.close();
+      final body = (await res.transform(utf8.decoder).join()).trim();
+      if (res.statusCode == 200) return null;
+      return body.isEmpty ? 'HTTP ${res.statusCode}' : body;
+    } on Object catch (e) {
+      return '$e';
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   /// GET /file?path=… into [destPath], streaming to a .part and renaming
   /// on completion. A `$destPath.part` from an interrupted transfer
   /// resumes (Range: bytes=N-); a 416 (the file changed under us) starts

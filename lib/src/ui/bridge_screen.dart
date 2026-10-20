@@ -79,6 +79,26 @@ class _BridgeScreenState extends State<BridgeScreen> {
     }
   }
 
+  /// The model row's switch: open the menu (GET /models), tap a name
+  /// to POST /model. Errors surface as a snack; on success the
+  /// /health re-read repaints the row.
+  Future<void> _pickModel() async {
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ModelPicker(assistant: widget.assistant),
+    );
+    if (chosen == null) return;
+    final err = await widget.assistant.setBridgeModel(chosen);
+    await _refreshHealth();
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not set the model: $err')),
+      );
+    }
+  }
+
   /// The harness row's switch: flip the bridge between claude and
   /// opencode (POST /harness). Each harness keeps its own pointer, so
   /// the flip is a step sideways, not a deletion — flipping back
@@ -319,6 +339,47 @@ class _BridgeScreenState extends State<BridgeScreen> {
                         ? _switchHarness
                         : null,
                     icon: const Icon(Icons.swap_horiz),
+                  ),
+                ],
+              ),
+              // Which model answers (POST /model): claude's menu is
+              // the bridge operator's (--models), opencode's is the
+              // service's own catalog — the row and the sheet are
+              // identical either way. The switch opens the menu; the
+              // label re-reads /health the moment a pick lands.
+              Row(
+                children: [
+                  Text(
+                    'Model',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SelectableText(
+                      _health == null
+                          ? 'no /health reply — Save & check first'
+                          : !_health!.containsKey('model')
+                          ? 'unknown (bridge too old for /model)'
+                          : _health!['model'] is String &&
+                                    _health!['model'] != ''
+                                ? _health!['model'] as String
+                                : 'the default (no step has named one '
+                                      'yet)',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: _health?.containsKey('model') ?? false
+                        ? 'Choose the model'
+                        : 'This bridge is too old to pick models',
+                    onPressed: a.bridgeConfigured &&
+                                _health?.containsKey('model') == true
+                            ? _pickModel
+                            : null,
+                    icon: const Icon(Icons.tune),
                   ),
                 ],
               ),
@@ -591,6 +652,130 @@ class _FolderBrowserState extends State<_FolderBrowser> {
                         );
                       },
                     ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The model menu (GET /models): one flat list, current checked, tap
+/// to choose — the bridge answers this shape whichever harness backs
+/// it (claude's --models config, opencode's service catalog). A pick
+/// pops its id back to BridgeScreen, which POSTs /model; the sheet
+/// never writes, so an abandoned browse changes nothing.
+class _ModelPicker extends StatefulWidget {
+  const _ModelPicker({required this.assistant});
+  final VoiceAssistant assistant;
+
+  @override
+  State<_ModelPicker> createState() => _ModelPickerState();
+}
+
+class _ModelPickerState extends State<_ModelPicker> {
+  Map<String, Object>? _menu;
+  bool _busy = true;
+  String? _why;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _busy = true);
+    final m = await widget.assistant.bridgeModels();
+    if (!mounted) return;
+    setState(() {
+      _menu = m;
+      _why = m == null
+          ? 'the bridge answered no model menu — unreachable, or too '
+                'old to have /models'
+          : null;
+      _busy = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final models = ((_menu?['models'] as List?) ?? const [])
+        .cast<Object>()
+        .whereType<Map>()
+        .toList();
+    final current = _menu?['current'];
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Model',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(width: 10),
+                if (_busy)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (current is String && current.isNotEmpty)
+                  Flexible(
+                    child: Text(
+                      'current: $current',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_why != null)
+              Text(_why!, style: Theme.of(context).textTheme.bodySmall)
+            else if (!models.any(((_) => true)))
+              Text(
+                'the menu came back empty — nothing to pick',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: models.length,
+                  itemBuilder: (context, i) {
+                    final m = models[i].cast<String, Object?>();
+                    final id = '${m['id']}';
+                    final label = '${m['label']}';
+                    return ListTile(
+                      dense: true,
+                      title: Text(label),
+                      subtitle: label == id
+                          ? null
+                          : Text(id,
+                              style:
+                                  Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontFamily: 'monospace',
+                              )),
+                      trailing: id == current
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () => Navigator.of(context).pop(id),
+                    );
+                  },
+                ),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Keep it'),
             ),
           ],
         ),

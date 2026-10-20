@@ -400,4 +400,186 @@ void main() {
       expect(back, isNot(contains('holds the pen')));
     });
   });
+
+  modelPickerTests();
 }
+
+// ── +216: the model picker, phone side ───────────────────────────────
+void modelPickerTests() {
+  group('model picker client /models + /model', () {
+    late HttpServer server;
+    late BridgeClient client;
+    final seen = <String>[];
+
+    setUp(() async {
+      seen.clear();
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      client = BridgeClient('http://127.0.0.1:${server.port}', 'tok');
+      server.listen((req) async {
+        seen.add('${req.method} ${req.uri}');
+        if (req.uri.path == '/models') {
+          req.response
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({
+              'ok': true,
+              'harness': 'claude',
+              'current': 'opus',
+              'models': [
+                {'id': 'default', 'label': 'default'},
+                {'id': 'opus', 'label': 'opus'},
+              ],
+            }));
+        } else if (req.uri.path == '/model') {
+          final body =
+              jsonDecode(await utf8.decodeStream(req)) as Map<String, Object?>;
+          if (body['id'] == 'pi') {
+            req.response.statusCode = HttpStatus.badRequest;
+            req.response.write('could not set the model: not in --models: pi');
+          } else {
+            req.response.write('{"ok":true,"id":"${body['id']}"}');
+          }
+        }
+        await req.response.close();
+      });
+    });
+
+    tearDown(() => server.close(force: true));
+
+    test('the menu rides the token and arrives parsed', () async {
+      final m = await client.models();
+      expect(m, isNotNull);
+      expect(m!['current'], 'opus');
+      expect((m['models'] as List).length, 2);
+      expect(seen.single, startsWith('GET /models'));
+      expect(seen.single, contains('token=tok'));
+    });
+
+    test('a pick answers null; an off-menu id answers the honest reason',
+        () async {
+      expect(await client.setModel('opus'), isNull);
+      final why = await client.setModel('pi');
+      expect(why, contains('not in --models'));
+    });
+
+    test('an unreachable bridge is a null menu and a reason for picks',
+        () async {
+      await server.close(force: true);
+      expect(await client.models(), isNull);
+      expect(await client.setModel('opus'), isNotNull);
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      await server.close(); // keep tearDown's close a no-op
+    });
+  });
+
+  group('assistant model methods', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+
+    setUp(() {
+      harness = FakeHarness();
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+    });
+
+    tearDown(() => a.dispose());
+
+    test('no bridge configured: no menu, and the pick says so', () async {
+      expect(await a.bridgeModels(), isNull);
+      expect(await a.setBridgeModel('opus'), 'bridge not configured');
+    });
+
+    test('a pick lands and the row label is the truth on return', () async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'model': 'default',
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      expect(await a.setBridgeModel('opus'), isNull);
+      expect(harness.modelPicks, ['opus']);
+      // setBridgeModel AWAITED its /health re-read: the screen's next
+      // paint already wears the new model, no refresh lag to explain.
+      expect((await a.bridgeHealth())!['model'], 'opus');
+      // A refused pick keeps the label honest (nothing moved).
+      harness.setModelError = 'not in --models: pi';
+      expect(await a.setBridgeModel('pi'), contains('not in --models'));
+      expect((await a.bridgeHealth())!['model'], 'opus');
+    });
+  });
+
+  group('BridgeScreen model row', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+
+    setUp(() {
+      harness = FakeHarness();
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+    });
+
+    tearDown(() => a.dispose());
+
+    Future<void> openScreen(WidgetTester tester) async {
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await tester.pump();
+      await tester.pumpWidget(MaterialApp(home: BridgeScreen(assistant: a)));
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('the row shows the current; the sheet lists the menu '
+        'and a pick travels POST /model', (tester) async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'model': 'default',
+      };
+      harness.modelsMenu = {
+        'ok': true, 'harness': 'claude', 'current': 'default',
+        'models': [
+          {'id': 'default', 'label': 'default'},
+          {'id': 'opus', 'label': 'opus'},
+          {'id': 'acme/beta', 'label': 'Acme Beta'},
+        ],
+      };
+      await openScreen(tester);
+      expect(find.text('default'), findsWidgets); // the row's label
+      final tune = find.widgetWithIcon(IconButton, Icons.tune);
+      expect(tester.widget<IconButton>(tune).onPressed, isNotNull);
+      await tester.tap(tune);
+      await tester.pumpAndSettle();
+      // The sheet: the menu, current checked, labels and ids honest.
+      expect(find.text('Acme Beta'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget); // on 'default'
+      await tester.tap(find.text('Acme Beta'));
+      await tester.pumpAndSettle();
+      expect(harness.modelPicks, ['acme/beta']);
+      await tester.pump(); // the row re-reads /health after the pick
+      expect(find.text('acme/beta'), findsWidgets); // row wears the pick
+    });
+
+    testWidgets('a pre-+216 bridge: the label admits it, the switch is dead',
+        (tester) async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', // NO 'model' field at all
+      };
+      await openScreen(tester);
+      expect(find.textContaining('too old for /model'), findsOneWidget);
+      final tune = find.widgetWithIcon(IconButton, Icons.tune);
+      expect(tester.widget<IconButton>(tune).onPressed, isNull);
+    });
+  });
+}
+

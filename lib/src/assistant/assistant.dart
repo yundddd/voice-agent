@@ -1268,6 +1268,22 @@ class VoiceAssistant extends ChangeNotifier {
     return err;
   }
 
+  /// The model picker's menu (GET /models) for whichever harness is
+  /// live. Null = unreachable, or a bridge with no picker.
+  Future<Map<String, Object>?> bridgeModels() async =>
+      await _gateway?.models();
+
+  /// Apply a model pick (POST /model) and AWAIT the /health re-read:
+  /// the row's current-model label is the truth the moment this call
+  /// returns, not eventually.
+  Future<String?> setBridgeModel(String id) async {
+    final g = _gateway;
+    if (g == null) return 'bridge not configured';
+    final err = await g.setModel(id);
+    if (err == null) await _refreshSession();
+    return err;
+  }
+
   /// The grey queue bubble's tap: cut the in-flight turn so the parked
   /// prompt starts NOW. Just a /stop — NOT the Stop chip's full
   /// bridgeStop: no detach, no supersede, no speaker silencing. This

@@ -261,6 +261,20 @@ shared machinery, not a second implementation.
   launch — the test rig, a bespoke unit — is never hijacked by the
   persisted flip (this was the +211 regression: the file dragged the
   whole queue suite onto the live service).
+- **Model picker (+216).** `GET /models` answers
+  `{harness, current, models:[{id,label}]}` from either backend: the
+  claude side is the `--models` config list (the CLI has no
+  model-list control — verified against 2.1.296 — only the
+  `set_model` control frame), the opencode side is the service's
+  catalog (`GET /api/model` for the working directory; ids are
+  `providerID/modelID`). `POST /model {"id":…}` applies: claude over
+  the control frame (a refused `control_response` rolls the current
+  back; the choice rides `--model` across respawns; a pick while the
+  child is down rides the same flag), opencode over the session model
+  API (parked into the session's creation if none exists). `/health`
+  carries `model`; opencode's goes proven when `session.step.started`
+  names the model it runs. Off-menu claude ids are refused at the
+  bridge's own gate.
 - **Per-harness memory.** Each harness keeps its own resume pointer
   (`.claude_bridge_session` / `.opencode_bridge_session` in the work
   dir): flipping away and back resumes each conversation exactly where

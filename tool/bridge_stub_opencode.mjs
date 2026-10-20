@@ -64,6 +64,7 @@ const send = (type, data, ms) => setTimeout(() => {
 const push = (type, data, ms) => send(type, data, ms);
 
 let SID = 'soc-1';
+let curModel = 'acme/alpha'; // what the next step.started will name
 let turnSeq = 0; // a cut turn's late frames must not speak
 
 // ── the surface ──────────────────────────────────────────────────────
@@ -90,6 +91,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'POST' && p === '/api/session') {
+    // A session CREATED with a model (the bridge parks a pre-session
+    // pick here): the catalog accepts it as the first step's truth.
+    if (j.model?.providerID && j.model?.id) {
+      curModel = `${j.model.providerID}/${j.model.id}`;
+      note(`model-create ${curModel}`);
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
       .end(JSON.stringify({ data: { id: SID, title: j.title } }));
     return;
@@ -122,6 +129,33 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && /^\/api\/session\/[^/]+\/compact$/.test(p)) {
     res.writeHead(204).end(); return;
   }
+  // +216: the model catalog and the session's model setter — the v2
+  // picker's two service calls. The catalog is tiny and fixed; the
+  // setter moves what step.started will NAME on the next turn, so the
+  // bridge's optimistic current gets its proof (or its correction).
+  if (req.method === 'GET' && p === '/api/model') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+      .end(JSON.stringify({
+        location: { directory: '/stub' },
+        data: [
+          { id: 'alpha', providerID: 'acme', name: 'Acme Alpha' },
+          { id: 'beta', providerID: 'acme', name: 'Acme Beta' },
+          { id: 'gamma', providerID: 'other' }, // no name: id fallback
+        ],
+      }));
+    return;
+  }
+  const setModel = p.match(/^\/api\/session\/([^/]+)\/model$/);
+  if (req.method === 'POST' && setModel) {
+    const m = j.model ?? {};
+    if (!m.providerID || !m.id) {
+      res.writeHead(400).end('{"message":"expected {model:{id,providerID}}"}\n');
+      return;
+    }
+    curModel = `${m.providerID}/${m.id}`;
+    note(`model ${curModel}`);
+    res.writeHead(204).end(); return;
+  }
   const prompt = p.match(/^\/api\/session\/([^/]+)\/prompt$/);
   if (req.method === 'POST' && prompt) {
     if (typeof j.text !== 'string' || !j.text) {
@@ -131,7 +165,9 @@ const server = http.createServer(async (req, res) => {
     const gen = ++turnSeq;
     let t = 0;
     const at = () => (t += stepMs);
-    push('session.step.started', {}, at());
+    push('session.step.started',
+      { model: { providerID: curModel.split('/')[0],
+                 id: curModel.split('/').slice(1).join('/') } }, at());
     if (wantPermission) push('session.permission.request', { requestID: 'perm-1' }, at());
     for (const s of says) {
       push('session.text.started', { ordinal: 0 }, at());

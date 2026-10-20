@@ -255,6 +255,27 @@ class FakeHarness implements HarnessGateway {
     return setHarnessError;
   }
 
+  /// Model-picker behaviour: models() answers this (null = no menu,
+  /// as a pre-+216 bridge would), setModel() records picks and fails
+  /// with setModelError. A successful set also moves healthState's
+  /// 'model' — the fake behaves like a bridge whose /health truth
+  /// follows the pick.
+  Map<String, Object>? modelsMenu;
+  String? setModelError;
+  final List<String> modelPicks = [];
+
+  @override
+  Future<Map<String, Object>?> models() async => modelsMenu;
+
+  @override
+  Future<String?> setModel(String id) async {
+    modelPicks.add(id);
+    if (setModelError == null && healthState != null) {
+      healthState = {...healthState!, 'model': id};
+    }
+    return setModelError;
+  }
+
   /// downloadFile(): writes [downloadBytes] to the destination when
   /// downloadOk, records the wire path, and reports progress once.
   List<int> downloadBytes = const [1, 2, 3];

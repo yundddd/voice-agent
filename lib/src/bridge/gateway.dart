@@ -95,6 +95,17 @@ abstract class HarnessGateway {
   /// Returns the failure reason, null on success/unsupported.
   Future<String?> setDir(String path) async => null;
 
+  /// +216: the model picker's menu, one shape for both harnesses:
+  /// {harness, current, models: [{id, label}]}. Null when unreachable
+  /// or a bridge too old for /models (the row then reads dead).
+  Future<Map<String, Object>?> models() async => null;
+
+  /// Apply a menu entry (POST /model): claude over the CLI's
+  /// set_model control frame, opencode over the session-model API —
+  /// the bridge translates; the phone never learns which dialect ran.
+  /// Returns the failure reason, null on success/unsupported.
+  Future<String?> setModel(String id) async => null;
+
   /// Switch WHICH harness the bridge speaks (POST /harness {"to":…}).
   /// The switch is an honest /new at the seam, but each harness keeps
   /// its OWN resume pointer — flipping back resumes that conversation

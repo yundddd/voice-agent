@@ -69,6 +69,14 @@ if (process.env.STUB_CWD_LOG) {
   appendFileSync(process.env.STUB_CWD_LOG, process.cwd() + '\n');
 }
 
+// STUB_ARGS_LOG: also record the SPAWN ARGS of every process start —
+// +216: how the /model pick rides a respawn (--model in argv) is a
+// fact about the spawn line, not about any frame.
+if (process.env.STUB_ARGS_LOG) {
+  appendFileSync(process.env.STUB_ARGS_LOG,
+    process.argv.slice(2).join(' ') + '\n');
+}
+
 const log = process.env.STUB_LOG;
 const delay = Number(process.env.STUB_RESULT_MS ?? 1500);
 const thinkMs = Number(process.env.STUB_THINK_MS ?? 0);
@@ -122,6 +130,25 @@ process.stdin.on('data', (b) => {
     lineBuf = lineBuf.slice(i + 1);
     if (!line.startsWith('{')) continue;
     const m = JSON.parse(line);
+    // +216: the model picker's claude dialect — a set_model control
+    // frame gets the success/error control_response the bridge's
+    // rollback rides. STUB_MODEL_FAIL=1 models the refusal (unknown
+    // name at the CLI's own gate), STUB_MODEL_SPY logs the SPAWN
+    // ARGS' --model carry too (that half is proven by argv, below).
+    if (m.type === 'control_request' &&
+        m.request?.subtype === 'set_model') {
+      appendFileSync(log, 'set-model ' + (m.request.model ?? '') + '\n');
+      out({
+        type: 'control_response',
+        response: {
+          subtype: process.env.STUB_MODEL_FAIL === '1' ? 'error' : 'success',
+          request_id: m.request_id,
+          ...(process.env.STUB_MODEL_FAIL === '1'
+            ? { message: 'model not available here' } : {}),
+        },
+      });
+      return;
+    }
     if (m.type === 'control_request' &&
         m.request?.subtype === 'interrupt') {
       // The real CLI aborts the open turn: its result arrives with

@@ -114,6 +114,18 @@
 //   POST /harness switch harness at runtime (to=claude|opencode; an
 //                honest /new at the switch; persisted in
 //                ~/.claude_bridge_harness so the trial survives restarts)
+//   GET  /models the model picker's menu for whichever harness is
+//                live: claude serves the --models list (no model-list
+//                control exists in the CLI), opencode asks the service
+//                what it resolves for this dir. Both answer
+//                {harness, current, models:[{id,label}]}.
+//   POST /model  {"id":…} applies a pick: claude over the CLI's
+//                set_model control frame (and the --model flag rides a
+//                respawn); opencode over the session model API (a
+//                pick before any session rides that session's
+//                creation). /health.model carries the current either
+//                way — opencode's goes PROVEN when a step names its
+//                model.
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
 //   POST /dir    {"path": …}: move the working folder — an honest /new at
@@ -351,6 +363,70 @@ if (harness !== 'claude' && harness !== 'opencode') {
 }
 if (harness !== 'opencode') harness = 'claude';
 noteHarnessEra(harness); // the era the boot found (or was pinned to)
+// +216: the model picker's data. ONE seam (GET /models, POST /model)
+// for both harnesses; each answers in its own dialect. Claude has no
+// model-list control (verified against 2.1.296's binary: set_model
+// exists, get_models does not), so its menu is the operator's —
+// --models default,sonnet,opus,haiku — and the bridge remembers which
+// entry it last handed the CLI (control_response failures roll the
+// memory back). opencode lists live from the service: every model it
+// resolves for this directory, identity providerID/modelID (the list's
+// own id field is the bare modelID — providers can collide).
+const modelMenu = String(arg('models', 'default,sonnet,opus,haiku'))
+  .split(',').map((s) => s.trim()).filter(Boolean);
+let claudeModel = arg('model', 'default');
+const modelAcks = new Map(); // control_request id -> the model it set
+function currentModel() {
+  return harness === 'opencode' ? oc.model : claudeModel;
+}
+function modelList() { // [{id,label}] — the picker's whole menu
+  if (harness === 'opencode') {
+    return ocReq('/api/model?location%5Bdirectory%5D=' +
+      encodeURIComponent(dir))
+      .then((r) => ((r && r.data) ?? []).map((m) => ({
+        id: `${m.providerID}/${m.id}`,
+        label: m.name ?? `${m.providerID}/${m.id}`,
+      })));
+  }
+  return Promise.resolve(modelMenu.map((id) => ({id, label: id})));
+}
+function applyModel(id) { // resolves with the new current, or throws
+  if (harness === 'claude') {
+    if (!modelMenu.includes(id)) {
+      return Promise.reject(new Error(`not in --models: ${id}`));
+    }
+    const reqID = randomUUID();
+    const prev = claudeModel;
+    claudeModel = id; // remembered FIRST: a dead child respawns WITH it
+    if (child && !childDead) {
+      modelAcks.set(reqID, prev); // control_response error rolls back
+      child.stdin.write(JSON.stringify({
+        type: 'control_request', request_id: reqID,
+        request: { subtype: 'set_model', model: id },
+      }) + '\n');
+      console.error('  [model] claude -> ' + id);
+    } else {
+      console.error('  [model] claude child down; the choice rides ' +
+        'the respawn flag');
+    }
+    return Promise.resolve(id);
+  }
+  const slash = id.indexOf('/');
+  const model = slash < 0
+    ? { providerID: 'opencode', id }
+    : { providerID: id.slice(0, slash), id: id.slice(slash + 1) };
+  const prev = oc.model;
+  oc.model = id;
+  const send = oc.sid
+    ? ocReq(`/api/session/${oc.sid}/model`, { model })
+    : Promise.resolve().then(() => { oc.pendingModel = model; });
+  return send.catch((e) => { oc.model = prev; throw e; })
+    .then(() => {
+      console.error('  [model] opencode -> ' + id +
+        (oc.sid ? '' : ' (parked for the next session)'));
+      return id;
+    });
+}
 // The opencode CLI: where the npm global install lands on THIS box
 // (nvm-managed node, so the systemd PATH has no idea) with sane fallbacks.
 const opencodeBin = arg('opencode', [
@@ -806,6 +882,12 @@ function spawnClaude(resume) {
     }}));
   }
   if (resume) args.push('--resume', resume);
+  // +216: a model picked mid-session survives a respawn — the CLI's
+  // own flag carries it into the fresh process, so the picker's choice
+  // is not hostage to the child's lifespan.
+  if (claudeModel && claudeModel !== 'default') {
+    args.push('--model', claudeModel);
+  }
   console.error('  [claude] spawn (resume=' +
     (resume ? resume.slice(0, 8) : 'none — fresh session') + ')');
   // Experimental betas are poison for our prefix cache — captured
@@ -831,7 +913,19 @@ function spawnClaude(resume) {
   childDead = false;
   attachJsonLines(child);
   child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
-  child.on('exit', onChildExit);
+  // A replaced child's late exit must not speak: /new SIGTERMs the old
+  // one and the FIRST TALK respawns before the old exit lands, and the
+  // handler used to read the fresh turn's turnOpen as its own death —
+  // phantoming an 'error' and ending the new turn's view (the done
+  // fell to the backlog unheard, field-proven by +216's wire test).
+  // `this !== child` means a NEW child owns the seat (or none does).
+  child.on('exit', function (code, sig) {
+    if (child !== this) {
+      console.error('  [claude] exit from a replaced child — ignored');
+      return;
+    }
+    onChildExit(code, sig);
+  });
 }
 // stdout is JSON-lines on both harnesses (the opencode backend pushes
 // translated stream-json into an EventEmitter with the same contract),
@@ -895,6 +989,8 @@ const oc = {
   seen: new Set(), // bus event ids (a resubscribe may replay the tail)
   tools: new Map(), // oc call id -> tool name (for error results)
   callIn: 0, callOut: 0, cost: 0, needsPreamble: false, extraErrs: [],
+  model: null,        // 'provider/model' the last step proved itself on
+  pendingModel: null, // a pick made before any session existed
 };
 oc.stdout = oc.ev;
 oc.stderr = new EventEmitter(); // nothing writes it; the wiring wants it
@@ -976,6 +1072,11 @@ function ocTranslate(j) {
   // it too. Only OUR session (or session-less server events) may speak.
   if (d.sessionID && d.sessionID !== oc.sid) return;
   if (t === 'session.step.started') {
+    // +216: the step names the model it runs — the picker's current
+    // goes from optimistic to PROVEN the moment the turn starts.
+    if (d.model?.id && d.model?.providerID) {
+      oc.model = `${d.model.providerID}/${d.model.id}`;
+    }
     ocEmit({ type: 'stream_event', event: { type: 'message_start',
       message: { usage: { input_tokens: oc.callIn,
         cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } });
@@ -1066,8 +1167,12 @@ function ocClose(errText) {
 async function ocPrompt(text) {
   try {
     if (!oc.sid) {
-      const s = await ocReq('/api/session',
-        { title: 'voice bridge', location: { directory: dir } });
+      // A model picked before the session existed rides its creation.
+      const s = await ocReq('/api/session', {
+        title: 'voice bridge', location: { directory: dir },
+        ...(oc.pendingModel ? { model: oc.pendingModel } : {}),
+      });
+      oc.pendingModel = null;
       oc.sid = s.data?.id ?? s.id;
       // The voice prompt belongs to the SESSION, not to one message, so
       // every later utterance keeps the spoken-answer shape. The v2
@@ -1179,12 +1284,36 @@ function spawnOpenCode(resume) {
   child = oc;
   childDead = false;
   attachJsonLines(child);
-  oc.ev.on('exit', onChildExit); // (the fake child's events live on its emitter)
+  // Same law as the claude side: only the backend that HOLDS the seat
+  // may announce a death (a replaced backend's exit is bookkeeping).
+  oc.ev.on('exit', (code, sig) => {
+    if (child !== oc) {
+      console.error('  [oc] exit from a replaced backend — ignored');
+      return;
+    }
+    onChildExit(code, sig);
+  }); // (the fake child's events live on its emitter)
   ocListen(oc.gen);
 }
 
 function handleEvent(line) {
   const m = JSON.parse(line);
+  // +216: a set_model the CLI refuses (unknown name, a betas quirk)
+  // arrives as a control_response error — the optimistic current
+  // rolls back then, so /health and the picker lie about nothing
+  // longer than the round trip.
+  if (m.type === 'control_response') {
+    const r = m.response ?? {};
+    if (modelAcks.has(r.request_id)) {
+      const prev = modelAcks.get(r.request_id);
+      modelAcks.delete(r.request_id);
+      if (r.subtype !== 'success') {
+        claudeModel = prev;
+        console.error('  [model] claude refused; back to ' + prev);
+      }
+    }
+    return;
+  }
   if (m.type !== 'stream_event') { // deltas are a firehose: keep the log legible
     console.error(`EVT ${m.type}/${m.subtype ?? '-'} len=${line.length}`);
   }
@@ -2447,6 +2576,10 @@ const server = http.createServer((req, res) => {
       // migration matches each legacy bubble's timestamp into an era
       // with this instead of guessing one label for the whole past.
       harnessHistory: harnessHistory(),
+      // +216: the model the picker selected (opencode: the one the
+      // last step PROVED itself on, once a turn has run; null until
+      // then).
+      model: currentModel(),
       // The folder the agent works in (mutable via POST /dir): the
       // Bridge screen shows it and the picker moves it.
       dir,
@@ -2581,6 +2714,21 @@ const server = http.createServer((req, res) => {
     createReadStream(f, { start, end }).pipe(res);
     return;
   }
+  // +216: the picker menu, both dialects — claude serves the --models
+  // config (the CLI has no model-list control), opencode asks the
+  // service what it resolves for this directory. One payload shape;
+  // the phone never learns which harness answered.
+  if (req.method === 'GET' && url.pathname === '/models') {
+    modelList().then((models) => {
+      res.writeHead(200, {'content-type': 'application/json'})
+        .end(JSON.stringify({
+          ok: true, harness, current: currentModel(), models,
+        }));
+    }).catch((e) => {
+      res.writeHead(502).end('model list failed: ' + e + '\n');
+    });
+    return;
+  }
   if (req.method === 'GET' && url.pathname === '/poll') {
     // The PULL transport companion to the event ring: {seq,events} since
     // the caller's cursor, oldest first. Each poll is an OUTBOUND request
@@ -2678,6 +2826,21 @@ const server = http.createServer((req, res) => {
         console.error('  [harness] ' + harness);
         res.writeHead(200, {'content-type': 'application/json'})
           .end(JSON.stringify({ ok: true, harness }));
+      }
+    } else if (url.pathname === '/model') {
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const id = typeof j?.id === 'string' && j.id ? j.id : null;
+      if (!id) {
+        res.writeHead(400).end('{"message":"expected {id}"}\n');
+      } else {
+        applyModel(id).then((now) => {
+          res.writeHead(200, {'content-type': 'application/json'})
+            .end(JSON.stringify({ ok: true, harness, id: now }));
+        }).catch((e) => {
+          res.writeHead(400).end('could not set the model: ' +
+            (e?.message ?? e) + '\n');
+        });
       }
     } else if (url.pathname === '/stop') {
       // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
