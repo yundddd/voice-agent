@@ -14,7 +14,7 @@ proxy `flash-next` via `ANTHROPIC_BASE_URL` in `~/.claude/settings.json`).
 | **One-shot per turn** | `claude -p "<text>" --resume <sid> --output-format json` per utterance, no persistent process. | Simplest, but pays CLI startup + context reload every turn (+1–3 s). Good fallback if the long-lived pipe ever wedges. |
 | **Agent SDK (TS/Python)** | `@anthropic-ai/claude-agent-sdk` `query()` with streaming input — the same protocol, wrapped as a library with typed messages, `interrupt()`, and a `canUseTool` callback. | The "official" version of the bridge below. Reach for it when we want permission prompts relayed to the phone ("can I run the tests? yes/no by voice"). |
 | Community HTTP/WebUI wrappers | Various OSS projects exposing claude over REST/WebSocket. | Workable, but they own the lifecycle and UI assumptions; a ~150-line bespoke bridge is easier to voice-tune. Skipped. |
-| `opencode serve` | The other harness on this box; HTTP + SSE event API for sessions. | Same bridge shape, different backend — if "the harness on my machine" should ever mean *this* OpenCode session, that's a one-function swap. |
+| `opencode serve` | The other harness on this box; HTTP + SSE event API for sessions. | **Shipped as the bridge's second backend (+211)** — see "The opencode harness" below. |
 
 The phone-to-bridge transport: **Tailscale** (this machine is already in
 the tailnet — the model proxy itself is reached over `*.ts.net`): install
@@ -243,6 +243,57 @@ Cost note: the `total_cost_usd` fields are the client's estimates
 against Anthropic pricing — on the local `flash-next` proxy they're
 fiction. One caveat found: `unrecognized_model` on stderr at startup is
 harmless probe noise here (turns still succeed).
+
+## The opencode harness (`--harness opencode`, shipped +211)
+
+The bridge can speak to the OpenCode v2 service instead of a `claude -p`
+child — same HTTP surface, same voice events, one swapped adapter. The
+phone cannot tell which harness spoke: every bus event is TRANSLATED
+into a claude stream-json frame and fed to the same `handleEvent`, so
+the sentence splitter, the census, the receipts, and the queue are
+shared machinery, not a second implementation.
+
+- **Resolution.** `--harness claude|opencode` pins at boot; otherwise a
+  runtime `POST /harness {"to":"…"}` flips the live bridge and persists
+  the choice in `~/.claude_bridge_harness` (rollback is one POST, not an
+  edit to the unit file). An explicit `--claude <path>` also MEANS
+  claude: naming the binary is choosing the harness, so a pointed
+  launch — the test rig, a bespoke unit — is never hijacked by the
+  persisted flip (this was the +211 regression: the file dragged the
+  whole queue suite onto the live service).
+- **Per-harness memory.** Each harness keeps its own resume pointer
+  (`.claude_bridge_session` / `.opencode_bridge_session` in the work
+  dir): flipping away and back resumes each conversation exactly where
+  it stopped.
+- **The backend joins, not owns.** The adapter finds the service via
+  `~/.local/state/opencode/service.json` (url + rotating basic-auth
+  password, re-read per call) — the same file the desktop TUI uses —
+  and wakes it with `opencode serve --service` only if nobody is home.
+  The voice prompt rides the SESSION (`PUT …/instructions/entries/voice`
+  with `{value}` — `{content}` is a 400), so the first-utterance
+  preamble fallback fires only if that API ever shrugs. Permission
+  asks are auto-approved with `{decision:"always"}` (`{response}` is a
+  400 — and a swallowed 400 there hangs the turn on an unanswered
+  question). Both shapes were captured wrong first and are now pinned
+  by the stub service, which enforces the same 400s.
+- **The bus is machine-global** (Tim's own desktop sessions ride it):
+  frames from any other `sessionID` are dropped, and replayed tails are
+  deduped by event id — a resubscribe must not re-speak a turn.
+- **Verified live** against 2.0.18 (routes from the service's own
+  `/openapi.json`; event names and payload shapes from a capture of a
+  real turn): `session.step.started` → `message_start`,
+  `session.reasoning.*` → thinking blocks, `session.text.*` → text
+  blocks (the `text.ended` snapshot dedupes against the live watermark
+  exactly like the CLI's own snapshots), `session.tool.*` → tool_use /
+  tool_result, `session.usage.updated` → `message_delta` + census
+  usage, `session.execution.succeeded|interrupted` → the `result` that
+  closes the turn. Interrupt is `POST …/interrupt`; `/compact` maps to
+  `POST …/compact` plus a `compact_boundary` for the chip.
+- **Tests**: `node --test tool/bridge_oc_test.mjs` runs the real bridge
+  against `tool/bridge_stub_opencode.mjs` — a stand-in v2 service that
+  enforces the request schemas the live one does and keeps a disk
+  ledger (`STUB_OC_LOG`) of every prompt, verdict and interrupt it
+  heard, the same doctrine as `bridge_stub_claude.mjs`.
 
 ## App side (shipped in 0.1.0+8 — lib/bridge.dart, lib/bridge_screen.dart)
 

@@ -53,3 +53,7 @@ app.*.map.json
 # Built by tool/build_neutts_pack.sh (shipped inside the voice pack)
 android/app/src/main/jniLibs/
 .claude_bridge_session
+.opencode_bridge_session
+# harness-local state (claude's worktree dir; the pointers above and
+# ~/.claude_bridge_harness carry the conversation memory instead)
+.claude/

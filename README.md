@@ -634,6 +634,17 @@ no route at all, so the phone POSTs its journal outbound (batched,
 acked, deduped by seq) and the bridge mirrors the latest envelope:
 `/applogs` answers from the mirror with `source:'push'`, and
 `appLog.mode` in `/health` reads push / pull / silent.
+**The bridge now has a second harness (+211):** `--harness opencode` (or
+a runtime `POST /harness {"to":"opencode"}`, persisted so the trial
+survives restarts) points the same voice events, sentence relay, queue
+and receipts at the OpenCode v2 service instead of a `claude -p` child —
+the adapter translates the session bus into stream-json and joins (or
+wakes) the machine's shared `opencode serve`, so the phone never learns
+which harness spoke. Each harness remembers its own conversation (a
+per-harness resume pointer: flipping back resumes where that one
+stopped), and an explicit `--claude <path>` always means claude. See
+`docs/claude-code-bridge.md` for the schema-verified API surface and
+`tool/bridge_oc_test.mjs` for the stub-service regression rig.
 Protocol, verification notes, and the systemd unit: `docs/claude-code-bridge.md`.
 
 ## Run

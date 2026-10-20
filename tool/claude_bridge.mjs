@@ -111,6 +111,9 @@
 //   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
 //                PROCESS stays alive. No-op while idle.
+//   POST /harness switch harness at runtime (to=claude|opencode; an
+//                honest /new at the switch; persisted in
+//                ~/.claude_bridge_harness so the trial survives restarts)
 //   POST /new    start a fresh session (kills + respawns claude, clears
 //                background turn and queued prompt)
 //   POST /dir    {"path": …}: move the working folder — an honest /new at
@@ -203,6 +206,7 @@
 // no partials, both features fall back to the old block-close relay.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync, statSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
@@ -283,6 +287,33 @@ const permMode = arg('permission-mode', 'bypassPermissions');
 // on disk and the diff names the volatile bytes — no more theorizing.
 const dumpDir = arg('dump-requests', null);
 
+// ── harness: claude (default) or opencode --------------------------------
+// The bridge was written as one adapter — speak stream-json, relay voice
+// events — so the second harness rides the SAME machinery: every opencode
+// service event is TRANSLATED into a claude stream-json line and fed to
+// handleEvent, so the sentence splitter, the census, the receipts, and
+// the queue behave identically whichever harness spoke. Chosen at boot
+// (--harness opencode) or at runtime (POST /harness, below); the choice
+// PERSISTS in ~/.claude_bridge_harness so the trial survives a restart
+// and a rollback is one POST, not an edit to the unit file.
+let harness = arg('harness', null);
+const harnessFile = join(homedir(), '.claude_bridge_harness');
+if (harness !== 'claude' && harness !== 'opencode') {
+  // An explicit --claude NAMES the binary, and naming the binary is
+  // choosing the harness: the persisted runtime flip must not hijack a
+  // pointed launch (the test rig passes --claude <stub> and got dragged
+  // onto the live opencode service by exactly this).
+  if (argv.includes('--claude')) harness = 'claude';
+  else { try { harness = readFileSync(harnessFile, 'utf8').trim(); } catch {} }
+}
+if (harness !== 'opencode') harness = 'claude';
+// The opencode CLI: where the npm global install lands on THIS box
+// (nvm-managed node, so the systemd PATH has no idea) with sane fallbacks.
+const opencodeBin = arg('opencode', [
+  join(homedir(), '.nvm/versions/node/v22.22.3/lib/node_modules/@opencode/cli/bin/opencode.exe'),
+  join(homedir(), '.local/bin/opencode'),
+].find(existsSync) ?? 'opencode');
+
 // NOTE on the model behind this bridge: see the header latency note —
 // request-byte stability, not server caprice, is what decides whether a
 // turn pays its context's prefill; the [census] line's verdict plus
@@ -294,7 +325,10 @@ let childDead = true;   // needs respawn?
 let sessionId = null;   // for --resume after a bridge restart
 // A function of the LIVE dir: each project remembers its own voice
 // session, and POST /dir moving the agent moves the pointer with it.
-const sidFile = () => join(dir, '.claude_bridge_session');
+// Each harness remembers its own conversation: a runtime switch never
+// destroys the other harness's resume pointer.
+const sidFile = () => join(dir, harness === 'opencode'
+  ? '.opencode_bridge_session' : '.claude_bridge_session');
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let proactiveTurn = false; // +133: this turn is the harness speaking
@@ -712,6 +746,7 @@ function startDumpTap() {
 }
 
 function spawnClaude(resume) {
+  if (harness === 'opencode') return spawnOpenCode(resume);
   const args = ['-p', '--input-format', 'stream-json',
     '--output-format', 'stream-json', '--verbose',
     // Live token progress for the spinner (see the stream_event branch of
@@ -750,8 +785,16 @@ function spawnClaude(resume) {
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
   } });
   childDead = false;
+  attachJsonLines(child);
+  child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
+  child.on('exit', onChildExit);
+}
+// stdout is JSON-lines on both harnesses (the opencode backend pushes
+// translated stream-json into an EventEmitter with the same contract),
+// so the parser is one function, not two copies.
+function attachJsonLines(stream) {
   let lineBuf = '';
-  child.stdout.on('data', (b) => {
+  stream.stdout.on('data', (b) => {
     lineBuf += b;
     let i;
     while ((i = lineBuf.indexOf('\n')) >= 0) {
@@ -760,8 +803,8 @@ function spawnClaude(resume) {
       if (line.startsWith('{')) handleEvent(line);
     }
   });
-  child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
-  child.on('exit', (code, sig) => {
+}
+function onChildExit(code, sig) {
     childDead = true;
     // An exit while a turn is OPEN is news (crash, kill, proxy death):
     // relay it so the phone hears the turn died instead of timing out on
@@ -772,7 +815,7 @@ function spawnClaude(resume) {
     // note (probe-verified): this CLI re-emits system/init on EVERY user
     // message and re-renders the request each turn, so cross-turn prefix
     // cache misses are its behaviour, not an exit symptom.
-    if (turnOpen) relay('error', { error: 'claude exited' });
+    if (turnOpen) relay('error', { error: harness + ' exited' });
     console.error(`  [claude] exit code=${code} sig=${sig} ` +
       (turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
                 : 'while idle (expected: /new kill or between-turns exit)'));
@@ -788,7 +831,312 @@ function spawnClaude(resume) {
     proactiveTurn = false;
     if (curRes) endTurn();
     flushPending();
-  });
+}
+
+// ── opencode backend ------------------------------------------------------
+// Discovered live against the v2 service (opencode 2.0.18): its HTTP API
+// is /api/* with basic auth from ~/.local/state/opencode/service.json
+// (username opencode; the password ROTATES with the service, so the file
+// is re-read per call), sessions are POST /api/session {location}, the
+// turn is POST /api/session/{id}/prompt {text}, the bus is GET /api/event
+// (SSE; envelope {id, type, data}), cuts are POST …/interrupt, and the
+// turn closes with session.execution.succeeded. The bus speaks parts, not
+// Anthropic frames — session.text.{started,delta,ended},
+// session.reasoning.*, session.tool.{input.started,called,success},
+// session.usage.updated — and ocTranslate below is the ONLY place that
+// knows it: everything downstream of handleEvent is shared machinery.
+const oc = {
+  ev: new EventEmitter(),
+  ctrl: null, sid: null, gen: 0, disposed: true, retry: 0,
+  seen: new Set(), // bus event ids (a resubscribe may replay the tail)
+  tools: new Map(), // oc call id -> tool name (for error results)
+  callIn: 0, callOut: 0, cost: 0, needsPreamble: false, extraErrs: [],
+};
+oc.stdout = oc.ev;
+oc.stderr = new EventEmitter(); // nothing writes it; the wiring wants it
+oc.stdin = { write: (line) => ocStdin(line) };
+oc.kill = () => ocClose(); // resetConversation SIGTERMs 'the child' on either harness
+const ocAuth = (st) => 'Basic ' +
+  Buffer.from(`opencode:${st.password}`).toString('base64');
+const ocState = () => {
+  try {
+    return JSON.parse(readFileSync(
+      join(homedir(), '.local/state/opencode/service.json'), 'utf8'));
+  } catch { return null; }
+};
+async function ocAlive(st) {
+  try {
+    const r = await fetch(st.url + '/api/info', {
+      headers: { authorization: ocAuth(st) },
+      signal: AbortSignal.timeout(3000) });
+    return r.ok;
+  } catch { return false; }
+}
+// The endpoint, reviving the shared service once if it is down: `opencode
+// serve --service` registers itself in the state file, which is also how
+// the TUI on the desktop finds it — the bridge does not own a private
+// server, it joins (or wakes) the machine's.
+let ocReviving = null;
+async function ocEndpoint() {
+  let st = ocState();
+  if (st && await ocAlive(st)) return st;
+  if (!ocReviving) {
+    ocReviving = (async () => {
+      try {
+        const c = spawn(opencodeBin,
+          ['serve', '--service', '--hostname', '127.0.0.1'],
+          { detached: true, stdio: 'ignore' });
+        c.unref();
+      } catch {}
+      const t0 = Date.now();
+      while (Date.now() - t0 < 10000) {
+        await new Promise(r => setTimeout(r, 400));
+        st = ocState();
+        if (st && await ocAlive(st)) return st;
+      }
+      throw new Error('opencode service not reachable (no live service, ' +
+        `'${opencodeBin} serve --service' did not register within 10s)`);
+    })().finally(() => { ocReviving = null; });
+  }
+  return ocReviving;
+}
+async function ocReq(path, body, method) {
+  const st = await ocEndpoint();
+  const r = await fetch(st.url + path, {
+    method: method ?? (body === undefined ? 'GET' : 'POST'),
+    headers: { authorization: ocAuth(st),
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(15000) });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(`opencode ${r.status} on ${path}: ${txt.slice(0, 200)}`);
+  try { return txt ? JSON.parse(txt) : {}; } catch { return {}; }
+}
+function ocEmit(m) {
+  oc.ev.emit('data', Buffer.from(JSON.stringify(m) + '\n'));
+}
+const seCBStart = (block) =>
+  ocEmit({ type: 'stream_event', event: { type: 'content_block_start', content_block: block } });
+const seCBStop = () =>
+  ocEmit({ type: 'stream_event', event: { type: 'content_block_stop' } });
+
+function ocTranslate(j) {
+  const t = typeof j.type === 'string' ? j.type : '';
+  const d = j.data ?? {};
+  if (typeof j.id === 'string') { // dedupe a resubscribe's replayed tail
+    if (oc.seen.has(j.id)) return;
+    oc.seen.add(j.id);
+    if (oc.seen.size > 600) oc.seen.delete(oc.seen.values().next().value);
+  }
+  // The bus is machine-global: Tim's own desktop opencode sessions ride
+  // it too. Only OUR session (or session-less server events) may speak.
+  if (d.sessionID && d.sessionID !== oc.sid) return;
+  if (t === 'session.step.started') {
+    ocEmit({ type: 'stream_event', event: { type: 'message_start',
+      message: { usage: { input_tokens: oc.callIn,
+        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } });
+  } else if (t === 'session.reasoning.started') {
+    seCBStart({ type: 'thinking' });
+  } else if (t === 'session.reasoning.delta') {
+    ocEmit({ type: 'stream_event', event: { type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: d.delta ?? '' } } });
+  } else if (t === 'session.reasoning.ended') {
+    seCBStop();
+  } else if (t === 'session.text.started') {
+    seCBStart({ type: 'text' });
+  } else if (t === 'session.text.delta') {
+    ocEmit({ type: 'stream_event', event: { type: 'content_block_delta',
+      delta: { type: 'text_delta', text: d.delta ?? '' } } });
+  } else if (t === 'session.text.ended') {
+    seCBStop();
+    // The final part text rides the snapshot path too: it claims the
+    // block's spoken watermark and owes only the un-relayed remainder
+    // (identical bookkeeping to the claude CLI's own snapshots).
+    if (typeof d.text === 'string' && d.text.trim()) {
+      ocEmit({ type: 'assistant', message: { content: [{ type: 'text', text: d.text }] } });
+    }
+  } else if (t === 'session.tool.input.started') {
+    seCBStart({ type: 'tool_use', name: d.name ?? 'tool' });
+  } else if (t === 'session.tool.called') {
+    oc.tools.set(d.id, d.name);
+    ocEmit({ type: 'assistant', message: { content: [{ type: 'tool_use',
+      id: d.id, name: d.name, input: d.input ?? {} }] } });
+  } else if (t === 'session.tool.success' || /^session\.tool\.(failed|error)/.test(t)) {
+    oc.tools.delete(d.id);
+    ocEmit({ type: 'user', message: { content: [{ type: 'tool_result',
+      tool_use_id: d.id,
+      content: (d.content ?? []).map(c => c.text ?? '').join('\n'),
+      is_error: t !== 'session.tool.success' }] } });
+  } else if (t === 'session.step.ended') {
+    ocEmit({ type: 'stream_event', event: { type: 'message_stop' } });
+  } else if (t === 'session.usage.updated') {
+    const tok = d.tokens ?? {};
+    oc.callIn = (tok.input ?? 0) + (tok.cache?.read ?? 0) + (tok.cache?.write ?? 0);
+    oc.callOut = tok.output ?? 0;
+    oc.cost = d.cost ?? oc.cost;
+    ocEmit({ type: 'stream_event', event: { type: 'message_delta',
+      usage: { output_tokens: oc.callOut } } });
+  } else if (/^session\.permission\.(request|create)/.test(t)) {
+    // Voice has nobody to answer a prompt: approve once, loudly in the
+    // log. The reply body is {decision} (schema-verified: 'response' is
+    // a 400, and a 400 here hangs the turn forever behind a question
+    // nobody answers). The explicit-deny rules in opencode's own config
+    // still win server-side, exactly as bypassPermissions keeps them
+    // under claude.
+    const reqID = d.requestID ?? d.id;
+    console.error(`  [oc] auto-approving permission ${reqID}`);
+    ocReq(`/api/session/${oc.sid}/permission/${reqID}/reply`,
+      { decision: 'always' }).catch(() => {});
+  } else if (t === 'session.execution.succeeded') {
+    ocEmit({ type: 'result', subtype: 'success', is_error: false,
+      session_id: oc.sid, duration_ms: 0, num_turns: 1,
+      usage: { input_tokens: oc.callIn, output_tokens: oc.callOut },
+      total_cost_usd: oc.cost });
+  } else if (/^session\.execution\.(failed|cancelled|canceled|interrupted)$/.test(t)
+             || t === 'session.error') {
+    ocEmit({ type: 'result', subtype: 'error', is_error: true,
+      session_id: oc.sid, result: t,
+      errors: [d.error ?? d.reason ?? t, ...oc.extraErrs] });
+  } else if (t.startsWith('session.') && !t.startsWith('session.inbox.')
+             && !['session.created', 'session.step.streamed',
+                  'session.tool.input.ended',
+                  'session.tool.progress',
+                  'session.instructions.updated', 'session.execution.started',
+                  'session.updated'].includes(t)) {
+    // Name the gaps once each, not once each per frame: the tape should
+    // still be legible after an hour of traffic.
+    if (!oc.kindsLogged?.has(t)) {
+      (oc.kindsLogged ??= new Set()).add(t);
+      console.error(`  [oc] unhandled bus event ${t} — ${JSON.stringify(d).slice(0, 160)}`);
+    }
+  }
+}
+function ocClose(errText) {
+  // Turn the fake child through onChildExit exactly once, so the shared
+  // bookkeeping (detached tools, receipts, error relay) runs the same.
+  if (oc.disposed) return;
+  oc.disposed = true;
+  try { oc.ctrl?.abort(); } catch {}
+  process.nextTick(() => oc.ev.emit('exit', errText ? 1 : 0, null));
+}
+async function ocPrompt(text) {
+  try {
+    if (!oc.sid) {
+      const s = await ocReq('/api/session',
+        { title: 'voice bridge', location: { directory: dir } });
+      oc.sid = s.data?.id ?? s.id;
+      // The voice prompt belongs to the SESSION, not to one message, so
+      // every later utterance keeps the spoken-answer shape. The v2
+      // instructions API takes {value} (schema-verified: {content} is a
+      // 400); if it still shrugs, fall back to carrying the prompt in
+      // the first utterance (flagged once).
+      try {
+        await ocReq(`/api/experimental/session/${oc.sid}/instructions/entries/voice`,
+          { value: sysPrompt }, 'PUT');
+      } catch { oc.needsPreamble = true; }
+      if (dumpDir) {
+        try {
+          appendFileSync(join(dumpDir, 'MANIFEST'),
+            new Date().toISOString() + ' oc-session ' + oc.sid + '\n');
+        } catch {}
+      }
+    }
+    let t = text;
+    if (oc.needsPreamble) {
+      t = sysPrompt + '\n\n' + text;
+      oc.needsPreamble = false;
+    }
+    await ocReq(`/api/session/${oc.sid}/prompt`, { text: t });
+  } catch (e) {
+    // A failed prompt must still CLOSE the turn the /talk began: the
+    // phone learned 'started' and is owed a done.
+    console.error('  [oc] prompt failed: ' + e);
+    ocEmit({ type: 'result', subtype: 'error', is_error: true,
+      session_id: oc.sid, result: String(e?.message ?? e) });
+  }
+}
+function ocStdin(line) {
+  let m;
+  try { m = JSON.parse(line); } catch { return; }
+  if (m.type === 'control_request') {
+    if (m.request?.subtype === 'interrupt' && oc.sid) {
+      ocReq(`/api/session/${oc.sid}/interrupt`, undefined, 'POST').catch(e =>
+        console.error('  [oc] interrupt failed: ' + e));
+    }
+    return;
+  }
+  if (m.type !== 'user') return;
+  const c = m.message?.content;
+  const text = typeof c === 'string' ? c
+    : (Array.isArray(c) ? c.map(b => b.text ?? '').join('\n') : '');
+  if (/^\/compact(\s|$)/i.test(text.trim())) {
+    // opencode's own condense; the chip hears the same compact_boundary
+    // claude emits, and the turn closes on the prompt call's own terms.
+    ocReq(`/api/session/${oc.sid}/compact`, undefined, 'POST').then(() => {
+      ocEmit({ type: 'system', subtype: 'compact_boundary' });
+      ocEmit({ type: 'result', subtype: 'success', is_error: false,
+        session_id: oc.sid, duration_ms: 0, num_turns: 0, usage: {} });
+    }).catch(e => console.error('  [oc] compact failed: ' + e));
+    return;
+  }
+  ocPrompt(text);
+}
+async function ocListen(gen) {
+  let backoff = 500;
+  while (!oc.disposed && gen === oc.gen) {
+    try {
+      const st = await ocEndpoint();
+      oc.ctrl = new AbortController();
+      const res = await fetch(st.url + '/api/event', {
+        headers: { authorization: ocAuth(st),
+          accept: 'text/event-stream' },
+        signal: oc.ctrl.signal });
+      if (!res.ok) throw new Error('event http ' + res.status);
+      backoff = 500; // the link proved itself; reset the ladder
+      const rd = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) throw new Error('event stream ended');
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const f = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const dl = f.split('\n').find(l => l.startsWith('data:'));
+          if (!dl) continue;
+          try { ocTranslate(JSON.parse(dl.slice(5))); } catch {}
+        }
+      }
+    } catch (e) {
+      if (oc.disposed || gen !== oc.gen) return;
+      // First drop while a turn is open gets one loud line; after that
+      // the retries are quiet (the heartbeat frames already tell the
+      // phone the truth: quiet, not lost).
+      if (backoff === 500) console.error('  [oc] event stream dropped: ' + e);
+      await new Promise(r => setTimeout(r, backoff));
+      backoff = Math.min(8000, backoff * 2);
+    }
+  }
+}
+function spawnOpenCode(resume) {
+  console.error('  [opencode] backend up (resume=' +
+    (resume ? resume.slice(0, 16) : 'none — fresh session') + ')');
+  oc.gen++;
+  oc.ev.removeAllListeners('data');
+  oc.ev.removeAllListeners('exit');
+  oc.sid = resume ?? null;
+  oc.callIn = oc.callOut = 0;
+  oc.cost = 0;
+  oc.seen.clear();
+  oc.tools.clear();
+  oc.disposed = false;
+  child = oc;
+  childDead = false;
+  attachJsonLines(child);
+  oc.ev.on('exit', onChildExit); // (the fake child's events live on its emitter)
+  ocListen(oc.gen);
 }
 
 function handleEvent(line) {
@@ -2050,7 +2398,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      ok: true, claudeUp: !childDead, sessionId,
+      ok: true, claudeUp: !childDead, sessionId, harness,
       // The folder the agent works in (mutable via POST /dir): the
       // Bridge screen shows it and the picker moves it.
       dir,
@@ -2259,6 +2607,29 @@ const server = http.createServer((req, res) => {
       talk(body.trim(), res, url.searchParams.get('interrupt') !== '0',
         url.searchParams.get('poll') === '1',
         url.searchParams.get('cuttool') === '1');
+    } else if (url.pathname === '/harness') {
+      // Switch harnesses at runtime (the claude↔opencode trial lever):
+      // an honest /new at the switch — the pointer files are per
+      // harness, so flipping back resumes the other conversation
+      // exactly where it stopped. The choice persists across restarts
+      // (~/.claude_bridge_harness) unless --harness pins it.
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const to = j?.to ?? url.searchParams.get('to');
+      if (to !== 'claude' && to !== 'opencode') {
+        res.writeHead(400).end('to=claude|opencode\n');
+      } else {
+        if (to !== harness) {
+          harness = to;
+          try { writeFileSync(harnessFile, to); } catch {}
+          resetConversation();
+          // The new harness resumes ITS OWN remembered conversation
+          try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
+        }
+        console.error('  [harness] ' + harness);
+        res.writeHead(200, {'content-type': 'application/json'})
+          .end(JSON.stringify({ ok: true, harness }));
+      }
     } else if (url.pathname === '/stop') {
       // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
       // the phone is still listening to it or backgrounded it. Context
@@ -2346,8 +2717,8 @@ const server = http.createServer((req, res) => {
   });
 });
 // no claude yet until first spawn
-if (!existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
+if (harness === 'claude' && !existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
 if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
 try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
 spawnClaude(sessionId || undefined);
-server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} dir=${dir} sid=${sessionId ?? 'new'}`));
+server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} harness=${harness} dir=${dir} sid=${sessionId ?? 'new'}`));
