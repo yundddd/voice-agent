@@ -38,10 +38,8 @@ class AsrModel {
   /// Absolute-path ASR wiring for the speech worker; VAD stays the shared
   /// Silero file `unpackModels` copies out of the APK.
   ModelPaths pathsIn(String modelsDir) => ModelPaths(
-    whisperEncoder:
-        p.join(modelsDir, dirName, '$filePrefix-encoder.int8.onnx'),
-    whisperDecoder:
-        p.join(modelsDir, dirName, '$filePrefix-decoder.int8.onnx'),
+    whisperEncoder: p.join(modelsDir, dirName, '$filePrefix-encoder.int8.onnx'),
+    whisperDecoder: p.join(modelsDir, dirName, '$filePrefix-decoder.int8.onnx'),
     whisperTokens: p.join(modelsDir, dirName, '$filePrefix-tokens.txt'),
     vadModel: p.join(modelsDir, 'silero_vad.onnx'),
   );

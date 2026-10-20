@@ -125,18 +125,25 @@ void main() {
       // belt's double transport): the recent scan still fires — one
       // completion, one period.
       t += 30 * 1000;
-      expect(s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
-          isTrue);
+      expect(
+        s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
+        isTrue,
+      );
       // The NEXT RUN of the same command, twenty minutes later: the old
       // bubble is in the log, but it belongs to a dead delivery window —
       // the fresh completion must file its own period (the whole-log
       // scan used to answer isTrue here forever).
       t += 20 * 60 * 1000;
-      expect(s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
-          isFalse,
-          reason: 'two runs, two receipts');
-      expect(s.containsBlock('Bash sleep 10 && echo done finished.'), isTrue,
-          reason: 'the whole-log scan is untouched for its own uses');
+      expect(
+        s.containsBlockRecent('Bash sleep 10 && echo done finished.'),
+        isFalse,
+        reason: 'two runs, two receipts',
+      );
+      expect(
+        s.containsBlock('Bash sleep 10 && echo done finished.'),
+        isTrue,
+        reason: 'the whole-log scan is untouched for its own uses',
+      );
     });
 
     test('+186: receipts dedup by the TASK ID — forever, and only for '
@@ -193,9 +200,13 @@ void main() {
         store.addUserTranscribing(), // nobody ever fills this one
       ]);
       store.load(raw);
-      expect(store.entries, isEmpty,
-          reason: 'a dead mid-ASR bubble reloads as nothing, not as a '
-              'blank card');
+      expect(
+        store.entries,
+        isEmpty,
+        reason:
+            'a dead mid-ASR bubble reloads as nothing, not as a '
+            'blank card',
+      );
     });
 
     test('containsBlock matches how the log stores (whitespace, not case)', () {

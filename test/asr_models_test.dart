@@ -17,8 +17,10 @@ void main() {
         'https://github.com/yundddd/voice-agent/releases/'
         'download/models-v1/asr-whisper-base.en.zip',
       );
-      expect(asrModelById('base.en')!.pack.markerFile,
-          'base.en-decoder.int8.onnx');
+      expect(
+        asrModelById('base.en')!.pack.markerFile,
+        'base.en-decoder.int8.onnx',
+      );
     });
 
     test('pathsIn wires the int8 graph and the shared Silero VAD', () {
@@ -38,8 +40,10 @@ void main() {
       expect(paths.vadModel, '/models/silero_vad.onnx');
       // The tiny variant keeps the exact layout the app shipped with
       // before the picker: an existing install never re-downloads.
-      expect(asrModelById('tiny.en')!.pathsIn('/models').whisperDecoder,
-          '/models/asr-whisper-tiny.en/tiny.en-decoder.int8.onnx');
+      expect(
+        asrModelById('tiny.en')!.pathsIn('/models').whisperDecoder,
+        '/models/asr-whisper-tiny.en/tiny.en-decoder.int8.onnx',
+      );
     });
 
     test('installed is decided by the marker file', () async {
@@ -48,8 +52,9 @@ void main() {
       final base = asrModelById('base.en')!;
       expect(await base.installedIn(dir.path), isFalse);
       Directory('${dir.path}/asr-whisper-base.en').createSync();
-      File('${dir.path}/asr-whisper-base.en/base.en-decoder.int8.onnx')
-          .writeAsBytesSync([0]);
+      File(
+        '${dir.path}/asr-whisper-base.en/base.en-decoder.int8.onnx',
+      ).writeAsBytesSync([0]);
       expect(await base.installedIn(dir.path), isTrue);
     });
 

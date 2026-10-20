@@ -305,21 +305,25 @@ void main() {
       mkTurn();
       final r = turnLoop.run(wire.stream);
       await settle();
-      wire.add(BridgeEvent.forTest(
-        'say',
-        mid: 9,
-        text: '<tool_call>\n<function name="Bash">\n'
-            '<parameter name="command">flutter test</parameter>'
-            '</function></tool_call>',
-      ));
+      wire.add(
+        BridgeEvent.forTest(
+          'say',
+          mid: 9,
+          text:
+              '<tool_call>\n<function name="Bash">\n'
+              '<parameter name="command">flutter test</parameter>'
+              '</function></tool_call>',
+        ),
+      );
       wire.add(const BridgeEvent.forTest('say', text: 'On it.', mid: 10));
       wire.add(BridgeEvent.forTest('done'));
       final outcome = await r;
       out.complete();
       await settle();
       expect(outcome.sawDone, isTrue);
-      expect(engine.synthesized, ['On it.'],
-          reason: 'only the prose reaches the mouth');
+      expect(engine.synthesized, [
+        'On it.',
+      ], reason: 'only the prose reaches the mouth');
       expect(bubble.blocks, ['On it.'], reason: 'and only it hits the screen');
       expect(
         probe.logs.any((l) => l.contains('pure tool-call markup')),
@@ -343,7 +347,8 @@ void main() {
         const BridgeEvent.forTest(
           'tool',
           toolName: 'queued',
-          detail: 'a tool call is running; your message will steer the '
+          detail:
+              'a tool call is running; your message will steer the '
               'turn at its next pause',
           turn: 77,
           mid: 10,
@@ -422,9 +427,16 @@ void main() {
         ),
       );
       wire.add(
-        const BridgeEvent.forTest('tool', toolName: 'tokens', detail: 'thinking · 1.2k out', mid: 13),
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          detail: 'thinking · 1.2k out',
+          mid: 13,
+        ),
       );
-      wire.add(const BridgeEvent.forTest('say', text: 'Brief answer.', mid: 14));
+      wire.add(
+        const BridgeEvent.forTest('say', text: 'Brief answer.', mid: 14),
+      );
       wire.add(const BridgeEvent.forTest('done', mid: 15));
       final outcome = await r;
       out.complete();
@@ -433,7 +445,8 @@ void main() {
       expect(
         probe.took,
         containsAll(<int>[11, 12, 13, 14, 15]),
-        reason: 'tool, context, tally and farewell frames are TAKEN the '
+        reason:
+            'tool, context, tally and farewell frames are TAKEN the '
             'moment they are digested — the bridge trims its backlog '
             'only under /heard',
       );
@@ -452,7 +465,8 @@ void main() {
       expect(
         bubble.blocks,
         ['Stuck in the synth.'],
-        reason: 'the bubble mirrors the WIRE (+161, inverting +116): '
+        reason:
+            'the bubble mirrors the WIRE (+161, inverting +116): '
             'received text waits for its audio in the open, so the '
             'reader can see the answer and press past the speaker',
       );
@@ -461,11 +475,9 @@ void main() {
       await r;
       out.complete();
       await settle();
-      expect(
-        bubble.blocks,
-        ['Stuck in the synth.'],
-        reason: 'stamped once at the take — the air never re-writes it',
-      );
+      expect(bubble.blocks, [
+        'Stuck in the synth.',
+      ], reason: 'stamped once at the take — the air never re-writes it');
     });
 
     test('a wire death without done arms the reattach chain and leaves '
@@ -620,8 +632,11 @@ void main() {
       wire.add(BridgeEvent.forTest('done'));
       await r;
       await settle();
-      expect(probe.lastReceiptId, 'bz960t1as',
-          reason: 'the frame’s own stamp survives the loop intact');
+      expect(
+        probe.lastReceiptId,
+        'bz960t1as',
+        reason: 'the frame’s own stamp survives the loop intact',
+      );
     });
 
     test('+110/+146: a queued verdict paints the status line, journals — '
@@ -747,7 +762,8 @@ void main() {
       expect(
         bubble.blocks,
         ['Cut mid-play.'],
-        reason: 'the old law lost a hide-cut answer ENTIRELY (never '
+        reason:
+            'the old law lost a hide-cut answer ENTIRELY (never '
             'aired, never shown, already acked — gone); +161 keeps '
             'the words and skips only the voice',
       );
@@ -871,13 +887,15 @@ void main() {
       mkTurn();
       final r = turnLoop.run(wire.stream);
       await settle();
-      wire.add(BridgeEvent.forTest(
-        'file',
-        fileName: 'app-release.apk',
-        filePath: 'dist/app-release.apk',
-        fileSize: 12345,
-        mid: 78,
-      ));
+      wire.add(
+        BridgeEvent.forTest(
+          'file',
+          fileName: 'app-release.apk',
+          filePath: 'dist/app-release.apk',
+          fileSize: 12345,
+          mid: 78,
+        ),
+      );
       wire.add(BridgeEvent.forTest('done'));
       await r;
       await settle();
@@ -893,22 +911,24 @@ void main() {
       mkTurn();
       final r = turnLoop.run(wire.stream);
       await settle();
-      wire.add(BridgeEvent.forTest(
-        'file',
-        fileName: 'stale.apk',
-        filePath: 'dist/stale.apk',
-        fileSize: 1,
-        mid: 77,
-      ));
+      wire.add(
+        BridgeEvent.forTest(
+          'file',
+          fileName: 'stale.apk',
+          filePath: 'dist/stale.apk',
+          fileSize: 1,
+          mid: 77,
+        ),
+      );
       wire.add(BridgeEvent.forTest('done'));
       await r;
       await settle();
-      expect(chat.entries.any((e) => e.isFile), isFalse,
-          reason: 'the ledger says this phone has the bubble — no second card');
       expect(
-        probe.logs.any((l) => l.contains('file dup by id #77')),
-        isTrue,
+        chat.entries.any((e) => e.isFile),
+        isFalse,
+        reason: 'the ledger says this phone has the bubble — no second card',
       );
+      expect(probe.logs.any((l) => l.contains('file dup by id #77')), isTrue);
     });
   });
 }

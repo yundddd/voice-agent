@@ -358,18 +358,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   : '${m.note} · ${m.sizeLabel} · downloaded'
             : '${m.note} · ${m.sizeLabel} · downloads when selected',
       ),
-      trailing:
-          installed && !active
-              ? IconButton(
-                tooltip: 'Delete downloaded model',
-                onPressed: a.voiceBusy
-                    ? null
-                    : () => unawaited(
+      trailing: installed && !active
+          ? IconButton(
+              tooltip: 'Delete downloaded model',
+              onPressed: a.voiceBusy
+                  ? null
+                  : () => unawaited(
                       a.deleteAsr(m.id).then((_) => _refreshInstalled()),
                     ),
-                icon: const Icon(Icons.delete_outline),
-              )
-              : null,
+              icon: const Icon(Icons.delete_outline),
+            )
+          : null,
       onTap: () => _pickAsr(m),
     );
   }

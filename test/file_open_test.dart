@@ -42,24 +42,31 @@ void main() {
   });
   tearDown(() => dir.deleteSync(recursive: true));
 
-  test('one tap on an APK bubble: fetch, stamp saved, hand to installer',
-      () async {
-    harness.downloadBytes = [0x50, 0x4b, 3, 4];
-    final e = ChatEntry.file('app-release.apk', 'dist/app-release.apk', 4,
-        createdMs: 1);
-    await a.fetchChatFile(e);
-    await settle();
-    expect(harness.downloadPaths, ['dist/app-release.apk']);
-    expect(e.savedMs, greaterThan(0));
-    expect(e.savedPath, '${dir.path}/app-release.apk');
-    expect(File(e.savedPath).readAsBytesSync(), [0x50, 0x4b, 3, 4]);
-    expect(
-      opener.opened,
-      [('${dir.path}/app-release.apk', 'application/vnd.android.package-archive')],
-      reason: 'apk mime — the package installer is what answers',
-    );
-    expect(e.openError, isNull);
-  });
+  test(
+    'one tap on an APK bubble: fetch, stamp saved, hand to installer',
+    () async {
+      harness.downloadBytes = [0x50, 0x4b, 3, 4];
+      final e = ChatEntry.file(
+        'app-release.apk',
+        'dist/app-release.apk',
+        4,
+        createdMs: 1,
+      );
+      await a.fetchChatFile(e);
+      await settle();
+      expect(harness.downloadPaths, ['dist/app-release.apk']);
+      expect(e.savedMs, greaterThan(0));
+      expect(e.savedPath, '${dir.path}/app-release.apk');
+      expect(File(e.savedPath).readAsBytesSync(), [0x50, 0x4b, 3, 4]);
+      expect(opener.opened, [
+        (
+          '${dir.path}/app-release.apk',
+          'application/vnd.android.package-archive',
+        ),
+      ], reason: 'apk mime — the package installer is what answers');
+      expect(e.openError, isNull);
+    },
+  );
 
   test('a saved bubble taps to OPEN without re-downloading', () async {
     final onDisk = File('${dir.path}/report.pdf')..writeAsBytesSync([1, 2]);
@@ -68,8 +75,11 @@ void main() {
       ..savedPath = onDisk.path;
     await a.fetchChatFile(e);
     await settle();
-    expect(harness.downloadPaths, isEmpty,
-        reason: 'the bytes are already here — no re-fetch');
+    expect(
+      harness.downloadPaths,
+      isEmpty,
+      reason: 'the bytes are already here — no re-fetch',
+    );
     expect(opener.opened, [(onDisk.path, 'application/pdf')]);
   });
 
@@ -82,14 +92,16 @@ void main() {
     expect(e.openError, contains('no viewer'));
   });
 
-  test('download failure keeps the tap alive (no saved stamp, no open)',
-      () async {
-    harness.downloadOk = false;
-    final e = ChatEntry.file('app.apk', 'dist/app.apk', 9, createdMs: 1);
-    await a.fetchChatFile(e);
-    await settle();
-    expect(e.savedMs, 0);
-    expect(opener.opened, isEmpty);
-    expect(e.downloading, isFalse, reason: 'ready for the next tap');
-  });
+  test(
+    'download failure keeps the tap alive (no saved stamp, no open)',
+    () async {
+      harness.downloadOk = false;
+      final e = ChatEntry.file('app.apk', 'dist/app.apk', 9, createdMs: 1);
+      await a.fetchChatFile(e);
+      await settle();
+      expect(e.savedMs, 0);
+      expect(opener.opened, isEmpty);
+      expect(e.downloading, isFalse, reason: 'ready for the next tap');
+    },
+  );
 }

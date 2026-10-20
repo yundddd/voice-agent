@@ -27,9 +27,7 @@ class ChannelFileOpener implements FileOpener {
 /// application/vnd.android.package-archive; anything else is guessed
 /// from the extension, and '*/*' lets the system pick.
 String mimeForFile(String name) {
-  final ext = name.contains('.')
-      ? name.split('.').last.toLowerCase()
-      : '';
+  final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
   return switch (ext) {
     'apk' => 'application/vnd.android.package-archive',
     'zip' => 'application/zip',

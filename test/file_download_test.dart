@@ -40,8 +40,10 @@ void main() {
       }
       final slice = body.sublist(start);
       req.response.statusCode = start > 0 ? 206 : 200;
-      req.response.headers.contentType =
-          ContentType('application', 'vnd.android.package-archive');
+      req.response.headers.contentType = ContentType(
+        'application',
+        'vnd.android.package-archive',
+      );
       req.response.headers.set('accept-ranges', 'bytes');
       req.response.contentLength = slice.length;
       req.response.add(slice);
@@ -58,24 +60,32 @@ void main() {
     final dest = '${dir.path}/payload.bin';
     final progress = <int>[];
     expect(
-      await client.downloadFile('payload.bin', dest,
-          onProgress: (d, t) => progress.add(d)),
+      await client.downloadFile(
+        'payload.bin',
+        dest,
+        onProgress: (d, t) => progress.add(d),
+      ),
       isTrue,
     );
     expect(File(dest).readAsBytesSync(), body);
     expect(progress.last, body.length);
     expect(rangeLog.single, isNull); // nothing on disk: no Range asked
-    expect(await File('$dest.part').exists(), isFalse,
-        reason: 'the .part is renamed, not copied — no litter');
+    expect(
+      await File('$dest.part').exists(),
+      isFalse,
+      reason: 'the .part is renamed, not copied — no litter',
+    );
   });
 
-  test('a .part from the dead wire resumes with a Range and appends',
-      () async {
+  test('a .part from the dead wire resumes with a Range and appends', () async {
     final dest = '${dir.path}/payload.bin';
     File('$dest.part').writeAsBytesSync(body.sublist(0, 400));
     expect(await client.downloadFile('payload.bin', dest), isTrue);
-    expect(File(dest).readAsBytesSync(), body,
-        reason: 'head from disk + tail off the wire = the whole file');
+    expect(
+      File(dest).readAsBytesSync(),
+      body,
+      reason: 'head from disk + tail off the wire = the whole file',
+    );
     expect(rangeLog.single, 'bytes=400-');
   });
 
@@ -86,21 +96,31 @@ void main() {
     // first planting one and letting the client re-ask from its end.
     File('$dest.part').writeAsBytesSync(List.filled(1500, 0));
     expect(await client.downloadFile('payload.bin', dest), isTrue);
-    expect(File(dest).readAsBytesSync(), body,
-        reason: '416 -> throw the partial -> fresh 200 -> the real bytes');
-    expect(rangeLog, ['bytes=1500-', null],
-        reason: "first ask resumed; the 416's second was whole");
+    expect(
+      File(dest).readAsBytesSync(),
+      body,
+      reason: '416 -> throw the partial -> fresh 200 -> the real bytes',
+    );
+    expect(rangeLog, [
+      'bytes=1500-',
+      null,
+    ], reason: "first ask resumed; the 416's second was whole");
   });
 
-  test('a vanished bridge fails but keeps the partial for the next tap',
-      () async {
-    await server.close(force: true);
-    final dest = '${dir.path}/payload.bin';
-    File('$dest.part').writeAsBytesSync(body.sublist(0, 10));
-    expect(await client.downloadFile('payload.bin', dest), isFalse);
-    expect(await File('$dest.part').exists(), isTrue,
-        reason: '10 good bytes must not be thrown away');
-    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    await server.close();
-  });
+  test(
+    'a vanished bridge fails but keeps the partial for the next tap',
+    () async {
+      await server.close(force: true);
+      final dest = '${dir.path}/payload.bin';
+      File('$dest.part').writeAsBytesSync(body.sublist(0, 10));
+      expect(await client.downloadFile('payload.bin', dest), isFalse);
+      expect(
+        await File('$dest.part').exists(),
+        isTrue,
+        reason: '10 good bytes must not be thrown away',
+      );
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      await server.close();
+    },
+  );
 }

@@ -98,12 +98,11 @@ double _bandOpacity(WidgetTester tester, String label) => tester
 
 void main() {
   group('FadeInBubble', () {
-    testWidgets('a new bubble fades in, settles opaque, and never replays',
-        (tester) async {
+    testWidgets('a new bubble fades in, settles opaque, and never replays', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        _host(
-          const FadeInBubble(key: ValueKey('e1'), child: Text('arriving')),
-        ),
+        _host(const FadeInBubble(key: ValueKey('e1'), child: Text('arriving'))),
       );
       FadeTransition fade() => tester.widget<FadeTransition>(
         find
@@ -125,9 +124,7 @@ void main() {
       // bubble) must not re-animate: the one-shot belongs to the
       // element's birth, and the ObjectKey keeps that birth honest.
       await tester.pumpWidget(
-        _host(
-          const FadeInBubble(key: ValueKey('e1'), child: Text('arriving')),
-        ),
+        _host(const FadeInBubble(key: ValueKey('e1'), child: Text('arriving'))),
       );
       await tester.pump();
       expect(fade().opacity.value, 1.0);
@@ -219,8 +216,11 @@ void main() {
       final mid = tester.getSize(find.byKey(ValueKey('grow'))).height;
       await tester.pumpAndSettle();
       final full = tester.getSize(find.byKey(ValueKey('grow'))).height;
-      expect(mid, lessThan(full),
-          reason: 'the height travels with the fade — no layout pop');
+      expect(
+        mid,
+        lessThan(full),
+        reason: 'the height travels with the fade — no layout pop',
+      );
       expect(mid, greaterThan(0), reason: 'the ease opens, it does not slam');
     });
 
@@ -235,10 +235,16 @@ void main() {
       );
       await tester.pumpAndSettle();
       final card = tester.widget<Card>(find.byType(Card));
-      expect(card.color, Colors.transparent,
-          reason: 'no secondaryContainer fill — it is not a spoken reply');
-      expect(card.shape, isA<RoundedRectangleBorder>(),
-          reason: 'the outline card law of +168, widened');
+      expect(
+        card.color,
+        Colors.transparent,
+        reason: 'no secondaryContainer fill — it is not a spoken reply',
+      );
+      expect(
+        card.shape,
+        isA<RoundedRectangleBorder>(),
+        reason: 'the outline card law of +168, widened',
+      );
       expect(find.byIcon(Icons.check_circle_outline), findsOne);
       expect(find.text('Bash sleep 10 finished.'), findsOne);
     });
@@ -265,8 +271,11 @@ void main() {
       );
       await tester.pumpWidget(bubble());
       expect(find.text(''), findsNothing);
-      expect(find.byType(SelectableText), findsNothing,
-          reason: 'no words yet — the pulse speaks instead');
+      expect(
+        find.byType(SelectableText),
+        findsNothing,
+        reason: 'no words yet — the pulse speaks instead',
+      );
       entry.blocks[0] = 'weather in the morning';
       entry.transcribing = false;
       await tester.pumpWidget(bubble());
@@ -326,8 +335,11 @@ void main() {
       );
       expect(find.textContaining('Saved · tap to open'), findsOne);
       await tester.tap(find.text('app-release.apk'));
-      expect(tapped, same(entry),
-          reason: 'the tap after the save goes to the system viewer');
+      expect(
+        tapped,
+        same(entry),
+        reason: 'the tap after the save goes to the system viewer',
+      );
       entry.openError = 'MissingPluginException(no handler)';
       tapped = null;
       await tester.pumpWidget(
@@ -418,9 +430,7 @@ void main() {
 
   group('the queued message in the flow', () {
     testWidgets('the grey bubble is a button: it offers the interrupt '
-        'and its tap lands (plain Text, no tap-thief inside)', (
-      tester,
-    ) async {
+        'and its tap lands (plain Text, no tap-thief inside)', (tester) async {
       ChatEntry? tapped;
       final parked = ChatEntry.user('ship it now')..queued = true;
       await tester.pumpWidget(
@@ -435,9 +445,13 @@ void main() {
       );
       expect(find.text('tap to interrupt now'), findsOne);
       await tester.tap(find.text('ship it now'));
-      expect(tapped, same(parked),
-          reason: 'while queued the words are plain Text — the tap '
-              'reaches the button instead of dying in a selectable');
+      expect(
+        tapped,
+        same(parked),
+        reason:
+            'while queued the words are plain Text — the tap '
+            'reaches the button instead of dying in a selectable',
+      );
       tapped = null;
       parked.queued = false; // taken: the button retires, the select comes back
       await tester.pumpWidget(

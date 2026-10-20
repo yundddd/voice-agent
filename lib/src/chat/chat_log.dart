@@ -147,6 +147,18 @@ class ChatEntry {
   int downloadBytes = 0;
   int totalBytes = 0;
 
+  /// +202: the bubble-widget cache revision — machinery, never
+  /// persisted. One view, one truth means every event rebuilds the
+  /// whole log, and the tape showed follow ticks at 30–40 ms apart:
+  /// eighty bubbles rebuilt per event was eating the entrance's frame
+  /// budget, and ~25 fps turns any glide into a hop. Every store
+  /// mutator bumps this counter; a bubble whose counter is unchanged
+  /// comes back as the SAME widget instance, so the subtree is never
+  /// even revisited. Anything that changes without a bump opts out of
+  /// the cache (the queue pin carries a wall-clock label; the file
+  /// slip carries memory-only progress).
+  int rev = 0;
+
   /// Why the last OPEN failed (no viewer, no channel) — memory-only,
   /// like the download counters: the bubble must never wear yesterday's
   /// error as if it were fresh news.
@@ -166,8 +178,7 @@ class ChatEntry {
     if (cancelled) 'cancelled': true,
     if (receipt) 'receipt': true,
     if (receiptId.isNotEmpty) 'rid': receiptId,
-    if (isFile)
-      'file': {'name': fileName, 'path': filePath, 'size': fileSize},
+    if (isFile) 'file': {'name': fileName, 'path': filePath, 'size': fileSize},
     if (savedMs != 0) 'saved': savedMs,
     if (savedPath.isNotEmpty) 'savedTo': savedPath,
   };
@@ -288,9 +299,7 @@ String encodeChatLog(List<ChatEntry> entries) =>
 /// rather than reloaded as a blank bubble forever.
 bool _isDeadTranscribePlaceholder(Map<String, Object?> j) =>
     j['user'] == true &&
-    ((j['blocks'] as List? ?? const <Object>['']).every(
-      (b) => '$b'.isEmpty,
-    ));
+    ((j['blocks'] as List? ?? const <Object>['']).every((b) => '$b'.isEmpty));
 
 /// Tolerant decode: any broken chat file (or a future format we do not
 /// understand) starts the log fresh rather than blocking app init.

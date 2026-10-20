@@ -90,8 +90,11 @@ void main() {
             'agent is not done — the relabel must die on arrival or '
             'the box stays dark through the whole round (14:20 field)',
       );
-      expect(t.isOn, isFalse,
-          reason: 'the counters stay frozen; only the verdict dies');
+      expect(
+        t.isOn,
+        isFalse,
+        reason: 'the counters stay frozen; only the verdict dies',
+      );
     });
 
     test('growth caps at 5 s of silence (a stalled stream is honest)', () {

@@ -245,8 +245,12 @@ void main() {
       // adds agentTasks at line 2008) — the retirement proof stays
       // false and the banner lives for the kill's receipt.
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false,
-        'queued': false, 'missed': 0, 'detached': 1,
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'missed': 0,
+        'detached': 1,
       };
       unawaited(a.runQuickCommand('sleep 300 in the background'));
       await settle();
@@ -271,7 +275,8 @@ void main() {
       expect(
         a.backgroundedWork,
         isNotEmpty,
-        reason: 'the banner lives for the kill\'s receipt — the record '
+        reason:
+            'the banner lives for the kill\'s receipt — the record '
             'is paid by proof, not by a wish',
       );
     });
@@ -450,7 +455,8 @@ void main() {
       expect(
         VoiceAssistant.controlChips,
         ['/new', '/compact'],
-        reason: 'dictate +178. Stop is not in the list — it is the '
+        reason:
+            'dictate +178. Stop is not in the list — it is the '
             "row's permanent tail (+154), never a controlChips member.",
       );
       expect(
@@ -1738,8 +1744,11 @@ void main() {
       harness.emit(BridgeEvent.forTest('say', text: 'Stuck in the synth.'));
       await settle();
 
-      expect(out.played.where((c) => c.$1.length == 2400), isEmpty,
-          reason: 'the reply audio is still mid-synth (UI blips exempt)');
+      expect(
+        out.played.where((c) => c.$1.length == 2400),
+        isEmpty,
+        reason: 'the reply audio is still mid-synth (UI blips exempt)',
+      );
       expect(a.phase, isNot(AssistantPhase.speaking));
       expect(
         a.chat.any(
@@ -1762,53 +1771,52 @@ void main() {
           (e) => !e.fromUser && e.blocks.contains('Stuck in the synth.'),
         ),
         isTrue,
-        reason: 'stamped at the take (+161); the air brings sound, '
+        reason:
+            'stamped at the take (+161); the air brings sound, '
             'not a second copy',
       );
     });
 
-    test(
-      'the AUDIO order waits for the PLAYER, not the queue '
-      '(+121, restated +161)',
-      () async {
-        // +121's original wound — chunks parked in the queue stamped
-        // 'heard' while a generation bump killed them — is v2's
-        // nothing: the ledger rides the id commit at the take, and the
-        // audio handover still waits for the player. What +161 moves is
-        // the TEXT: both paragraphs are on the screen the moment they
-        // arrive; only their voices keep the queue's order.
-        await withBridge();
-        harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
-        unawaited(a.runQuickCommand('go'));
-        await settle();
-        harness.emit(BridgeEvent.forTest('say', text: 'First, playing.'));
-        harness.emit(BridgeEvent.forTest('say', text: 'Second, queued.'));
-        await settle();
-        expect(out.playing, isTrue); // the player took the first…
-        final bubbles = () =>
-            a.chat.where((e) => !e.fromUser).expand((e) => e.blocks).toList();
-        expect(
-          bubbles(),
-          containsAll(['First, playing.', 'Second, queued.']),
-          reason: 'both TAKEN: both on the screen (+161) — the reader '
-              'seems the whole answer while the speaker is on paragraph '
-              'one',
-        );
-        expect(
-          out.played.where((c) => c.$1.length == 2400),
-          hasLength(1),
-          reason: 'the queued paragraph holds its VOICE back (+121)',
-        );
+    test('the AUDIO order waits for the PLAYER, not the queue '
+        '(+121, restated +161)', () async {
+      // +121's original wound — chunks parked in the queue stamped
+      // 'heard' while a generation bump killed them — is v2's
+      // nothing: the ledger rides the id commit at the take, and the
+      // audio handover still waits for the player. What +161 moves is
+      // the TEXT: both paragraphs are on the screen the moment they
+      // arrive; only their voices keep the queue's order.
+      await withBridge();
+      harness.healthState = {'ok': true, 'claudeUp': true, 'turnOpen': true};
+      unawaited(a.runQuickCommand('go'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('say', text: 'First, playing.'));
+      harness.emit(BridgeEvent.forTest('say', text: 'Second, queued.'));
+      await settle();
+      expect(out.playing, isTrue); // the player took the first…
+      final bubbles = () =>
+          a.chat.where((e) => !e.fromUser).expand((e) => e.blocks).toList();
+      expect(
+        bubbles(),
+        containsAll(['First, playing.', 'Second, queued.']),
+        reason:
+            'both TAKEN: both on the screen (+161) — the reader '
+            'seems the whole answer while the speaker is on paragraph '
+            'one',
+      );
+      expect(
+        out.played.where((c) => c.$1.length == 2400),
+        hasLength(1),
+        reason: 'the queued paragraph holds its VOICE back (+121)',
+      );
 
-        out.complete(); // the first ends; the pump hands over the second
-        await settle();
-        expect(
-          out.played.where((c) => c.$1.length == 2400),
-          hasLength(2),
-          reason: 'the queue order reaches the ear one at a time',
-        );
-      },
-    );
+      out.complete(); // the first ends; the pump hands over the second
+      await settle();
+      expect(
+        out.played.where((c) => c.$1.length == 2400),
+        hasLength(2),
+        reason: 'the queue order reaches the ear one at a time',
+      );
+    });
 
     test('the queue verdict injects no bubble (+146)', () async {
       await withBridge();
@@ -1987,7 +1995,8 @@ void main() {
         const BridgeEvent.forTest(
           'tool',
           toolName: 'queued',
-          detail: 'a tool call is running; your message will steer '
+          detail:
+              'a tool call is running; your message will steer '
               'the turn at its next pause',
           mid: 5,
         ),
@@ -2843,9 +2852,7 @@ void main() {
       );
       expect(
         a.chat
-            .firstWhere(
-              (e) => e.blocks.contains('Bash sleep 10 cancelled.'),
-            )
+            .firstWhere((e) => e.blocks.contains('Bash sleep 10 cancelled.'))
             .cancelled,
         isTrue,
         reason:
@@ -3058,14 +3065,17 @@ void main() {
   });
 
   group('queue-bubble tap-to-interrupt', () {
-    test('tapping the grey bubble /stops the in-flight turn (+172)',
-        () async {
+    test('tapping the grey bubble /stops the in-flight turn (+172)', () async {
       await withBridge();
       await a.interruptForQueued();
       await settle();
-      expect(harness.stops, 1,
-          reason: 'just /stop — the bridge interrupts and flushes the '
-              'parked prompt; the queued view stays listening');
+      expect(
+        harness.stops,
+        1,
+        reason:
+            'just /stop — the bridge interrupts and flushes the '
+            'parked prompt; the queued view stays listening',
+      );
     });
   });
 }

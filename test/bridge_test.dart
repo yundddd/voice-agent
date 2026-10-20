@@ -264,8 +264,10 @@ void main() {
       // arguments vanish WITH the tags — a lone 'flutter test' would
       // promise a run that never happened.
       expect(
-        cleanForSpeech('<tool_call>\n<function name="Bash">\n'
-            '<parameter name="command">flutter test</parameter>\n</function></tool_call>'),
+        cleanForSpeech(
+          '<tool_call>\n<function name="Bash">\n'
+          '<parameter name="command">flutter test</parameter>\n</function></tool_call>',
+        ),
         isEmpty,
         reason: 'a whole call is nothing to say',
       );
@@ -276,13 +278,14 @@ void main() {
       );
       expect(m, contains('Sure'));
       expect(m, contains('Checking'));
-      expect(m, isNot(contains('pubspec')),
-          reason: 'args die with the span');
+      expect(m, isNot(contains('pubspec')), reason: 'args die with the span');
       expect(m, isNot(contains('<')), reason: 'no tag survives for espeak');
       // A truncated emission (no closer at all) still falls.
       expect(
-        cleanForSpeech('<tool_call>\n<function name="Bash">\n'
-            '<parameter name="command">flutter test'),
+        cleanForSpeech(
+          '<tool_call>\n<function name="Bash">\n'
+          '<parameter name="command">flutter test',
+        ),
         isEmpty,
       );
     });

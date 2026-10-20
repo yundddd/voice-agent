@@ -35,8 +35,8 @@ void main() {
             }),
           );
       } else if (req.uri.path == '/dir') {
-        final body = jsonDecode(await utf8.decodeStream(req))
-            as Map<String, Object?>;
+        final body =
+            jsonDecode(await utf8.decodeStream(req)) as Map<String, Object?>;
         if (body['path'] == '/home/user/good') {
           req.response.write('{"ok":true}');
         } else {
@@ -60,20 +60,24 @@ void main() {
     expect(seen.last, contains('in=projects'));
   });
 
-  test('setDir posts the path; 200 is success, 400 the honest reason',
-      () async {
-    expect(await client.setDir('/home/user/good'), isNull);
-    final why = await client.setDir('/etc');
-    expect(why, contains('not a folder'));
-    expect(why, isNot(contains('HTTP'))); // the body beat the bare code
-  });
+  test(
+    'setDir posts the path; 200 is success, 400 the honest reason',
+    () async {
+      expect(await client.setDir('/home/user/good'), isNull);
+      final why = await client.setDir('/etc');
+      expect(why, contains('not a folder'));
+      expect(why, isNot(contains('HTTP'))); // the body beat the bare code
+    },
+  );
 
-  test('an unreachable bridge answers null dirs and a reason for setDir',
-      () async {
-    await server.close(force: true);
-    expect(await client.dirs(), isNull);
-    expect(await client.setDir('/home/user/good'), isNotNull);
-    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    await server.close(); // keep tearDown's close a no-op
-  });
+  test(
+    'an unreachable bridge answers null dirs and a reason for setDir',
+    () async {
+      await server.close(force: true);
+      expect(await client.dirs(), isNull);
+      expect(await client.setDir('/home/user/good'), isNotNull);
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      await server.close(); // keep tearDown's close a no-op
+    },
+  );
 }

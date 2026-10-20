@@ -73,9 +73,9 @@ class _BridgeScreenState extends State<BridgeScreen> {
     final err = await widget.assistant.setBridgeDir(chosen);
     await _refreshHealth();
     if (err != null && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not move the folder: $err')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not move the folder: $err')),
+      );
     }
   }
 
@@ -239,8 +239,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                     child: SelectableText(
                       _health == null
                           ? 'no /health reply — Save & check first'
-                          : _health?['dir'] is String &&
-                                    _health!['dir'] != ''
+                          : _health?['dir'] is String && _health!['dir'] != ''
                           ? _health!['dir'] as String
                           : 'unknown (bridge too old for /dir)',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -251,8 +250,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   ),
                   IconButton(
                     tooltip: 'Change the working folder',
-                    onPressed: a.bridgeConfigured &&
-                                    _health?['dir'] is String
+                    onPressed: a.bridgeConfigured && _health?['dir'] is String
                         ? _pickFolder
                         : null,
                     icon: const Icon(Icons.folder_open),
@@ -445,9 +443,7 @@ class _FolderBrowserState extends State<_FolderBrowser> {
 
   Future<void> _load() async {
     setState(() => _busy = true);
-    final l = await widget.assistant.bridgeDirs(
-      path: _in.isEmpty ? null : _in,
-    );
+    final l = await widget.assistant.bridgeDirs(path: _in.isEmpty ? null : _in);
     if (!mounted) return;
     setState(() {
       _listing = l;
@@ -488,9 +484,9 @@ class _FolderBrowserState extends State<_FolderBrowser> {
                 Expanded(
                   child: Text(
                     here ?? 'Loading…',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
                   ),
                 ),
                 FilledButton(
@@ -513,10 +509,7 @@ class _FolderBrowserState extends State<_FolderBrowser> {
                   : _why != null
                   ? Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Text(
-                        _why!,
-                        style: TextStyle(color: scheme.error),
-                      ),
+                      child: Text(_why!, style: TextStyle(color: scheme.error)),
                     )
                   : ListView.builder(
                       itemCount: dirs.length,

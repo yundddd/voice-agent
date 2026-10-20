@@ -192,6 +192,78 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
+  /// +202: entry → (revision at paint, theme behind it, the exact
+  /// widget instance). One view, one truth means every notification
+  /// rebuilds the whole channel; +199 fenced the REPAINT, but the
+  /// rebuild itself — eighty ChatBubble subtrees, a thousand widget
+  /// objects per event — was the entrance's frame tax, and the tape
+  /// proved the toll: follow ticks 30–40 ms apart, ~25 fps, and any
+  /// glide at 25 fps is a hop. A cache hit hands back the identical
+  /// widget, and Flutter does not even look inside. Live things opt
+  /// out: the queue pin (a wall-clock label that ticks on its own)
+  /// and the file slip (memory-only progress).
+  final Map<ChatEntry, (int, ThemeData, Widget)> _bubbleCache = {};
+
+  /// The channel's one bubble wrapper — key, fence, entrance, card —
+  /// minted once per revision.
+  Widget _bubbleFor(ChatEntry e, VoiceAssistant a, BuildContext context) {
+    final cacheable = !e.isFile && !e.queued;
+    final theme = Theme.of(context);
+    if (cacheable) {
+      final hit = _bubbleCache[e];
+      if (hit != null && hit.$1 == e.rev && identical(hit.$2, theme)) {
+        return hit.$3;
+      }
+    }
+    final widget = Padding(
+      // +197: the key LIVES HERE, on the Column's actual child. The
+      // ObjectKey used to sit on the FadeInBubble one level DOWN —
+      // invisible to the Column, which pairs children by POSITION:
+      // the moment the 80-entry cap evicts the oldest bubble, every
+      // entry shifts one slot, the position pairing hands each old
+      // Padding a new entry, the inner key mismatch re-mounts every
+      // State, and all eighty bubbles replay their entrance at once
+      // — the collapse-and-regrow the scroll telemetry caught (n 80,
+      // content −4600 and back) and the field felt as the scrolling
+      // bug every send since the log filled up.
+      key: ObjectKey(e),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      // A whole bubble opening is also a height arrival (+187): grow
+      // with the same ease the segments use.
+      child: RepaintBoundary(
+        // +199: one fence per bubble. Every notification rebuilds the
+        // whole log (one view, one truth); without the fence an
+        // entrance's opacity frame repainted all eighty cards beside
+        // it, and that cost — not the ease — was the lag the field
+        // felt on arrivals.
+        child: FadeInBubble(
+          grow: true,
+          child: ChatBubble(
+            entry: e,
+            maxWidthFrac: 0.86,
+            source: () => a.view,
+            onFileTap: a.fetchChatFile,
+            onQueueTap: (_) => a.interruptForQueued(),
+          ),
+        ),
+      ),
+    );
+    if (cacheable) {
+      _bubbleCache[e] = (e.rev, theme, widget);
+    } else {
+      _bubbleCache.remove(e); // opt-out: never serve a stale slip or pin
+    }
+    return widget;
+  }
+
+  /// Cap evictions (and withdrawals) must not leave tombstones: after
+  /// any rebuild, drop cached entries no longer in the log.
+  void _pruneBubbleCache(List<ChatEntry> chat) {
+    if (_bubbleCache.length > chat.length) {
+      _bubbleCache.removeWhere((k, _) => !chat.any((x) => identical(x, k)));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -250,6 +322,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     // agrees with every other. Intents still go straight to the
     // assistant; state comes only through the projection.
     final v = a.view;
+    _pruneBubbleCache(v.chat); // +202: evicted entries leave no tombstones
     final scheme = Theme.of(context).colorScheme;
 
     // +192: the auto-follow is no longer an event hook at all — the
@@ -442,56 +515,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                     // blocks — the slip IS the
                                     // bubble.
                                     e.isFile)
-                                  Padding(
-                                    // +197: the key LIVES HERE, on the
-                                    // Column's actual child. The
-                                    // ObjectKey used to sit on the
-                                    // FadeInBubble one level DOWN —
-                                    // invisible to the Column, which
-                                    // pairs children by POSITION: the
-                                    // moment the 80-entry cap evicts
-                                    // the oldest bubble, every entry
-                                    // shifts one slot, the position
-                                    // pairing hands each old Padding a
-                                    // new entry, the inner key mismatch
-                                    // re-mounts every State, and all
-                                    // eighty bubbles replay their
-                                    // entrance at once — the collapse-
-                                    // and-regrow the scroll telemetry
-                                    // caught (n 80, content −4600 and
-                                    // back) and the field felt as the
-                                    // scrolling bug every send since
-                                    // the log filled up.
-                                    key: ObjectKey(e),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 4,
-                                    ),
-                                    // A whole bubble opening is also a
-                                    // height arrival (+187): grow with
-                                    // the same ease the segments use.
-                                    child: RepaintBoundary(
-                                      // +199: one fence per bubble.
-                                      // Every notification rebuilds
-                                      // the whole log (one view, one
-                                      // truth); without the fence an
-                                      // entrance's opacity frame
-                                      // repainted all eighty cards
-                                      // beside it, and that cost —
-                                      // not the ease — was the lag
-                                      // the field felt on arrivals.
-                                      child: FadeInBubble(
-                                        grow: true,
-                                        child: ChatBubble(
-                                          entry: e,
-                                          maxWidthFrac: 0.86,
-                                          source: () => a.view,
-                                          onFileTap: a.fetchChatFile,
-                                          onQueueTap: (_) =>
-                                              a.interruptForQueued(),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                                  _bubbleFor(e, a, context),
 
                               // The working row: spinner, one-line
                               // activity, meter — permanently the

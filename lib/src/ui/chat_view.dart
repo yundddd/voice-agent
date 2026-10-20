@@ -144,174 +144,176 @@ class ChatBubble extends StatelessWidget {
                         child: entry.isFile
                             ? _FileBody(entry: entry, scheme: scheme)
                             : entry.fromUser
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                // +188: the release opened this bubble
-                                // at the button-up moment; while ASR
-                                // is still finding the words the card
-                                // pulses instead of pretending to be
-                                // empty. The fill replaces the pulse
-                                // with the text in the same place.
-                                if (entry.transcribing)
-                                  const _TranscribePulse()
-                                else if (entry.queued)
-                                  // While GREY the bubble is a button,
-                                  // so it renders its words as plain
-                                  // Text: the same tap-thief law that
-                                  // killed the file bubble's receive —
-                                  // a SelectableText inside would win
-                                  // the arena and the interrupt tap
-                                  // would look dead. Once taken, the
-                                  // selectability comes back.
-                                  Text(
-                                    entry.blocks.join(' '),
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyLarge?.copyWith(
-                                      color: scheme.onPrimaryContainer,
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  // +188: the release opened this bubble
+                                  // at the button-up moment; while ASR
+                                  // is still finding the words the card
+                                  // pulses instead of pretending to be
+                                  // empty. The fill replaces the pulse
+                                  // with the text in the same place.
+                                  if (entry.transcribing)
+                                    const _TranscribePulse()
+                                  else if (entry.queued)
+                                    // While GREY the bubble is a button,
+                                    // so it renders its words as plain
+                                    // Text: the same tap-thief law that
+                                    // killed the file bubble's receive —
+                                    // a SelectableText inside would win
+                                    // the arena and the interrupt tap
+                                    // would look dead. Once taken, the
+                                    // selectability comes back.
+                                    Text(
+                                      entry.blocks.join(' '),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge
+                                          ?.copyWith(
+                                            color: scheme.onPrimaryContainer,
+                                          ),
+                                    )
+                                  else
+                                    SelectableText(
+                                      entry.blocks.join(' '),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge
+                                          ?.copyWith(
+                                            color: scheme.onPrimaryContainer,
+                                          ),
                                     ),
-                                  )
-                                else
-                                  SelectableText(
-                                    entry.blocks.join(' '),
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyLarge?.copyWith(
-                                      color: scheme.onPrimaryContainer,
+                                  _BubbleStamp(
+                                    text: stamp,
+                                    color: scheme.onPrimaryContainer.withValues(
+                                      alpha: 0.7,
                                     ),
                                   ),
-                                _BubbleStamp(
-                                  text: stamp,
-                                  color: scheme.onPrimaryContainer.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ),
-                                if (entry.queued)
-                                  Text(
-                                    'tap to interrupt now',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.labelSmall?.copyWith(
-                                      fontStyle: FontStyle.italic,
-                                      color: scheme.onPrimaryContainer.withValues(
-                                        alpha: 0.8,
+                                  if (entry.queued)
+                                    Text(
+                                      'tap to interrupt now',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            fontStyle: FontStyle.italic,
+                                            color: scheme.onPrimaryContainer
+                                                .withValues(alpha: 0.8),
+                                          ),
+                                    ),
+                                ],
+                              )
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // One [FadeInBubble] PER SEGMENT, keyed
+                                  // by position (+181): the bubble's own
+                                  // entrance (+175) fades the whole card
+                                  // once, but the blocks stream in AFTER
+                                  // that — and un-wrapped they popped at
+                                  // full opacity beside settled text, the
+                                  // segment-level flicker this ends. Keyed
+                                  // by index, an
+                                  // append can only animate the NEW tail:
+                                  // every already-spoken segment keeps its
+                                  // completed state and never re-fades. At
+                                  // boot the whole row of wrappers mounts
+                                  // on the bubble's first frame — one
+                                  // group, one settle, as the restored
+                                  // log always arrived.
+                                  for (final (i, s) in entry.blocks.indexed)
+                                    FadeInBubble(
+                                      key: ValueKey(i),
+                                      grow: true,
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          if (i > 0) const Divider(height: 24),
+                                          // +184: the receipt line — italic
+                                          // in its outcome's ink, led by
+                                          // the glyph that says which at a
+                                          // glance (check for finished, the
+                                          // same pan the interrupted stamp
+                                          // uses for cancelled).
+                                          if (isReceipt)
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  entry.cancelled
+                                                      ? Icons.pan_tool_outlined
+                                                      : Icons
+                                                            .check_circle_outline,
+                                                  size: 14,
+                                                  color: receiptInk,
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Expanded(
+                                                  child: SelectableText(
+                                                    s,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodyMedium
+                                                        ?.copyWith(
+                                                          fontStyle:
+                                                              FontStyle.italic,
+                                                          color: receiptInk,
+                                                        ),
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          else
+                                            SelectableText(
+                                              s,
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.bodyLarge,
+                                            ),
+                                        ],
                                       ),
                                     ),
-                                  ),
-                              ],
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // One [FadeInBubble] PER SEGMENT, keyed
-                                // by position (+181): the bubble's own
-                                // entrance (+175) fades the whole card
-                                // once, but the blocks stream in AFTER
-                                // that — and un-wrapped they popped at
-                                // full opacity beside settled text, the
-                                // segment-level flicker this ends. Keyed
-                                // by index, an
-                                // append can only animate the NEW tail:
-                                // every already-spoken segment keeps its
-                                // completed state and never re-fades. At
-                                // boot the whole row of wrappers mounts
-                                // on the bubble's first frame — one
-                                // group, one settle, as the restored
-                                // log always arrived.
-                                for (final (i, s) in entry.blocks.indexed)
-                                  FadeInBubble(
-                                    key: ValueKey(i),
-                                    grow: true,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                  if (entry.interrupted) ...[
+                                    // +108: a cut turn says so — the
+                                    // sections above it are what the speaker
+                                    // got before the newer press took over.
+                                    const SizedBox(height: 8),
+                                    Row(
                                       children: [
-                                        if (i > 0) const Divider(height: 24),
-                                        // +184: the receipt line — italic
-                                        // in its outcome's ink, led by
-                                        // the glyph that says which at a
-                                        // glance (check for finished, the
-                                        // same pan the interrupted stamp
-                                        // uses for cancelled).
-                                        if (isReceipt)
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                entry.cancelled
-                                                    ? Icons.pan_tool_outlined
-                                                    : Icons
-                                                          .check_circle_outline,
-                                                size: 14,
-                                                color: receiptInk,
+                                        Icon(
+                                          Icons.pan_tool_outlined,
+                                          size: 14,
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'interrupted'
+                                          '${formatBubbleClock(entry.interruptedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.interruptedMs)}'}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                fontStyle: FontStyle.italic,
+                                                color: scheme.onSurfaceVariant,
                                               ),
-                                              const SizedBox(width: 6),
-                                              Expanded(
-                                                child: SelectableText(
-                                                  s,
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .bodyMedium
-                                                      ?.copyWith(
-                                                        fontStyle:
-                                                            FontStyle.italic,
-                                                        color: receiptInk,
-                                                      ),
-                                                ),
-                                              ),
-                                            ],
-                                          )
-                                        else
-                                          SelectableText(
-                                            s,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodyLarge,
-                                          ),
+                                        ),
                                       ],
                                     ),
-                                  ),
-                                if (entry.interrupted) ...[
-                                  // +108: a cut turn says so — the
-                                  // sections above it are what the speaker
-                                  // got before the newer press took over.
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.pan_tool_outlined,
-                                        size: 14,
-                                        color: scheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'interrupted'
-                                        '${formatBubbleClock(entry.interruptedMs).isEmpty ? '' : ' · ${formatBubbleClock(entry.interruptedMs)}'}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                              fontStyle: FontStyle.italic,
-                                              color: scheme.onSurfaceVariant,
-                                            ),
-                                      ),
-                                    ],
+                                  ],
+                                  _BubbleStamp(
+                                    text: stamp,
+                                    color: scheme.onSurfaceVariant,
+                                    topGap: true,
                                   ),
                                 ],
-                                _BubbleStamp(
-                                  text: stamp,
-                                  color: scheme.onSurfaceVariant,
-                                  topGap: true,
-                                ),
-                              ],
-                            ),
-                        ),
+                              ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
+          ),
         ],
       ),
     );
@@ -360,16 +362,15 @@ class _TranscribePulseState extends State<_TranscribePulse>
       width: 110,
       child: AnimatedBuilder(
         animation: _c,
-        builder:
-            (context, _) => CustomPaint(
-              painter: _NetPaint(
-                ink: ink,
-                // The wave's position in LAYER units, eased across the
-                // net with half a layer of lead-in and run-off so the
-                // glow fades before it loops — a sweep, not a blink.
-                wave: _c.value * (_NetPaint.layers.length + 1) - 0.5,
-              ),
-            ),
+        builder: (context, _) => CustomPaint(
+          painter: _NetPaint(
+            ink: ink,
+            // The wave's position in LAYER units, eased across the
+            // net with half a layer of lead-in and run-off so the
+            // glow fades before it loops — a sweep, not a blink.
+            wave: _c.value * (_NetPaint.layers.length + 1) - 0.5,
+          ),
+        ),
       ),
     );
   }
@@ -394,8 +395,7 @@ class _NetPaint extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final n = layers.length;
     final xs = [
-      for (var i = 0; i < n; i++)
-        10.0 + (size.width - 20) * (i / (n - 1)),
+      for (var i = 0; i < n; i++) 10.0 + (size.width - 20) * (i / (n - 1)),
     ];
     final cols = [
       for (final count in layers)
@@ -646,9 +646,7 @@ class _FileBody extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          isApk
-              ? Icons.android
-              : Icons.description_outlined,
+          isApk ? Icons.android : Icons.description_outlined,
           size: 28,
           color: scheme.tertiary,
         ),

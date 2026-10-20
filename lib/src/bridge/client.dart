@@ -220,7 +220,9 @@ class BridgeClient extends HarnessGateway {
   Future<Map<String, Object>?> dirs({String? path}) async {
     try {
       final res = await HttpClient()
-          .getUrl(_u('/dirs', {if (path != null && path.isNotEmpty) 'in': path}))
+          .getUrl(
+            _u('/dirs', {if (path != null && path.isNotEmpty) 'in': path}),
+          )
           .then((r) => r.close())
           .timeout(const Duration(seconds: 6));
       final text = await res.transform(utf8.decoder).join();
@@ -264,7 +266,8 @@ class BridgeClient extends HarnessGateway {
     void Function(int done, int total)? onProgress,
   }) async {
     final tmp = File('$destPath.part');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 10);
     try {
       int have = await tmp.exists() ? await tmp.length() : 0;
       Future<HttpClientResponse> open(int from) async {

@@ -176,11 +176,7 @@ final class BridgeTurnEnv {
   /// frame's kind: the tool did not finish — the cut killed it — and
   /// the chat says so (the field's 'finished AND cancelled AND
   /// backgrounded all at once' contradiction, resolved at the wire).
-  final void Function(
-    String detail, {
-    bool cancelled,
-    String taskId,
-  })
+  final void Function(String detail, {bool cancelled, String taskId})
   retireBgWork;
 
   /// +132: a push-to-talk PRESS took this turn out of the ear; the
@@ -456,9 +452,7 @@ class BridgeTurn {
       }
       if (ev.mid != 0) env.commitHeard(ev.mid);
       chat.addFile(name: ev.fileName, path: ev.filePath, size: ev.fileSize);
-      env.log(
-        'file relayed: "${ev.fileName}"${transport.wireTag(ev)}',
-      );
+      env.log('file relayed: "${ev.fileName}"${transport.wireTag(ev)}');
       return;
     }
     if (ev.kind != 'turn' && !ev.isSay && ev.mid != 0) {

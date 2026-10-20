@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_agent/src/assistant/chat_store.dart';
 import 'package:voice_agent/src/bridge/bridge.dart';
 import 'package:voice_agent/src/chat/chat_log.dart';
 
@@ -288,6 +289,59 @@ void main() {
         ui,
         isNot(contains('isScrollingNotifier')),
         reason: 'the geometry proxy that sank +190 must not return',
+      );
+    });
+  });
+
+  group('the bubble cache rev rides every mutator (+202)', () {
+    // The frame tax the 25 fps tape charged: one view, one truth
+    // rebuilds the whole log per event, and eighty ChatBubble
+    // subtrees per rebuild ate the entrance's frames. The screen now
+    // hands unchanged entries their SAME widget, trusted on the rev
+    // counter — so the law is: every mutation of a live entry bumps
+    // it. Proven functionally on the real store, not at the source.
+    ChatStore store() =>
+        ChatStore(persist: (_) async {}, repaint: () {}, nowMs: () => 1000);
+    test('every store mutator bumps the revision', () {
+      final s = store();
+      final turn = s.beginTurn();
+      expect(turn.rev, 0, reason: 'born clean');
+      s.addBlock(turn, 'first spoken section');
+      expect(turn.rev, 1, reason: 'THE streaming hot path');
+      s.addBlock(turn, 'second section');
+      expect(turn.rev, 2);
+      s.markInterrupted(turn);
+      expect(turn.rev, 3, reason: 'the cut stamp rides the face');
+      s.removeBlock(turn, 'second section');
+      expect(turn.rev, 4, reason: 'a withdrawn block is a smaller bubble');
+      final u = s.addUserTranscribing();
+      final before = u.rev;
+      s.fillUser(u, 'words at last');
+      expect(u.rev, greaterThan(before), reason: 'the pulse became text');
+      s.addUser('pinned press', queued: true);
+      s.unpinQueued();
+      expect(
+        s.entries.last.rev,
+        greaterThan(0),
+        reason: 'the lifted pin re-renders without its caption',
+      );
+    });
+    test('the screen trusts the rev and opts live things out', () {
+      final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
+      expect(
+        ui,
+        contains('hit.\$1 == e.rev'),
+        reason: 'the cache hit is the rev, nothing heuristic',
+      );
+      expect(
+        ui,
+        contains('!e.isFile && !e.queued'),
+        reason: 'the ticking pin and the churning slip rebuild always',
+      );
+      expect(
+        ui,
+        contains('_pruneBubbleCache'),
+        reason: 'cap evictions must not leave tombstones in the map',
       );
     });
   });

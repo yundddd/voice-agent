@@ -74,8 +74,11 @@ void main() {
     expect(json.contains('"receipt":true'), isTrue);
     final back = decodeChatLog(json);
     expect(back.single.receipt, isTrue, reason: 'history, not machinery');
-    expect(back.single.cancelled, isFalse,
-        reason: 'finished is not cancelled — the ink says which');
+    expect(
+      back.single.cancelled,
+      isFalse,
+      reason: 'finished is not cancelled — the ink says which',
+    );
     expect(
       encodeChatLog([ChatEntry.assistant()..blocks.add('spoken prose')]),
       isNot(contains('receipt')),
@@ -94,11 +97,21 @@ void main() {
       note('new echo', 5000),
     ];
     expect(
-      chatRecentlyContains(entries, 'Bash x finished.', nowMs: 6000, withinMs: 5000),
+      chatRecentlyContains(
+        entries,
+        'Bash x finished.',
+        nowMs: 6000,
+        withinMs: 5000,
+      ),
       isTrue,
     );
     expect(
-      chatRecentlyContains(entries, 'Bash x finished.', nowMs: 999999, withinMs: 1000),
+      chatRecentlyContains(
+        entries,
+        'Bash x finished.',
+        nowMs: 999999,
+        withinMs: 1000,
+      ),
       isFalse,
       reason: 'outside the window: a different completion',
     );
@@ -107,7 +120,12 @@ void main() {
       ChatEntry.assistant()..blocks.add('Bash x finished.'), // createdMs 0
     ];
     expect(
-      chatRecentlyContains(legacy, 'Bash x finished.', nowMs: 6000, withinMs: 5000),
+      chatRecentlyContains(
+        legacy,
+        'Bash x finished.',
+        nowMs: 6000,
+        withinMs: 5000,
+      ),
       isFalse,
       reason: 'an unstamped receipt is older than anything living',
     );
@@ -120,9 +138,13 @@ void main() {
       decodeChatLog('[{"user":true,"blocks":["x"]},{"nope":1}]').length,
       2,
     ); // tolerant
-    expect(decodeChatLog('[{"user":true,"blocks":[""]}]'), isEmpty,
-        reason: '+188: a blank user entry is a dead transcribe '
-            'placeholder — machinery, dropped on load');
+    expect(
+      decodeChatLog('[{"user":true,"blocks":[""]}]'),
+      isEmpty,
+      reason:
+          '+188: a blank user entry is a dead transcribe '
+          'placeholder — machinery, dropped on load',
+    );
     expect(decodeChatLog('[]'), isEmpty);
   });
 
@@ -176,20 +198,28 @@ void main() {
 
 // (appended with the file bubble) ─────────────────────────────────────────
 void fileBubbleTests() {
-  test('a file bubble round-trips: name, path, size — and the saved stamp',
-      () {
-    final e = ChatEntry.file('app-release.apk', 'dist/app-release.apk', 99,
-        createdMs: 111)
-      ..savedMs = 222
-      ..savedPath = '/data/user/0/com.voiceagent/files/received/app-release.apk';
+  test('a file bubble round-trips: name, path, size — and the saved stamp', () {
+    final e =
+        ChatEntry.file(
+            'app-release.apk',
+            'dist/app-release.apk',
+            99,
+            createdMs: 111,
+          )
+          ..savedMs = 222
+          ..savedPath =
+              '/data/user/0/com.voiceagent/files/received/app-release.apk';
     final back = decodeChatLog(encodeChatLog([e])).single;
     expect(back.isFile, isTrue);
     expect(back.fileName, 'app-release.apk');
     expect(back.filePath, 'dist/app-release.apk');
     expect(back.fileSize, 99);
     expect(back.createdMs, 111);
-    expect(back.savedMs, 222,
-        reason: 'a fetched file stays Saved across a restart — history');
+    expect(
+      back.savedMs,
+      222,
+      reason: 'a fetched file stays Saved across a restart — history',
+    );
     expect(back.savedPath, contains('received/app-release.apk'));
     // The live download state is memory-only: a reload never shows a
     // frozen percentage from a wire that died with the process.

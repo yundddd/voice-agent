@@ -88,15 +88,8 @@ class ChatStore {
   /// Exact-block scan limited to the recent tail (see
   /// [chatRecentlyContains]): the belt behind the heard-ledger's by-id
   /// dedup, for the same delivery arriving over two transports.
-  bool containsBlockRecent(
-    String text, {
-    int withinMs = receiptDedupMs,
-  }) => chatRecentlyContains(
-    _entries,
-    text,
-    nowMs: _nowMs(),
-    withinMs: withinMs,
-  );
+  bool containsBlockRecent(String text, {int withinMs = receiptDedupMs}) =>
+      chatRecentlyContains(_entries, text, nowMs: _nowMs(), withinMs: withinMs);
 
   /// +188: open a user bubble while the words are still in ASR — the
   /// push-to-talk release moment, answered to the speaker with a
@@ -104,8 +97,7 @@ class ChatStore {
   /// an unfilled placeholder never survives a reload, and the
   /// renderer knows the state from the entry itself.
   ChatEntry addUserTranscribing() {
-    final entry = ChatEntry.user('', createdMs: _nowMs())
-      ..transcribing = true;
+    final entry = ChatEntry.user('', createdMs: _nowMs())..transcribing = true;
     _entries.add(entry);
     trace?.call('msg phone: user (transcribing…)');
     touch();
@@ -120,6 +112,7 @@ class ChatStore {
   void fillUser(ChatEntry entry, String text, {bool queued = false}) {
     entry.blocks[0] = text;
     entry.transcribing = false;
+    entry.rev++; // +202: the pulse gave way to words — the bubble changed
     if (queued) {
       unpinQueued();
       entry.queued = true;
@@ -147,6 +140,7 @@ class ChatStore {
     if (turn.interrupted) return;
     turn.interrupted = true;
     turn.interruptedMs = _nowMs();
+    turn.rev++; // +202: the cut stamp rides the bubble's face
     trace?.call(
       'msg cut: turn shortened'
       '${turn.createdMs == 0 ? '' : ' after ${formatWait(turn.interruptedMs - turn.createdMs)}'}'
@@ -159,7 +153,10 @@ class ChatStore {
   /// whose audio never started, so the ledger means what it says:
   /// every block in it was heard (or is background-buffered on purpose).
   void removeBlock(ChatEntry turn, String text) {
-    if (turn.blocks.remove(text)) touch();
+    if (turn.blocks.remove(text)) {
+      turn.rev++; // +202: a block withdrawn is a smaller bubble
+      touch();
+    }
   }
 
   /// +110: a standalone system bubble — the interruption verdict gets
@@ -177,8 +174,7 @@ class ChatStore {
   /// forever, and forever-correct: the same task can only ever be
   /// finished once). +186.
   bool hasReceiptFor(String taskId) =>
-      taskId.isNotEmpty &&
-      _entries.any((e) => e.receiptId == taskId);
+      taskId.isNotEmpty && _entries.any((e) => e.receiptId == taskId);
 
   void addSystemNote(
     String text, {
@@ -227,13 +223,12 @@ class ChatStore {
     required String path,
     required int size,
   }) {
-    if (_entries.isNotEmpty && _entries.last.isFile &&
+    if (_entries.isNotEmpty &&
+        _entries.last.isFile &&
         _entries.last.filePath == path) {
       return;
     }
-    _entries.add(
-      ChatEntry.file(name, path, size, createdMs: _nowMs()),
-    );
+    _entries.add(ChatEntry.file(name, path, size, createdMs: _nowMs()));
     trace?.call('msg file: "$name" ($size bytes)');
     touch();
   }
@@ -261,6 +256,8 @@ class ChatStore {
       trace?.call(_deliveredLine(turn, text));
     }
     turn.blocks.add(text);
+    turn.rev++; // +202: THE streaming hot bump — one spoken section,
+    // one bubble rebuilt, the other seventy-nine untouched
     touch();
   }
 
@@ -270,6 +267,7 @@ class ChatStore {
     if (q != null && q.queued) {
       q.queued = false;
       q.pickedUpMs = _nowMs();
+      q.rev++; // +202: the pin lifted — the wait caption lands
       trace?.call(
         'msg queue taken: ${q.createdMs == 0 ? 'waited ?' : 'waited ${formatWait(q.pickedUpMs - q.createdMs)}'}',
       );
@@ -289,6 +287,7 @@ class ChatStore {
     if (identical(_queued, e)) _queued = null;
     if (e.queued) {
       e.queued = false;
+      e.rev++; // +202: pin gone, grey gone — the bubble re-renders plain
       trace?.call('msg pin dropped: superseded before pickup');
       touch();
     }

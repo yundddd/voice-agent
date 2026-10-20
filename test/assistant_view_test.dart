@@ -248,7 +248,8 @@ void main() {
       expect(
         a.view.agentWorking,
         isTrue,
-        reason: 'the turn is still OPEN here — the box rides the turn, '
+        reason:
+            'the turn is still OPEN here — the box rides the turn, '
             'not the shell (+182 revised +170: agent-initiated frames '
             'light the banner; the box spins for open turns only)',
       );
@@ -274,7 +275,10 @@ void main() {
       // form of in-flight work.
       await withBridge();
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2, // the steered follow-on, unheard
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'missed': 2, // the steered follow-on, unheard
       };
       unawaited(a.runQuickCommand('go'));
       await settle();
@@ -291,12 +295,16 @@ void main() {
       await settle();
       final v = a.view;
       expect(v.drainOwed, isTrue, reason: 'missed>0 with audio on air: parked');
-      expect(v.agentBusy, isTrue,
-          reason: 'the owed reply keeps the BRAKE lit (+164)');
+      expect(
+        v.agentBusy,
+        isTrue,
+        reason: 'the owed reply keeps the BRAKE lit (+164)',
+      );
       expect(
         v.showWorkingRow,
         isFalse,
-        reason: '+167 supersedes the row half of +164: the agent is '
+        reason:
+            '+167 supersedes the row half of +164: the agent is '
             'done (done clean closed it) and only the phone speaks — '
             'the box shows agent status, TTS is independent of it. '
             'A real follow-on turn lights the box itself via ATTACH.',
@@ -321,7 +329,10 @@ void main() {
       // the silent drain.
       await withBridge();
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2,
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'missed': 2,
       };
       unawaited(a.runQuickCommand('go'));
       await settle();
@@ -354,76 +365,87 @@ void main() {
       expect(
         harness.attachCount,
         greaterThan(0),
-        reason: 'and honoured: the mute world drains via reattach at '
+        reason:
+            'and honoured: the mute world drains via reattach at '
             'once (frames file as text; the lit brake is now the real '
             'reattach, not a stranded promise)',
       );
     });
 
-    test('+165: a settled turn hides the row — rendering audio is not '
-        'agent status — and the owed drain re-lights it after the close',
-        () async {
-      // The field sequence of the steered exchange: the host's text
-      // settles (message_stop, no tool open), the farewell closes the
-      // turn, and the answer to THIS phone's prompt is born a beat
-      // later in the follow-on. The box belongs to the agent: while
-      // only the phone's TTS pipeline remained, the row showed a
-      // frozen wheel captioned 'Rendering audio…' — the speaker's
-      // queue inside the agent's status slot.
-      await withBridge();
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 2,
-      };
-      unawaited(a.runQuickCommand('go'));
-      await settle();
-      harness.emit(
-        const BridgeEvent.forTest(
-          'tool',
-          toolName: 'tokens',
-          toolKind: 'settled',
-          outTokens: 800,
-          inputTokens: 5000,
-          draft: 'Done — the sleep finished cleanly.',
-        ),
-      );
-      await settle();
-      expect(a.turnSettled, isTrue);
-      expect(
-        a.view.agentBusy,
-        isTrue,
-        reason: 'the turn is open — the wire has not closed yet',
-      );
-      expect(
-        a.view.showWorkingRow,
-        isFalse,
-        reason: 'but nothing computes: settled means only the speaker '
-            'is left, and TTS is independent of the box (+165)',
-      );
-      harness.emit(
-        const BridgeEvent.forTest(
-          'say',
-          text: 'Done — the sleep finished cleanly.',
-          mid: 41,
-        ),
-      );
-      harness.emit(const BridgeEvent.forTest('done'));
-      await settle();
-      expect(a.view.token.settled, isFalse,
-          reason: 'the rendering verdict died with the wire');
-      expect(a.view.drainOwed, isTrue, reason: 'the +164 debt is owed');
-      expect(
-        a.view.agentBusy,
-        isTrue,
-        reason: 'it keeps the BRAKE lit — pressing it silences the tail',
-      );
-      expect(
-        a.view.showWorkingRow,
-        isFalse,
-        reason: '+167: but the box shows AGENT status — the agent '
-            'closed the turn; the owed tail is the phone\'s own '
-            'playback, and a real follow-on lights the box itself',
-      );
-    });
+    test(
+      '+165: a settled turn hides the row — rendering audio is not '
+      'agent status — and the owed drain re-lights it after the close',
+      () async {
+        // The field sequence of the steered exchange: the host's text
+        // settles (message_stop, no tool open), the farewell closes the
+        // turn, and the answer to THIS phone's prompt is born a beat
+        // later in the follow-on. The box belongs to the agent: while
+        // only the phone's TTS pipeline remained, the row showed a
+        // frozen wheel captioned 'Rendering audio…' — the speaker's
+        // queue inside the agent's status slot.
+        await withBridge();
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'missed': 2,
+        };
+        unawaited(a.runQuickCommand('go'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            toolKind: 'settled',
+            outTokens: 800,
+            inputTokens: 5000,
+            draft: 'Done — the sleep finished cleanly.',
+          ),
+        );
+        await settle();
+        expect(a.turnSettled, isTrue);
+        expect(
+          a.view.agentBusy,
+          isTrue,
+          reason: 'the turn is open — the wire has not closed yet',
+        );
+        expect(
+          a.view.showWorkingRow,
+          isFalse,
+          reason:
+              'but nothing computes: settled means only the speaker '
+              'is left, and TTS is independent of the box (+165)',
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'say',
+            text: 'Done — the sleep finished cleanly.',
+            mid: 41,
+          ),
+        );
+        harness.emit(const BridgeEvent.forTest('done'));
+        await settle();
+        expect(
+          a.view.token.settled,
+          isFalse,
+          reason: 'the rendering verdict died with the wire',
+        );
+        expect(a.view.drainOwed, isTrue, reason: 'the +164 debt is owed');
+        expect(
+          a.view.agentBusy,
+          isTrue,
+          reason: 'it keeps the BRAKE lit — pressing it silences the tail',
+        );
+        expect(
+          a.view.showWorkingRow,
+          isFalse,
+          reason:
+              '+167: but the box shows AGENT status — the agent '
+              'closed the turn; the owed tail is the phone\'s own '
+              'playback, and a real follow-on lights the box itself',
+        );
+      },
+    );
 
     test('+168: a mail-fetch attach keeps the box dark — no more '
         'flash-by before the last reply', () async {
@@ -434,120 +456,171 @@ void main() {
       // Reading mail is not the agent working.
       await withBridge();
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false, 'missed': 3,
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'missed': 3,
       };
       expect(await a.reattachBackgroundTurn(), isTrue);
       await settle();
       final v = a.view;
-      expect(v.bridgeBusy, isTrue,
-          reason: 'the replay holds the slot (chips stay asleep)');
-      expect(v.drainReading, isTrue, reason: 'the badge is earned: '
-          'the very probe that justified ATTACH said no turn is open');
-      expect(v.agentWorking, isFalse,
-          reason: 'reading mail is not churning — no flash-by');
+      expect(
+        v.bridgeBusy,
+        isTrue,
+        reason: 'the replay holds the slot (chips stay asleep)',
+      );
+      expect(
+        v.drainReading,
+        isTrue,
+        reason:
+            'the badge is earned: '
+            'the very probe that justified ATTACH said no turn is open',
+      );
+      expect(
+        v.agentWorking,
+        isFalse,
+        reason: 'reading mail is not churning — no flash-by',
+      );
       expect(v.showWorkingRow, isFalse);
-      expect(v.agentBusy, isTrue,
-          reason: 'the brake stays lit: the replay is cuttable (+154)');
+      expect(
+        v.agentBusy,
+        isTrue,
+        reason: 'the brake stays lit: the replay is cuttable (+154)',
+      );
     });
 
     test('+168: rejoining a GENERATING turn spins the box — the mail '
         'badge does not leak onto real work', () async {
       await withBridge();
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': true, 'missed': 0,
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': true,
+        'missed': 0,
       };
       expect(await a.reattachBackgroundTurn(), isTrue);
       await settle();
-      expect(a.view.drainReading, isFalse,
-          reason: 'turnOpen at the probe: a live turn being rejoined');
+      expect(
+        a.view.drainReading,
+        isFalse,
+        reason: 'turnOpen at the probe: a live turn being rejoined',
+      );
       expect(a.view.agentWorking, isTrue);
       expect(a.view.showWorkingRow, isTrue);
     });
 
-    test('+170 as revised by +182: a backgrounded shell keeps the '
-        'banner and the brake — but a FREE agent sits quiet in the box',
-        () async {
-      // The field tape (14:20:33, 'Let's do the bridge to app'): the
-      // agent launched `Bash sleep 300` run_in_background; the
-      // backgrounded frame armed the banner and `done clean` landed
-      // 31 ms later. The user watched the box stay DARK for the
-      // shell's whole 13 s run — 'even after more than 4 seconds the
-      // box did not reappear'. The banner row knew (its warrant set
-      // includes the agent's own shell); the box asked
-      // harnessBackgrounded, and that badge is the DETACH mark. The
-      // two rows must answer the same question: out-of-earshot work
-      // is agent status, and a per-message `settled` cannot veto it.
-      // +182 UNMARRIES the box from the banner: the field's newer word
-      // is that with the turn closed the agent is free to answer, and
-      // a spinning box performs a thinking that is not happening. The
-      // banner row keeps naming the shell; the box waits for a turn.
-      await withBridge();
-      // /health's real word while the shell runs: no turn, no queue,
-      // nothing unheard — but detached counts the agentTasks ledger
-      // (claude_bridge.mjs:2008), so the +140 retirement proof is
-      // FALSE and the banner lives for its receipt. Walks must script
-      // that truth or they pin a world the bridge never reports.
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'turnOpen': false,
-        'queued': false, 'missed': 0, 'detached': 1,
-      };
-      unawaited(a.runQuickCommand('sleep 300 in the background'));
-      await settle();
-      harness.emit(
-        const BridgeEvent.forTest(
-          'tool',
-          toolName: 'backgrounded',
-          detail: 'Bash sleep 300',
-        ),
-      );
-      await settle();
-      expect(a.view.outOfEarshotWork, isTrue);
-      harness.emit(BridgeEvent.forTest('done')); // the 31 ms farewell
-      await settle();
-      expect(a.view.bridgeBusy, isFalse, reason: 'the turn closed');
-      expect(a.view.harnessBackgrounded, isFalse,
-          reason: '+133 unchanged: the badge stays the detach mark');
-      expect(a.view.agentWorking, isFalse,
-          reason: '+182: the turn closed — no box while the agent is '
-              'free to answer');
-      expect(a.view.showWorkingRow, isFalse,
-          reason: 'the sleep keeps its name, age and clock in the '
-              'banner row — the box no longer rents itself out');
-      expect(a.view.agentBusy, isTrue,
-          reason: 'and the lit brake means a press kills the task '
-              '(+154, +182: the brake still answers to the shell)');
-      harness.emit(
-        const BridgeEvent.forTest(
-          'tool',
-          toolName: 'finished',
-          detail: 'Bash sleep 300',
-        ),
-      );
-      await settle();
-      // The receipt pays the promise. The field retired on the
-      // health proof (the 47 s moment); the in-walk vehicle is the
-      // next heard turn's pump — proof is proof whichever way the
-      // ledger learns the shell is gone. (The +133 walk ships
-      // receipts this same way.)
-      unawaited(a.runQuickCommand('status?'));
-      await settle();
-      harness.emit(
-        const BridgeEvent.forTest(
-          'tool',
-          toolName: 'finished',
-          detail: 'Bash sleep 300',
-        ),
-      );
-      await settle();
-      expect(a.backgroundedWork, isEmpty,
-          reason: 'the receipt retires the owed shell');
-      harness.emit(BridgeEvent.forTest('done'));
-      await settle();
-      expect(a.view.showWorkingRow, isFalse,
-          reason: 'and the box hushes with the turn that carried its '
-              'farewell');
-      expect(a.view.agentBusy, isFalse);
-    });
+    test(
+      '+170 as revised by +182: a backgrounded shell keeps the '
+      'banner and the brake — but a FREE agent sits quiet in the box',
+      () async {
+        // The field tape (14:20:33, 'Let's do the bridge to app'): the
+        // agent launched `Bash sleep 300` run_in_background; the
+        // backgrounded frame armed the banner and `done clean` landed
+        // 31 ms later. The user watched the box stay DARK for the
+        // shell's whole 13 s run — 'even after more than 4 seconds the
+        // box did not reappear'. The banner row knew (its warrant set
+        // includes the agent's own shell); the box asked
+        // harnessBackgrounded, and that badge is the DETACH mark. The
+        // two rows must answer the same question: out-of-earshot work
+        // is agent status, and a per-message `settled` cannot veto it.
+        // +182 UNMARRIES the box from the banner: the field's newer word
+        // is that with the turn closed the agent is free to answer, and
+        // a spinning box performs a thinking that is not happening. The
+        // banner row keeps naming the shell; the box waits for a turn.
+        await withBridge();
+        // /health's real word while the shell runs: no turn, no queue,
+        // nothing unheard — but detached counts the agentTasks ledger
+        // (claude_bridge.mjs:2008), so the +140 retirement proof is
+        // FALSE and the banner lives for its receipt. Walks must script
+        // that truth or they pin a world the bridge never reports.
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'turnOpen': false,
+          'queued': false,
+          'missed': 0,
+          'detached': 1,
+        };
+        unawaited(a.runQuickCommand('sleep 300 in the background'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'backgrounded',
+            detail: 'Bash sleep 300',
+          ),
+        );
+        await settle();
+        expect(a.view.outOfEarshotWork, isTrue);
+        harness.emit(BridgeEvent.forTest('done')); // the 31 ms farewell
+        await settle();
+        expect(a.view.bridgeBusy, isFalse, reason: 'the turn closed');
+        expect(
+          a.view.harnessBackgrounded,
+          isFalse,
+          reason: '+133 unchanged: the badge stays the detach mark',
+        );
+        expect(
+          a.view.agentWorking,
+          isFalse,
+          reason:
+              '+182: the turn closed — no box while the agent is '
+              'free to answer',
+        );
+        expect(
+          a.view.showWorkingRow,
+          isFalse,
+          reason:
+              'the sleep keeps its name, age and clock in the '
+              'banner row — the box no longer rents itself out',
+        );
+        expect(
+          a.view.agentBusy,
+          isTrue,
+          reason:
+              'and the lit brake means a press kills the task '
+              '(+154, +182: the brake still answers to the shell)',
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'Bash sleep 300',
+          ),
+        );
+        await settle();
+        // The receipt pays the promise. The field retired on the
+        // health proof (the 47 s moment); the in-walk vehicle is the
+        // next heard turn's pump — proof is proof whichever way the
+        // ledger learns the shell is gone. (The +133 walk ships
+        // receipts this same way.)
+        unawaited(a.runQuickCommand('status?'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'finished',
+            detail: 'Bash sleep 300',
+          ),
+        );
+        await settle();
+        expect(
+          a.backgroundedWork,
+          isEmpty,
+          reason: 'the receipt retires the owed shell',
+        );
+        harness.emit(BridgeEvent.forTest('done'));
+        await settle();
+        expect(
+          a.view.showWorkingRow,
+          isFalse,
+          reason:
+              'and the box hushes with the turn that carried its '
+              'farewell',
+        );
+        expect(a.view.agentBusy, isFalse);
+      },
+    );
 
     test('+170: a pickup marker voids the previous turn\'s settled — '
         'a queued birth starts from zero', () async {
@@ -576,11 +649,18 @@ void main() {
         ),
       );
       await settle();
-      expect(a.view.token.settled, isFalse,
-          reason: 'the marker is a turn\'s birth, not a relabel');
-      expect(a.view.showWorkingRow, isTrue,
-          reason: 'the queued turn owns the box from the pickup, '
-              'not from whenever its first tally happens to relay');
+      expect(
+        a.view.token.settled,
+        isFalse,
+        reason: 'the marker is a turn\'s birth, not a relabel',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason:
+            'the queued turn owns the box from the pickup, '
+            'not from whenever its first tally happens to relay',
+      );
     });
 
     test(
