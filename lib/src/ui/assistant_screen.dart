@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 
@@ -67,16 +68,29 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// the only reason +190 could not animate: its guard consulted the
   /// scrolling notifier — true for the glide's own DrivenScrollActivity
   /// — so every re-pin saw 'scroll in progress', skipped itself, and the
-  /// glide aimed stale forever. The guard is _userTouch now, and the
-  /// chase re-targets every frame, so a mid-glide touch or scroll-away
-  /// updates the verdict at once (the hand outranks the pin, and the
-  /// hand cancels the chase). Without this, every growth — a streaming
-  /// section's new line, a file slip's relabel, a receipt landing —
-  /// moved the whole channel up by a LINE in one teleporting jumpTo
-  /// (field: 'the old segment gets pushed up as if it's getting scrolled
-  /// up, and that scroll is not very smooth'). The push stays mandatory
-  /// and the distance stays honest; only the step becomes a glide.
+  /// glide aimed stale forever. The guard is _userTouch now, so a
+  /// mid-glide touch or scroll-away updates the verdict at once (the
+  /// hand outranks the pin, and the hand cancels the chase). Without
+  /// this, every growth — a streaming section's new line, a file slip's
+  /// relabel, a receipt landing — moved the whole channel up by a LINE
+  /// in one teleporting jumpTo (field: 'the old segment gets pushed up
+  /// as if it's getting scrolled up, and that scroll is not very
+  /// smooth'). The push stays mandatory and the distance stays honest;
+  /// only the step becomes a glide. The first shape of the chase WAS an
+  /// animateTo re-targeted every frame, and the tape executed it: the
+  /// delta froze at exactly +90, cont never moving. A driven activity
+  /// counts elapsed time from its ticker's FIRST pulse, so replacing it
+  /// every frame before its next pulse restarts the glide at zero
+  /// progress forever — an animateTo re-targeted per tick is a glide
+  /// that can never move. The chase therefore carries its own easing:
+  /// each frame it jumps over a fraction of the remaining gap, sized by
+  /// real elapsed time, so re-targeting is just… the next frame.
   bool _pinGliding = false;
+
+  /// When the chase last stepped — the easing is time-sized, so a
+  /// janky 25 fps frame and a smooth 60 fps one move the same
+  /// distance per millisecond.
+  int _lastPinUs = 0;
 
   /// +192: THE STICKY BOTTOM. The follow no longer waits for chat
   /// events: every frame, if the view was resting at the tail (within
@@ -126,30 +140,35 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (delta > 160) {
           pos.jumpTo(pos.maxScrollExtent);
           _pinGliding = false;
+          _lastPinUs = 0;
         } else if (delta > 0.5) {
-          // Re-targeted every frame while the tail grows underneath
-          // us: the gap decays toward zero as fast as the entrance
-          // opens, so the newest bubble rides the bottom edge of the
-          // screen the whole way in.
-          unawaited(
-            pos.animateTo(
-              pos.maxScrollExtent,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-            ),
-          );
+          // Cover ~1 - e^(-dt/65ms) of the remaining gap this frame:
+          // a 90 px arrival lands inside a handful of visible frames,
+          // a tail that keeps opening stays a constant short hop
+          // ahead, and the time base means a smooth 120 fps device and
+          // a busy 25 fps one glide the same distance per
+          // millisecond. Re-targeting is just the next frame — no
+          // driven activity to restart at zero forever.
+          final now = DateTime.now().microsecondsSinceEpoch;
+          final dtMs = _lastPinUs == 0 ? 16.0 : (now - _lastPinUs) / 1000.0;
+          _lastPinUs = now;
+          var step = delta * (1 - exp(-dtMs / 65));
+          if (step > delta) step = delta;
+          if (step < 1) step = 1; // never stall the landing on tiny dt
+          pos.jumpTo(pos.pixels + step);
           _pinGliding = true;
         } else {
           _pinGliding = false; // landed (or nothing ever opened)
+          _lastPinUs = 0;
         }
       } else {
         if (_pinGliding) {
           // The hand outranks the pin: a touch (or a scroll-away)
-          // mid-glide stops the chase dead, wherever the finger is.
-          // (jumpTo to the SAME pixels is the public way to retire a
-          // driven activity — goIdle itself is @protected.)
-          pos.jumpTo(pos.pixels);
+          // mid-chase stops it where it stands. The chase owns no
+          // driven activity — nothing to quench, only the verdict
+          // that it moves no more.
           _pinGliding = false;
+          _lastPinUs = 0;
         }
       }
       if (!_stick) {

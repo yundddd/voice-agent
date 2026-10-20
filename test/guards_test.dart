@@ -252,22 +252,33 @@ void main() {
     // pushed up as if scrolled — and that scroll is not smooth.' It
     // was not a scroll at all: a per-frame jumpTo moved the channel up
     // by a whole line, instantly, at every streaming arrival. The pin
-    // now rides a re-targeted animateTo for anything near (long
-    // distances still snap — nobody wants to watch a 3000-px commute).
+    // now eases anything near (long distances still snap — nobody
+    // wants to watch a 3000-px commute). The chase is self-owned: the
+    // first shape re-targeted an animateTo every frame, and the tape
+    // showed why that can never move — a driven activity counts
+    // elapsed from its FIRST pulse, so replacing it each tick restarts
+    // the glide at zero forever (pin +90, frozen, cont unmoving).
     final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
-    test('the pinned branch issues an eased animateTo, not a bare jump', () {
-      expect(ui, contains('pos.animateTo('), reason: 'the chase exists');
-      expect(ui, contains('Curves.easeOutCubic'));
+    test('the pinned branch eases its own chase, time-sized', () {
       expect(
-        RegExp(
-          r'animateTo\([\s\S]{0,120}Duration\(milliseconds: \d+\)',
-        ).hasMatch(ui),
-        isTrue,
-        reason: 'a bounded glide — an unbounded one is a runaway',
+        ui,
+        contains('pos.jumpTo(pos.pixels + '),
+        reason: 'the chase steps a fraction of the remaining gap',
       );
-      // The hand must be able to kill it (goIdle is @protected; a
-      // zero-distance jump is the public retirement).
-      expect(ui, contains('pos.jumpTo(pos.pixels);'));
+      expect(
+        ui,
+        contains('exp(-dtMs /'),
+        reason:
+            'the fraction is sized by elapsed time, not frames — '
+            '25 fps jank and 120 fps silk must glide the same',
+      );
+      expect(
+        ui,
+        isNot(contains('pos.animateTo(')),
+        reason:
+            'near-pins must never hand the viewport to a driven '
+            'activity: the elapsed-zero restart is the frozen +90',
+      );
     });
     test('the +190 trap stays dead: no isScrollingNotifier anywhere', () {
       // +190 died because its guard skipped re-pins while the view was
