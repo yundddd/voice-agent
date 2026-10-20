@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/assistant.dart';
 import 'package:voice_agent/src/assistant/chat_store.dart';
 import 'package:voice_agent/src/bridge/client.dart';
+import 'package:voice_agent/src/bridge/prefs.dart';
 import 'package:voice_agent/src/common/sinks.dart';
 import 'package:voice_agent/src/platform/audio_output.dart';
 import 'package:voice_agent/src/ui/bridge_screen.dart';
@@ -461,6 +462,14 @@ void modelPickerTests() {
       expect(why, contains('not in --models'));
     });
 
+    test('+218 prefs: the lastModels map round-trips; legacy json starts '
+        'empty', () {
+      final p = BridgePrefs()..lastModels = {'claude': 'opus'};
+      final back = BridgePrefs.fromJson(jsonDecode(jsonEncode(p.toJson())));
+      expect(back.lastModels, {'claude': 'opus'});
+      expect(BridgePrefs.fromJson({}).lastModels, isEmpty);
+    });
+
     test('an unreachable bridge is a null menu and a reason for picks',
         () async {
       await server.close(force: true);
@@ -510,6 +519,37 @@ void modelPickerTests() {
       harness.setModelError = 'not in --models: pi';
       expect(await a.setBridgeModel('pi'), contains('not in --models'));
       expect((await a.bridgeHealth())!['model'], 'opus');
+      expect(a.bridgeLastModel, 'opus',
+          reason: 'a REFUSED pick does not rewrite the memory');
+    });
+
+    test('+218 memory is per era: claude remembers its alias, opencode '
+        'its provider path', () async {
+      harness.healthState = {
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'model': 'default',
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      await a.setBridgeModel('opus');
+      expect(a.bridgeLastModel, 'opus');
+      // Flip eras: the opencode thread has NO memory yet — last
+      // time's claude alias must not haunt it as a suggestion.
+      harness.healthState = <String, Object?>{
+        ...harness.healthState!, 'harness': 'opencode', 'model': null,
+      };
+      await a.setBridgeHarness('opencode');
+      await settle();
+      expect(a.bridgeLastModel, isNull);
+      await a.setBridgeModel('acme/beta');
+      expect(a.bridgeLastModel, 'acme/beta');
+      // Flip BACK: the claude memory is where it was left.
+      harness.healthState = {
+        ...harness.healthState!, 'harness': 'claude',
+      };
+      await a.setBridgeHarness('claude');
+      await settle();
+      expect(a.bridgeLastModel, 'opus');
     });
   });
 
@@ -580,6 +620,50 @@ void modelPickerTests() {
       final tune = find.widgetWithIcon(IconButton, Icons.tune);
       expect(tester.widget<IconButton>(tune).onPressed, isNull);
     });
+ 
+    testWidgets('+218: an amnesiac bridge shows the remembered pick — '
+        'row and sheet both', (tester) async {
+      harness.healthState = <String, Object?>{
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/x', 'model': null, // the bridge has no current
+      };
+      harness.modelSetsHealth = false; // accepts picks, forgets on restart
+      harness.modelsMenu = <String, Object?>{
+        'ok': true, 'harness': 'claude', 'current': null,
+        'models': [
+          {'id': 'default', 'label': 'default'},
+          {'id': 'opus', 'label': 'opus'},
+          {'id': 'acme/beta', 'label': 'Acme Beta'},
+          {'id': 'acme/gamma', 'label': 'Acme Gamma'},
+          {'id': 'other/delta', 'label': 'Other Delta'},
+        ],
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await tester.pump();
+      await a.setBridgeModel('acme/beta'); // the memory is filed
+      // A fresh screen state re-reads /health: model null, but the
+      // app remembers — the row wears it labelled as memory, not truth.
+      await tester.pumpWidget(
+        MaterialApp(home: BridgeScreen(key: UniqueKey(), assistant: a)),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('acme/beta (last used)'), findsOneWidget);
+      final tune = find.widgetWithIcon(IconButton, Icons.tune);
+      await tester.tap(tune);
+      await tester.pumpAndSettle();
+      // Hierarchical now (acme + other): the provider shelf holding
+      // the remembered model wears the HISTORY glyph, and the sheet's
+      // caption says 'last used', not 'current'.
+      expect(find.text('last used: acme/beta'), findsOneWidget);
+      expect(find.byIcon(Icons.history), findsOneWidget); // on 'acme'
+      await tester.tap(find.text('acme'));
+      await tester.pumpAndSettle();
+      // Inside the shelf, the remembered model keeps the history mark.
+      expect(find.widgetWithIcon(ListTile, Icons.history), findsOneWidget);
+      await tester.tap(find.text('Acme Gamma'));
+      await tester.pumpAndSettle();
+      expect(harness.modelPicks.last, 'acme/gamma');
+    });
   });
 }
-

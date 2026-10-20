@@ -640,8 +640,8 @@ switch to the other one — each harness keeps its own conversation, so
 flipping is a step sideways, and flipping back resumes. The switch
 rests while a turn is open (a flip is an honest `/new` for whoever holds
 the seat) and lies dead on pre-switch bridges.
-**The model picker (+216):** the Bridge screen's Model row shows the
-current model (from `/health`) and opens a menu (`GET /models`) —
+**The model picker (+216, +218):** the Bridge screen's Model row shows
+the current model (from `/health`) and opens a menu (`GET /models`) —
 claude's list is the operator's `--model(s)` config (the CLI has no
 list control; verified against 2.1.296), opencode's is the service's
 own catalog for the working directory. A pick is one POST (`/model`)
@@ -650,6 +650,16 @@ answered in whichever dialect: a `set_model` control frame to the CLI
 or the session-model API to the service (parked into session creation
 if no session exists yet). Opencode's current goes PROVEN when a step
 names its model. Bridges pre-+216 say so and the switch lies dead.
+The sheet is HIERARCHICAL when the catalog earns it (`+218`): two or
+more providers means you browse PROVIDERS first, models under the one
+you tap — a checked shelf is the one holding the current model, a
+back arrow retreats; a single-provider or claude menu stays flat (no
+gratuitous hop). And the app REMEMBERS: every accepted pick is filed
+in prefs per harness (`lastModels`), so after a bridge restart —
+before claude re-spawns its `--model` or an opencode step names
+itself — the row wears `'acme/beta (last used)'`, the sheet captions
+`last used:` and marks the remembered model (and its provider shelf)
+with a history glyph. One tap puts it back.
 **The split transcript (+213):** every bubble now carries the harness
 era it was born under, and the chat channel renders ONE THREAD — the
 current harness's bubbles plus the un-era'd prologue (the offline demo,

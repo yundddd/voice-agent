@@ -103,8 +103,11 @@ class FakeHarness implements HarnessGateway {
   @override
   int Function()? journalPort;
 
-  /// What healthInfo answers (null = unreachable).
-  Map<String, Object>? healthState = {'ok': true, 'claudeUp': true};
+  /// What healthInfo answers (null = unreachable). JSON nulls ride
+  /// the seam (a real /health carries 'model': null), so the scripted
+  /// map is Object?-valued and healthInfo() casts at the edge — the
+  /// same lazy view a decoded wire line is.
+  Map<String, Object?>? healthState = {'ok': true, 'claudeUp': true};
 
   /// The live talk() view; frames pushed with [emit].
   StreamController<BridgeEvent>? view;
@@ -220,8 +223,8 @@ class FakeHarness implements HarnessGateway {
   Future<Map<String, Object>?> healthInfo() async {
     final h = healthState;
     if (h == null) return null;
-    if (h.containsKey('turnOpen')) return h;
-    return {...h, 'turnOpen': turnOpenOnServer};
+    final m = h.containsKey('turnOpen') ? h : {...h, 'turnOpen': turnOpenOnServer};
+    return m.cast<String, Object>(); // nulls ride, like the real JSON
   }
 
   @override
@@ -260,18 +263,23 @@ class FakeHarness implements HarnessGateway {
   /// with setModelError. A successful set also moves healthState's
   /// 'model' — the fake behaves like a bridge whose /health truth
   /// follows the pick.
-  Map<String, Object>? modelsMenu;
+  Map<String, Object?>? modelsMenu;
   String? setModelError;
   final List<String> modelPicks = [];
 
+  /// False models a bridge that ACCEPTS the pick but keeps no current
+  /// (a restart's amnesia): the pick lands, /health still says null.
+  bool modelSetsHealth = true;
+
   @override
-  Future<Map<String, Object>?> models() async => modelsMenu;
+  Future<Map<String, Object>?> models() async =>
+      modelsMenu?.cast<String, Object>();
 
   @override
   Future<String?> setModel(String id) async {
     modelPicks.add(id);
-    if (setModelError == null && healthState != null) {
-      healthState = {...healthState!, 'model': id};
+    if (setModelError == null && modelSetsHealth && healthState != null) {
+      healthState = {...healthState!, 'model': id as Object?};
     }
     return setModelError;
   }

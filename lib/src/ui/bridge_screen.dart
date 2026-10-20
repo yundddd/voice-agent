@@ -363,6 +363,13 @@ class _BridgeScreenState extends State<BridgeScreen> {
                           : _health!['model'] is String &&
                                     _health!['model'] != ''
                                 ? _health!['model'] as String
+                                : a.bridgeLastModel != null
+                                // +218: the bridge has no current YET
+                                // (a restart, or opencode before its
+                                // first step names itself) — the app's
+                                // own memory of this harness's last
+                                // pick wears the row, honestly labelled.
+                                ? '${a.bridgeLastModel} (last used)'
                                 : 'the default (no step has named one '
                                       'yet)',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -677,6 +684,7 @@ class _ModelPickerState extends State<_ModelPicker> {
   Map<String, Object>? _menu;
   bool _busy = true;
   String? _why;
+  String? _provider; // drilled-into level (+218); null = the top
 
   @override
   void initState() {
@@ -698,13 +706,55 @@ class _ModelPickerState extends State<_ModelPicker> {
     });
   }
 
+  /// Models grouped by the provider its id names (`provider/model`;
+  /// claude's bare aliases land under ''). The opencode service's
+  /// catalog runs to dozens of models across several providers — a
+  /// flat list turned the sheet into archaeology, so the picker shows
+  /// PROVIDERS first and only the tapped one's models. A menu with
+  /// fewer than two groups (claude's alias list, one provider) never
+  /// asks for a hop: it stays flat.
+  Map<String, List<Map<String, Object?>>> get _byProvider {
+    final out = <String, List<Map<String, Object?>>>{};
+    for (final m in _models) {
+      final id = '${m['id']}';
+      final slash = id.indexOf('/');
+      out
+          .putIfAbsent(slash < 0 ? '' : id.substring(0, slash), () => [])
+          .add(m);
+    }
+    return out;
+  }
+
+  List<Map<String, Object?>> get _models =>
+      ((_menu?['models'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((m) => m.cast<String, Object?>())
+          .toList();
+
+  bool get _hierarchical {
+    final named = _byProvider.keys.where((k) => k.isNotEmpty);
+    return named.length >= 2;
+  }
+
+  String _title(String id, String label) => label.isEmpty ? id : label;
+
+  /// +218: the app's own memory for THIS harness — the sheet badges
+  /// what was last used even when the bridge has no current to show
+  /// (a restart forgets a claude --model that was never persisted;
+  /// opencode names its model only once a step runs).
+  String? get _last => widget.assistant.bridgeLastModel;
+
   @override
   Widget build(BuildContext context) {
-    final models = ((_menu?['models'] as List?) ?? const [])
-        .cast<Object>()
-        .whereType<Map>()
-        .toList();
     final current = _menu?['current'];
+    final hasCurrent = current is String && current.isNotEmpty;
+    final last = _last;
+    final providers = _byProvider.keys.toList()..sort();
+    final drilled = _hierarchical && _provider != null;
+    final shown = <Map<String, Object?>>[
+      if (drilled) ...(_byProvider[_provider!] ?? const []),
+      if (!drilled && !_hierarchical) ..._models,
+    ];
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -714,10 +764,17 @@ class _ModelPickerState extends State<_ModelPicker> {
           children: [
             Row(
               children: [
-                Text(
-                  'Model',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                if (drilled)
+                  IconButton(
+                    tooltip: 'All providers',
+                    onPressed: () => setState(() => _provider = null),
+                    icon: const Icon(Icons.arrow_back),
+                  )
+                else
+                  Text(
+                    'Model',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 const SizedBox(width: 10),
                 if (_busy)
                   const SizedBox(
@@ -725,10 +782,21 @@ class _ModelPickerState extends State<_ModelPicker> {
                     height: 14,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                else if (current is String && current.isNotEmpty)
+                else if (hasCurrent)
                   Flexible(
                     child: Text(
                       'current: $current',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  )
+                else if (last != null && last.isNotEmpty)
+                  Flexible(
+                    child: Text(
+                      'last used: $last',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontFamily: 'monospace',
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -741,7 +809,50 @@ class _ModelPickerState extends State<_ModelPicker> {
             const SizedBox(height: 8),
             if (_why != null)
               Text(_why!, style: Theme.of(context).textTheme.bodySmall)
-            else if (!models.any(((_) => true)))
+            else if (_hierarchical && !drilled)
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: providers.length,
+                  itemBuilder: (context, i) {
+                    final p = providers[i];
+                    final models = _byProvider[p]!;
+                    final holdsCurrent = hasCurrent &&
+                        (p.isEmpty
+                            ? !current.contains('/')
+                            : current.startsWith('$p/'));
+                    final holdsLast = !holdsCurrent &&
+                        last != null &&
+                        last.isNotEmpty &&
+                        (p.isEmpty
+                            ? !last.contains('/')
+                            : last.startsWith('$p/'));
+                    return ListTile(
+                      dense: true,
+                      // A provider row names its shelf, not a model:
+                      // the check rides here when the CURRENT model
+                      // lives in this provider, so the answer to
+                      // 'what am I on?' is one glance at the top list.
+                      title: Text(p.isEmpty ? 'Models' : p),
+                      subtitle: Text(
+                        '${models.length} model'
+                        '${models.length == 1 ? '' : 's'}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      trailing: holdsCurrent
+                          ? const Icon(Icons.check)
+                          : holdsLast
+                          // The shelf that holds last time's model:
+                          // one tap back to it after a restart wiped
+                          // the bridge's memory but not the app's.
+                          ? const Icon(Icons.history)
+                          : null,
+                      onTap: () => setState(() => _provider = p),
+                    );
+                  },
+                ),
+              )
+            else if (!shown.any(((_) => true)))
               Text(
                 'the menu came back empty — nothing to pick',
                 style: Theme.of(context).textTheme.bodySmall,
@@ -750,11 +861,11 @@ class _ModelPickerState extends State<_ModelPicker> {
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: models.length,
+                  itemCount: shown.length,
                   itemBuilder: (context, i) {
-                    final m = models[i].cast<String, Object?>();
+                    final m = shown[i];
                     final id = '${m['id']}';
-                    final label = '${m['label']}';
+                    final label = _title(id, '${m['label']}');
                     return ListTile(
                       dense: true,
                       title: Text(label),
@@ -767,6 +878,8 @@ class _ModelPickerState extends State<_ModelPicker> {
                               )),
                       trailing: id == current
                           ? const Icon(Icons.check)
+                          : id == last
+                          ? const Icon(Icons.history)
                           : null,
                       onTap: () => Navigator.of(context).pop(id),
                     );

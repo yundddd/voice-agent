@@ -27,9 +27,20 @@ class BridgePrefs {
     this.tts = true,
     this.mode = 'conversation',
     this.eraBackfilled = false,
-  });
+    Map<String, String>? lastModels,
+  }) : lastModels = lastModels ?? {};
   String url, token;
   bool voice;
+
+  /// +218: the model EACH harness last answered with, as the app
+  /// remembers it ('claude' → 'opus', 'opencode' →
+  /// 'local/gemma-3'). The bridge reports a CURRENT; the app keeps a
+  /// MEMORY: after a bridge restart (or before opencode's first step
+  /// names itself) the row and the picker still know what you were
+  /// using, the sheet can badge it, and one tap puts it back. Keyed by
+  /// harness because eras keep their own habits — last time's claude
+  /// model is not this time's opencode suggestion.
+  Map<String, String> lastModels;
 
   /// +214: the one-time chat migration's mark. The first /health that
   /// names an era files the harness of every UN-ERA'D legacy bubble
@@ -71,6 +82,7 @@ class BridgePrefs {
     'tts': tts,
     'mode': mode,
     'eraBackfilled': eraBackfilled,
+    'lastModels': {for (final e in lastModels.entries) e.key: e.value},
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
@@ -82,6 +94,11 @@ class BridgePrefs {
     // edit) falls back to the factory default.
     mode: j['mode'] == 'pushToTalk' ? 'pushToTalk' : 'conversation',
     eraBackfilled: j['eraBackfilled'] == true,
+    lastModels: {
+      for (final e in (j['lastModels'] as Map? ?? const {}).entries)
+        if (e.key is String && e.value is String)
+          e.key as String: e.value as String,
+    },
   );
 }
 

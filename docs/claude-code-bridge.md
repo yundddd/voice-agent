@@ -274,7 +274,12 @@ shared machinery, not a second implementation.
   API (parked into the session's creation if none exists). `/health`
   carries `model`; opencode's goes proven when `session.step.started`
   names the model it runs. Off-menu claude ids are refused at the
-  bridge's own gate.
+  bridge's own gate. +218, phone side: the sheet groups by PROVIDER
+  first when the catalog spans two or more (claude's bare-alias menu
+  stays flat), and every accepted pick is remembered in app prefs
+  under its harness — after a bridge restart the row and sheet show
+  the remembered model, labelled as memory, until /health names a
+  current again.
 - **Per-harness memory.** Each harness keeps its own resume pointer
   (`.claude_bridge_session` / `.opencode_bridge_session` in the work
   dir): flipping away and back resumes each conversation exactly where

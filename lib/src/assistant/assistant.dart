@@ -1275,14 +1275,29 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Apply a model pick (POST /model) and AWAIT the /health re-read:
   /// the row's current-model label is the truth the moment this call
-  /// returns, not eventually.
+  /// returns, not eventually. +218: the pick is also REMEMBERED under
+  /// the current harness — the app's own memory outlives a bridge
+  /// restart, where the bridge's word does not (see BridgePrefs).
   Future<String?> setBridgeModel(String id) async {
     final g = _gateway;
     if (g == null) return 'bridge not configured';
     final err = await g.setModel(id);
-    if (err == null) await _refreshSession();
+    if (err == null) {
+      final era = _bridgeHarness;
+      if (era != null) {
+        _bridgePrefs.lastModels = {..._bridgePrefs.lastModels, era: id};
+        await _saveBridgePrefs();
+      }
+      await _refreshSession();
+    }
     return err;
   }
+
+  /// The model this harness last answered with, as the app remembers
+  /// (null = never picked, or no harness known yet). The picker's
+  /// badge and the row's fallback label both defer to the bridge's
+  /// CURRENT whenever /health has one.
+  String? get bridgeLastModel => _bridgePrefs.lastModels[_bridgeHarness ?? ''];
 
   /// The grey queue bubble's tap: cut the in-flight turn so the parked
   /// prompt starts NOW. Just a /stop — NOT the Stop chip's full
