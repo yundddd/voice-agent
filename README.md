@@ -808,7 +808,11 @@ sed -i '' 's/^version: .*/version: 0.1.0+N/' pubspec.yaml   # macOS sed wants th
                                                         # Android refuses to
                                                         # update-install over a lower
                                                         # versionCode
-flutter build apk --release --split-per-abi
+# --dart-define stamps the app's OWN journal line ('app start: build
+# 0.1.0+N …'), so a field tape can say which binary it rode. Omit it
+# and the tape reads 'build UNSTAMPED' — an honest tell, not a guess.
+flutter build apk --release --split-per-abi \
+  --dart-define=APP_VERSION=0.1.0+N
 # → build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  (the phone build, ~46 MB)
 ```
 

@@ -2704,8 +2704,16 @@ class VoiceAssistant extends ChangeNotifier {
       final carried = j.seq > 0
           ? ' — carried over ${j.seq} events across the process gap'
           : '';
+      // +260: the tape must name its own author. The field round that
+      // this volley's law needed was read on an UNKNOWN build — every
+      // 'where is my ear let go line?' question could only be answered
+      // by inferring behavior backwards. No new dependency: the build
+      // command stamps it (README), and an unstamped build SAYS SO
+      // rather than lying with a stale constant.
+      final stamp = const String.fromEnvironment('APP_VERSION');
       await j.log(
-        'app start: journal ${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
+        'app start: build ${stamp.isEmpty ? 'UNSTAMPED' : stamp}: journal '
+        '${_eventsPort > 0 ? 'on :$_eventsPort' : 'BIND '
                   'FAILED'} (${await _ifaceIps()})$carried',
       );
       // PUSH transport: the journal rides an ordinary outbound POST /applog
