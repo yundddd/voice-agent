@@ -152,8 +152,17 @@ class TtsVoice {
   }
 }
 
-const _k2fsaTts =
-    'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
+/// Our model packs (Apache-2.0 provenance: the k2-fsa tts-models
+/// release, the TiTL students from MithrilMan's Hugging Face weights,
+/// Kokoro's own lexicon text). Re-hosted as zips deliberately: the
+/// k2-fsa Kokoro original ships .tar.bz2, whose pure-Dart decode costs
+/// ~21 s and ~900 MB on a desktop CPU (and OOM-kills mid-range phones)
+/// to save 13% bytes that quantized weights never pay back anyway.
+/// The zip stores binaries rather than deflating them: extraction is
+/// then file-copy speed (0.6 s for the whole 371 MB pack here), and
+/// peak RAM is one member instead of two full archives.
+const _ourPacks =
+    'https://github.com/yundddd/voice-agent/releases/download/models-v1';
 
 /// Voices on offer, in display order. The students (TITL) are the
 /// default and download on first run: 9 MB per style versus Kokoro's
@@ -196,7 +205,7 @@ const ttsVoices = <TtsVoice>[
     packs: [
       ModelPack(
         label: 'voice: Kokoro v1.0',
-        url: '$_k2fsaTts/kokoro-multi-lang-v1_0.tar.bz2',
+        url: '$_ourPacks/kokoro-multi-lang-v1_0.zip',
         dirName: 'kokoro-multi-lang-v1_0',
         markerFile: 'model.onnx',
       ),
