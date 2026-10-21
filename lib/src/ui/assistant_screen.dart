@@ -113,7 +113,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   // old token, so a stale leg can only ever die quietly, never steer.
   final ValueNotifier<double> _paintX = ValueNotifier<double>(0);
   late final AnimationController _leg; // the leg clock (one ticker)
-  Animation<double>? _legAnim; // the in-flight leg, if any
   int _legGen = 0; // bumped by every _beginLeg / re-grab
   double _exitDir = 1; // committed exit side: +1 right (walked OLDER)
   bool _flipArmed = false; // awaiting the receipt beyond the edge
@@ -138,7 +137,6 @@ class _AssistantScreenState extends State<AssistantScreen>
     _legGen++;
     final gen = _legGen;
     _leg.stop();
-    _legAnim = null;
     if (d == Duration.zero) {
       _paintX.value = to;
       _dragDx = to;
@@ -153,7 +151,6 @@ class _AssistantScreenState extends State<AssistantScreen>
       _paintX.value = anim.value;
       _dragDx = anim.value;
     });
-    _legAnim = anim;
     _leg
       ..duration = d
       ..forward(from: 0);
@@ -182,10 +179,22 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   /// +230: the session's own wash — see [AssistantScreenSupport].
-  static List<Color> _sessionTint(int tab) => [
-    AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.10),
-    AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.02),
+  static List<Color> _sessionTint(int hue) => [
+    AssistantScreenSupport.sessionTint(hue).withValues(alpha: 0.10),
+    AssistantScreenSupport.sessionTint(hue).withValues(alpha: 0.02),
   ];
+
+  /// +271: the CURRENT tab's hue from the projection (the tab list is
+  /// already carried there; falling back to the legacy law keeps a
+  /// no-tabs render honest).
+  int _hueOf(AssistantView v) => v.tabs.isEmpty
+      ? 0
+      : v.tabs
+            .firstWhere(
+              (t) => t.index == v.tabIndex,
+              orElse: () => v.tabs.first,
+            )
+            .hue;
 
   void _onTabDragUpdate(DragUpdateDetails d) {
     if (!_dragLive) {
@@ -198,7 +207,6 @@ class _AssistantScreenState extends State<AssistantScreen>
       });
       _legGen++; // whatever leg was running is dead
       _leg.stop();
-      _legAnim = null;
       _dragDx = _paintX.value;
     }
     _dragDx += d.delta.dx;
@@ -284,7 +292,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   ) {
     final scheme = Theme.of(context).colorScheme;
     final active = t.index == v.tabIndex;
-    final tint = AssistantScreenSupport.sessionTint(t.index);
+    final tint = AssistantScreenSupport.sessionTint(t.hue);
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: Tooltip(
@@ -1206,7 +1214,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                       gradient: LinearGradient(
                                         begin: Alignment.topLeft,
                                         end: Alignment.bottomRight,
-                                        colors: _sessionTint(v.tabIndex),
+                                        colors: _sessionTint(_hueOf(v)),
                                       ),
                                     ),
                                     child: Padding(
@@ -1518,8 +1526,9 @@ String hintFor({
   },
 };
 
-/// +230: the session's own wash — a barely-there hue per tab
-/// (golden-angle steps so neighbours never collide), painted as a
+/// +230: the session's own wash — a barely-there hue per session
+/// (+271: random at creation, maximally distant from its siblings,
+/// so neighbours never collide), painted as a
 /// top-left → bottom-right gradient behind the bubbles, worn as the
 /// pill's inactive tint, and glowed from the edge mid-drag. Subtle
 /// at rest, unmistakable in motion: a different session is visibly a
@@ -1527,8 +1536,11 @@ String hintFor({
 class AssistantScreenSupport {
   const AssistantScreenSupport._();
 
-  static Color sessionTint(int tab) {
-    final hue = ((tab * 137) % 360).toDouble();
-    return HSLColor.fromAHSL(1.0, hue, 0.45, 0.55).toColor();
-  }
+  /// +271: the parameter is a HUE (the session's own, random at
+  /// creation), not a tab index — deleting a neighbour used to
+  /// recolour every session to its right, which is not how faces
+  /// work. The legacy golden-angle law survives only as the
+  /// pre-+271 fallback (SessionTab.hueOrDefault).
+  static Color sessionTint(int hue) =>
+      HSLColor.fromAHSL(1.0, hue.toDouble(), 0.45, 0.55).toColor();
 }

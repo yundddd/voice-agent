@@ -17,18 +17,25 @@
 ///    waveform, seen — you watch yourself being heard, which is also
 ///    the honest mic-is-really-open proof the old FAB never gave.
 ///
-///  * THE GESTURE. The two release slides are wide zones, not pills: a
-///    full-width band along the top edge names UP = interrupt, a
-///    full-height band along the right edge names RIGHT = discard.
+///  * THE GESTURE (+272, Tim's brief replacing the flat bands): two
+///    CONES of light open from the finger itself. Straight UP the
+///    INTERRUPT cone — amber beams spreading ±30° from the press
+///    point; to the RIGHT the DISCARD cone — red beams on the level.
 ///    They fade in the moment a hold starts (the gestures only exist
-///    while you are holding) and light solid once the slide is armed —
-///    the same PttHold predicate classifies both, so the picture can
-///    never disagree with what releasing now would do.
+///    while you are holding), widen and brighten as the finger leans
+///    toward a direction, and IGNITE when the slide arms — and the
+///    arm state is read from the same PttHold predicate the release
+///    will consult, so the picture can never disagree with what
+///    releasing now would do. The words name themselves inside each
+///    cone: INTERRUPT, DISCARD — a direction you can see, not a
+///    legend you have to remember.
 ///
 /// Ripples and the field keep painting from their own ticker, but the
 /// state they paint is the projected view (ptt.holdActive/slide/
 /// micLevel) — the widget owns animation, never truth.
 library;
+
+import 'dart:math' show cos, sin;
 
 import 'package:flutter/material.dart';
 
@@ -194,6 +201,16 @@ class _TalkSurfaceState extends State<TalkSurface>
 
   Widget _body(BuildContext context, PttGuide ptt, ColorScheme scheme) {
     final armed = ptt.holdActive ? ptt.slide : PttSlide.none;
+    // The lean the state machine reports (quantised, clamped at
+    // leanMaxPx=72 by PttHold.move). The arm threshold is 48 — the
+    // progress mapping below stretches 8→72 px to 0→1 so the cone is
+    // FULL at the moment the slide arms (the exact threshold number
+    // lives on PttHold; this only has to read right, the ARMED truth
+    // never comes from here: it rides ptt.slide, the release's own
+    // predicate).
+    final drag = ptt.holdActive ? ptt.drag : Offset.zero;
+    final upProg = ((-drag.dy - 8) / 64).clamp(0.0, 1.0);
+    final rightProg = ((drag.dx - 8) / 64).clamp(0.0, 1.0);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -206,7 +223,7 @@ class _TalkSurfaceState extends State<TalkSurface>
           ),
         ),
         // The phase glyph: the press answer, dimmed under a live hold
-        // (the waves and bands are the conversation now, not the icon).
+        // (the waves and cones are the conversation now, not the icon).
         Center(
           child: Icon(
             widget.icon,
@@ -216,102 +233,213 @@ class _TalkSurfaceState extends State<TalkSurface>
                 : widget.color,
           ),
         ),
-        // ── UP = interrupt: the wide band along the top edge ──
-        Positioned(
-          left: 0,
-          right: 0,
-          top: 0,
-          child: _slideBand(
-            shown: ptt.holdActive,
-            armed: armed == PttSlide.up,
-            armedColor: Colors.orange.shade700,
-            scheme: scheme,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.north, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  'Release to interrupt',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-              ],
-            ),
-          ),
+        // ── UP = INTERRUPT: the amber cone, apex at the finger ──
+        _cone(
+          context,
+          shown: ptt.holdActive,
+          prog: upProg,
+          armed: armed == PttSlide.up,
+          color: Colors.amber.shade700,
+          scheme: scheme,
+          up: true,
+          label: 'INTERRUPT',
+          mic: ptt.micLevel,
         ),
-        // ── RIGHT = discard: the wide band along the right edge ──
-        Positioned(
-          right: 0,
-          top: 0,
-          bottom: 0,
-          child: _slideBand(
-            shown: ptt.holdActive,
-            armed: armed == PttSlide.right,
-            armedColor: scheme.error,
-            scheme: scheme,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.arrow_forward, size: 18),
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    width: 56,
-                    child: Text(
-                      'Release to discard',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        // ── RIGHT = DISCARD: the red cone, same shape on the level ──
+        _cone(
+          context,
+          shown: ptt.holdActive,
+          prog: rightProg,
+          armed: armed == PttSlide.right,
+          color: scheme.error,
+          scheme: scheme,
+          up: false,
+          label: 'DISCARD',
+          mic: ptt.micLevel,
         ),
       ],
     );
   }
 
-  /// One gesture band: invisible at rest (the gestures only exist while
-  /// a hold is down), translucent on hold, SOLID and coloured once the
-  /// finger has passed the arm threshold — armed or not, read from the
-  /// same PttHold state the release decision will read.
-  Widget _slideBand({
+  /// One gesture cone: invisible at rest, a faint fan of beams the
+  /// instant the hold opens, widening and brightening with the lean,
+  /// IGNITED (solid fan, bright edge, white word) when armed. The
+  /// apex is the press point, so the beam literally comes out from
+  /// under the thumb and points where the thumb is going.
+  Widget _cone(
+    BuildContext context, {
     required bool shown,
+    required double prog,
     required bool armed,
-    required Color armedColor,
+    required Color color,
     required ColorScheme scheme,
-    required Widget child,
+    required bool up,
+    required String label,
+    required double mic,
   }) {
-    // No IgnorePointer: the bands sit INSIDE the talk area — a press
-    // landing on one is still a press landing on the button.
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 130),
-      opacity: shown ? 1 : 0,
-      child: AnimatedContainer(
+    return IgnorePointer(
+      // The cones sit INSIDE the talk area — a press landing on one is
+      // still a press landing on the button; the labels never eat them.
+      ignoring: true,
+      child: AnimatedOpacity(
         duration: const Duration(milliseconds: 130),
-        margin: const EdgeInsets.all(10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: armed ? armedColor : scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: DefaultTextStyle.merge(
-          style: TextStyle(
-            color: armed ? Colors.white : scheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-          child: IconTheme.merge(
-            data: IconThemeData(
-              color: armed ? Colors.white : scheme.onSurfaceVariant,
-            ),
-            child: child,
-          ),
+        opacity: shown ? 1 : 0,
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final size = Size(box.maxWidth, box.maxHeight);
+            final origin = _coneOrigin(size);
+            // The word rides the axis at 62% of the live fan radius —
+            // the SAME geometry the painter uses, so glyph and beam
+            // cannot drift apart.
+            final r = _ConePainter.radiusFor(prog, armed) * 0.62;
+            final ax = up ? 0.0 : 1.0, ay = up ? -1.0 : 0.0;
+            final at = origin + Offset(r * ax, r * ay);
+            return Stack(
+              children: [
+                CustomPaint(
+                  painter: _ConePainter(
+                    origin: origin,
+                    prog: prog,
+                    armed: armed,
+                    color: color,
+                    up: up,
+                    mic: mic,
+                  ),
+                  size: size,
+                ),
+                Align(
+                  alignment: Alignment(
+                    (2 * at.dx / size.width - 1).clamp(-1.0, 1.0),
+                    (2 * at.dy / size.height - 1).clamp(-1.0, 1.0),
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: armed
+                          ? Colors.white
+                          : scheme.onSurfaceVariant.withValues(alpha: 0.9),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
+
+  /// The cone's apex: the live finger point while it is down (the
+  /// ripple origin already tracks it), falling back to the panel's
+  /// bottom-centre — where a thumb naturally sits — before the first
+  /// move event of the hold.
+  Offset _coneOrigin(Size size) =>
+      _pointerLocal == Offset.zero && _ripples.isEmpty
+      ? Offset(size.width / 2, size.height * 0.62)
+      : _pointerLocal;
+}
+
+/// The +272 gesture cone: a ±30° fan of BEAMS from the apex along the
+/// gesture axis (up for INTERRUPT, right for DISCARD). Faint always
+/// while held; fill, ray count glow and edge stroke all scale with the
+/// lean; arm state arrives from PttHold itself so the picture can only
+/// ever show what releasing right now would do. The word rides the
+/// axis inside the fan.
+class _ConePainter extends CustomPainter {
+  _ConePainter({
+    required this.origin,
+    required this.prog,
+    required this.armed,
+    required this.color,
+    required this.up,
+    required this.mic,
+  });
+
+  final Offset origin;
+  final double prog; // 0..1 lean toward this cone's direction
+  final bool armed;
+  final Color color;
+  final bool up; // axis: -90° when up, 0° (right) otherwise
+  final double mic; // beam pulse from the capture meter
+
+  static const _halfSpread = 0.523; // ±30°
+  static double radiusFor(double prog, bool armed) =>
+      70 + 170 * prog + (armed ? 34 : 0);
+
+  double get _axis => up ? -1.5708 : 0.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = radiusFor(prog, armed);
+    final a0 = _axis - _halfSpread;
+    final fan = Path()
+      ..moveTo(origin.dx, origin.dy)
+      ..lineTo(origin.dx + _cx(a0) * r, origin.dy + _cy(a0) * r)
+      ..arcTo(
+        Rect.fromCircle(center: origin, radius: r),
+        a0,
+        _halfSpread * 2,
+        false,
+      )
+      ..close();
+    // The fill: translucent always, brighter under the lean, and a
+    // stronger base when armed so the decision reads before the word
+    // is even parsed.
+    canvas.drawPath(
+      fan,
+      Paint()
+        ..shader = RadialGradient(
+          // The apex IS the gradient centre (the shader rect is the
+          // fan's circle): bright at the thumb, fading to the rim.
+          center: Alignment.center,
+          radius: 1.0,
+          colors: [
+            color.withValues(alpha: 0.34 + 0.30 * prog + (armed ? 0.25 : 0)),
+            color.withValues(alpha: 0.04 + 0.10 * prog),
+          ],
+          tileMode: TileMode.clamp,
+        ).createShader(Rect.fromCircle(center: origin, radius: r)),
+    );
+    // The BEAMS: five rays fanning the sector; the meter pulses their
+    // weight so the cones breathe with the voice, not just the lean.
+    final beam = Paint()
+      ..strokeWidth = 1.2 + 2.6 * prog + 1.4 * mic + (armed ? 1.6 : 0)
+      ..color = color.withValues(alpha: armed ? 0.85 : 0.22 + 0.45 * prog);
+    for (var k = -2; k <= 2; k++) {
+      final a = _axis + k * (_halfSpread / 2.4);
+      canvas.drawLine(
+        origin,
+        Offset(origin.dx + _cx(a) * r, origin.dy + _cy(a) * r),
+        beam,
+      );
+    }
+    // The arc rim: only once the fan means it.
+    if (armed) {
+      canvas.drawArc(
+        Rect.fromCircle(center: origin, radius: r),
+        a0,
+        _halfSpread * 2,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.4
+          ..color = color.withValues(alpha: 0.9),
+      );
+    }
+  }
+
+  static double _cx(double a) => cos(a);
+  static double _cy(double a) => sin(a);
+
+  @override
+  bool shouldRepaint(covariant _ConePainter old) =>
+      old.prog != prog ||
+      old.armed != armed ||
+      old.origin != origin ||
+      old.mic != mic;
 }
 
 class _RipplePainter extends CustomPainter {

@@ -808,7 +808,7 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
     });
 
-    testWidgets('the wide slide bands appear ONLY while a hold is down', (
+    testWidgets('the gesture cones appear ONLY while a hold is down', (
       tester,
     ) async {
       final edges = <String>[];
@@ -817,11 +817,11 @@ void main() {
         surface(tester, edges: edges, holding: () => holding),
       );
       expect(
-        _bandOpacity(tester, 'Release to interrupt'),
+        _bandOpacity(tester, 'INTERRUPT'),
         0,
         reason: 'the gestures only exist mid-hold',
       );
-      expect(_bandOpacity(tester, 'Release to discard'), 0);
+      expect(_bandOpacity(tester, 'DISCARD'), 0);
 
       // Press FOR REAL first: the down edge is what wakes the surface
       // ticker (in the app the hold truth arrives from the assistant;
@@ -833,12 +833,12 @@ void main() {
       await tester.pump(); // start the fade
       await tester.pump(const Duration(milliseconds: 200)); // complete it
       expect(
-        _bandOpacity(tester, 'Release to interrupt'),
+        _bandOpacity(tester, 'INTERRUPT'),
         1,
-        reason: 'UP = interrupt, full-width band on the top edge',
+        reason: 'UP = interrupt, the amber cone opens from the finger',
       );
       expect(
-        _bandOpacity(tester, 'Release to discard'),
+        _bandOpacity(tester, 'DISCARD'),
         1,
         reason: 'RIGHT = discard, full-height band on the right edge',
       );

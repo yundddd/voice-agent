@@ -226,16 +226,17 @@ void main() {
       expect(
         ui,
         isNot(contains('TweenAnimationBuilder')),
-        reason: "the rebuild-driven tween is retired — the notifier "
+        reason:
+            "the rebuild-driven tween is retired — the notifier "
             "does the same job at a fraction of a fast swipe's cost",
       );
       expect(
-        RegExp(r'AnimatedSwitcher|SpringSimulation')
-            .allMatches(ui)
-            .where((m) => m.group(0) == 'AnimatedSwitcher')
-            .length,
+        RegExp(
+          r'AnimatedSwitcher|SpringSimulation',
+        ).allMatches(ui).where((m) => m.group(0) == 'AnimatedSwitcher').length,
         0,
-        reason: 'the crossfade switcher is retired — it was the '
+        reason:
+            'the crossfade switcher is retired — it was the '
             'second act every tape blamed',
       );
     });

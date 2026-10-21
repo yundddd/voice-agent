@@ -3,6 +3,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 
@@ -22,6 +23,7 @@ class SessionTab {
     this.model,
     List<String>? sessionIds,
     this.createdMs = 0,
+    this.hue,
   }) : sessionIds = sessionIds ?? [];
 
   String harness; // 'claude' | 'opencode'
@@ -29,6 +31,43 @@ class SessionTab {
   String? model; // a pick made AT creation (null = harness default)
   List<String> sessionIds;
   int createdMs;
+
+  /// +271 (Tim): each session gets its own colour, RANDOM at creation
+  /// and then STUCK — identity that survives restarts and reorders,
+  /// unlike the +230 index-derived hue that changed a session's face
+  /// every time a neighbour was deleted. Null on pre-+271 tabs:
+  /// [hueOrDefault] falls back to the old golden-angle of the tab's
+  /// index (existing installs keep the exact colours they wore at
+  /// upgrade — a session's colour may be random, but it is never
+  /// revised).
+  int? hue;
+
+  /// The random-but-distant picker: sample 24 hues and keep the one
+  /// FARTHEST (circularly) from every hue already worn — neighbours
+  /// and complements stay distinguishable without trusting luck.
+  static int pickHue(List<int> taken, {Random? rng}) {
+    final r = rng ?? Random();
+    if (taken.isEmpty) return r.nextInt(360);
+    var best = 0, bestDist = -1;
+    for (var k = 0; k < 24; k++) {
+      final h = r.nextInt(360);
+      final d = taken.map((t) => _hueGap(h, t)).reduce((a, b) => a < b ? a : b);
+      if (d > bestDist) {
+        bestDist = d;
+        best = h;
+      }
+    }
+    return best;
+  }
+
+  static int _hueGap(int a, int b) {
+    final d = (a - b).abs() % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
+  /// The colour this tab wears: its own, or the legacy index-derived
+  /// one when it predates +271.
+  int hueOrDefault(int index) => hue ?? (index * 137) % 360;
 
   /// The conversation this tab is CURRENTLY (the newest id it ever
   /// wore); null while the birth turn has not been named yet.
@@ -47,6 +86,9 @@ class SessionTab {
     if (model != null && model!.isNotEmpty) 'model': model!,
     'sessionIds': sessionIds,
     'createdMs': createdMs,
+    // (the local promotion the guard needs: 'hue != null ? h : ...'
+    // would still carry the field's nullability into the map)
+    if (hue != null) 'hue': (hue as int),
   };
   static SessionTab fromJson(Map<String, Object?> j) => SessionTab(
     harness: j['harness'] == 'opencode' ? 'opencode' : 'claude',
@@ -57,6 +99,7 @@ class SessionTab {
         if (s is String && s.isNotEmpty) s,
     ],
     createdMs: (j['createdMs'] as num?)?.toInt() ?? 0,
+    hue: j['hue'] is num ? (j['hue'] as num).toInt() % 360 : null,
   );
 }
 

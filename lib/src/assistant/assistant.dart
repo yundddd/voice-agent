@@ -437,6 +437,7 @@ class VoiceAssistant extends ChangeNotifier {
           label: t[i].label.isEmpty ? t[i].dir : t[i].label,
           dir: t[i].dir,
           currentId: t[i].currentId,
+          hue: t[i].hueOrDefault(i), // +271: the pill's AND wash's own
         ),
     ];
   }
@@ -1165,6 +1166,14 @@ class VoiceAssistant extends ChangeNotifier {
         model: r['model'] is String ? r['model'] as String : model,
         sessionIds: r['sessionId'] is String ? [r['sessionId'] as String] : [],
         createdMs: DateTime.now().millisecondsSinceEpoch,
+        // +271: the session's colour is drawn at its birth and kept
+        // for life — the seed tab (the upgrade's first seat) and an
+        // adopted tab wear the legacy index hue until +271-era tabs
+        // prove the random one more legible.
+        hue: SessionTab.pickHue([
+          for (var i = 0; i < prefs.tabs.length; i++)
+            prefs.tabs[i].hueOrDefault(i),
+        ]),
       ),
     );
     prefs.activeTab = prefs.tabs.length - 1;

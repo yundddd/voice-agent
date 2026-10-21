@@ -10,6 +10,7 @@
 // against the scripted gateway), and the SHEET half (the real widget
 // over the fake, big buttons, one submit that seats and pops).
 import 'dart:async';
+import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1408,6 +1409,89 @@ void main() {
         isFalse,
         reason: 'nothing filed it yet — the filter only shows the truth',
       );
+    });
+  });
+
+  group('the session palette (+271)', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+    setUp(() async {
+      harness = FakeHarness();
+      harness.healthState = <String, Object?>{
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/proj-a',
+        'seat': true,
+      };
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+    });
+    tearDown(() => a.dispose());
+    test('a drawn hue round-trips; a legacy tab keeps the index law', () {
+      final t = SessionTab(
+        harness: 'claude',
+        dir: '/p',
+        hue: SessionTab.pickHue(const [], rng: Random(7)),
+      );
+      expect(t.hue, inInclusiveRange(0, 359));
+      final back = SessionTab.fromJson(t.toJson());
+      expect(back.hue, t.hue, reason: 'the colour is persisted, not redrawn');
+      // A pre-+271 tab (no hue in its JSON) wears exactly what the
+      // +230 index law painted — the upgrade changes no faces:
+      final legacy = SessionTab.fromJson({
+        'harness': 'claude',
+        'dir': '/p',
+        'sessionIds': <String>[],
+      });
+      expect(legacy.hue, isNull);
+      expect(legacy.hueOrDefault(2), (2 * 137) % 360);
+    });
+    test('pickHue runs far from the colours already worn', () {
+      // The seeded samples below are the property, not the literals:
+      // the chosen hue sits farther from every taken hue than a
+      // coin-flip pick would, and neighbours stay distinguishable.
+      for (final seed in [1, 2, 3, 4, 5]) {
+        final h = SessionTab.pickHue([0], rng: Random(seed));
+        final gap = h > 180 ? 360 - h : h;
+        expect(gap, greaterThan(20), reason: 'seed $seed drew too close');
+      }
+    });
+    test('creating a session draws a new, different colour', () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-h1');
+      await a.createSession(harness: 'opencode', dir: '/proj-h2');
+      final hues = [for (final t in a.view.tabs) t.hue];
+      expect(hues, hasLength(2));
+      expect(hues[0], isNot(hues[1]));
+      for (final h in hues) {
+        expect(h, inInclusiveRange(0, 359));
+      }
+    });
+    test('DELETING a neighbour recolours nobody', () async {
+      // The +230 law's one real flaw, and the reason for the
+      // persisted draw: an index-derived hue is a seat number, so
+      // deleting tab 0 put yesterday's colours on every remaining
+      // tab — the sessions changed faces when nothing about THEM
+      // changed. A drawn hue belongs to its tab.
+      await a.createSession(harness: 'opencode', dir: '/proj-h1');
+      await a.createSession(harness: 'opencode', dir: '/proj-h2');
+      final h1 = a.view.tabs[0].hue, h2 = a.view.tabs[1].hue;
+      expect(await a.removeSessionTab(0), isNull); // Y (active) stays
+      expect(a.view.tabs, hasLength(1));
+      expect(
+        a.view.tabs[0].hue,
+        h2,
+        reason: 'the survivor keeps ITS colour — faces do not shuffle',
+      );
+      expect(h2, isNot(h1));
     });
   });
 

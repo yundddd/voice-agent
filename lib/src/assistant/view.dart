@@ -173,6 +173,7 @@ final class SessionTabInfo {
     required this.harness,
     required this.label,
     required this.dir,
+    required this.hue,
     this.currentId,
   });
   final int index;
@@ -180,6 +181,10 @@ final class SessionTabInfo {
   final String label;
   final String dir;
   final String? currentId;
+
+  /// +271: the session's colour (random at creation, persisted;
+  /// legacy tabs carry the index-derived one). 0-359 degrees.
+  final int hue;
 }
 
 /// One consistent snapshot of everything the conversation screens
