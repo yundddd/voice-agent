@@ -479,6 +479,21 @@ let proactiveTurn = false; // +133: this turn is the harness speaking
 const bgTools = new Map();    // tool_use ids launched run_in_background
 const agentTasks = new Map(); // background task id -> {label, outPath}
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
+// +250: 'Prompt is too long' is not a retryable failure — it is the
+// conversation itself being unreadable to the model. Re-asking costs a
+// full re-upload of the oversized transcript just to be told the same
+// thing 20-40 s later (field tape: three hellos, three timeouts, the
+// phone spinning honestly through each). So the verdict is REMEMBERED:
+// the next spoken prompt is refused here, instantly, with the recovery
+// options in its mouth. A line starting with / still reaches the CLI —
+// /compact is exactly the way back this notice points at — and a clean
+// result, a compact_boundary, or any conversation reset clears the
+// memory (recovery is proven, never assumed).
+let contextFull = false;
+const CONTEXT_FULL_MSG =
+  'Context window exceeded. Please compact or create a new session.';
+const tooLongErr = (t) => /\btoo long\b/i.test(String(t ?? ''));
+let lastCompactingRelay = 0; // throttle for the status:"compacting" frame
 // +163: the id of a PARKED prompt that was folded (steered) into the
 // running turn at a tool-result boundary instead of waiting for the
 // turn to close. It has no turn of its own — its pickup rode the
@@ -1428,7 +1443,11 @@ function handleEvent(line) {
     return;
   }
   if (m.type !== 'stream_event') { // deltas are a firehose: keep the log legible
-    console.error(`EVT ${m.type}/${m.subtype ?? '-'} len=${line.length}`);
+    console.error(`EVT ${m.type}/${m.subtype ?? '-'} len=${line.length}` +
+      // +250: status frames are rare, tiny, and the ONLY early sign of
+      // the CLI auto-compacting — journal the body, not just the size.
+      (m.type === 'system' && m.subtype === 'status'
+        ? ' body=' + JSON.stringify(m).slice(0, 400) : ''));
   }
   if (m.session_id) sessionId = m.session_id;
   if (m.type === 'stream_event') {
@@ -1807,6 +1826,16 @@ function handleEvent(line) {
         .map((v) => typeof v === 'string' ? v
           : (v && (v.message ?? v.msg)) || JSON.stringify(v))
         .filter(Boolean).join('; ').slice(0, 300) || null;
+      // +250: the oversized-conversation verdict, in the one wording
+      // the ear deserves (the API's 'Prompt is too long' blames the
+      // prompt; the fix is a compaction or a new session, and THAT is
+      // what gets said).
+      if (tooLongErr(errText)) {
+        contextFull = true;
+        errText = CONTEXT_FULL_MSG;
+      }
+    } else {
+      contextFull = false; // an answer came: the window fits again
     }
     // +106: a turn the phone CUT to make room for its own waiting
     // prompt gets no funeral notice. The +99 interrupt path always
@@ -1935,8 +1964,13 @@ function handleEvent(line) {
             blk.spoken = blk.buf.length;
           }
           if (!owed.text) continue;
-          console.error(`  -> say "${owed.text.slice(0, 40)}"`);
-          relay('say', { text: owed.text });
+          // +250: the CLI's bare 'Prompt is too long' echo gets the
+          // same friendly rewrite as the result frame — spoken BEFORE
+          // the result handler runs, so the flag lands here too.
+          const speak = tooLongErr(owed.text)
+            ? (contextFull = true, CONTEXT_FULL_MSG) : owed.text;
+          console.error(`  -> say "${speak.slice(0, 40)}"`);
+          relay('say', { text: speak });
         }
         if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
           spokenTools.add(c.id);
@@ -1971,11 +2005,31 @@ function handleEvent(line) {
       break;
     }
     case 'system':
+      // +250: the CLI's own progress confessions. `status:"compacting"`
+      // is the EARLY sign of an auto-compaction — the step that eats
+      // the 20-40 s of silence the field heard as a frozen spinner
+      // (upload the oversized transcript, watch it shrink, then the
+      // real call). Relay it as the activity it is: the phone paints
+      // the tool detail verbatim, so the wait reads 'auto-compacting
+      // the conversation' instead of 'thinking'. One copy per minute:
+      // the CLI re-states the status across a long compaction, and the
+      // spinner needs no ticker for the same work.
+      if (m.subtype === 'status' && m.status === 'compacting') {
+        if (Date.now() - lastCompactingRelay > 60000) {
+          lastCompactingRelay = Date.now();
+          console.error('  -> tool compacting');
+          relay('tool', {
+            name: 'compact',
+            detail: 'auto-compacting the conversation…',
+          });
+        }
       // The compaction proof the /compact chip listens for: emitted when
       // the CLI finishes condensing the transcript (silent otherwise —
       // no assistant message, empty result text), so relay it as live
       // tool-style progress instead of dead air.
-      if (m.subtype === 'compact_boundary') {
+      } else if (m.subtype === 'compact_boundary') {
+        contextFull = false; // +250: the transcript just got smaller —
+        // the recovery the refusal notice pointed at, proven on the wire
         console.error('  -> tool compact');
         relay('tool', {
           name: 'compact',
@@ -2128,6 +2182,26 @@ function interruptTurn() {
 // prompt to claude. The keep-pinger/heartbeat belongs to the turn object
 // now: a backgrounded turn and whatever replaces it each carry their own.
 function beginTurn(text, res, keep, markerKind, turnId) {
+  // +250: an oversized conversation answers its next spoken prompt at
+  // HOME — no respawn, no stdin, no 20 s upload-and-reject round trip
+  // for news we already have. The frames wear the reserved turn id so
+  // the phone's pump closes exactly like any other turn; slash lines
+  // pass through untouched (/compact cannot run against a refusal).
+  if (contextFull && !String(text).startsWith('/')) {
+    console.error('  [context-full] instant refusal (no upstream call)');
+    curTurnId = turnId ?? ++nextTurnId;
+    foldedTurnId = 0;
+    curRes = { res, keep, turnStart: Date.now() };
+    relay('tool', {
+      name: 'started',
+      detail: String(text).slice(0, 60),
+      ...(markerKind ? {kind: markerKind} : {}),
+    });
+    relay('say', { text: CONTEXT_FULL_MSG });
+    relay('done', { isError: true, error: CONTEXT_FULL_MSG });
+    endTurn(); // closes the view and the pinger; turnOpen never opened
+    return;
+  }
   if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
   // The id the POST promised this prompt; every frame relayed from here
   // on wears it (proactive turns invent their own — no echo, no queue).
@@ -2650,6 +2724,7 @@ function resetConversation() {
   // on until the new session's first message_start proves itself.
   lastCtx = { in: 0, window: ctxWindow };
   ctxOwner = null; // +249: a fresh conversation inherits no size record
+  contextFull = false; // +250: ...nor the oversized verdict
   estIn = estSentIn = 0;
   if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
   endTurn();

@@ -274,6 +274,36 @@ against Anthropic pricing — on the local `flash-next` proxy they're
 fiction. One caveat found: `unrecognized_model` on stderr at startup is
 harmless probe noise here (turns still succeed).
 
+## The oversized conversation (shipped +250)
+
+`Prompt is too long` is a verdict about the TRANSCRIPT, not a flaky
+API — every re-ask pays a full oversized re-upload plus the CLI's own
+auto-compaction attempt (20–40 s of spinner, measured on the field
+tape, three hellos, three timeouts). The bridge therefore:
+
+- **Rewords** the API's blame into recovery instructions, on the live
+  `say`, on the assistant echo and in `done.error`: *"Context window
+  exceeded. Please compact or create a new session."*
+- **Relays the wait being named**: the CLI's early
+  `system/status` + `status:"compacting"` frame becomes a live
+  `tool` frame (`auto-compacting the conversation…`, throttled to one
+  copy per minute) — the spinner says what the machine is doing
+  instead of lying about thinking.
+- **Remembers the verdict** (`contextFull`): the next *spoken* prompt
+  is refused at home — `started`/`say`/`done(isError)` land without an
+  upstream call (verified < 1.4 s end to end; the harness stub's disk
+  log proves the prompt never left). A line starting with `/` still
+  reaches the CLI: `/compact` is exactly the way back the notice
+  points at, and it must be able to speak.
+- **Lifts only on proof**: a `compact_boundary`, any clean `result`,
+  or any conversation reset (`/new`, `/dir`, `/seat`) clears the
+  memory. The recovery is believed when the wire shows it, never
+  assumed.
+
+Regression walk: `node --test tool/bridge_queue_test.mjs` — the stub
+knows `STUB_TOO_LONG` (re-enact the refusal) and `STUB_COMPACT` (play
+the compaction tape).
+
 ## The opencode harness (`--harness opencode`, shipped +211)
 
 The bridge can speak to the OpenCode v2 service instead of a `claude -p`

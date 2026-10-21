@@ -101,6 +101,9 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
 let turnSeq = 0; // timers of a superseded/cut turn must not speak again
 let openToolId = null; // survives the cut when STUB_TOOL_DONE_MS is set
+let compactedOnce = false; // +250: after the tape's compaction, turns
+// answer normally — the too-long echo is the FIRST turns' state, not a
+// personality
 
 const says = () => (process.env.STUB_SAYS ?? '').split('\n')
     .map((x) => x.trim()).filter(Boolean);
@@ -202,6 +205,46 @@ process.stdin.on('data', (b) => {
         attempt: 2, max_retries: 5, retry_delay_ms: 1200,
         error_status: 429, error: 'rate limited',
       }), Math.max(10, delay >> 2));
+    }
+    // +250: STUB_TOO_LONG=1 re-enacts the oversized conversation: the
+    // CLI echoes the API's refusal as an assistant text block and
+    // closes the turn is_error with the same words. The bridge must
+    // rewrite the wording, remember the verdict and refuse the NEXT
+    // prompt without ever coming back here.
+    if (process.env.STUB_TOO_LONG === '1' && !compactedOnce &&
+        !(text.startsWith('/') && process.env.STUB_COMPACT === '1')) {
+      setTimeout(() => {
+        if (gen !== turnSeq) return;
+        out({
+          type: 'assistant', session_id: 'stub-session',
+          message: { role: 'assistant',
+            content: [{ type: 'text', text: 'Prompt is too long' }] },
+        });
+        out({
+          type: 'result', subtype: 'error_during_execution',
+          session_id: 'stub-session', is_error: true, total_cost_usd: 0,
+          result: 'Prompt is too long',
+        });
+      }, delay);
+      return;
+    }
+    // +250: STUB_COMPACT=1 plays the auto-compaction tape — the early
+    // system/status frame, the boundary proof, then the ordinary
+    // answer and a clean result (the recovered conversation).
+    if (process.env.STUB_COMPACT === '1') {
+      compactedOnce = true; // the refusal is over: this turn shrinks
+      setTimeout(() => {
+        if (gen !== turnSeq) return;
+        out({ type: 'system', subtype: 'status', status: 'compacting',
+              session_id: 'stub-session' });
+      }, Math.max(10, delay >> 2));
+      setTimeout(() => {
+        if (gen !== turnSeq) return;
+        out({ type: 'system', subtype: 'compact_boundary',
+              session_id: 'stub-session' });
+        finishTurn(gen);
+      }, delay);
+      return;
     }
     if (toolCmd) {
       setTimeout(() => {

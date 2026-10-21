@@ -1250,3 +1250,84 @@ test('POST /send relays a file frame; GET /file streams it (Range included)',
     await stopBridge(proc);
   }
 });
+
+// ── +250: the oversized conversation answers AT HOME ──────────────────
+// 'Prompt is too long' is a verdict about the TRANSCRIPT, not a flaky
+// API — re-asking costs a full oversized re-upload just to hear it
+// again (field tape: 20-40 s of spinner per hello). The bridge must:
+// (a) reword the API's blame into recovery instructions, (b) REMEMBER
+// the verdict — the next spoken prompt is refused here, instantly,
+// with nothing reaching the harness, and (c) lift it only on PROOF:
+// slash-through compaction (whose in-progress system/status frame the
+// phone must SEE as an 'auto-compacting' line — the wait finally
+// named) or a clean result.
+const PORT19 = PORT1 + 50;
+test('+250 too-long: reworded, remembered, instant refusal, liftable by compaction',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
+    const log = join(dir, 'stub.log');
+    const proc = startBridge(log, PORT19,
+      { STUB_TOO_LONG: '1', STUB_COMPACT: '1',
+        STUB_SAYS: 'Back in business.', STUB_RESULT_MS: '300' });
+    try {
+      await up(PORT19);
+      const MSG = 'Context window exceeded. Please compact or create a new session.';
+
+      // Turn 1: the oversized turn — echo AND done both reworded.
+      const a = await call(PORT19, `/talk?token=${TOKEN}`,
+        { body: 'hello', method: 'POST' });
+      await until('turn 1 done', async () =>
+        sseEvents(a.text).some((e) => e.ev === 'done'));
+      const evsA = sseEvents(a.text);
+      assert.ok(evsA.some((e) => e.ev === 'say' && e.data.text === MSG),
+        'the too-long echo was not reworded: ' + JSON.stringify(
+          evsA.filter((e) => e.ev === 'say').map((e) => e.data.text)));
+      assert.equal(evsA.find((e) => e.ev === 'done').data.error, MSG);
+      assert.deepEqual(seen(log), ['hello']);
+
+      // Turn 2: refused AT HOME — frames land before an upstream call
+      // could even clear the loopback, and the stub never hears of it.
+      const t0 = Date.now();
+      const b = await call(PORT19, `/talk?token=${TOKEN}`,
+        { body: 'hello again', method: 'POST' });
+      await until('refusal done', async () =>
+        sseEvents(b.text).some((e) => e.ev === 'done'), 1500);
+      assert.ok(Date.now() - t0 < 1400, 'refusal was not instant');
+      const evsB = sseEvents(b.text);
+      assert.ok(evsB.some((e) => e.ev === 'tool' && e.data.name === 'started'),
+        'the refused turn never announced itself');
+      assert.ok(evsB.some((e) => e.ev === 'say' && e.data.text === MSG));
+      assert.equal(evsB.find((e) => e.ev === 'done').data.isError, true);
+      assert.deepEqual(seen(log), ['hello'],
+        'the refused prompt reached the harness anyway');
+
+      // Turn 3: /compact STEERS THROUGH the refusal — and the phone
+      // watches the work: the CLI's early status frame becomes a live
+      // 'auto-compacting' line, the boundary is the proof that lifts
+      // the verdict, and the turn closes clean.
+      const c = await call(PORT19, `/talk?token=${TOKEN}`,
+        { body: '/compact', method: 'POST' });
+      await until('compact done', async () =>
+        sseEvents(c.text).some((e) => e.ev === 'done'));
+      const evsC = sseEvents(c.text);
+      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'compact'
+        && /auto-compacting/.test(e.data.detail)),
+        'the compaction in progress was invisible to the phone');
+      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'compact'
+        && /condensed/.test(e.data.detail)),
+        'the compaction proof did not ride the wire');
+      assert.equal(evsC.find((e) => e.ev === 'done').data.isError, false);
+
+      // Turn 4: spoken prompts flow again — the verdict lifted on
+      // proof, not on hope.
+      const d = await call(PORT19, `/talk?token=${TOKEN}`,
+        { body: 'are we back?', method: 'POST' });
+      await until('recovered done', async () =>
+        sseEvents(d.text).some((e) => e.ev === 'done'));
+      assert.ok(sseEvents(d.text).some((e) =>
+        e.ev === 'say' && e.data.text === 'Back in business.'));
+      assert.deepEqual(seen(log), ['hello', '/compact', 'are we back?']);
+    } finally {
+      await stopBridge(proc);
+    }
+  });
