@@ -3065,11 +3065,17 @@ const server = http.createServer((req, res) => {
         // child keeps working, its frames keep streaming (session-
         // stamped, so the store files them into THEIR conversation
         // whatever tab is looking), done lands on its own terms, and
-        // swiping back re-seats the same id: foreground again. The
-        // conditions are strict: same harness (a different runtime has
-        // no view to grow into — flipping harnesses still resets), and
-        // not fresh:true (that verb MEANS 'end this conversation').
-        const backgroundable = turnOpen && to === harness && !fresh;
+        // swiping back re-seats the same id: foreground again.
+        // +248: the same-harness restriction is gone — the tape from
+        // +247's log line caught a real refusal on a cross-harness
+        // swipe, and the fear it encoded was double-counted: the
+        // running child is not bound to the harness variable (the
+        // seat's new harness spawns its own child only on the NEXT
+        // turn, and the opencode bus path never touches `child` at
+        // all), so nothing about backgrounding changes shape when
+        // tabs differ. fresh:true still means 'end this
+        // conversation' — that verb's whole word is the reset.
+        const backgroundable = turnOpen && !fresh;
         if (!backgroundable) resetConversation(); // whatever rode the old seat ends here
         if (to !== harness) {
           harness = to;

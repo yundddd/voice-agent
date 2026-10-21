@@ -1010,38 +1010,47 @@ class VoiceAssistant extends ChangeNotifier {
   /// reattach chain NOW (the same +168 mail-fetch, honest dark), so
   /// the replay lands within a round trip and the next swipe moves.
   /// Null = free to move; a string is the reason, in words.
-  String? _seatRest(Map<String, Object>? h, {bool backgroundable = false}) {
+  /// The seat's rest law, shared by switchSession and createSession —
+  /// with ONE difference, decided by what the wire does next:
+  /// [+resets] says the caller's /seat will run resetConversation
+  /// (fresh:true always; a harness flip did until +248's reading of
+  /// its own log line), and then mid-turn and owed backlog are both
+  /// genuinely at risk — refuse. When the move BACKGROUNDS instead
+  /// (+246/+248: turnOpen && !fresh on the bridge side), nothing is
+  /// at risk except the one shape streaming cannot carry: a prompt
+  /// parked with no open turn to flush it.
+  /// Every verdict, free or refused, journalled with its inputs
+  /// (+247) so the field's 'I still see the refusal' reads the exact
+  /// clause from /applogs.
+  String? _seatRest(Map<String, Object>? h, {bool resets = false}) {
     if (h == null) return null; // unreachable: the verb's own error speaks
+    final turnOpen = h['turnOpen'] == true;
+    final queued = h['queued'] == true;
+    final missed = ((h['missed'] as num?)?.toInt() ?? 0) > 0;
     String? rest(String? why) {
-      // +247: every seat decision — free or refused — hits the journal
-      // with its inputs, so 'I still see the refusal' reads the exact
-      // clause that spoke instead of guessing which field lied.
       _logDebug(
-        'seat rest: turnOpen=${h['turnOpen']} queued=${h['queued']} '
-        'missed=${h['missed']} harness=${h['harness']} '
-        'backgroundable=$backgroundable -> ${why ?? 'free to move'}',
+        'seat rest: turnOpen=$turnOpen queued=$queued missed=${h['missed']} '
+        'harness=${h['harness']} resets=$resets -> ${why ?? 'free to move'}',
       );
       return why;
     }
 
-    if (h['queued'] == true) {
+    // A parked prompt always rests a RESET; mid-turn the queued flush
+    // rides the backgrounding (it belongs to the conversation being
+    // backgrounded, and its own turn is still there to flush it), so
+    // only the no-turn shape refuses.
+    if (queued && !(turnOpen && !resets)) {
+      return rest('a prompt is queued — stop it before switching sessions');
+    }
+    if (resets && (turnOpen || queued)) {
       return rest(
         'the harness is mid-turn — stop it before switching sessions',
       );
     }
-    // +246: mid-turn no longer rests a switch when the destination
-    // shares the harness — /seat backgrounds the live turn (the law
-    // the app background already taught), so the move costs nothing
-    // the switch-back cannot get back. A harness flip still rests.
-    if (h['turnOpen'] == true && !backgroundable) {
-      return rest(
-        'the harness is mid-turn — stop it before switching sessions',
-      );
-    }
-    // +246: under the backgrounding law the backlog SURVIVES the move
-    // (no reset ran), so unheard frames are not at risk and the swipe
-    // is free; the drain laws deliver them when the view lands.
-    if (((h['missed'] as num?)?.toInt() ?? 0) > 0 && !backgroundable) {
+    // The backlog dies to a reset whenever one runs: creation always
+    // resets; a switch resets precisely when no turn is open to
+    // background (the bridge's own condition, mirrored here).
+    if (missed && (resets || !turnOpen)) {
       if (!_bridgeBusy &&
           !_turn.backgrounded &&
           !_benchCapturing &&
@@ -1070,7 +1079,7 @@ class VoiceAssistant extends ChangeNotifier {
     // The rest law applies to creation too: /seat resets, and a
     // reset drops the backlog — unseen messages leave with the seat
     // that owed them.
-    final rest = _seatRest(await bridgeHealth());
+    final rest = _seatRest(await bridgeHealth(), resets: true);
     if (rest != null) return rest;
     final r = await g.seat(
       harness: harness,
@@ -1123,7 +1132,7 @@ class VoiceAssistant extends ChangeNotifier {
     final tab = prefs.tabs[index];
     // +246: same harness => the mid-turn move backgrounds rather than
     // resets (see /seat); the rest guard only bites across harnesses.
-    final rest = _seatRest(h, backgroundable: tab.harness == h?['harness']);
+    final rest = _seatRest(h);
     if (rest != null) return rest;
     final r = await g.seat(
       harness: tab.harness,
@@ -1166,7 +1175,7 @@ class VoiceAssistant extends ChangeNotifier {
     final isActive = index == active;
     if (isActive && prefs.tabs.length > 1) {
       // Relieving the seat is a seat verb.
-      final rest = _seatRest(await bridgeHealth());
+      final rest = _seatRest(await bridgeHealth(), resets: true);
       if (rest != null) return rest;
     }
     final doomed = prefs.tabs.removeAt(index);

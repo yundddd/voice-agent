@@ -373,19 +373,6 @@ void main() {
       },
     );
 
-    test('the switch rests while a turn is open (and says so)', () async {
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      harness.healthState = {...harness.healthState!, 'turnOpen': true};
-      final before = harness.seatCalls.length;
-      expect(
-        await a.switchSession(0),
-        'the harness is mid-turn — stop it before switching sessions',
-      );
-      expect(harness.seatCalls.length, before); // not one call attempted
-      expect(a.view.tabIndex, 1); // and the view stayed put
-    });
-
     test('+246: mid-turn, a SAME-harness switch backgrounds — the seat '
         'moves, the answer lives, no refusal', () async {
       // The app-background law applied to tabs: switching sessions
