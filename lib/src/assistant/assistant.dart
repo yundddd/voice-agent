@@ -510,7 +510,8 @@ class VoiceAssistant extends ChangeNotifier {
     tabIndex: _bridgePrefs.tabs.isEmpty
         ? 0
         : _bridgePrefs.activeTab.clamp(0, _bridgePrefs.tabs.length - 1),
-    needsSetup: !_bridgePrefs.installed &&
+    needsSetup:
+        !_bridgePrefs.installed &&
         bridgeConfigured &&
         _bridgePrefs.tabs.isEmpty,
     canSeat: _seatCap,
@@ -603,6 +604,7 @@ class VoiceAssistant extends ChangeNotifier {
     _bridgePrefs = p;
     notifyListeners();
   }
+
   HarnessGateway? _gateway;
   // ── Bridge-turn truth (owned by TurnCoordinator — see turn_session.dart) ──
   // This class only READS the truth (below) and fires the coordinator's
@@ -916,16 +918,20 @@ class VoiceAssistant extends ChangeNotifier {
     // seat into tab 1 without a dialog — the thread the user already
     // lives in becomes the first tab. A FRESH install is NOT seeded:
     // the first-launch sheet owns that question.
-    if (_bridgePrefs.installed && _bridgePrefs.tabs.isEmpty &&
-        eraNow != null && h['dir'] is String) {
+    if (_bridgePrefs.installed &&
+        _bridgePrefs.tabs.isEmpty &&
+        eraNow != null &&
+        h['dir'] is String) {
       final d = h['dir'] as String;
-      _bridgePrefs.tabs.add(SessionTab(
-        harness: eraNow,
-        dir: d,
-        model: h['model'] is String ? h['model'] as String : null,
-        sessionIds: sid == null ? [] : [sid],
-        createdMs: DateTime.now().millisecondsSinceEpoch,
-      ));
+      _bridgePrefs.tabs.add(
+        SessionTab(
+          harness: eraNow,
+          dir: d,
+          model: h['model'] is String ? h['model'] as String : null,
+          sessionIds: sid == null ? [] : [sid],
+          createdMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
       unawaited(_saveBridgePrefs());
       notifyListeners();
       return;
@@ -949,27 +955,32 @@ class VoiceAssistant extends ChangeNotifier {
           ((h['missed'] as num?)?.toInt() ?? 0) > 0) {
         return;
       }
-      final mismatch = eraNow != tab.harness ||
+      final mismatch =
+          eraNow != tab.harness ||
           h['dir'] != tab.dir ||
           (tab.currentId != null && sid != tab.currentId);
       if (mismatch && _seatCap) {
-        unawaited(_gateway
-            ?.seat(
-              harness: tab.harness,
-              dir: tab.dir,
-              model: tab.model,
-              sessionId: tab.currentId,
-              fresh: tab.currentId == null,
-            )
-            .then((r) {
-              if (r == null || r['ok'] != true) {
-                _logDebug('tab re-seat failed: ${r?['error'] ?? 'no /seat'}');
-                return;
-              }
-              _logDebug('tab re-seat: back on '
-                  '${tab.harness} @ ${tab.dir} (${tab.currentId ?? 'fresh'})');
-              unawaited(_refreshSession());
-            }));
+        unawaited(
+          _gateway
+              ?.seat(
+                harness: tab.harness,
+                dir: tab.dir,
+                model: tab.model,
+                sessionId: tab.currentId,
+                fresh: tab.currentId == null,
+              )
+              .then((r) {
+                if (r == null || r['ok'] != true) {
+                  _logDebug('tab re-seat failed: ${r?['error'] ?? 'no /seat'}');
+                  return;
+                }
+                _logDebug(
+                  'tab re-seat: back on '
+                  '${tab.harness} @ ${tab.dir} (${tab.currentId ?? 'fresh'})',
+                );
+                unawaited(_refreshSession());
+              }),
+        );
       }
       _seatReconciled = true;
       return;
@@ -1035,19 +1046,27 @@ class VoiceAssistant extends ChangeNotifier {
     final rest = _seatRest(await bridgeHealth());
     if (rest != null) return rest;
     final r = await g.seat(
-        harness: harness, dir: dir, model: model, fresh: true);
+      harness: harness,
+      dir: dir,
+      model: model,
+      fresh: true,
+    );
     if (r == null) {
       return 'this bridge has no /seat — session tabs need the new claude_bridge.mjs';
     }
-    if (r['ok'] != true) return '${r['error'] ?? 'the bridge refused the seat'}';
+    if (r['ok'] != true) {
+      return '${r['error'] ?? 'the bridge refused the seat'}';
+    }
     final prefs = _bridgePrefs;
-    prefs.tabs.add(SessionTab(
-      harness: '${r['harness'] ?? harness}',
-      dir: '${r['dir'] ?? dir}',
-      model: r['model'] is String ? r['model'] as String : model,
-      sessionIds: r['sessionId'] is String ? [r['sessionId'] as String] : [],
-      createdMs: DateTime.now().millisecondsSinceEpoch,
-    ));
+    prefs.tabs.add(
+      SessionTab(
+        harness: '${r['harness'] ?? harness}',
+        dir: '${r['dir'] ?? dir}',
+        model: r['model'] is String ? r['model'] as String : model,
+        sessionIds: r['sessionId'] is String ? [r['sessionId'] as String] : [],
+        createdMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
     prefs.activeTab = prefs.tabs.length - 1;
     _sessionId = r['sessionId'] is String ? r['sessionId'] as String : null;
     await _saveBridgePrefs();
@@ -1085,7 +1104,9 @@ class VoiceAssistant extends ChangeNotifier {
       fresh: tab.currentId == null,
     );
     if (r == null) return 'this bridge has no /seat';
-    if (r['ok'] != true) return '${r['error'] ?? 'the bridge refused the seat'}';
+    if (r['ok'] != true) {
+      return '${r['error'] ?? 'the bridge refused the seat'}';
+    }
     prefs.activeTab = index;
     final sid = r['sessionId'];
     if (sid is String && !tab.sessionIds.contains(sid)) {
@@ -1147,18 +1168,22 @@ class VoiceAssistant extends ChangeNotifier {
   String? useCurrentSeat() {
     final h = _lastHealth;
     final era = h?['harness'], d = h?['dir'];
-    if (h == null || (era != 'claude' && era != 'opencode') ||
-        d is! String || d.isEmpty) {
+    if (h == null ||
+        (era != 'claude' && era != 'opencode') ||
+        d is! String ||
+        d.isEmpty) {
       return 'the bridge has not named a seat to adopt';
     }
     final sid = h['sessionId'];
-    _bridgePrefs.tabs.add(SessionTab(
-      harness: era as String,
-      dir: d,
-      model: h['model'] is String ? h['model'] as String : null,
-      sessionIds: sid is String && sid.isNotEmpty ? [sid] : [],
-      createdMs: DateTime.now().millisecondsSinceEpoch,
-    ));
+    _bridgePrefs.tabs.add(
+      SessionTab(
+        harness: era as String,
+        dir: d,
+        model: h['model'] is String ? h['model'] as String : null,
+        sessionIds: sid is String && sid.isNotEmpty ? [sid] : [],
+        createdMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
     _bridgePrefs.activeTab = _bridgePrefs.tabs.length - 1;
     unawaited(_saveBridgePrefs());
     notifyListeners();
@@ -1251,7 +1276,8 @@ class VoiceAssistant extends ChangeNotifier {
         eraNow,
         timeline: [
           for (final row in (h?['harnessHistory'] as List? ?? const []))
-            if (row is Map && row['since'] is num &&
+            if (row is Map &&
+                row['since'] is num &&
                 (row['harness'] == 'claude' || row['harness'] == 'opencode'))
               (
                 since: (row['since'] as num).toInt(),
@@ -2029,7 +2055,9 @@ class VoiceAssistant extends ChangeNotifier {
     // files one card.
     noteHarnessError: (why) {
       _chat.addSystemNote(
-        _error = why ?? 'the harness reported an error', receipt: true);
+        _error = why ?? 'the harness reported an error',
+        receipt: true,
+      );
     },
     noteReplyText: _hide.noteReplyText,
     noteUnheardSay: _hide.noteUnheardSay,
@@ -2122,6 +2150,23 @@ class VoiceAssistant extends ChangeNotifier {
       _chat.removeEmptyTurn(b);
       _logDebug('transcribe bubble withdrawn ($why)');
     }
+  }
+
+  /// +236: a chunked long-hold decode finished another piece. The
+  /// placeholder bubble fills progressively — same card, growing —
+  /// instead of making the listener wait for the whole retranscription;
+  /// the cumulative text is provisional until the final fillUser
+  /// replaces it, which is why the pulse stays lit.
+  void _onTranscriptPartial(String soFar) {
+    final b = _transcribeBubble;
+    if (b == null || _phase != AssistantPhase.transcribing) return;
+    _chat.progressUser(b, soFar);
+    _logDebug(
+      'asr partial '
+      '"${soFar.length > 40 ? '${soFar.substring(0, 40)}…' : soFar}" '
+      '(${soFar.length} chars so far)',
+    );
+    notifyListeners();
   }
 
   /// The release decided: this turn WAS cut — file the +110 trace it
@@ -2319,10 +2364,7 @@ class VoiceAssistant extends ChangeNotifier {
           if (tab == null) {
             _chat.clearAll();
           } else {
-            _chat.removeSessions({
-              ...tab.sessionIds,
-              ChatStore.pendingSession,
-            });
+            _chat.removeSessions({...tab.sessionIds, ChatStore.pendingSession});
             tab.sessionIds.clear();
             unawaited(_saveBridgePrefs());
           }
@@ -3744,6 +3786,12 @@ class VoiceAssistant extends ChangeNotifier {
       debugPrint('[worker] ${event.note}'); // gate telemetry (level/floor)
       if (event.note!.startsWith('bargein: ')) {
         _logDebug('INTERRUPT ${event.note}');
+      }
+      // +236: a chunked long-hold decode announcing another finished
+      // piece. Cumulative text rides the same note channel as the gate
+      // telemetry it predates.
+      if (event.note!.startsWith('partial:')) {
+        _onTranscriptPartial(event.note!.substring(8));
       }
       return;
     }

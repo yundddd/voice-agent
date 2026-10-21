@@ -27,7 +27,16 @@ import 'titl_engine.dart';
 /// sherpa recognizer's create→accept→decode→getResult dance collapses
 /// into one call: every real use transcribes a whole clip at once.
 abstract interface class AsrBackend {
-  String transcribe(Float32List samples, int sampleRate);
+  /// Transcribes a whole clip. Chunking backends (long holds decoded
+  /// piece by piece) call [onPartial] with the CUMULATIVE text each
+  /// time another piece finishes, so the UI can show the decode
+  /// landing while the rest is still in Whisper. Whole-clip backends
+  /// have nothing early to say and simply don't call it.
+  String transcribe(
+    Float32List samples,
+    int sampleRate, {
+    void Function(String partialSoFar)? onPartial,
+  });
   void free();
 }
 
@@ -185,6 +194,7 @@ class RealBackends extends WorkerBackends {
 class FakeBackends extends WorkerBackends {
   const FakeBackends({
     this.transcripts = const ['fake transcript'],
+    this.partialGroups = const [],
     this.vadStartsAt = 1,
     this.vadEndsAt = 4,
     this.ttsChunkSamples = 800,
@@ -193,6 +203,7 @@ class FakeBackends extends WorkerBackends {
   });
 
   final List<String> transcripts;
+  final List<List<String>> partialGroups;
   final int vadStartsAt;
   final int vadEndsAt;
   final int ttsChunkSamples;
@@ -200,7 +211,8 @@ class FakeBackends extends WorkerBackends {
   final int ttsNumSpeakers;
 
   @override
-  Future<AsrBackend> buildAsr(ModelPaths p) async => FakeAsr(transcripts);
+  Future<AsrBackend> buildAsr(ModelPaths p) async =>
+      FakeAsr(transcripts, partials: partialGroups);
 
   @override
   Future<VadBackend?> buildVad(ModelPaths p, double endpointSilence) async =>
@@ -233,38 +245,54 @@ class SherpaAsr implements AsrBackend {
   static const double _windowSeconds = 26.0;
 
   @override
-  String transcribe(Float32List samples, int sampleRate) {
+  String transcribe(
+    Float32List samples,
+    int sampleRate, {
+    void Function(String partialSoFar)? onPartial,
+  }) {
     if (chunkVadModel.isEmpty ||
         sampleRate != 16000 ||
         samples.length <= (_windowSeconds * sampleRate).round()) {
       return _decode(samples, sampleRate);
     }
-    final vad = _chunker ??= SherpaVad(sherpa_onnx.VoiceActivityDetector(
-      config: sherpa_onnx.VadModelConfig(
-        sileroVad: sherpa_onnx.SileroVadModelConfig(
-          model: chunkVadModel,
-          // Same opening posture as the live endpointer: raise early,
-          // let the word attack survive; this clip already passed the
-          // SNR gate on the way in.
-          threshold: 0.35,
-          minSilenceDuration: 0.3,
-          minSpeechDuration: 0.25,
-          maxSpeechDuration: 20.0,
-          windowSize: 512,
+    final vad = _chunker ??= SherpaVad(
+      sherpa_onnx.VoiceActivityDetector(
+        config: sherpa_onnx.VadModelConfig(
+          sileroVad: sherpa_onnx.SileroVadModelConfig(
+            model: chunkVadModel,
+            // Same opening posture as the live endpointer: raise early,
+            // let the word attack survive; this clip already passed the
+            // SNR gate on the way in.
+            threshold: 0.35,
+            // +236: half a second, not three tenths — the 0.3 belt cut a
+            // counting session between 'twenty-eight' and 'twenty-nine'
+            // and the word died in the seam (field tape: 24 doubled, 29
+            // gone). A transcribe split should cost a word only at a
+            // REAL pause; the 20 s maxSpeechDuration still forces a cut
+            // through unbroken talk inside Whisper's window.
+            minSilenceDuration: 0.5,
+            minSpeechDuration: 0.25,
+            maxSpeechDuration: 20.0,
+            windowSize: 512,
+          ),
+          sampleRate: 16000,
+          numThreads: 1,
+          debug: false,
+          provider: 'cpu',
         ),
-        sampleRate: 16000,
-        numThreads: 1,
-        debug: false,
-        provider: 'cpu',
-      ),
         bufferSizeInSeconds: 60,
       ),
     );
-    final parts = chunkForWhisper(vad, samples, sampleRate)
-        .map((seg) => _decode(seg, sampleRate).trim())
-        .where((t) => t.isNotEmpty)
-        .join(' ')
-        .trim();
+    // Each finished segment lifts the cumulative text to the caller —
+    // the decode appears as it lands, not all at the end.
+    final soFar = <String>[];
+    for (final seg in chunkForWhisper(vad, samples, sampleRate)) {
+      final t = _decode(seg, sampleRate).trim();
+      if (t.isEmpty) continue;
+      soFar.add(t);
+      onPartial?.call(soFar.join(' '));
+    }
+    final parts = soFar.join(' ').trim();
     // A clip this long with no detectable speech is noise; decode it
     // whole anyway — that's exactly what today's path does with it,
     // truncated by the window, and silence beats a wrong word.
@@ -421,14 +449,29 @@ class TitlTts implements TtsBackend {
 // ── Fakes ─────────────────────────────────────────────────────────────────
 
 class FakeAsr implements AsrBackend {
-  FakeAsr(this.transcripts);
+  FakeAsr(this.transcripts, {this.partials = const []});
   final List<String> transcripts;
+
+  /// Cumulative partials this fake 'decodes' on the way to each
+  /// transcript — one list per transcribe call, delivered to onPartial
+  /// before the result, exactly as the chunking SherpaAsr does.
+  final List<List<String>> partials;
   int _i = 0;
   final List<Float32List> calls = [];
 
   @override
-  String transcribe(Float32List samples, int sampleRate) {
+  String transcribe(
+    Float32List samples,
+    int sampleRate, {
+    void Function(String partialSoFar)? onPartial,
+  }) {
     calls.add(samples);
+    if (partials.isNotEmpty) {
+      for (final p
+          in partials[_i < partials.length ? _i : partials.length - 1]) {
+        onPartial?.call(p);
+      }
+    }
     return transcripts[_i < transcripts.length ? _i++ : transcripts.length - 1];
   }
 

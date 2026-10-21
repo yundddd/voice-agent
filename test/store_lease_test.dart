@@ -209,6 +209,29 @@ void main() {
       );
     });
 
+    test('+236: a chunked decode progress-fills the placeholder in place — '
+        'the words land as they are heard, the pulse stays lit until the '
+        'verdict', () {
+      final ph = store.addUserTranscribing();
+      store.progressUser(ph, 'one two');
+      expect(
+        ph.blocks.single,
+        'one two',
+        reason: 'partial text in the same card',
+      );
+      expect(ph.transcribing, isTrue, reason: 'provisional: still decoding');
+      final revBefore = ph.rev;
+      store.progressUser(ph, 'one two three');
+      expect(ph.blocks.single, 'one two three', reason: 'cumulative, replaced');
+      expect(ph.rev, greaterThan(revBefore), reason: 'the repaint stamp moved');
+      store.fillUser(ph, 'one two three four');
+      expect(
+        ph.transcribing,
+        isFalse,
+        reason: 'the final fill owns the bubble and kills the pulse',
+      );
+    });
+
     test('containsBlock matches how the log stores (whitespace, not case)', () {
       final t = store.beginTurn();
       store.addBlock(t, 'Two   spaces\nand a newline');

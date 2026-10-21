@@ -42,6 +42,7 @@ Float32List loud({int skip = 0}) {
 void main() {
   Future<SpeechWorker> startFake({
     List<String> transcripts = const ['fake transcript'],
+    List<List<String>> partialGroups = const [],
     int vadStartsAt = 1,
     int vadEndsAt = 4,
     int ttsChunkSamples = 600,
@@ -58,6 +59,7 @@ void main() {
     onEvent: onEvent,
     backends: FakeBackends(
       transcripts: transcripts,
+      partialGroups: partialGroups,
       vadStartsAt: vadStartsAt,
       vadEndsAt: vadEndsAt,
       ttsChunkSamples: ttsChunkSamples,
@@ -72,6 +74,30 @@ void main() {
       expect(await w.transcribe(Float32List(16000), 16000), 'first');
       expect(await w.transcribe(Float32List(16000), 16000), 'second');
       expect(await w.transcribe(Float32List(16000), 16000), 'second');
+    });
+
+    test('+236: a chunked decode raises cumulative partials before the '
+        'result — the worker relays them as partial: notes', () async {
+      final notes = <String>[];
+      final w = await startFake(
+        transcripts: const ['one two three'],
+        partialGroups: const [
+          ['one', 'one two', 'one two three'],
+        ],
+        onEvent: (e) {
+          if (e.note != null) notes.add(e.note!);
+        },
+      );
+      addTearDown(w.dispose);
+      expect(await w.transcribe(Float32List(16000), 16000), 'one two three');
+      await flushed(); // let the event lane deliver what the result raced
+      expect(
+        notes,
+        ['partial:one', 'partial:one two', 'partial:one two three'],
+        reason:
+            'cumulative, in order, on the note channel — the UI '
+            'reads the prefix and fills the placeholder bubble',
+      );
     });
 
     test(

@@ -130,8 +130,10 @@ class ChatStore {
       }
     }
     if (n != 0) {
-      trace?.call('msg migration: $n legacy bubbles era\u2019d '
-          '(${timeline.length} timeline lines read)');
+      trace?.call(
+        'msg migration: $n legacy bubbles era\u2019d '
+        '(${timeline.length} timeline lines read)',
+      );
       touch();
     }
     return n;
@@ -198,6 +200,18 @@ class ChatStore {
     trace?.call('msg phone: user (transcribing…)');
     touch();
     return entry;
+  }
+
+  /// +236: a chunked decode finished a piece — write the cumulative
+  /// partial into a [+addUserTranscribing] placeholder while the rest
+  /// is still in Whisper. The pulse KEEPS pulsing (transcribing stays
+  /// true: the verdict is still provisional), but the words arrive as
+  /// they are heard instead of all at the end.
+  void progressUser(ChatEntry entry, String partialSoFar) {
+    entry.blocks[0] = partialSoFar;
+    entry.rev++; // the bubble changed: partial text landed
+    trace?.call('msg phone: user (partial "${_abbrev(partialSoFar)}")');
+    touch();
   }
 
   /// The ASR verdict for a [+addUserTranscribing] placeholder: the
@@ -300,11 +314,11 @@ class ChatStore {
     // the reply card.
     _entries.add(
       ChatEntry.assistant(
-        createdMs: _nowMs(),
-        cancelled: cancelled,
-        receipt: receipt,
-        receiptId: receiptId,
-      )
+          createdMs: _nowMs(),
+          cancelled: cancelled,
+          receipt: receipt,
+          receiptId: receiptId,
+        )
         ..blocks.add(text)
         ..harness = _era
         ..session = _sessionOwner,
@@ -329,9 +343,11 @@ class ChatStore {
         _entries.last.filePath == path) {
       return;
     }
-    _entries.add(ChatEntry.file(name, path, size, createdMs: _nowMs())
-      ..harness = _era
-      ..session = _sessionOwner);
+    _entries.add(
+      ChatEntry.file(name, path, size, createdMs: _nowMs())
+        ..harness = _era
+        ..session = _sessionOwner,
+    );
     trace?.call('msg file: "$name" ($size bytes)');
     touch();
   }

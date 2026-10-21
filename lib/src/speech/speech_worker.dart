@@ -521,7 +521,15 @@ Future<void> _runWorker(
           toParent.send(
             _JobResult.text(
               message.id,
-              asr.transcribe(message.samples!, message.sampleRate!),
+              // +236: a chunked decode lifts each finished piece to the
+              // parent as a 'partial:' note BEFORE the job result —
+              // cumulative text, in order, so the placeholder bubble
+              // fills while the rest is still in Whisper.
+              asr.transcribe(
+                message.samples!,
+                message.sampleRate!,
+                onPartial: (t) => toParent.send(_Event.note('partial:$t')),
+              ),
             ),
           );
         case 'useTts':
