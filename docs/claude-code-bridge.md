@@ -329,6 +329,27 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## A band line lives as long as its work (shipped +277)
+
+The +276 tape's last scar: X's `Bash sleep 15` debt settled on the
+return home (health scoped-proof, receipt filed — both laws audited
+on the tape: `bg line holds: health said clean for 42196747…, the
+badge belongs to 03601cd9…` then `bg line retired` at X's own
+report). But every later swipe back onto X still restored
+`'Bash sleep 15…'` from the tab's band cache — a spinner-shaped lie
+about work that stopped existing while the tab was away. A band line
+is now buried with the ledger it describes:
+
+- Every settlement path calls `_clearOwnedBand(owner)` — the health
+  net, the heartbeat, the named and unnamed receipt payments, the
+  ORPHAN retire, and the Stop chip over detached work. It drops the
+  owner tab's cache entry, and reverts a painted STALE work caption
+  (only while no live turn holds the band).
+- `removeSessionTab` re-indexes `_bandByTab`: the caches key on tab
+  INDEX, so deleting a middle tab used to shift every later tab's
+  cached line onto its neighbour (and the doomed tab's line fossilised
+  in the map). The doomed entry dies; everything above slides down.
+
 ## A health report speaks only for the conversation it describes (shipped +276)
 
 The field tape (21:38, two tabs): tab A ran *"sleep 15 in the

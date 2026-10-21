@@ -617,6 +617,116 @@ void main() {
       },
     );
 
+    test('+277: a settled background debt buries its tab\u2019s stale '
+        'band \u2014 and an idle stranger tab cannot settle it at all',
+        () async {
+      // The 21:49 field tape, end to end: X runs a backgrounded
+      // shell, its turn closes politely with the debt owed, and the
+      // user swipes. (+276) the idle tab\u2019s clean /health must not
+      // retire the banner \u2014 and when X\u2019s OWN health finally
+      // settles the debt, the cached \u2018Bash sleep 15\u2026\u2019 row
+      // goes with it, so coming home shows the rest line, not a
+      // spinner-shaped lie about work that stopped existing.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // Seat X: a turn opens, the harness backgrounds a shell, the
+      // turn closes with the debt owed.
+      expect(await a.switchSession(0), isNull);
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      unawaited(a.runQuickCommand('sleep for me', bubble: 'sleep for me'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 10,
+          contextWindow: 20,
+          ctxSession: 'ses-X',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 15',
+        ),
+      );
+      // The bridge counts the owed shell in its detached ledger —
+      // the honest tape says detached=1 while the sleep runs (the
+      // 21:49:43 resume probe), and 0 once it is over.
+      harness.healthState = {...harness.healthState!, 'detached': 1};
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      // SWIPE to idle Y: Y\u2019s clean health speaks only for Y (+276).
+      // (Y's own ledger has nothing detached — the count rides the
+      // seated conversation.)
+      harness.healthState = {
+        ...harness.healthState!,
+        'sessionId': 'ses-Y',
+        'detached': 0,
+      };
+      expect(await a.switchSession(1), isNull);
+      a.settleBandOnLanding(0, 1);
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('bg line holds')),
+        isTrue,
+        reason: 'the hold is named on the tape, not silently survived',
+      );
+      expect(
+        a.view.backgrounded.visible,
+        isTrue,
+        reason: 'X still owes the work \u2014 the banner stands',
+      );
+      // COME HOME: the sleep has ended while the tab was away
+      // (X's detached count is back to 0); X\u2019s OWN clean health
+      // settles the debt \u2014 the banner retires, the receipt files,
+      // and the tab\u2019s cached command line is buried with it
+      // (+277).
+      harness.healthState = {
+        ...harness.healthState!,
+        'sessionId': 'ses-X',
+        'detached': 0,
+      };
+      expect(await a.switchSession(0), isNull);
+      a.settleBandOnLanding(1, 0);
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('bg line retired')),
+        isTrue,
+        reason: 'this time the proof speaks for the badge\u2019s thread',
+      );
+      expect(
+        a.view.status,
+        isNot(contains('Bash sleep 15')),
+        reason:
+            'the band must not resurrect the dead command \u2014 the '
+            'tape\u2019s lie was a spinner that outlived its work',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('resumes on its OWN cached line')),
+        isFalse,
+        reason: 'the cache entry is gone, not merely unpainted',
+      );
+    });
+
     test('+270: the return SPEAKS — a switch cut kills the mouth, not '
         'the turn', () async {
       // The field signature of this round, in Tim's words: 'the cutoff

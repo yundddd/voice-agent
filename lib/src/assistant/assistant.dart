@@ -261,7 +261,12 @@ class VoiceAssistant extends ChangeNotifier {
         probe: () => _gateway?.healthInfo() ?? Future.value(null),
         noteHealth: _transport.noteHealth,
         reattach: (health) => reattachBackgroundTurn(health: health),
-        retireWork: turn.retireBadgeAndWork,
+        retireWork: () {
+          // +277: the orphan's band goes with its badge.
+          final ownedBy = _turn.workOwner ?? _turnHomeSid;
+          turn.retireBadgeAndWork();
+          _clearOwnedBand(ownedBy);
+        },
         idleReady: _idleReady,
         setStatus: _setStatus,
         log: _logDebug,
@@ -1438,6 +1443,20 @@ class VoiceAssistant extends ChangeNotifier {
       if (rest != null) return rest;
     }
     final doomed = prefs.tabs.removeAt(index);
+    // +277: band caches are keyed by tab INDEX — a deleted tab
+    // shifts every later tab's cached line onto its neighbour, and
+    // the doomed tab's own line is gone with it.
+    final shifted = <int, Activity>{};
+    _bandByTab.forEach((k, v) {
+      if (k < index) {
+        shifted[k] = v;
+      } else if (k > index) {
+        shifted[k - 1] = v;
+      }
+    });
+    _bandByTab
+      ..clear()
+      ..addAll(shifted);
     // +276: a deleted conversation retires the banner IT owed —
     // nothing will ever report a backgrounded shell whose thread
     // the user threw away.
@@ -1624,6 +1643,7 @@ class VoiceAssistant extends ChangeNotifier {
       for (final shell in paid) {
         _bgFinishedBubble(shell, session: ownedBy);
       }
+      _clearOwnedBand(ownedBy); // +277: the stale row goes too
     } else if (h != null &&
         showsBackgroundedWork &&
         h['turnOpen'] != true &&
@@ -1644,6 +1664,33 @@ class VoiceAssistant extends ChangeNotifier {
     if (showsBackgroundedWork) _scheduleBgProbe();
   }
 
+  /// +277: a band line lives exactly as long as the work it
+  /// describes. When a conversation's background ledger settles —
+  /// receipt paid, orphan retired, health-proven closed — the tab's
+  /// CACHED working row dies with it: the field tape (21:49:55→5:04)
+  /// shows the return landing on 'Bash sleep 15…' long after the
+  /// banner retired and the receipt filed, a spinner-shaped lie
+  /// about work that stopped existing while the tab was away. If
+  /// that tab is on screen, its painted band reverts to the at-rest
+  /// line too (only while it still wears the stale WORK caption and
+  /// no live turn holds the slot — a fresh command owns the band).
+  void _clearOwnedBand(String? sid) {
+    if (sid == null) return;
+    final i = _bridgePrefs.tabs.indexWhere(
+      (t) => t.sessionIds.contains(sid),
+    );
+    if (i >= 0) _bandByTab.remove(i);
+    if (sid == _sessionId &&
+        !_bridgeBusy &&
+        !_ticker.isOn &&
+        (_activity is StepLine || _activity is TurnWaiting)) {
+      _activity = _phase == AssistantPhase.listening
+          ? const ListeningHint()
+          : const IdleHint();
+    }
+    notifyListeners();
+  }
+
   /// +276: does THIS /health report speak for the conversation the
   /// banner owes its work to? A /health names the SEAT — it can only
   /// prove absence in the conversation it describes. The badge's home
@@ -1660,10 +1707,12 @@ class VoiceAssistant extends ChangeNotifier {
     if (badgeOwner == null) return true;
     final speaks = h?['sessionId'];
     if (speaks is String && speaks == badgeOwner) return true;
+    // Test ids are short; tape ids are long. Abbreviate honestly.
+    String eight(String s) => s.length <= 8 ? s : '${s.substring(0, 8)}…';
     _logDebug(
       'bg line holds: $door said clean for '
-      '${speaks is String ? '${speaks.substring(0, 8)}…' : 'an unnamed seat'}, '
-      'the badge belongs to ${badgeOwner.substring(0, 8)}…',
+      '${speaks is String ? eight(speaks) : 'an unnamed seat'}, '
+      'the badge belongs to ${eight(badgeOwner)}',
     );
     return false;
   }
@@ -1715,6 +1764,7 @@ class VoiceAssistant extends ChangeNotifier {
       for (final shell in paid) {
         _bgFinishedBubble(shell, session: ownedBy);
       }
+      _clearOwnedBand(ownedBy); // +277: the stale row goes too
       return;
     }
     // Wake the ear for a report that is STREAMING, and — the case the
@@ -1760,6 +1810,9 @@ class VoiceAssistant extends ChangeNotifier {
     bool cancelled = false,
     String taskId = '',
   }) {
+    // +277: remember whose band this payment might settle — the
+    // retirement clears the owner, so capture it first.
+    final wasOwner = _turn.workOwner ?? _turnHomeSid;
     final unnamed = detail.isEmpty || detail.startsWith('ended after');
     if (unnamed && _turn.agentWork) {
       _logDebug(
@@ -1772,6 +1825,11 @@ class VoiceAssistant extends ChangeNotifier {
     }
     _turn.clearBgWork(); // the promise is paid here (see turn_session)
     if (_harnessBackgrounded) _turn.retireBadgeAndWork();
+    // +277: the LAST debt paid (the ledger released its owner — see
+    // turn_session) settles that conversation's band as well.
+    if (_turn.workOwner == null && wasOwner != null) {
+      _clearOwnedBand(wasOwner);
+    }
     if (unnamed) {
       _logDebug(
         'backgrounded work finished '
@@ -1781,6 +1839,10 @@ class VoiceAssistant extends ChangeNotifier {
       return;
     }
     _turn.payAgentDebt(detail); // no-op for a cut tool's label
+    // +277: if that was the final debt, the band is history.
+    if (_turn.workOwner == null && wasOwner != null) {
+      _clearOwnedBand(wasOwner);
+    }
     _bgFinishedBubble(detail, cancelled: cancelled, taskId: taskId);
   }
 
@@ -2666,7 +2728,10 @@ class VoiceAssistant extends ChangeNotifier {
   /// leave the conversation usable — a follow-up utterance goes straight
   /// out, the interrupted session context carries over.
   void bridgeStop() {
+    // +277: a stopped badge's band retires with it.
+    final stoppedOwner = _turn.workOwner ?? _turnHomeSid;
     if (_turn.stopDetachedWork()) {
+      _clearOwnedBand(stoppedOwner);
       _activity = const StatusText(
         'Stopped the harness — the detached turn was cut short.',
       );
