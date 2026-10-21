@@ -18,8 +18,22 @@ export const MIN_SENT_CHARS = 40; // never carve micro-segments ("OK.")
 // shape that asked for this: the period's flush arriving as a final
 // two-word bubble ("garbage collection.") one and a half seconds
 // after its head, because the sentence's only comma sat under the 40
-// floor and the ramble cap (300) never came.
+// floor and the ramble cap (300) never came. (+228 gates this cut
+// behind MIN_CLAUSE_BACKLOG below: the funeral it prevents only
+// matters when the reply is long enough to mind the wait.)
 export const MIN_CLAUSE_CHARS = 20;
+// +228: the clause cut is a LATENCY valve, not a rhythm rule — it earns
+// its seam only when the reply has grown long enough that waiting for a
+// sentence end would stall the voice. Below this backlog of un-spoken
+// text, commas stay fused and the reply rides its sentence ends: Tim's
+// field report on +222's cuts was 'chunking too aggressively, very very
+// small chunks' — every comma-spliced answer arrived in breath-sized
+// shreds, each its own synthesis with its own seam and its own gap.
+// 160 chars (~30 words) is past any plausible short answer, so a reply
+// that WAS a single breath never gets carved, while a ramble still
+// meets the first comma well before the 300 cap. The clause FLOOR
+// above still prices each individual cut; this gate prices the wait.
+export const MIN_CLAUSE_BACKLOG = 160;
 export const MAX_SENT_CHARS = 300; // bound first-audio latency unpunctuated
 
 // blk: {buf: string, spoken: number}. Advances blk.spoken past every
@@ -49,11 +63,13 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
         break;
       }
     }
-    if (cut < 0 && win.length >= MIN_CLAUSE_CHARS) {
-      // +222: no legal sentence end yet — take the FIRST breath the
-      // prose marked for itself once the chunk is a breath's length.
-      // The same word-char anchor and whitespace lookahead the ramble
-      // path uses keep 'main.dart:801' and 'v1,2' from faking one.
+    if (cut < 0 && blk.buf.length - from >= MIN_CLAUSE_BACKLOG) {
+      // +222, gated by +228: no legal sentence end yet AND the block has
+      // grown long enough that the wait itself is the problem — take the
+      // FIRST breath the prose marked for itself once the chunk is a
+      // breath's length. The same word-char anchor and whitespace
+      // lookahead the ramble path uses keep 'main.dart:801' and 'v1,2'
+      // from faking one.
       const re2 = /[^\s][,;:—–]["')\]]*(?=[ \n])/g;
       for (let m; (m = re2.exec(win)) !== null;) {
         if (m.index + m[0].length >= MIN_CLAUSE_CHARS) {

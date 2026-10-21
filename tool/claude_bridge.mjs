@@ -221,8 +221,9 @@
 //
 // Voice events are derived from the raw stream-json: assistant text is
 // spoken sentence by sentence off the live content_block_deltas — at
-// sentence ends past the 40-char micro floor AND at clause commas
-// past the 20-char breath floor (+222, tool/sentence_relay.mjs) — (the
+// sentence ends past the 40-char micro floor, and at clause commas
+// past the 20-char breath floor only once the un-spoken backlog
+// reaches 160 chars (+222, gated +228, tool/sentence_relay.mjs) — (the
 // first period lands in TTS mid-message), tool_use becomes `tool`
 // progress lines, `result` becomes `done`. The un-said live tail of the
 // answer rides the tally frames as `draft` so the chat window can paint

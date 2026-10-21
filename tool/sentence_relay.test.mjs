@@ -2,7 +2,7 @@
 // Every test here names a field report it exists to keep fixed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relaySentences, settleOwed, fmtTok, MIN_SENT_CHARS } from './sentence_relay.mjs';
+import { relaySentences, settleOwed, fmtTok, MIN_SENT_CHARS, MIN_CLAUSE_CHARS, MIN_CLAUSE_BACKLOG } from './sentence_relay.mjs';
 
 const run = (buf, opts = {}) => {
   const blk = { buf, spoken: 0 };
@@ -40,15 +40,26 @@ test('ramble cuts at the FIRST breath the prose marked, not an arbitrary space '
   assert.ok(out[0].endsWith('here,'), 'frame must end at the comma');
 });
 
-test('+222: a mid-sentence comma past the breath floor cuts on its own', () => {
+test('+228: a short reply stays fused even when its comma clears the breath floor', () => {
   const t = 'If you want space back, the practical moves are pruning the ' +
     'ComfyUI folder and running a containerd garbage collection.';
   const { out } = run(t, { force: true });
-  // The field shape: the advice ships at the comma, the tail rides
-  // with its own head instead of arriving as a two-word funeral.
-  assert.equal(out[0], 'If you want space back,');
-  assert.ok(out[1].startsWith('the practical moves are'),
-    'the rest follows as the next breath');
+  // The +222 shape this comma used to carve at: a 23-char head and its
+  // own tail. +228: the advice fits under the backlog gate, so it ships
+  // as the ONE breath the prose always was.
+  assert.equal(out.length, 1, 'sub-backlog commas never carve');
+  assert.equal(out[0], t);
+});
+
+test('+228: past the backlog the same comma cuts at its breath floor', () => {
+  const t = 'If you want space back, the practical moves are pruning the ' +
+    'ComfyUI folder and running a containerd garbage collection, plus ' +
+    'unloading models you no longer route to and closing the tabs that ' +
+    'leak a gigabyte each until the whole machine finally feels light.';
+  assert.ok(t.length > 160);
+  const { out } = run(t, { force: true });
+  assert.equal(out[0], 'If you want space back,',
+    'the valve opens at the backlog and the first breath still wins');
 });
 
 test('+222: commas under the breath floor never carve', () => {
@@ -58,11 +69,14 @@ test('+222: commas under the breath floor never carve', () => {
     'a 5-char first clause stays fused — the micro-segment lesson holds');
 });
 
-test('+222: path labels and versions do not fake a breath', () => {
-  const { out } = run('Open main.dart:801 first, then read the log line.',
+test('+228: path labels and versions do not fake a breath', () => {
+  const { out } = run('Open main.dart:801 first, then read the log line ' +
+    'that follows it and note the retry counter before the run finally ' +
+    'reports its verdict and writes the summary you will read tomorrow.',
     { force: true });
   assert.ok(out[0].endsWith('first,'),
-    'the colon inside main.dart:801 has no trailing space — not a breath');
+    'past the backlog the real comma cuts — and the colon inside ' +
+    'main.dart:801, having no trailing space, never did');
 });
 
 test('truly unpunctuated ramble still cuts at a word gap under the cap', () => {
@@ -127,6 +141,8 @@ test('token counts read with two decimals at every magnitude', () => {
   assert.equal(fmtTok(1250000), '1.25M');
 });
 
-test('MIN floor is the documented 40 characters', () => {
+test('MIN floors are the documented 40 / 20 / 160 characters', () => {
   assert.equal(MIN_SENT_CHARS, 40);
+  assert.equal(MIN_CLAUSE_CHARS, 20);
+  assert.equal(MIN_CLAUSE_BACKLOG, 160);
 });
