@@ -174,48 +174,32 @@ void main() {
     });
   });
 
-  group('status line rides a static band (no jittering the conversation)', () {
-    // The centered channel column walks the WHOLE conversation whenever
-    // any part of it reflows; the status wording changes HEIGHT as it
-    // changes (the idle two-liner, a bare 'Thinking…', a long 'Bash …'
-    // command), so the line may no longer size itself to its text.
-    // Widget-level layout needs the device harness; the LAW is pinned
-    // at the source.
+  group('the status banner is gone (+267)', () {
+    // The banner's whole +259..+266 arc — owner, cache, off-screen
+    // sweep — ended at Tim's plain verdict: 'I want that banner
+    // completely gone.' Every word it showed has a better home (the
+    // working row for work, the bottom hint for ear-state, the red
+    // line for errors, the tape for the rest), and the pinned
+    // HEIGHT the band reserved is the channel's own. The guard is
+    // the retirement certificate: the band may never come back by
+    // name, and v.status may not be painted on this screen at all.
     final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
-    test('the band is computed, font-scale-aware, and fixed-height', () {
-      expect(ui, contains('static double _statusBand('));
-      expect(
-        ui,
-        contains('MediaQuery.textScalerOf'),
-        reason: 'a big system font must not overflow the band',
-      );
-      // The render site of the status word: from its band anchor
-      // forward a short window — the two-line promise must be INSIDE
-      // the banded Text itself, not merely somewhere in the file. (The
-      // ellipsis is the promise StepLine always made of "the widget".)
-      // +259 widened the window and adds its own clause: the band may
-      // still render v.status, but a tool command may not squat there
-      // while the working row is lit and naming the same step.
-      final at = ui.indexOf('height: _statusBand(context)');
-      expect(at, greaterThan(-1));
-      final site = ui.substring(at, at + 1200);
-      expect(site, contains('v.status'));
-      expect(site, contains('maxLines: 2'));
-      expect(site, contains('TextOverflow.ellipsis'));
-      expect(
-        site,
-        contains('v.showWorkingRow && v.activity is StepLine'),
-        reason: '+259: one statement of a tool call, in the working row',
-      );
+    test('no band, no band height, no painted status', () {
+      for (final gone in ['_statusBand', 'v.status', 'maxLines: 2']) {
+        expect(
+          ui,
+          isNot(contains(gone)),
+          reason: '$gone belonged to the banner Tim deleted',
+        );
+      }
     });
-    test('the screen renders the status in exactly one place', () {
-      // The old bare wrapping Text(v.status) must not return beside
-      // (or instead of) the banded one.
-      expect(
-        RegExp(r'v\.status').allMatches(ui).length,
-        1,
-        reason: 'one banded render site is the whole law',
-      );
+    test('the projection still SPEAKS status — the row, not a band', () {
+      // v.status remains the spinner label's data source (the +89
+      // command lives there now); only the painting retired.
+      final view = File('lib/src/assistant/view.dart').readAsStringSync();
+      expect(view, contains('String get status'));
+      final spin = File('lib/src/ui/harness_spinner.dart').readAsStringSync();
+      expect(spin, contains('activityLabel'));
     });
   });
 

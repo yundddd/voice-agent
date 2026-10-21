@@ -828,18 +828,6 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
-  /// The static band the status line rides: two lines of the status
-  /// style at the user's font scale. The 1.45 margin is the slack
-  /// between a declared line height (multiplies exactly) and the font's
-  /// intrinsic metrics when the style declares none (Roboto rides
-  /// ~1.17) — it is what keeps a long 'Bash …' command ellipsized
-  /// INSIDE the band instead of overflowing it.
-  static double _statusBand(BuildContext context) {
-    final ts = Theme.of(context).textTheme.titleMedium;
-    final px = MediaQuery.textScalerOf(context).scale(ts?.fontSize ?? 16);
-    return px * (ts?.height ?? 1.0) * 2 * 1.45;
-  }
-
   @override
   Widget build(BuildContext context) {
     final a = _assistant;
@@ -1084,41 +1072,26 @@ class _AssistantScreenState extends State<AssistantScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // The status line rides a STATIC two-line
-                                // band. The wording changes HEIGHT as it
-                                // changes — the idle two-liner, a bare
-                                // 'Thinking…', a long 'Bash …' command
-                                // (StepLine's promise of being "ellipsized
-                                // by the widget", finally kept) — and under
-                                // this centered column every reflow walked
-                                // the whole conversation up and down: the
-                                // jitter the static band kills. Two lines
-                                // reserved at any font scale; more is
-                                // ellipsized, never reflowed.
-                                SizedBox(
-                                  height: _statusBand(context),
-                                  child: Center(
-                                    child: Text(
-                                      // +259 (Tim's read): the band at
-                                      // the very top has no business
-                                      // naming a tool call — the working
-                                      // row already says that line,
-                                      // beside its meter and draft. One
-                                      // statement, one place: while the
-                                      // row is lit on a step, the band
-                                      // speaks the ear's own line.
-                                      v.showWorkingRow && v.activity is StepLine
-                                          ? hint
-                                          : v.status,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                    ),
-                                  ),
-                                ),
+                                // +267: THE BANNER IS GONE. The
+                                // status line spent the whole +259/
+                                // +266 arc getting an owner, a cache
+                                // and a quieter entrance, and Tim's
+                                // verdict landed anyway: 'I want
+                                // that banner completely gone.' Fair
+                                // — every word it ever showed has a
+                                // better home now: the work says
+                                // itself in the working row (label,
+                                // meter, draft), the ear-state says
+                                // itself in the bottom hint, errors
+                                // own their red line below, and the
+                                // tape keeps the rest. The band
+                                // reserved two lines of height to
+                                // duplicate all three; the channel
+                                // just took them back. (The status
+                                // projection still exists — the
+                                // per-tab cache feeds the spinner's
+                                // label through it; it is simply no
+                                // longer PAINTED on this screen.)
                                 if (v.error.isNotEmpty) ...[
                                   const SizedBox(height: 12),
                                   Text(
