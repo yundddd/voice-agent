@@ -251,8 +251,13 @@ class _AssistantScreenState extends State<AssistantScreen>
     label: label,
     onPressed: onPressed,
     visualDensity: VisualDensity.compact,
-    padding: const EdgeInsets.symmetric(horizontal: 8),
+    // +244: the 'microspace' Tim clocked is the chip's own left
+    // padding — the frame Material draws before the avatar. It goes
+    // to 4; labelPadding already died at zero. With the 16 px glyph
+    // and a 12 pt label the whole row loses ~30 dp.
+    padding: const EdgeInsets.only(left: 4, right: 8),
     labelPadding: EdgeInsets.zero,
+    labelStyle: const TextStyle(fontSize: 12),
   );
 
   /// +242: the '/model' chip's verb — the settings sheet's own picker
@@ -1205,18 +1210,16 @@ class _AssistantScreenState extends State<AssistantScreen>
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      const SizedBox(width: 4),
+                      // (+244: the row's own leading SizedBox is gone —
+                      // the chips' left padding now IS the inset.)
                       for (final chip in VoiceAssistant.controlChips)
                         Padding(
-                          // +243: the row got a fourth member and the
-                          // pocket widths stayed — chips wear a compact
-                          // skin so /model /new /compact Stop all read
-                          // at a glance on one line, no sideways hunt.
-                          // The scroll view stays as the belt for the
-                          // smallest phones, not as the design.
-                          padding: const EdgeInsets.only(right: 6),
+                          // +243: chips wear a compact skin; +244
+                          // tightens it again at Tim's read: four
+                          // verbs must fit the width, no sideways hunt.
+                          padding: const EdgeInsets.only(right: 4),
                           child: _controlChip(
-                            avatar: Icon(_chipIcons[chip], size: 18),
+                            avatar: Icon(_chipIcons[chip], size: 16),
                             label: Text(chip),
                             onPressed: v.bridgeBusy
                                 ? null
@@ -1232,7 +1235,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                       _controlChip(
                         avatar: Icon(
                           Icons.stop_circle_outlined,
-                          size: 18,
+                          size: 16,
                           color: v.agentBusy ? null : scheme.outline,
                         ),
                         label: Text(
