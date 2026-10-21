@@ -441,90 +441,111 @@ class VoiceAssistant extends ChangeNotifier {
   /// computed from the machine's truth in exactly one place. Widgets
   /// read this (or re-read it on their own tick through a [ViewSource]);
   /// gestures come back as the intent methods below.
-  AssistantView get view => AssistantView(
-    phase: _phase,
-    mode: _mode,
-    activity: _activity,
-    error: _error,
-    // +213/223: the channel shows ONE THREAD: this session's bubbles
-    // (which, while no id is known yet, also admits the unnamed
-    // birth-turn ones) plus the un-era'd, un-owned prologue. The
-    // FILTER IS RENDER-SIDE ONLY — the store underneath stays the
-    // whole append-only log, so the reattach dedup, the receipt-by-id
-    // law, and the heard ledger keep scanning everything: a task
-    // finished under another project is still finished when this
-    // one's replay arrives. Switch project or harness and the window
-    // follows the conversation — cleared of one thread, restored to
-    // the other's, nothing deleted.
-    chat: _chat.entries.where(_entryVisible).toList(growable: false),
-    chatVersion: _chat.version,
-    queued: queuedBubble == null
-        ? null
-        : QueuedPin(text: queuedText ?? '', createdMs: queuedBubble!.createdMs),
-    backgrounded: BgWork(
-      visible: showsBackgroundedWork,
-      label: backgroundedWork,
-      sinceMs: harnessSinceMs,
-      elapsed: harnessElapsed,
-    ),
-    bridgeBusy: _bridgeBusy,
-    harnessBackgrounded: _harnessBackgrounded,
-    turnHomeHere:
-        _turnHomeSid == null ||
-        _turnHomeSid == _sessionId ||
-        _sessionId == null,
-    drainOwed: _drainAfterSpeech != null,
-    drainReading: _drainReading,
-    bridgeConfigured: bridgeConfigured,
-    ttsOn: _bridgePrefs.tts,
-    userSpeaking: _userSpeaking,
-    token: TokenMeter(
-      on: tokenTickerOn,
-      out: tokensOut,
-      inTok: tokensIn,
-      thought: tokenThought,
-      draft: tokenDraft,
-      settled: turnSettled,
-      activityLabel: activityLabel,
-    ),
-    context: ContextBarView(
-      tokensIn: _contextIn,
-      window: _contextWindow,
-      busy: _bridgeBusy,
-      model: bridgeLastModel, // +241: the name rides the bar it fills
-    ),
-    latency: LatencyView(
-      recordSeconds: _recordSeconds,
-      asrSeconds: _asrSeconds,
-      ttsSeconds: _ttsSeconds,
-      playSeconds: _reply.playSeconds,
-      hopAsr: _hops.hopAsr,
-      hopSent: _hops.hopSent,
-      hopReply: _hops.hopReply,
-      hopTts: _hops.hopTts,
-    ),
-    ptt: PttGuide(
-      holdActive: pttHoldActive,
-      slide: _ptt.slide,
-      drag: _ptt.drag,
-      holdOverTurn: _ptt.holdOverTurn,
-      micLevel: _micLevel,
-    ),
-    sessionId: _sessionId,
-    harnessElapsed: harnessElapsed,
-    // +230: the tab ledger, projected. needsSetup is the first-launch
-    // gate (fresh install, configured bridge, empty ledger); canSeat
-    // is /health's word that /seat answers here.
-    tabs: _tabInfos,
-    tabIndex: _bridgePrefs.tabs.isEmpty
-        ? 0
-        : _bridgePrefs.activeTab.clamp(0, _bridgePrefs.tabs.length - 1),
-    needsSetup:
-        !_bridgePrefs.installed &&
-        bridgeConfigured &&
-        _bridgePrefs.tabs.isEmpty,
-    canSeat: _seatCap,
-  );
+  AssistantView get view {
+    // +256 (the xray tape): HOME is where the working row and the
+    // context bar's busy-ness come from — and an unnamed seat is NOT
+    // automatically home. +249's third clause ('_sessionId == null →
+    // home') made sense for the pre-tab world, where a null id was
+    // simply 'not tracked yet'; with a marker SET, a null seat names
+    // a different conversation than the work — a fresh (unnamed) tab
+    // was showing another conversation's thinking box and its
+    // stranger-driven shimmer precisely because it had no name to
+    // mismatch on. No marker = no away work = the row/bar serve the
+    // seat; that is the whole clause now.
+    final turnHome = _turnHomeSid == null || _turnHomeSid == _sessionId;
+    return AssistantView(
+      phase: _phase,
+      mode: _mode,
+      activity: _activity,
+      error: _error,
+      // +213/223: the channel shows ONE THREAD: this session's bubbles
+      // (which, while no id is known yet, also admits the unnamed
+      // birth-turn ones) plus the un-era'd, un-owned prologue. The
+      // FILTER IS RENDER-SIDE ONLY — the store underneath stays the
+      // whole append-only log, so the reattach dedup, the receipt-by-id
+      // law, and the heard ledger keep scanning everything: a task
+      // finished under another project is still finished when this
+      // one's replay arrives. Switch project or harness and the window
+      // follows the conversation — cleared of one thread, restored to
+      // the other's, nothing deleted.
+      chat: _chat.entries.where(_entryVisible).toList(growable: false),
+      chatVersion: _chat.version,
+      queued: queuedBubble == null
+          ? null
+          : QueuedPin(
+              text: queuedText ?? '',
+              createdMs: queuedBubble!.createdMs,
+            ),
+      backgrounded: BgWork(
+        visible: showsBackgroundedWork,
+        label: backgroundedWork,
+        sinceMs: harnessSinceMs,
+        elapsed: harnessElapsed,
+      ),
+      bridgeBusy: _bridgeBusy,
+      harnessBackgrounded: _harnessBackgrounded,
+      turnHomeHere: turnHome,
+      drainOwed: _drainAfterSpeech != null,
+      drainReading: _drainReading,
+      bridgeConfigured: bridgeConfigured,
+      ttsOn: _bridgePrefs.tts,
+      userSpeaking: _userSpeaking,
+      token: TokenMeter(
+        on: tokenTickerOn,
+        out: tokensOut,
+        inTok: tokensIn,
+        thought: tokenThought,
+        draft: tokenDraft,
+        settled: turnSettled,
+        activityLabel: activityLabel,
+      ),
+      context: ContextBarView(
+        tokensIn: _contextIn,
+        window: _contextWindow,
+        // +256 (the xray tape): the bar belongs to the conversation
+        // like the row — and 'busy' here drives the 'measuring…'
+        // shimmer, so a STRANGER's open turn may not animate it. The
+        // +249 owner gate kept the NUMBERS honest across a switch;
+        // this keeps the MOTION honest: the shimmer spins only for
+        // work this seat owns. (Numbers already follow the rule: the
+        // manual zero at the switch and /health's owner gate blank
+        // them together.)
+        busy: _bridgeBusy && turnHome,
+        model: bridgeLastModel, // +241: the name rides the bar it fills
+      ),
+      latency: LatencyView(
+        recordSeconds: _recordSeconds,
+        asrSeconds: _asrSeconds,
+        ttsSeconds: _ttsSeconds,
+        playSeconds: _reply.playSeconds,
+        hopAsr: _hops.hopAsr,
+        hopSent: _hops.hopSent,
+        hopReply: _hops.hopReply,
+        hopTts: _hops.hopTts,
+      ),
+      ptt: PttGuide(
+        holdActive: pttHoldActive,
+        slide: _ptt.slide,
+        drag: _ptt.drag,
+        holdOverTurn: _ptt.holdOverTurn,
+        micLevel: _micLevel,
+      ),
+      sessionId: _sessionId,
+      harnessElapsed: harnessElapsed,
+      // +230: the tab ledger, projected. needsSetup is the first-launch
+      // gate (fresh install, configured bridge, empty ledger); canSeat
+      // is /health's word that /seat answers here.
+      tabs: _tabInfos,
+      tabIndex: _bridgePrefs.tabs.isEmpty
+          ? 0
+          : _bridgePrefs.activeTab.clamp(0, _bridgePrefs.tabs.length - 1),
+      needsSetup:
+          !_bridgePrefs.installed &&
+          bridgeConfigured &&
+          _bridgePrefs.tabs.isEmpty,
+      canSeat: _seatCap,
+    );
+  }
 
   // ── Latency strip moments (see HopTracker) ─────────────────────────────
   bool get hopAsr => _hops.hopAsr;
@@ -1172,7 +1193,14 @@ class VoiceAssistant extends ChangeNotifier {
     final tab = prefs.tabs[index];
     // +246: same harness => the mid-turn move backgrounds rather than
     // resets (see /seat); the rest guard only bites across harnesses.
-    final rest = _seatRest(h);
+    // +256 (the xray tape): an UNNAMED destination is a fresh seat —
+    // the verb below sends fresh:true, and fresh always resets — so
+    // the guard must consult the reset law for exactly that shape.
+    // The tape caught the hole: a mid-turn swipe onto a tab that had
+    // never spoken reset the bridge's conversation under a 'free to
+    // move' verdict, SIGTERM'd the answering turn, and the phone
+    // reattached to mail it never asked to stop reading.
+    final rest = _seatRest(h, resets: tab.currentId == null);
     if (rest != null) return rest;
     final r = await g.seat(
       harness: tab.harness,

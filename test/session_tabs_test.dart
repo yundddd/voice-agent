@@ -386,11 +386,22 @@ void main() {
       // is the foreground. Only a harness FLIP still ends a turn.
       await a.createSession(harness: 'opencode', dir: '/proj-x');
       await a.createSession(harness: 'opencode', dir: '/proj-y');
-      await a.switchSession(0); // start on X
+      // +256: the destination gets NAMED first (one turn, then the
+      // /health records the id onto the tab). A never-spoken tab is a
+      // FRESH seat — its move resets, and a mid-turn swipe onto it
+      // refuses by law (see 'the unnamed destination is a reset'
+      // walk). The backgrounding law is about moving between two
+      // conversations that exist.
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y'); // any awaited refresh path names it
+      await settle();
+      expect(a.view.tabs[1].currentId, 'ses-Y');
+      await a.switchSession(0); // start on X (its fresh seat, idle: allowed)
       await settle();
       harness.healthState = {
         ...harness.healthState!,
         'harness': 'opencode',
+        'sessionId': 'ses-X', // X gets its own name the honest way: a turn
         'turnOpen': true,
         'missed': 1,
       };
@@ -614,7 +625,70 @@ void main() {
             'the attach claimed the OPEN (foreign) turn — the row '
             'belongs to the conversation, not to whoever holds the busy slot',
       );
+      // +256 (the xray tape's third finding): the bar's MOTION obeys
+      // the same ownership as its numbers and the row — and an
+      // unnamed seat no longer counts as home by default. Drop the
+      // seat's name from the health line (a reset conversation is
+      // exactly this shape): the away marker must still gate.
+      harness.healthState = Map.of({
+        ...harness.healthState!,
+      })..remove('sessionId');
+      await a.setBridgeModel('default'); // any awaited refresh path
+      await settle();
+      expect(a.view.bridgeBusy, isTrue, reason: 'the foreign turn is open');
+      expect(
+        a.view.turnHomeHere,
+        isFalse,
+        reason:
+            'an unnamed seat with a named away work is NOT home — '
+            'the +249 clause let the stranger\'s box show here',
+      );
+      expect(
+        a.view.context.busy,
+        isFalse,
+        reason: 'the measuring shimmer spins only for the seat\'s own work',
+      );
+      expect(a.view.showWorkingRow, isFalse);
       harness.finishView();
+    });
+
+    test('+256: the unnamed destination is a reset — a mid-turn swipe '
+        'onto a never-spoken tab REFUSES with words, not a silent kill',
+    () async {
+      // The xray tape's opening act: the first swipe reset the
+      // bridge's conversation under a 'free to move' verdict and
+      // SIGTERM'd the answering turn. A tab that never spoke has no
+      // id; seating it sends fresh:true; fresh ALWAYS resets; so the
+      // rest law reads the reset law. Idle moves stay free — the
+      // refusal is exactly the shape +248 already wrote for fresh.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      await a.createSession(harness: 'opencode', dir: '/proj-z'); // never speaks
+      await a.switchSession(0); // idle: seating X's fresh start is allowed
+      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+      await settle();
+      harness.healthState = {
+        ...harness.healthState!,
+        'sessionId': 'ses-X',
+        'turnOpen': true,
+      };
+      await a.setBridgeDir('/proj-x'); // name X while its turn streams
+      await settle();
+      final before = harness.seatCalls.length;
+      expect(
+        await a.switchSession(1),
+        'the harness is mid-turn — stop it before switching sessions',
+        reason: 'an unnamed destination resets; resets rest mid-turn',
+      );
+      expect(harness.seatCalls.length, before, reason: 'no wire verb fired');
+      expect(a.view.tabIndex, 0, reason: 'stayed put, honestly');
+      // The turn closes; the same move is now free (resetting nothing).
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      harness.healthState = Map.of({...harness.healthState!})
+        ..remove('turnOpen'); // the real bridge closes its flag with the turn
+      await settle();
+      expect(await a.switchSession(1), isNull);
+      expect(a.view.tabIndex, 1);
     });
 
     test(
