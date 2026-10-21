@@ -1144,6 +1144,7 @@ class VoiceAssistant extends ChangeNotifier {
     );
     prefs.activeTab = prefs.tabs.length - 1;
     _sessionId = r['sessionId'] is String ? r['sessionId'] as String : null;
+    _noteFocusMoved(); // +253: a landing is a landing, fresh or not
     await _saveBridgePrefs();
     await _refreshSession();
     notifyListeners();
@@ -1213,11 +1214,22 @@ class VoiceAssistant extends ChangeNotifier {
     if (sid is String && !tab.sessionIds.contains(sid)) {
       tab.sessionIds.add(sid);
     }
+    // +253: the watermark lands with the focus — what this conversation
+    // already owes is history the eyes get, not the ears.
+    _noteFocusMoved();
     await _saveBridgePrefs();
     await _refreshSession();
     notifyListeners();
     return null;
   }
+
+  /// +253: the moment this conversation became the one on screen, in
+  /// the bridge's clock domain (the same _ts a frame carries — the
+  /// transport's calibrated skew makes the comparison honest). A say
+  /// stamped BEFORE it is backlog: filed, acked, visible, mute (see
+  /// SessionChannel.focusAtMs and BridgeTurn._onSay).
+  void _noteFocusMoved() =>
+      _chan.focusAtMs = _clock().millisecondsSinceEpoch - _transport.skewMs;
 
   /// +230: ✕ on the pill — FORGET A TAB. The tab's bubbles leave with
   /// it (the same replace law as /new: a deleted thread whose store
@@ -2186,6 +2198,7 @@ class VoiceAssistant extends ChangeNotifier {
     awaitingPickup: () => _awaitPickup,
     isHeard: _heard.isHeard,
     commitHeard: _heard.commit,
+    focusAtMs: () => _chan.focusAtMs, // +253: the channel keeps the time
     turnOpenOnWire: () async {
       final h = await _gateway?.healthInfo();
       return h != null && h['turnOpen'] == true;

@@ -201,6 +201,9 @@ void main() {
   group('assistant: the tab ledger', () {
     late FakeHarness harness;
     late VoiceAssistant a;
+    // +253: the engine is captured, not inline — the watermark walks
+    // read what it was (and was NOT) given a voice for.
+    late FakeSpeechEngine engine;
 
     setUp(() async {
       harness = FakeHarness();
@@ -211,8 +214,9 @@ void main() {
         'dir': '/proj-a',
         'seat': true,
       };
+      engine = FakeSpeechEngine();
       a = VoiceAssistant(
-        worker: FakeSpeechEngine(),
+        worker: engine,
         micSource: FakeMic(),
         audioOutput: FakeAudioOutput(),
         gatewayFactory: (_, _) => harness,
@@ -459,6 +463,96 @@ void main() {
         isTrue,
         reason: 'the turn never stopped; coming home shows it working',
       );
+    });
+
+    test('+253: swipe away mid-turn — the answer lands in its thread '
+        'mute; after the return, the next paragraph gets a voice',
+    () async {
+      // The full field arc over the real assistant: a turn working in
+      // X speaks while X is on screen; the swipe to Y files X's answer
+      // silently (the new tab keeps its peace); swiping back is the
+      // foreground — X's NEXT sentence speaks, and what landed while
+      // away is complete history, never re-spoken (the heard ack rode
+      // the take).
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // Seat X, start a turn that stays OPEN (no done on the wire).
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'heard before the swipe.',
+          mid: 21,
+        ),
+      );
+      await settle();
+      expect(
+        engine.synthesized,
+        contains('heard before the swipe.'),
+        reason: 'the focused conversation speaks as always',
+      );
+      // SWIPE AWAY mid-turn (the +246 backgrounding keeps the stream).
+      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      expect(await a.switchSession(1), isNull);
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'answered while away.', mid: 22),
+      );
+      await settle();
+      expect(
+        engine.synthesized,
+        isNot(contains('answered while away.')),
+        reason: 'the tab you swipe onto does not get someone else\'s answer',
+      );
+      // BACK TO X: the foreground — and the NEXT paragraph speaks.
+      expect(await a.switchSession(0), isNull);
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'back home, speaking.', mid: 23),
+      );
+      await settle();
+      expect(
+        engine.synthesized,
+        containsAll([
+          'heard before the swipe.',
+          'back home, speaking.',
+        ]),
+        reason: 'live work at home keeps its voice',
+      );
+      expect(
+        engine.synthesized,
+        isNot(contains('answered while away.')),
+        reason: 'and the away backlog is NEVER re-spoken — it was acked',
+      );
+      // The thread of X has every word, in order, in one answer.
+      expect(
+        a.chat.map((e) => e.blocks),
+        contains(
+          containsAllInOrder([
+            'heard before the swipe.',
+            'answered while away.',
+            'back home, speaking.',
+          ]),
+        ),
+      );
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
     });
 
     test(

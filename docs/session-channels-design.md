@@ -85,6 +85,24 @@ the FOCUSED channel; the tab strip reads the others.
 Step 1 (+252, phone): landed as written — SessionChannel with one
 instance, all 466 walks the extraction proof.
 
+Step 3, phone portion (+254): Tim's watermark LAW landed where the
+pump decides mouths — BridgeTurn._onSay asks two questions before it
+dare speak: is this view's conversation the seated one (identity: the
++246 backgrounding kept the stream alive; from now on its paragraphs
+file into the thread, mute — the gear badge signs them, the thread
+delivers them), and was the frame stamped before the focus landed
+(watermark: SessionChannel.focusAtMs, recorded by the phone's clock in
+the bridge's clock domain — the same _ts every frame carries, which
+the bridge has always preserved across replays for exactly this kind
+of question)? A say that fails either is filed AND acked (received
+means acked — the +253 walks pin the commit riding the mute path) and
+journalled by name: 'pre-focus backlog' / 'unfocused conversation:
+logged silently, not spoken'. Unstamped frames (old bridges) fall
+through to the age and heard-ledger laws unchanged. The focus moves
+that set the watermark: switchSession and createSession (boot's
+reconcile does not — the screen never moved; it put the seat back
+under the tab already in view).
+
 Step 2 (+253, bridge): landed as a WRAP — `sessions` map in
 claude_bridge.mjs, rows minted at turn birth (or at the harness
 speaking a birth turn's name mid-flight), resting with their context
@@ -101,18 +119,23 @@ actual concurrent-inactive-receive — are the map's next increment.
 
 ## Migration order (tests green at every step)
 
-1. Phone first: extract `SessionChannel` from `VoiceAssistant`'s
-   globals with exactly ONE channel instance and the focus trivially
-   on it. All 250 eras of walks keep passing — the extraction is the
-   proof the state was one channel's anyway.
-2. Bridge: wrap the single turn into the map + `focus`; `/health`
-   answers both old globals and the map for one era; the phone reads
-   the map.
-3. Phone: N channels, live subscriptions per busy channel, the TTS
-   gate at the reply pipeline. New walks: (a) background session
-   receives, files, acks, says nothing; (b) foreground shows the whole
-   thread silent + unread badge; (c) focused session speaks; (d) a
-   barge interrupts only the focused turn.
+1. ✅ (+252) Phone first: extract `SessionChannel` from
+   `VoiceAssistant`'s globals with exactly ONE channel instance and
+   the focus trivially on it. All 250 eras of walks keep passing —
+   the extraction is the proof the state was one channel's anyway.
+2. ✅ (+253) Bridge: wrap the single turn into the map + `focus`;
+   `/health` answers both old globals and the map for one era; the
+   phone reads the map.
+3. ◐ (+254) Phone: the TTS gate (identity + watermark) at
+   `_onSay` — walks (a), (b-silent), (c) and the return-arc are
+   green. Still owed for this step to close: N channel instances
+   with per-channel live subscriptions (the single `_chan` still
+   wears every tab's state; the watermark rides it correctly because
+   every focus MOVE re-stamps it, but the away conversation's turn
+   bookkeeping — ticker, drain, row — is still ONE bed that two
+   conversations take turns in), per-session rings for the
+   never-acked backlog, and (d) a barge scoped to the focused turn
+   only.
 4. Delete the marker laws: `turnHomeSid`, `ctxOwner` gate,
    `turnHomeHere`, the rest/refusal journal. The +246…+251 walks
    retarget to the structural equivalents.

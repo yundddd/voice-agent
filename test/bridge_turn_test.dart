@@ -73,6 +73,12 @@ class EnvProbe {
 
   bool get speaking => phase == AssistantPhase.speaking;
 
+  // +253: the focus seams — a watermark (0 = none) and the seated id
+  // (null = single-thread world, every view at home). The walks that
+  // pin the watermark law set them; every older walk rides the defaults.
+  int focusMs = 0;
+  String? seatedNow;
+
   BridgeTurnEnv get env => BridgeTurnEnv(
     mode: () => mode,
     backgrounded: () => backgrounded,
@@ -135,6 +141,8 @@ class EnvProbe {
     awaitingPickup: () => false,
     isHeard: alreadyHeard.contains,
     commitHeard: took.add,
+    focusAtMs: () => focusMs,
+    seatedSession: () => seatedNow,
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);
@@ -333,6 +341,142 @@ void main() {
         probe.logs.any((l) => l.contains('pure tool-call markup')),
         isTrue,
         reason: 'the drop is journalled — future tapes read honest',
+      );
+    });
+
+    test('+253: the focus watermark files the backlog you land on; only '
+        'words written after you sit down speak', () async {
+      // Tim's swipe law, at the pump: /attach replay brings the
+      // unheard paragraphs a conversation owed BEFORE the switch —
+      // filed, acked, visible, mute. The next paragraph, born after
+      // the landing, gets the normal voice.
+      // Stamps live on the fake clock's own epoch: the backlog frame
+      // is 6 s old AND older than the landing (5 s ago) — the watermark
+      // silences it while the 120 s age law still considers it news.
+      final t0 = DateTime(2026, 1, 1, 12).millisecondsSinceEpoch;
+      probe.focusMs = t0 - 5000; // the swipe landed 5 s ago
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        BridgeEvent.forTest(
+          'say',
+          text: 'owed from before the swipe.',
+          mid: 1,
+          wireMs: t0 - 6000,
+        ),
+      );
+      wire.add(
+        BridgeEvent.forTest(
+          'say',
+          text: 'new since you landed.',
+          mid: 2,
+          wireMs: t0,
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+      expect(
+        engine.synthesized,
+        ['new since you landed.'],
+        reason: 'the backlog you swiped onto never interrupts the welcome',
+      );
+      expect(bubble.blocks, [
+        'owed from before the swipe.',
+        'new since you landed.',
+      ], reason: 'the thread is complete either way');
+      expect(
+        probe.took,
+        containsAll(<int>[1, 2]),
+        reason: 'received means acked — mute included',
+      );
+      expect(
+        probe.logs.any((l) => l.contains('pre-focus backlog: logged silently')),
+        isTrue,
+        reason: 'the silence has a name on the tape',
+      );
+    });
+
+    test('+253: a backgrounded session answers into its thread without '
+        'interrupting the tab on screen', () async {
+      // The +246 backgrounding kept the stream alive; this is what it
+      // does with a paragraph now: the conversation the seat left
+      // behind files its says silently — age irrelevant, live frames
+      // included. The gear badge is its sign; the thread, its delivery.
+      probe.seatedNow = 'ses-X'; // the view opens while X is on screen
+      mkTurn();
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      probe.seatedNow = 'ses-Y'; // swipe away mid-turn
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'answered out of earshot.',
+          mid: 3,
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+      expect(
+        engine.synthesized,
+        isEmpty,
+        reason: 'the tab you are watching keeps its peace',
+      );
+      expect(bubble.blocks, ['answered out of earshot.']);
+      expect(
+        probe.took,
+        contains(3),
+        reason: 'the take rides — coming back must not re-speak it',
+      );
+      expect(
+        probe.logs.any(
+          (l) => l.contains('unfocused conversation: logged silently'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('+253: a birth turn learns its name from the context frame, '
+        'and only THEN can a swipe mute its says', () async {
+      // A view that opens nameless is the conversation watching it
+      // born (every say at home); the message_start that names the id
+      // gives the gate its subject — from that frame on, a seat move
+      // is visible to the pump.
+      mkTurn(); // seatedNow null: the birth turn's name coming
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 100,
+          contextWindow: 200,
+          ctxSession: 'ses-newborn',
+        ),
+      );
+      await settle();
+      probe.seatedNow = 'ses-other-tab';
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'born nameless, muted by name.',
+          mid: 4,
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+      expect(engine.synthesized, isEmpty);
+      expect(
+        probe.logs.any(
+          (l) => l.contains('unfocused conversation: logged silently'),
+        ),
+        isTrue,
+        reason: 'the ctx frame named the conversation; the gate read it',
       );
     });
 

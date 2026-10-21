@@ -114,6 +114,7 @@ final class BridgeTurnEnv {
     required this.awaitingPickup,
     required this.isHeard,
     required this.commitHeard,
+    required this.focusAtMs,
   });
 
   final InteractionMode Function() mode;
@@ -232,6 +233,14 @@ final class BridgeTurnEnv {
   final bool Function(int mid) isHeard;
   final void Function(int mid) commitHeard;
 
+  /// +253 THE FOCUS WATERMARK (Tim's law): the instant (bridge clock —
+  /// the same domain as a frame's _ts) the conversation became the one
+  /// on screen; 0 = none since boot. A say stamped before it is
+  /// backlog the eyes get and the ears don't; a say from a conversation
+  /// that is NOT the seated one is out-of-earshot work, whatever its
+  /// age — the gear badge is its sign, the thread is its delivery.
+  final int Function() focusAtMs;
+
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
 }
@@ -317,6 +326,16 @@ class BridgeTurn {
 
   int _myTurn = 0;
 
+  /// +253: the conversation this view's frames belong to — the seat's
+  /// id when the view opened (null = the birth turn's honest 'name
+  /// coming'; an unnamed turn IS the conversation watching it born),
+  /// corrected by any context frame that carries its session. Feeds
+  /// the focus gate in [_onSay]: a view whose conversation the seat
+  /// left behind files its says silently — the +246 backgrounding kept
+  /// the stream alive, and this is what that stream may now do with a
+  /// paragraph: land in the thread, never interrupt the tab on screen.
+  String? _viewSid;
+
   bool get isLive => origin != BridgeTurnOrigin.attach;
   bool get isAttach => origin == BridgeTurnOrigin.attach;
 
@@ -339,6 +358,7 @@ class BridgeTurn {
     lease.armWatch(); // this connection is watched for quiet from here on
     hops.sent(); // asr→harness hop crossed: the words are on the wire
     env.log(_openLine());
+    _viewSid = env.seatedSession?.call(); // +253: named at birth, if named
     if (isLive) _rearmPulse();
     var outcome = const PumpOutcome(
       stale: true,
@@ -480,6 +500,11 @@ class BridgeTurn {
         env.repaint();
       }
       env.log('bridge context ${ev.inputTokens}/${ev.contextWindow}');
+      // +253: the frame that names the pen names the CONVERSATION —
+      // a birth turn's view learns its own identity here, and the
+      // focus gate below can finally tell 'mine' from 'the one you
+      // left' even for streams that opened nameless.
+      if (ev.ctxSession != null) _viewSid = ev.ctxSession;
       // +249: the bar belongs to the conversation it is seated on. A
       // context frame from a backgrounded thread updates the METER
       // (that turn's own ledger keeps its truth) but not the BAR of a
@@ -536,6 +561,28 @@ class BridgeTurn {
       env.log(
         'say #${ev.mid} was pure tool-call markup — dropped'
         '${transport.wireTag(ev)}',
+      );
+      return;
+    }
+    // +253 THE FOCUS WATERMARK (Tim's law): only the conversation ON
+    // SCREEN gets the speaker, and only what was written after you got
+    // there. A say stamped before this view's focus landed is the
+    // backlog you swiped onto — filed, acked, visible, mute. A say
+    // whose conversation the seat left behind is out-of-earshot work
+    // whatever its age — the thread delivers it, the gear badge (+230)
+    // signs it, and the speaker never interrupts the tab you are
+    // watching. (The 120 s rule below is the same honesty for a longer
+    // absence; the watermark is the same honesty for this one.)
+    final seatedNow = env.seatedSession?.call();
+    final viewHome =
+        _viewSid == null || seatedNow == null || _viewSid == seatedNow;
+    final focusAt = env.focusAtMs();
+    if (!viewHome ||
+        (focusAt != 0 && ev.wireMs != 0 && ev.wireMs < focusAt)) {
+      chat.addBlock(turnBubble, sayText);
+      env.log(
+        '${viewHome ? 'pre-focus backlog' : 'unfocused conversation'}:'
+        ' logged silently, not spoken${transport.wireTag(ev)}',
       );
       return;
     }

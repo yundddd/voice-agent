@@ -63,4 +63,13 @@ final class SessionChannel {
   /// box stays dark while the replay of history the ear already owns
   /// streams in.
   bool drainReading = false;
+
+  /// +253 THE FOCUS WATERMARK (Tim's law): the moment (bridge clock,
+  /// milliseconds — same domain as a frame's _ts stamp) this
+  /// conversation became the one on screen. A say stamped BEFORE it
+  /// is backlog: filed, acked, visible, mute — you do not hear the
+  /// messages you switch onto, only the ones written after you sit
+  /// down. 0 = no watermark yet (fresh boot: the age and heard-ledger
+  /// laws alone decide, as they always have).
+  int focusAtMs = 0;
 }
