@@ -28,6 +28,20 @@ library;
 /// above).
 const int maxWords = 100;
 
+/// +233 — the floor under a breath. The per-sentence law shipped a
+/// bug the old packer had hidden: 'Hello! The +232 APK should be…'
+/// relayed as ONE bridge frame was cut into 'Hello!' + its sentence,
+/// and the field heard the greeting's own falling intonation, a seam,
+/// and the answer starting over — 'your first chunk audio is completely
+/// cut off before this next chunk audio starts playing'. A two-word
+/// salutation is not a breath; the same micro-segment lesson the bridge
+/// learned as MIN_SENT_CHARS, restated where sentences are now cut.
+/// So a sentence SHORTER than this merges with its neighbour (forward,
+/// or backward for a trailing fragment) instead of standing alone —
+/// exactly what the greedy packer accidentally did for every short
+/// 'Sure.' and 'OK.' the old law ever shipped.
+const int minBreathChars = 40;
+
 /// Split [text] into speakable chunks: one per sentence, and a sentence
 /// over [maxWords] words recursively halved at the clause mark
 /// (, ; : — –) nearest its middle — a mark only counts at a word's end
@@ -41,11 +55,35 @@ List<String> splitForTts(String text) {
   final t = text.trim();
   if (t.isEmpty) return const [''];
   final chunks = <String>[];
-  for (final (start, end) in _sentences(t)) {
+  for (final (start, end) in _merged(t, _sentences(t))) {
     _balance(t, start, end, chunks);
   }
   return chunks;
 }
+
+/// Merge sub-breath sentences into their neighbours: forward while a
+/// run is shorter than [minBreathChars], and backward for a trailing
+/// fragment ('he said.' at the very end has no next to join). Ranges
+/// stay contiguous spans of [t], so the merged sentence's own
+/// whitespace rides along and the chunks stay lossless.
+List<(int, int)> _merged(String t, List<(int, int)> ranges) {
+  final out = <(int, int)>[];
+  for (final r in ranges) {
+    if (out.isNotEmpty && _short(t, out.last)) {
+      out[out.length - 1] = (out.last.$1, r.$2);
+    } else {
+      out.add(r);
+    }
+  }
+  if (out.length > 1 && _short(t, out.last)) {
+    final last = out.removeLast();
+    out[out.length - 1] = (out.last.$1, last.$2);
+  }
+  return out;
+}
+
+bool _short(String t, (int, int) r) =>
+    t.substring(r.$1, r.$2).trim().length < minBreathChars;
 
 /// Sentence ranges (start, end) of [t] split at [.!?] runs (with any
 /// trailing quotes/brackets) followed by whitespace or end-of-text.
@@ -87,8 +125,7 @@ List<(int, int)> _sentences(String t) {
     i += 1;
   }
   if (start < t.length) out.add((start, t.length));
-  return out
-    ..removeWhere((r) => t.substring(r.$1, r.$2).trim().isEmpty);
+  return out..removeWhere((r) => t.substring(r.$1, r.$2).trim().isEmpty);
 }
 
 /// Emit the chunks of t[start:end]: the sentence whole when it fits one
@@ -104,8 +141,7 @@ void _balance(String t, int start, int end, List<String> out) {
   // Clause marks preferred, nearest the middle; the middle WORD is the
   // fallback for truly punctuation-less runs (it can't fake anything).
   final target = (words.length - 1) / 2;
-  var best = -1,
-      bestDist = double.infinity;
+  var best = -1, bestDist = double.infinity;
   for (var k = 0; k < words.length - 1; k++) {
     if (!_endsAtBreath(t, words[k])) continue;
     final d = (k - target).abs();

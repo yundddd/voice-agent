@@ -4,15 +4,17 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/speech/speech_worker.dart';
 
-int _words(String c) => c.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+int _words(String c) =>
+    c.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
 
 void main() {
   test('short replies stay one chunk', () {
-    // +232: 'Hello Tim.' is its own sentence and its own chunk — the old
-    // packer welded it to the next one; one breath per sentence now.
+    // +233: 'Hello Tim.' is under the micro-breath floor and MERGES into
+    // the next sentence — +232 shipped it as its own chunk and the field
+    // heard the greeting clipped off its own answer.
     expect(
       splitForTts('Hello Tim. NeuTTS nano speaking, generated on device.'),
-      ['Hello Tim.', 'NeuTTS nano speaking, generated on device.'],
+      ['Hello Tim. NeuTTS nano speaking, generated on device.'],
     );
     expect(splitForTts('No punctuation reply here'), [
       'No punctuation reply here',
@@ -20,8 +22,7 @@ void main() {
     expect(splitForTts(''), ['']);
   });
 
-  test('a comma-spliced sentence under the cap ships WHOLE, commas intact',
-      () {
+  test('a comma-spliced sentence under the cap ships WHOLE, commas intact', () {
     // The +232 headline: this is the shape the old 40-word packer shaved
     // into clause shreds; 60 words is one breath to the new law.
     final sentence =
@@ -75,8 +76,7 @@ void main() {
   });
 
   test('multi-sentence replies stay one chunk PER sentence — no greedy '
-      'packing (the old 40-word packer welded sentences across breaths)',
-      () {
+      'packing (the old 40-word packer welded sentences across breaths)', () {
     final sentences = List.generate(
       6,
       (i) =>
@@ -87,20 +87,42 @@ void main() {
     expect(chunks, sentences);
   });
 
+  test('the field case: a salutation rides its sentence, not a seam of '
+      'its own (+233: "I only heard hello")', () {
+    const text =
+        "Hello! The +233 APK should be on your phone's shelf whenever you "
+        'want to try the new chunking.';
+    expect(splitForTts(text), [text]);
+  });
+
+  test('a short sentence in the MIDDLE absorbs forward, then flows', () {
+    // 'On it.' (6 chars) is no breath: it rides the sentence that follows.
+    const text =
+        'On it. The merge lands in the splitter and every greeting after '
+        'this one rides its own answer in a single breath.';
+    expect(splitForTts(text), [text]);
+  });
+
+  test('a trailing fragment merges BACKWARD when there is no next', () {
+    // Long head + short tail: the tail has nowhere forward to go.
+    const text =
+        'Every chunk before this one clears the micro-breath floor with '
+        'plenty of prose to spare, and keeps going. Yes it does.';
+    expect(splitForTts(text), [text]);
+  });
+
   test('terminator runs never split the sentence they end', () {
     // The '...' + closing quote is ONE boundary: the ellipsis and its
     // quote never orphan from each other. The boundary still ends that
-    // quoted fragment's sentence (the period after 'said' ends the next);
-    // +232 gives each its own chunk, none long enough to halve.
+    // quoted fragment's sentence; +233 then walks the short tail back —
+    // '"Wait..."' < 'he said.' < 'Then silence.' are all sub-breath, so
+    // the whole text is ONE chunk: the aside reattaches to the prose it
+    // was always part of, lossless.
     final text =
         'Words up front like ${List.filled(33, 'filler').join(' ')} here. '
         '"Wait..." he said. Then silence.';
     final chunks = splitForTts(text);
-    expect(chunks.length, 4);
-    expect(chunks[1], '"Wait..."');
-    expect(chunks[2], 'he said.');
-    expect(chunks[3], 'Then silence.');
-    expect(chunks.join(' '), text); // nothing lost or reordered
+    expect(chunks, [text]);
   });
 
   test('one giant unpunctuated blob splits at middle words, recursively', () {
