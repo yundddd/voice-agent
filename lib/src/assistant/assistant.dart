@@ -1010,12 +1010,22 @@ class VoiceAssistant extends ChangeNotifier {
   /// reattach chain NOW (the same +168 mail-fetch, honest dark), so
   /// the replay lands within a round trip and the next swipe moves.
   /// Null = free to move; a string is the reason, in words.
-  String? _seatRest(Map<String, Object>? h) {
+  String? _seatRest(Map<String, Object>? h, {bool backgroundable = false}) {
     if (h == null) return null; // unreachable: the verb's own error speaks
-    if (h['turnOpen'] == true || h['queued'] == true) {
+    if (h['queued'] == true) {
       return 'the harness is mid-turn — stop it before switching sessions';
     }
-    if (((h['missed'] as num?)?.toInt() ?? 0) > 0) {
+    // +246: mid-turn no longer rests a switch when the destination
+    // shares the harness — /seat backgrounds the live turn (the law
+    // the app background already taught), so the move costs nothing
+    // the switch-back cannot get back. A harness flip still rests.
+    if (h['turnOpen'] == true && !backgroundable) {
+      return 'the harness is mid-turn — stop it before switching sessions';
+    }
+    // +246: under the backgrounding law the backlog SURVIVES the move
+    // (no reset ran), so unheard frames are not at risk and the swipe
+    // is free; the drain laws deliver them when the view lands.
+    if (((h['missed'] as num?)?.toInt() ?? 0) > 0 && !backgroundable) {
       if (!_bridgeBusy &&
           !_turn.backgrounded &&
           !_benchCapturing &&
@@ -1094,9 +1104,11 @@ class VoiceAssistant extends ChangeNotifier {
     }
     if (!_seatCap) return 'the bridge is too old to switch sessions';
     final h = await bridgeHealth(); // the FRESH glance, not the cached era
-    final rest = _seatRest(h); // mid-turn, or unheard frames owed
-    if (rest != null) return rest;
     final tab = prefs.tabs[index];
+    // +246: same harness => the mid-turn move backgrounds rather than
+    // resets (see /seat); the rest guard only bites across harnesses.
+    final rest = _seatRest(h, backgroundable: tab.harness == h?['harness']);
+    if (rest != null) return rest;
     final r = await g.seat(
       harness: tab.harness,
       dir: tab.dir,

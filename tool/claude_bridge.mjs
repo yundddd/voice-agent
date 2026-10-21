@@ -3060,7 +3060,17 @@ const server = http.createServer((req, res) => {
       } else if (typeof model !== 'string' && model !== null) {
         seatErr(400, 'model must be a string');
       } else {
-        resetConversation(); // whatever rode the old seat ends here
+        // +246: a seat move mid-turn BACKGROUNDS the turn instead of
+        // ending it — the exact life a backgrounded app gets. The
+        // child keeps working, its frames keep streaming (session-
+        // stamped, so the store files them into THEIR conversation
+        // whatever tab is looking), done lands on its own terms, and
+        // swiping back re-seats the same id: foreground again. The
+        // conditions are strict: same harness (a different runtime has
+        // no view to grow into — flipping harnesses still resets), and
+        // not fresh:true (that verb MEANS 'end this conversation').
+        const backgroundable = turnOpen && to === harness && !fresh;
+        if (!backgroundable) resetConversation(); // whatever rode the old seat ends here
         if (to !== harness) {
           harness = to;
           try { writeFileSync(harnessFile, to); } catch {}

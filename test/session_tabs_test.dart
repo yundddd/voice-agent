@@ -87,29 +87,36 @@ void main() {
     });
     tearDown(() => server.close(force: true));
 
-    test('a fresh seat is ONE request carrying the whole question set',
-        () async {
-      replyBody = jsonEncode({
-        'ok': true, 'harness': 'opencode', 'dir': '/proj',
-        'sessionId': null, 'model': 'acme/alpha',
-      });
-      final r = await seat(
-          harness: 'opencode', dir: '/proj', model: 'acme/alpha',
-          fresh: true);
-      expect(seen, ['POST /seat']);
-      final j = jsonDecode(reqBody!) as Map<String, Object?>;
-      expect(j['harness'], 'opencode');
-      expect(j['dir'], '/proj');
-      expect(j['model'], 'acme/alpha');
-      // fresh and pointer-read stay distinct verbs on the wire.
-      expect(j['fresh'], isTrue);
-      expect(j.containsKey('sessionId'), isFalse);
-      expect(r?['ok'], isTrue);
-      expect(r?['harness'], 'opencode');
-    });
+    test(
+      'a fresh seat is ONE request carrying the whole question set',
+      () async {
+        replyBody = jsonEncode({
+          'ok': true,
+          'harness': 'opencode',
+          'dir': '/proj',
+          'sessionId': null,
+          'model': 'acme/alpha',
+        });
+        final r = await seat(
+          harness: 'opencode',
+          dir: '/proj',
+          model: 'acme/alpha',
+          fresh: true,
+        );
+        expect(seen, ['POST /seat']);
+        final j = jsonDecode(reqBody!) as Map<String, Object?>;
+        expect(j['harness'], 'opencode');
+        expect(j['dir'], '/proj');
+        expect(j['model'], 'acme/alpha');
+        // fresh and pointer-read stay distinct verbs on the wire.
+        expect(j['fresh'], isTrue);
+        expect(j.containsKey('sessionId'), isFalse);
+        expect(r?['ok'], isTrue);
+        expect(r?['harness'], 'opencode');
+      },
+    );
 
-    test('a named sessionId rides alone; a 400 answers as a refusal',
-        () async {
+    test('a named sessionId rides alone; a 400 answers as a refusal', () async {
       await seat(sessionId: 'ses-7');
       final j = jsonDecode(reqBody!) as Map<String, Object?>;
       expect(j['sessionId'], 'ses-7');
@@ -121,12 +128,14 @@ void main() {
       expect(r?['error'], 'not a folder');
     });
 
-    test('a pre-seat bridge (404 on the route) answers null, like a shrug',
-        () async {
-      replyStatus = 404;
-      replyBody = 'stub: no route POST /seat';
-      expect(await seat(fresh: true), isNull);
-    });
+    test(
+      'a pre-seat bridge (404 on the route) answers null, like a shrug',
+      () async {
+        replyStatus = 404;
+        replyBody = 'stub: no route POST /seat';
+        expect(await seat(fresh: true), isNull);
+      },
+    );
 
     test('/models carries harness and dir as the sheet asks them', () async {
       replyBody = '{"ok":true,"harness":"claude","models":[]}';
@@ -139,7 +148,9 @@ void main() {
   group('store: removeSessions', () {
     test('takes the named sessions and the sentinel, stands the rest', () {
       final store = ChatStore(
-        persist: (_) async {}, repaint: () {}, harness: () => 'claude',
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => 'claude',
         session: () => 'ses-PROV',
       );
       store.addUser('in A');
@@ -161,12 +172,19 @@ void main() {
   group('prefs: the ledger on disk', () {
     test('tabs round-trip; a PARSED file is the installed proof', () {
       final p = BridgePrefs()
-        ..tabs.add(SessionTab(
-            harness: 'opencode', dir: '/proj-x', model: 'acme/beta',
-            sessionIds: ['ses-1', 'ses-2'], createdMs: 111))
+        ..tabs.add(
+          SessionTab(
+            harness: 'opencode',
+            dir: '/proj-x',
+            model: 'acme/beta',
+            sessionIds: ['ses-1', 'ses-2'],
+            createdMs: 111,
+          ),
+        )
         ..activeTab = 1;
       final back = BridgePrefs.fromJson(
-          jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>);
+        jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>,
+      );
       expect(back.installed, isTrue); // the file EXISTED — not first launch
       expect(BridgePrefs().installed, isFalse); // fresh install asks
       expect(back.activeTab, 1);
@@ -187,8 +205,11 @@ void main() {
     setUp(() async {
       harness = FakeHarness();
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/proj-a', 'seat': true,
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/proj-a',
+        'seat': true,
       };
       a = VoiceAssistant(
         worker: FakeSpeechEngine(),
@@ -207,11 +228,20 @@ void main() {
       // Fresh install (unparsed prefs), configured bridge: the gate.
       expect(a.view.needsSetup, isTrue);
       expect(a.view.canSeat, isTrue);
-      expect(await a.createSession(
-          harness: 'opencode', model: 'acme/beta', dir: '/proj-b'), isNull);
+      expect(
+        await a.createSession(
+          harness: 'opencode',
+          model: 'acme/beta',
+          dir: '/proj-b',
+        ),
+        isNull,
+      );
       expect(harness.seatCalls.single, {
-        'harness': 'opencode', 'dir': '/proj-b', 'model': 'acme/beta',
-        'sessionId': null, 'fresh': true,
+        'harness': 'opencode',
+        'dir': '/proj-b',
+        'model': 'acme/beta',
+        'sessionId': null,
+        'fresh': true,
       });
       final v = a.view;
       expect(v.tabs, hasLength(1));
@@ -232,167 +262,238 @@ void main() {
       expect(a.view.needsSetup, isTrue); // still owed
     });
 
-    test('an upgrade seeds its live seat as tab 1, no wire, no dialog',
-        () async {
-      harness.healthState = <String, Object?>{
-        ...harness.healthState!, 'sessionId': 'ses-legacy',
-      };
-      // Prefs from disk (installed), no tabs yet — the +230 upgrade.
-      a.bridgePrefsForTest = BridgePrefs.fromJson({});
-      await a.setBridge(url: 'http://harness.test', token: 'tok');
-      await settle();
-      final v = a.view;
-      expect(v.needsSetup, isFalse); // an upgrade is never asked
-      expect(v.tabs, hasLength(1));
-      expect(v.tabs.single.harness, 'claude');
-      expect(v.tabs.single.dir, '/proj-a');
-      expect(v.tabs.single.currentId, 'ses-legacy');
-      expect(harness.seatCalls, isEmpty); // the seed touches no wire
-    });
+    test(
+      'an upgrade seeds its live seat as tab 1, no wire, no dialog',
+      () async {
+        harness.healthState = <String, Object?>{
+          ...harness.healthState!,
+          'sessionId': 'ses-legacy',
+        };
+        // Prefs from disk (installed), no tabs yet — the +230 upgrade.
+        a.bridgePrefsForTest = BridgePrefs.fromJson({});
+        await a.setBridge(url: 'http://harness.test', token: 'tok');
+        await settle();
+        final v = a.view;
+        expect(v.needsSetup, isFalse); // an upgrade is never asked
+        expect(v.tabs, hasLength(1));
+        expect(v.tabs.single.harness, 'claude');
+        expect(v.tabs.single.dir, '/proj-a');
+        expect(v.tabs.single.currentId, 'ses-legacy');
+        expect(harness.seatCalls, isEmpty); // the seed touches no wire
+      },
+    );
 
-    test('tabs hold their threads: switching moves the seat and the window',
-        () async {
-      // Tab 1: opencode at /proj-x, a sentence spoken, then NAMED.
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
-      await a.setBridgeDir('/proj-x'); // any awaited refresh path works
-      await settle();
-      expect(a.view.tabs.single.currentId, 'ses-X');
-      // Tab 2: claude at /proj-y, its own sentence, its own name.
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
-      await a.setBridgeDir('/proj-y');
-      await settle();
-      expect(a.view.tabs[1].currentId, 'ses-Y');
-      // The window shows tab 2's thread only.
-      expect(a.view.chat.any((e) => e.blocks.contains('two in Y')), isTrue);
-      expect(a.view.chat.where((e) => e.blocks.contains('one in X')), isEmpty);
-      // SWIPE/PILL: back to tab 1 — the seat moves, the window follows.
-      expect(await a.switchSession(0), isNull);
-      expect(harness.seatCalls.last, {
-        'harness': 'opencode', 'dir': '/proj-x', 'model': null,
-        'sessionId': 'ses-X', 'fresh': false,
-      });
-      expect(a.view.tabIndex, 0);
-      expect(a.view.chat.where((e) => e.blocks.contains('two in Y')), isEmpty);
-      expect(a.view.chat.any((e) => e.blocks.contains('one in X')), isTrue);
-      // And the store kept every word of both.
-      expect(a.chat.where((e) => e.blocks.contains('two in Y')), hasLength(1));
-    });
+    test(
+      'tabs hold their threads: switching moves the seat and the window',
+      () async {
+        // Tab 1: opencode at /proj-x, a sentence spoken, then NAMED.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x'); // any awaited refresh path works
+        await settle();
+        expect(a.view.tabs.single.currentId, 'ses-X');
+        // Tab 2: claude at /proj-y, its own sentence, its own name.
+        await a.createSession(harness: 'claude', dir: '/proj-y');
+        unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+        await a.setBridgeDir('/proj-y');
+        await settle();
+        expect(a.view.tabs[1].currentId, 'ses-Y');
+        // The window shows tab 2's thread only.
+        expect(a.view.chat.any((e) => e.blocks.contains('two in Y')), isTrue);
+        expect(
+          a.view.chat.where((e) => e.blocks.contains('one in X')),
+          isEmpty,
+        );
+        // SWIPE/PILL: back to tab 1 — the seat moves, the window follows.
+        expect(await a.switchSession(0), isNull);
+        expect(harness.seatCalls.last, {
+          'harness': 'opencode',
+          'dir': '/proj-x',
+          'model': null,
+          'sessionId': 'ses-X',
+          'fresh': false,
+        });
+        expect(a.view.tabIndex, 0);
+        expect(
+          a.view.chat.where((e) => e.blocks.contains('two in Y')),
+          isEmpty,
+        );
+        expect(a.view.chat.any((e) => e.blocks.contains('one in X')), isTrue);
+        // And the store kept every word of both.
+        expect(
+          a.chat.where((e) => e.blocks.contains('two in Y')),
+          hasLength(1),
+        );
+      },
+    );
 
-    test('/new replaces the CURRENT tab and leaves every other tab alone',
-        () async {
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
-      await a.setBridgeDir('/proj-x');
-      await settle();
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      await settle();
-      await a.switchSession(0); // back on the named thread
-      // /new: the tab's whole past goes, the OTHER tab's stays.
-      await a.bridgeControl('/new');
-      await settle();
-      expect(a.view.tabs[0].currentId, isNull); // replaced in place
-      expect(a.chat.where((e) => e.blocks.contains('one in X')), isEmpty,
-          reason: 'the replaced tab\'s history left with its session');
-      expect(a.chat.any((e) => e.blocks.contains('/new')), isFalse,
-          reason: 'a /new that leaves its own tombstone is not blank');
-      expect(await a.switchSession(1), isNull);
-      // Tab 2 was never touched by tab 1's replacement — and tab 1
-      // (empty now) is still there with its fresh slot.
-      expect(a.view.tabs, hasLength(2));
-    });
+    test(
+      '/new replaces the CURRENT tab and leaves every other tab alone',
+      () async {
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x');
+        await settle();
+        await a.createSession(harness: 'claude', dir: '/proj-y');
+        await settle();
+        await a.switchSession(0); // back on the named thread
+        // /new: the tab's whole past goes, the OTHER tab's stays.
+        await a.bridgeControl('/new');
+        await settle();
+        expect(a.view.tabs[0].currentId, isNull); // replaced in place
+        expect(
+          a.chat.where((e) => e.blocks.contains('one in X')),
+          isEmpty,
+          reason: 'the replaced tab\'s history left with its session',
+        );
+        expect(
+          a.chat.any((e) => e.blocks.contains('/new')),
+          isFalse,
+          reason: 'a /new that leaves its own tombstone is not blank',
+        );
+        expect(await a.switchSession(1), isNull);
+        // Tab 2 was never touched by tab 1's replacement — and tab 1
+        // (empty now) is still there with its fresh slot.
+        expect(a.view.tabs, hasLength(2));
+      },
+    );
 
     test('the switch rests while a turn is open (and says so)', () async {
       await a.createSession(harness: 'opencode', dir: '/proj-x');
       await a.createSession(harness: 'claude', dir: '/proj-y');
       harness.healthState = {...harness.healthState!, 'turnOpen': true};
       final before = harness.seatCalls.length;
-      expect(await a.switchSession(0),
-          'the harness is mid-turn — stop it before switching sessions');
+      expect(
+        await a.switchSession(0),
+        'the harness is mid-turn — stop it before switching sessions',
+      );
       expect(harness.seatCalls.length, before); // not one call attempted
       expect(a.view.tabIndex, 1); // and the view stayed put
     });
 
-    test('unheard messages rest the seat — a tab verb may not eat the backlog',
-        () async {
+    test('+246: mid-turn, a SAME-harness switch backgrounds — the seat '
+        'moves, the answer lives, no refusal', () async {
+      // The app-background law applied to tabs: switching sessions
+      // while the agent works must feel exactly like backgrounding
+      // the app — the turn keeps running, its frames keep streaming
+      // (session-stamped into their own thread), and switching back
+      // is the foreground. Only a harness FLIP still ends a turn.
       await a.createSession(harness: 'opencode', dir: '/proj-x');
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      harness.healthState = {...harness.healthState!, 'missed': 2};
-      final before = harness.seatCalls.length;
-      expect(await a.switchSession(0),
-          'the bridge owes unheard messages — they land first');
-      expect(
-        await a.createSession(harness: 'claude', dir: '/proj-z'),
-        'the bridge owes unheard messages — they land first',
-      );
-      expect(harness.seatCalls.length, before,
-          reason: 'a seat move resets the conversation — over the '
-              'unplayed backlog that would silently eat unseen messages');
-      expect(a.view.tabIndex, 1); // stayed put, honestly
-      // The tap that was refused armed the drain; the replay lands
-      // (missed goes to 0) and the very next switch moves.
-      harness.healthState = {...harness.healthState!}..remove('missed');
-      expect(await a.switchSession(0), isNull);
-      expect(a.view.tabIndex, 0);
-    });
-
-    test('the boot reconcile holds while a replay is owed, reconciles after',
-        () async {
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      // The seat moved out of band AND the bridge owes frames: the
-      // reconcile must wait for the mail, not resetConversation it.
-      harness.healthState = <String, Object?>{
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      await a.switchSession(0); // start on X
+      await settle();
+      harness.healthState = {
         ...harness.healthState!,
-        'harness': 'claude', 'dir': '/elsewhere',
-        'sessionId': 'ses-stranger', 'missed': 3,
+        'harness': 'opencode',
+        'turnOpen': true,
+        'missed': 1,
       };
-      await a.setBridge(url: 'http://harness.test', token: 'tok');
-      await settle();
-      expect(harness.seatCalls.length, 1); // create only — reconcile held
-      // The replay lands (whatever path clears the backlog): the
-      // NEXT glance reconciles, no re-boot needed.
-      harness.healthState = {...harness.healthState!}..remove('missed');
-      await a.setBridgeModel('default'); // any awaited refresh path
-      await settle();
-      expect(harness.seatCalls.length, 2);
-      expect(harness.seatCalls.last['dir'], '/proj-x');
+      final before = harness.seatCalls.length;
+      expect(
+        await a.switchSession(1),
+        isNull,
+        reason:
+            'turnOpen AND unheard backlog both stop resting the '
+            'move when no reset will run — the backlog rides along',
+      );
+      expect(harness.seatCalls.length, before + 1);
+      expect(harness.seatCalls.last['dir'], '/proj-y');
+      expect(a.view.tabIndex, 1);
     });
 
-    test('a tab switch restores the FULL thread — everything it ever spoke',
-        () async {
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      unawaited(a.runQuickCommand('seen in X', bubble: 'seen in X'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
-      await a.setBridgeDir('/proj-x');
-      await settle();
-      final tabXCount = a.view.chat.length;
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      await settle();
-      await a.switchSession(0);
-      expect(a.view.tabIndex, 0);
-      expect(a.view.chat, hasLength(tabXCount)); // whole thread restored
-      expect(a.view.chat.any((e) => e.blocks.contains('seen in X')), isTrue);
-    });
+    test(
+      'unheard messages rest the seat — a tab verb may not eat the backlog',
+      () async {
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        await a.createSession(harness: 'claude', dir: '/proj-y');
+        harness.healthState = {...harness.healthState!, 'missed': 2};
+        final before = harness.seatCalls.length;
+        expect(
+          await a.switchSession(0),
+          'the bridge owes unheard messages — they land first',
+        );
+        expect(
+          await a.createSession(harness: 'claude', dir: '/proj-z'),
+          'the bridge owes unheard messages — they land first',
+        );
+        expect(
+          harness.seatCalls.length,
+          before,
+          reason:
+              'a seat move resets the conversation — over the '
+              'unplayed backlog that would silently eat unseen messages',
+        );
+        expect(a.view.tabIndex, 1); // stayed put, honestly
+        // The tap that was refused armed the drain; the replay lands
+        // (missed goes to 0) and the very next switch moves.
+        harness.healthState = {...harness.healthState!}..remove('missed');
+        expect(await a.switchSession(0), isNull);
+        expect(a.view.tabIndex, 0);
+      },
+    );
+
+    test(
+      'the boot reconcile holds while a replay is owed, reconciles after',
+      () async {
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        // The seat moved out of band AND the bridge owes frames: the
+        // reconcile must wait for the mail, not resetConversation it.
+        harness.healthState = <String, Object?>{
+          ...harness.healthState!,
+          'harness': 'claude',
+          'dir': '/elsewhere',
+          'sessionId': 'ses-stranger',
+          'missed': 3,
+        };
+        await a.setBridge(url: 'http://harness.test', token: 'tok');
+        await settle();
+        expect(harness.seatCalls.length, 1); // create only — reconcile held
+        // The replay lands (whatever path clears the backlog): the
+        // NEXT glance reconciles, no re-boot needed.
+        harness.healthState = {...harness.healthState!}..remove('missed');
+        await a.setBridgeModel('default'); // any awaited refresh path
+        await settle();
+        expect(harness.seatCalls.length, 2);
+        expect(harness.seatCalls.last['dir'], '/proj-x');
+      },
+    );
+
+    test(
+      'a tab switch restores the FULL thread — everything it ever spoke',
+      () async {
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('seen in X', bubble: 'seen in X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x');
+        await settle();
+        final tabXCount = a.view.chat.length;
+        await a.createSession(harness: 'claude', dir: '/proj-y');
+        await settle();
+        await a.switchSession(0);
+        expect(a.view.tabIndex, 0);
+        expect(a.view.chat, hasLength(tabXCount)); // whole thread restored
+        expect(a.view.chat.any((e) => e.blocks.contains('seen in X')), isTrue);
+      },
+    );
 
     test('✕ forgets a tab: its thread leaves, neighbours stand, the '
         'active seat relieves to the neighbour', () async {
@@ -413,15 +514,20 @@ void main() {
       expect(harness.seatCalls.length, before);
       expect(a.view.tabs, hasLength(1));
       expect(a.view.tabIndex, 0); // the strip closed up, active tracked
-      expect(a.chat.any((e) => e.blocks.contains('mine')), isFalse,
-          reason: 'the doomed tab\'s thread left with it');
+      expect(
+        a.chat.any((e) => e.blocks.contains('mine')),
+        isFalse,
+        reason: 'the doomed tab\'s thread left with it',
+      );
       // 2) Rebuild to two tabs and delete the ACTIVE one while a turn
       // is open: the relief move is a seat verb — it rests.
       await a.createSession(harness: 'opencode', dir: '/proj-z'); // tab 1
       await a.switchSession(0);
       harness.healthState = {...harness.healthState!, 'turnOpen': true};
-      expect(await a.removeSessionTab(0),
-          'the harness is mid-turn — stop it before switching sessions');
+      expect(
+        await a.removeSessionTab(0),
+        'the harness is mid-turn — stop it before switching sessions',
+      );
       expect(a.view.tabs, hasLength(2)); // nothing half-happened
       harness.healthState = {...harness.healthState!}..remove('turnOpen');
       // 3) Now it goes, and the NEIGHBOUR takes the seat.
@@ -431,37 +537,43 @@ void main() {
       expect(harness.seatCalls.last['dir'], '/proj-z');
     });
 
-    test('deleting the LAST tab fires no verb and re-opens the question',
-        () async {
-      await a.createSession(harness: 'claude', dir: '/proj-x');
-      expect(await a.removeSessionTab(0), isNull);
-      expect(a.view.tabs, isEmpty); // empty ledger
-      expect(harness.seatCalls.length, 1); // create only — no seat verb
-      // The + (always on the bar) still works: creation answers again.
-      expect(await a.createSession(harness: 'claude', dir: '/proj-x'), isNull);
-      expect(a.view.tabs, hasLength(1));
-    });
+    test(
+      'deleting the LAST tab fires no verb and re-opens the question',
+      () async {
+        await a.createSession(harness: 'claude', dir: '/proj-x');
+        expect(await a.removeSessionTab(0), isNull);
+        expect(a.view.tabs, isEmpty); // empty ledger
+        expect(harness.seatCalls.length, 1); // create only — no seat verb
+        // The + (always on the bar) still works: creation answers again.
+        expect(
+          await a.createSession(harness: 'claude', dir: '/proj-x'),
+          isNull,
+        );
+        expect(a.view.tabs, hasLength(1));
+      },
+    );
 
-    test('a bridge without the seat flag refuses the verb it cannot answer',
-        () async {
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      await a.createSession(harness: 'claude', dir: '/proj-y');
-      harness.healthState = {
-        ...harness.healthState!,
-      }..remove('seat');
-      await a.setBridgeDir('/proj-y'); // re-glance: canSeat goes false
-      await settle();
-      expect(a.view.canSeat, isFalse);
-      expect(await a.switchSession(0), contains('too old'));
-    });
+    test(
+      'a bridge without the seat flag refuses the verb it cannot answer',
+      () async {
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        await a.createSession(harness: 'claude', dir: '/proj-y');
+        harness.healthState = {...harness.healthState!}..remove('seat');
+        await a.setBridgeDir('/proj-y'); // re-glance: canSeat goes false
+        await settle();
+        expect(a.view.canSeat, isFalse);
+        expect(await a.switchSession(0), contains('too old'));
+      },
+    );
 
-    test('the boot reconcile re-homes a seat that moved out of band',
-        () async {
+    test('the boot reconcile re-homes a seat that moved out of band', () async {
       await a.createSession(harness: 'opencode', dir: '/proj-x');
       // Something ELSE moved the seat (a curl, a restart's pointer):
       harness.healthState = <String, Object?>{
         ...harness.healthState!,
-        'harness': 'claude', 'dir': '/elsewhere', 'sessionId': 'ses-stranger',
+        'harness': 'claude',
+        'dir': '/elsewhere',
+        'sessionId': 'ses-stranger',
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
       await settle();
@@ -482,8 +594,11 @@ void main() {
     setUp(() async {
       harness = FakeHarness();
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/proj-a', 'seat': true,
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/proj-a',
+        'seat': true,
       };
       a = VoiceAssistant(
         worker: FakeSpeechEngine(),
@@ -524,8 +639,11 @@ void main() {
       final v0 = a.view;
       expect(v0.chat.any((e) => e.blocks.contains('late for X')), isFalse);
       await a.switchSession(0);
-      expect(a.view.chat.any((e) => e.blocks.contains('late for X')), isFalse,
-          reason: 'nothing filed it yet — the filter only shows the truth');
+      expect(
+        a.view.chat.any((e) => e.blocks.contains('late for X')),
+        isFalse,
+        reason: 'nothing filed it yet — the filter only shows the truth',
+      );
     });
   });
 
@@ -536,7 +654,10 @@ void main() {
     setUp(() async {
       harness = FakeHarness();
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'claude', 'dir': '/proj-a',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/proj-a',
         'seat': true,
       };
       harness.modelsMenu = <String, Object?>{
@@ -548,7 +669,10 @@ void main() {
         ],
       };
       harness.dirsInfo = (<String, Object?>{
-        'ok': true, 'dir': '/home/tim', 'in': null, 'parent': null,
+        'ok': true,
+        'dir': '/home/tim',
+        'in': null,
+        'parent': null,
         'dirs': [
           {'name': 'proj-a', 'path': 'proj-a'},
           {'name': 'proj-b', 'path': 'proj-b'},
@@ -575,60 +699,70 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: Builder(builder: (c) => TextButton(
-            onPressed: () => showSessionSheet(c, a: a),
-            child: const Text('open'),
-          )),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (c) => TextButton(
+                onPressed: () => showSessionSheet(c, a: a),
+                child: const Text('open'),
+              ),
+            ),
+          ),
         ),
-      ));
+      );
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
     }
 
-    testWidgets('big buttons: both harnesses, the menu, the folders, one Start',
-        (tester) async {
-      await open(tester);
-      // The whole question set is on one screen, in big buttons.
-      expect(find.text('New session'), findsOneWidget);
-      expect(find.text('Claude Code'), findsOneWidget);
-      expect(find.text('Opencode'), findsOneWidget);
-      expect(find.text('opus'), findsOneWidget);
-      expect(find.text('Default'), findsOneWidget);
-      expect(find.text('proj-b'), findsOneWidget);
-      // The folder section is a BROWSER: no pre-ticked 'Current', no
-      // per-row confirm buttons — rows ENTER folders, one SELECT files
-      // the folder you stand in, and the path you stand on is spelled
-      // out. Start without one is refused IN the sheet.
-      expect(find.textContaining('Current'), findsNothing);
-      expect(find.text('Here'), findsNothing);
-      await tester.tap(find.text('Start session'));
-      await tester.pumpAndSettle();
-      expect(find.text('pick a working folder first'), findsOneWidget);
-      // Tap a folder to enter (the fake re-answers the same listing,
-      // standing at /home/tim), then SELECT, then a model, then START:
-      // one fresh seat, the sheet pops itself, the tab is filed.
-      await tester.tap(find.text('proj-b'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Select this folder'));
-      await tester.pumpAndSettle();
-      expect(find.text('Selected'), findsOneWidget);
-      await tester.tap(find.text('opus'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Start session'));
-      await tester.pumpAndSettle();
-      expect(find.text('New session'), findsNothing); // answered, dismissed
-      final call = harness.seatCalls.last;
-      expect(call['harness'], 'claude'); // (menu still answers for claude here)
-      expect(call['model'], 'opus');
-      expect(call['fresh'], isTrue);
-      expect(call['dir'], '/home/tim'); // the listing's own absolute folder
-      expect(a.view.tabs, hasLength(1));
-    });
+    testWidgets(
+      'big buttons: both harnesses, the menu, the folders, one Start',
+      (tester) async {
+        await open(tester);
+        // The whole question set is on one screen, in big buttons.
+        expect(find.text('New session'), findsOneWidget);
+        expect(find.text('Claude Code'), findsOneWidget);
+        expect(find.text('Opencode'), findsOneWidget);
+        expect(find.text('opus'), findsOneWidget);
+        expect(find.text('Default'), findsOneWidget);
+        expect(find.text('proj-b'), findsOneWidget);
+        // The folder section is a BROWSER: no pre-ticked 'Current', no
+        // per-row confirm buttons — rows ENTER folders, one SELECT files
+        // the folder you stand in, and the path you stand on is spelled
+        // out. Start without one is refused IN the sheet.
+        expect(find.textContaining('Current'), findsNothing);
+        expect(find.text('Here'), findsNothing);
+        await tester.tap(find.text('Start session'));
+        await tester.pumpAndSettle();
+        expect(find.text('pick a working folder first'), findsOneWidget);
+        // Tap a folder to enter (the fake re-answers the same listing,
+        // standing at /home/tim), then SELECT, then a model, then START:
+        // one fresh seat, the sheet pops itself, the tab is filed.
+        await tester.tap(find.text('proj-b'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Select this folder'));
+        await tester.pumpAndSettle();
+        expect(find.text('Selected'), findsOneWidget);
+        await tester.tap(find.text('opus'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start session'));
+        await tester.pumpAndSettle();
+        expect(find.text('New session'), findsNothing); // answered, dismissed
+        final call = harness.seatCalls.last;
+        expect(
+          call['harness'],
+          'claude',
+        ); // (menu still answers for claude here)
+        expect(call['model'], 'opus');
+        expect(call['fresh'], isTrue);
+        expect(call['dir'], '/home/tim'); // the listing's own absolute folder
+        expect(a.view.tabs, hasLength(1));
+      },
+    );
 
-    testWidgets('a two-provider catalog folds under shelves until tapped',
-        (tester) async {
+    testWidgets('a two-provider catalog folds under shelves until tapped', (
+      tester,
+    ) async {
       harness.modelsMenu = <String, Object?>{
         'harness': 'opencode',
         'current': null,
@@ -656,8 +790,9 @@ void main() {
       expect(harness.seatCalls.last['model'], 'acme/beta');
     });
 
-    testWidgets('a refused seat keeps the sheet open with the reason',
-        (tester) async {
+    testWidgets('a refused seat keeps the sheet open with the reason', (
+      tester,
+    ) async {
       harness.seatRefused = 'opencode is resting';
       await open(tester);
       await tester.tap(find.text('Select this folder'));
