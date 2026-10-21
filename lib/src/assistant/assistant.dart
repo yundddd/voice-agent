@@ -1700,19 +1700,32 @@ class VoiceAssistant extends ChangeNotifier {
   /// that tab is on screen, its painted band reverts to the at-rest
   /// line too (only while it still wears the stale WORK caption and
   /// no live turn holds the slot — a fresh command owns the band).
-  void _clearOwnedBand(String? sid) {
+  void _clearOwnedBand(String? sid, {String? settledLabel}) {
     if (sid == null) return;
     final i = _bridgePrefs.tabs.indexWhere(
       (t) => t.sessionIds.contains(sid),
     );
     if (i >= 0) _bandByTab.remove(i);
-    if (sid == _sessionId &&
-        !_bridgeBusy &&
-        !_ticker.isOn &&
-        (_activity is StepLine || _activity is TurnWaiting)) {
-      _activity = _phase == AssistantPhase.listening
-          ? const ListeningHint()
-          : const IdleHint();
+    if (sid == _sessionId) {
+      final act = _activity;
+      // +279.1→+282: the painted stale line ALWAYS goes when it
+      // NAMES the debt just settled (the 22:24 tape: xray's pump
+      // made the old !_bridgeBusy guard decline, and the very next
+      // swipe-away re-stashed the dead 'Bash sleep 20…' into the
+      // cache — the tab wore a spinner for a sleep a minute dead).
+      // Without a label to match, the conservative form remains:
+      // only with no live work holding the band may the at-rest
+      // line return.
+      final namesSettled = settledLabel != null &&
+          act.text(mode: _mode) == '$settledLabel…';
+      if (namesSettled ||
+          (!_bridgeBusy &&
+              !_ticker.isOn &&
+              (act is StepLine || act is TurnWaiting))) {
+        _activity = _phase == AssistantPhase.listening
+            ? const ListeningHint()
+            : const IdleHint();
+      }
     }
     notifyListeners();
   }
@@ -1732,7 +1745,9 @@ class VoiceAssistant extends ChangeNotifier {
     final badgeElsewhere = _turn.badgeOwnedByOtherThan(spoke);
     for (final d in paid) {
       _bgFinishedBubble(d.label, session: d.sid ?? spoke);
-      _clearOwnedBand(d.sid ?? spoke); // +277: the stale row follows
+      // +277: the stale row follows; +282: by NAME, so a stranger's
+      // live pump cannot veto the burial of the line that just died.
+      _clearOwnedBand(d.sid ?? spoke, settledLabel: d.label);
     }
     if (!othersRemain && !badgeElsewhere) {
       final ownedBy = _turn.workOwner;
@@ -1892,7 +1907,7 @@ class VoiceAssistant extends ChangeNotifier {
     // +277: the LAST debt paid (the ledger released its owner — see
     // turn_session) settles that conversation's band as well.
     if (_turn.workOwner == null && wasOwner != null) {
-      _clearOwnedBand(wasOwner);
+      _clearOwnedBand(wasOwner, settledLabel: detail); // +282
     }
     if (unnamed) {
       _logDebug(
@@ -1905,7 +1920,7 @@ class VoiceAssistant extends ChangeNotifier {
     _turn.payAgentDebt(detail, sid: session); // +279
     // +277: if that was the final debt, the band is history.
     if (_turn.workOwner == null && wasOwner != null) {
-      _clearOwnedBand(wasOwner);
+      _clearOwnedBand(wasOwner, settledLabel: detail); // +282
     }
     // +279.1: the period card stamps for the conversation that OWED
     // the shell (the frame's wire stamp), not the thread that was
