@@ -163,7 +163,27 @@ class FilePlayerAudioOutput implements AudioOutput {
     }
   }
 
+  /// +291 (the field tape's 'chunk ended naturally: ran 0.0s of 5.4s
+  /// handed'): ONE listener, the current play's. The +123 minAge guard
+  /// swallows play()'s own source-reset artifact and stays armed for
+  /// the real end — but a swallowed-then-never-satisfied listener is
+  /// a landmine: once its minAge ages past, ANY later event satisfies
+  /// it — typically the NEXT chunk's own hand-off artifact, minutes
+  /// or merely rows later. The stale sub consumes that event, the
+  /// CURRENT chunk's seam closes at its own hand-off, the pump steps
+  /// forward while the murdered chunk is still on air, and the next
+  /// play's source swap eats its seconds unheard: short paragraphs
+  /// (small minAge, aged instantly) are the usual victims, and
+  /// 'ran 0.0s of Ys handed' is the fingerprint. A fresh play retires
+  /// its predecessor's listener before arming its own — an answer
+  /// period ends when the question changes.
+  StreamSubscription<void>? _pendingEnd;
+
   void _listenOnce(Duration minAge) {
+    unawaited(_pendingEnd?.cancel()); // +291: the previous play's landmine
+    // is defused before this one arms; its seam is already resolved
+    // (the pump plays in order), and an event no one waits for is
+    // worth losing.
     final started = Stopwatch()..start();
     late StreamSubscription<void> sub;
     sub = _player.onPlayerComplete.listen((_) {
@@ -179,6 +199,7 @@ class FilePlayerAudioOutput implements AudioOutput {
       sub.cancel();
       _ended.add(null);
     });
+    _pendingEnd = sub;
   }
 
   @override
@@ -202,6 +223,7 @@ class FilePlayerAudioOutput implements AudioOutput {
 
   @override
   Future<void> dispose() async {
+    await _pendingEnd?.cancel(); // +291: no landmine outlives the output
     await _player.dispose();
     await _ended.close();
   }

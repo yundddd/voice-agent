@@ -97,6 +97,47 @@ void main() {
           'the source the platform started past it',
     );
   });
+
+  test('+291: a stale listener may not spend the NEXT chunk\'s artifact — '
+      'the seam closes only on its own end', () async {
+    // The 'ran 0.0s of 5.4s handed' fingerprint, reproduced: chunk A's
+    // hand-off artifact is swallowed young (the +123 law — stay
+    // armed), A's minAge ages past while no event for A ever lands
+    // (its audio gets source-swapped), and the NEXT chunk's artifact
+    // walks into the landmine: the old code spent it on A's listener,
+    // completed B's seam at B's own hand-off, and the pump's next
+    // play murdered B's seconds unheard.
+    final dir = await Directory.systemTemp.createTemp('stale_mine');
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    final ends = <void>[];
+    out.onNaturalEnd.listen(ends.add);
+    // 0.2 s at 16 kHz: minAge ~80 ms.
+    await out.play(Float32List(3200), 16000, tag: 'A');
+    platform.fireComplete(); // A's own artifact: too young, swallowed,
+    // the listener stays armed — the landmine is set.
+    await Future<void>.delayed(const Duration(milliseconds: 200)); // A's
+    // minAge ages past; nothing ever answers for A.
+    await out.play(Float32List(6400), 16000, tag: 'B'); // 0.4 s:
+    // minAge ~280 ms.
+    platform.fireComplete(); // B's hand-off artifact.
+    await settle();
+    expect(
+      ends,
+      isEmpty,
+      reason:
+          'the artifact belongs to no seam — the old code let A\'s '
+          'stale listener spend it and closed B\'s at birth',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 500)); // B's
+    // audio really ran out now.
+    platform.fireComplete();
+    await settle();
+    expect(ends, hasLength(1), reason: 'B\'s real end is heard, once');
+  });
 }
 
 class _FakePlatform implements FilePlayerPlatform {
@@ -104,6 +145,11 @@ class _FakePlatform implements FilePlayerPlatform {
   int stops = 0;
   Completer<void>? holdStart;
   final StreamController<void> _complete = StreamController<void>.broadcast();
+
+  /// Push the platform's own onPlayerComplete event (the hand-off
+  /// artifact and the real end look identical from here — which is
+  /// exactly the point the minAge guard and +291 adjudicate).
+  void fireComplete() => _complete.add(null);
 
   @override
   Future<void> play(Source source) async {
