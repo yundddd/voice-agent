@@ -1649,24 +1649,8 @@ class VoiceAssistant extends ChangeNotifier {
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
-        missedNow == 0 &&
-        _healthSpeaksForBadge(h, 'health')) {
-      // None-detached AND nothing unheard is proof for EVERY owed
-      // shell at once (+140): capture the ledger before the
-      // retirement clears it and file one period per name — the chat
-      // states what finished, not what the banner happened to be
-      // wearing.
-      final paid = _turn.agentDebts;
-      // +276: the receipt cards belong to the conversation that owed
-      // the work — capture its name BEFORE the retirement clears it.
-      final ownedBy = _turn.workOwner;
-      _turn.retireBadgeAndWork(); // the promise goes with the snapshot
-      _logDebug('bg line retired: health — nothing open, none detached');
-      notifyListeners();
-      for (final shell in paid) {
-        _bgFinishedBubble(shell, session: ownedBy);
-      }
-      _clearOwnedBand(ownedBy); // +277: the stale row goes too
+        missedNow == 0) {
+      _settleBannerFromHealth(h, 'health'); // +279 (scoped, partial)
     } else if (h != null &&
         showsBackgroundedWork &&
         h['turnOpen'] != true &&
@@ -1710,6 +1694,39 @@ class VoiceAssistant extends ChangeNotifier {
       _activity = _phase == AssistantPhase.listening
           ? const ListeningHint()
           : const IdleHint();
+    }
+    notifyListeners();
+  }
+
+  /// +279: the clean-report settlement, shared by the refresh net and
+  /// the heartbeat. A /health that proves nothing open retires what
+  /// IT CAN SEE: the debts (and badge) owned by the conversation it
+  /// names. Each settled debt gets its receipt card stamped for its
+  /// own thread and its band line buried (+277); another
+  /// conversation's owed debt — invisible to this report — HOLDS the
+  /// banner, journalled through the +276 hold line. The banner
+  /// retires only when nothing anywhere is owed any more.
+  void _settleBannerFromHealth(Map<String, Object> h, String door) {
+    final spoke = h['sessionId'] is String ? h['sessionId'] as String : null;
+    final paid = _turn.settleDebtsOwnedBy(spoke);
+    final othersRemain = _turn.agentWork;
+    final badgeElsewhere = _turn.badgeOwnedByOtherThan(spoke);
+    for (final d in paid) {
+      _bgFinishedBubble(d.label, session: d.sid ?? spoke);
+      _clearOwnedBand(d.sid ?? spoke); // +277: the stale row follows
+    }
+    if (!othersRemain && !badgeElsewhere) {
+      final ownedBy = _turn.workOwner;
+      _turn.retireBadgeAndWork(); // the promise goes with the snapshot
+      _logDebug('bg line retired: $door — nothing open, none detached');
+      _clearOwnedBand(ownedBy ?? spoke);
+    } else if (paid.isEmpty) {
+      _healthSpeaksForBadge(h, door); // journals the hold
+    } else {
+      _logDebug(
+        'bg line holding: $door settled this conversation\u2019s debts, '
+        'another thread still owes',
+      );
     }
     notifyListeners();
   }
@@ -1774,21 +1791,13 @@ class VoiceAssistant extends ChangeNotifier {
     if (h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
-        missed == 0 &&
-        // +276: the heartbeat asks /health — the SAME scoped proof
-        // applies: while the user reads another tab, a clean report
-        // about THAT conversation is silence about this debt.
-        _healthSpeaksForBadge(h, 'idle probe')) {
-      final paid = _turn.agentDebts; // one period per owed shell (+140)
-      final ownedBy = _turn.workOwner; // +276: stamp before retiring
-      _turn.retireBadgeAndWork();
-      _logDebug('bg line retired: idle probe — nothing open, none detached');
-      notifyListeners();
-      for (final shell in paid) {
-        _bgFinishedBubble(shell, session: ownedBy);
+        missed == 0) {
+      // +279: scoped like the refresh net — the beat proves absence
+      // for the conversation it NAMES; other threads' debts hold.
+      _settleBannerFromHealth(h, 'idle probe');
+      if (!_turn.backgrounded && !_turn.agentWork && !_turn.detachedPromise) {
+        return;
       }
-      _clearOwnedBand(ownedBy); // +277: the stale row goes too
-      return;
     }
     // Wake the ear for a report that is STREAMING, and — the case the
     // 10 s beat could miss — for one that already OPENED AND CLOSED
@@ -1842,6 +1851,9 @@ class VoiceAssistant extends ChangeNotifier {
     String detail, {
     bool cancelled = false,
     String taskId = '',
+    // +279: the pump's own conversation — the debt it pays is the
+    // one THAT thread launched.
+    String? session,
   }) {
     // +277: remember whose band this payment might settle — the
     // retirement clears the owner, so capture it first.
@@ -1871,7 +1883,7 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _turn.payAgentDebt(detail); // no-op for a cut tool's label
+    _turn.payAgentDebt(detail, sid: session); // +279
     // +277: if that was the final debt, the band is history.
     if (_turn.workOwner == null && wasOwner != null) {
       _clearOwnedBand(wasOwner);

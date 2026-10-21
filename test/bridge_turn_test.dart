@@ -69,7 +69,8 @@ class EnvProbe {
   final Set<int> alreadyHeard = {};
   final List<int> took = [];
   int repaints = 0, firstWords = 0, audioActivity = 0, refreshes = 0;
-  String lastReceiptId = ''; // +186: what the finished frame stamped
+  String lastReceiptId = '';
+  String? receiptSession; // +279 // +186: what the finished frame stamped
   bool dropMarkCleared = false, idled = false;
 
   bool get speaking => phase == AssistantPhase.speaking;
@@ -131,7 +132,11 @@ class EnvProbe {
         )),
     drainBacklog: (gen, seq) async => drains.add((gen, seq)),
     ttsOff: () => ttsOff,
-    retireBgWork: (d, {bool cancelled = false, String taskId = ''}) {
+    retireBgWork: (d,
+        {bool cancelled = false,
+        String taskId = '',
+        String? session}) {
+      receiptSession = session; // +279: the receipt names its speaker
       lastReceiptId = taskId; // +186: the frame's task id rides the seam
       retiredBg.add((d, cancelled));
       // The assistant's law (see _retireBgWork): the promise is paid,
@@ -644,6 +649,48 @@ void main() {
         isTrue,
       );
       wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
+    test('+279: a pump that opens while a debt is owed SPEAKS the '
+        'debt\u2019s report (fresh) instead of filing it silently',
+        () async {
+      // The tape: the sleep finished while the user was away, the
+      // landing\u2019s catch-up attach drained the report, and the
+      // focus watermark filed the news in silence \u2014 'the response
+      // after the sleep finish didn\u2019t go through tts'. A pump born
+      // over an owed ledger is the REPORT\u2019S delivery, owed to the
+      // ear; only the 2-minute archaeology rule may silence it.
+      turn.noteWorkOwner('ses-X');
+      turn.noteAgentWork('Bash sleep 15', sid: 'ses-X');
+      probe.seatedNow = 'ses-X'; // the report lands on its own tab
+      final frameMs = time.now.subtract(const Duration(seconds: 15));
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      probe.focusMs = time.now.millisecondsSinceEpoch; // landed AFTER it
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        BridgeEvent.forTest(
+          'say',
+          text: 'The sleep finished clean.',
+          wireMs: frameMs.millisecondsSinceEpoch,
+          mid: 77,
+        ),
+      );
+      await settle();
+      expect(
+        engine.synthesized,
+        isNotEmpty,
+        reason: 'the debt report speaks \u2014 15 s old, owed an ear',
+      );
+      expect(
+        probe.logs,
+        isNot(contains(contains('logged silently'))),
+        reason: 'not filed as pre-focus history',
+      );
+      wire.add(const BridgeEvent.forTest('done'));
       await r;
       out.complete();
       await settle();

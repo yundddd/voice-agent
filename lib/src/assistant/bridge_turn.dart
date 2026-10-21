@@ -193,7 +193,12 @@ final class BridgeTurnEnv {
   /// frame's kind: the tool did not finish — the cut killed it — and
   /// the chat says so (the field's 'finished AND cancelled AND
   /// backgrounded all at once' contradiction, resolved at the wire).
-  final void Function(String detail, {bool cancelled, String taskId})
+  final void Function(
+    String detail, {
+    bool cancelled,
+    String taskId,
+    String? session, // +279: whose conversation the receipt speaks for
+  })
   retireBgWork;
 
   /// +132: a push-to-talk PRESS took this turn out of the ear; the
@@ -287,6 +292,12 @@ class BridgeTurn {
   });
 
   final BridgeTurnOrigin origin;
+
+  /// +279: this pump opened while the ledger owed a background
+  /// shell — its replay is the debt's REPORT, owed to the ear
+  /// (fresh lines speak; see the say gate). Latched on the first
+  /// event so the mid-drain payment cannot undo it.
+  bool _drainOwesReport = false;
   final BridgeTurnEnv env;
   final TurnCoordinator turn;
   final ChatStore chat;
@@ -472,6 +483,8 @@ class BridgeTurn {
   }
 
   Future<void> _onEvent(BridgeEvent ev) async {
+    // +279: latch the debt-drain intent on the pump's FIRST frame.
+    if (!_drainOwesReport && turn.agentWork) _drainOwesReport = true;
     // wire v2: CONSUMPTION is the ack. Only `say` gets its commit at
     // the take (before the speaker — the barge-in-drop law below);
     // every other frame this pump digests — tool lifecycle, context
@@ -640,7 +653,18 @@ class BridgeTurn {
     final viewHome =
         _viewSid == null || seatedNow == null || _viewSid == seatedNow;
     final focusAt = env.focusAtMs();
-    if (!viewHome || (focusAt != 0 && ev.wireMs != 0 && ev.wireMs < focusAt)) {
+    // +279: a pump that OPENED WHILE A DEBT WAS OWED is draining the
+    // backgrounded work's own report — its words are news owed to
+    // the ear, not stale history to be filed in silence (the tape:
+    // 'The 15-second background sleep just finished...' logged
+    // silently, and the user had to ask). The two-minute archaeology
+    // rule below still silences reports the user let go cold.
+    final debtReport = _drainOwesReport && ev.wireMs != 0 && age < 120000;
+    if (!viewHome ||
+        (focusAt != 0 &&
+            ev.wireMs != 0 &&
+            ev.wireMs < focusAt &&
+            !debtReport)) {
       chat.addBlock(turnBubble, sayText);
       env.log(
         '${viewHome ? 'pre-focus backlog' : 'unfocused conversation'}:'
@@ -737,6 +761,7 @@ class BridgeTurn {
         ev.detail,
         cancelled: ev.toolKind == 'cancelled',
         taskId: ev.taskId,
+        session: _viewSid ?? ev.session, // +279
       );
       return;
     }
@@ -748,7 +773,9 @@ class BridgeTurn {
       // frame still learns the work exists). The `finished` receipt
       // retires it; the heartbeat keeps watching for the UNPROMPTED
       // report turn meanwhile.
-      turn.noteAgentWork(ev.detail);
+      // +279: the debt is stamped for the conversation that launched
+      // it — the pump's own view id, not wherever the seat drifts.
+      turn.noteAgentWork(ev.detail, sid: _viewSid ?? ev.session);
       // +170: the harness backgrounded a shell — a tool IS running,
       // whatever the last message's message_stop said.
       ticker.markToolStep();

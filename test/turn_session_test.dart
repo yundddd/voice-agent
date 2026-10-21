@@ -416,6 +416,65 @@ void main() {
       expect(turn.workOwner, 'ses-B', reason: 'free to name again');
     });
 
+    test('+279: two conversations each owe a shell \u2014 each debt '
+        'remembers its OWN thread', () {
+      turn.claimSlot();
+      turn.noteWorkOwner('ses-A');
+      turn.noteAgentWork('Bash sleep 15', sid: 'ses-A');
+      // Tab B launches its own shell while A's is still owed \u2014 the
+      // tape's 'switch to another session and do the same test'.
+      turn.claimSlot();
+      turn.noteWorkOwner('ses-B');
+      turn.noteAgentWork('Bash sleep 20', sid: 'ses-B');
+      expect(
+        turn.workOwner,
+        'ses-B',
+        reason: 'the NEWEST debt owns the banner \u2014 on B\u2019s tab',
+      );
+      // B\u2019s receipt pays only B\u2019s row (same label, two threads:
+      // no cross-payment).
+      turn.noteAgentWork('Bash sleep 15', sid: 'ses-B');
+      turn.payAgentDebt('Bash sleep 15', sid: 'ses-B');
+      expect(turn.bgWork, 'Bash sleep 20',
+          reason: 'the line re-labels to B\u2019s still-owed newest');
+      expect(turn.workOwner, 'ses-B',
+          reason: 'B still owes the 20 — the banner stays B\u2019s');
+      // A clean /health about B settles ALL of B's rows (A holds).
+      final paid = turn.settleDebtsOwnedBy('ses-B');
+      expect(paid.map((d) => d.label).toList(), ['Bash sleep 20']);
+      expect(turn.agentWork, isTrue);
+      expect(turn.workOwner, 'ses-A');
+      turn.retireIfOwned({'ses-A'});
+      expect(turn.agentWork, isFalse);
+    });
+
+    test('+279: the debt clock belongs to the debt \u2014 a re-attach '
+        'landing does not re-anchor it', () {
+      var now = DateTime(2026, 1, 1, 12);
+      final t = TurnCoordinator(
+        clock: () => now,
+        log: (_) {},
+        hardStop: () async {},
+        beforeDetach: () {},
+        afterDetach: () {},
+        queuedPin: () => false,
+      );
+      t.claimSlot();
+      t.noteWorkOwner('ses-A');
+      t.noteAgentWork('Bash sleep 50', sid: 'ses-A');
+      final born = t.since;
+      now = now.add(const Duration(seconds: 30));
+      // The swipe-back landing: the catch-up attach claims a heard
+      // turn. The 30 s the sleep has already run must survive it.
+      t.becomeHeard();
+      expect(t.since, born, reason: 'the debt owns the clock');
+      // Only once the ledger is clear does the next heard turn
+      // anchor fresh.
+      t.settleDebtsOwnedBy('ses-A');
+      t.becomeHeard();
+      expect(t.since, isNot(born));
+    });
+
     test('+276: retireIfOwned buries the banner only with the '
         'conversation that owed it', () {
       turn.claimSlot();

@@ -329,6 +329,52 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## Every debt remembers its own thread (shipped +279)
+
+The +278 tape closed the loop on the bridge (the sleep survived the
+swipes) and the banner stayed honest — but the SINGLE-OWNER ledger
+crumbled the moment two conversations ran the same test. Tape
+22:10:19→22:11:05:
+
+- Voice-agent owed `Bash sleep 15`; the user swiped to xray and asked
+  for the same. The launch frame stamped its debt, but the +276
+  freeze refused to re-name the still-owed ledger — `work home:
+  owner=6ad88191… -> marker=6ad88191…`. Xray's banner hid ON XRAY
+  (the owner check named the other tab): 'when I switch to another
+  session and do the same test, it doesn't show the banner'.
+- The swipe-back's catch-up attach claimed a heard turn and
+  `becomeHeard` re-anchored `_since` to NOW: 'the second count is
+  reset when I swipe back'.
+- The report drained as `pre-focus backlog: logged silently, not
+  spoken` — the focus watermark treats pre-landing frames as history,
+  but a pump that OPENS OVER AN OWED LEDGER is the report's delivery,
+  owed to the ear: 'the response after the sleep finish didn't go
+  through tts'.
+
++279 laws:
+
+- **Per-debt ownership.** Each ledger row carries the sid of the
+  conversation that launched it (`noteAgentWork(label, sid)` — the
+  pump's own `_viewSid`). `workOwner` = the NEWEST debt's sid, falling
+  back to the machine's stamped owner only when the ledger is dark.
+  The freeze applies only to single-owner artifacts (the badge, the
+  cut promise, nameless legacy rows); named debts never freeze the
+  machine.
+- **Scoped partial settlement.** A clean health report settles
+  exactly the debts (and badge ownership) of the conversation it
+  NAMES — `settleDebtsOwnedBy(spoke)`: receipt cards per thread, band
+  burials per thread — and any other thread's debt HOLDS the banner
+  (`bg line holding: … another thread still owes`). Both nets share
+  `_settleBannerFromHealth`. A `finished` receipt pays its own row:
+  `payAgentDebt(label, sid)` prefers the speaker's thread.
+- **The clock belongs to the debt.** `becomeHeard` re-anchors only
+  when nothing is owed; a landing cannot rewind a sleeping shell's
+  age.
+- **The report speaks.** A pump whose ledger was owed at birth latches
+  `_drainOwesReport`; fresh (<2 min) say lines bypass the focus
+  watermark and go through TTS. The two-minute archaeology rule still
+  files cold reports silently.
+
 ## The banner belongs to its session (shipped +278, phone side)
 
 The sleep-50 tape proved +278's bridge law (the shell survived eight

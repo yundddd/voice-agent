@@ -193,7 +193,10 @@ final class TurnCoordinator {
   // last sharing bug: a mail fetch on the wrong tab lit the box for
   // someone else's thoughts).
   String? _workOwner;
-  String? get workOwner => _workOwner;
+  /// +279: an OWED DEBT answers for itself (its own sid); with the
+  /// ledger dark, the machine's stamped owner (the badge's or the
+  /// last stream's) is all the history there is.
+  String? get workOwner => debtOwner ?? _workOwner;
   void noteWorkOwner(String sid) {
     // +276: THE BADGE'S HOME DOES NOT MOVE. While unheard work is
     // owed, the owner its own stream stamped stands — a later turn's
@@ -204,8 +207,9 @@ final class TurnCoordinator {
     // clean probe of tab 1 filed 'Bash sleep 15 finished.' two
     // seconds into the sleep.) Once the ledger is dark, the machine
     // is unnamed again and the next stream claims it freely.
+    final legacyDebt = _agentDebts.any((d) => d.sid == null);
     if (_workOwner == null ||
-        (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty)) {
+        (!_backgrounded && !_detachedPromise && !legacyDebt)) {
       _workOwner = sid;
     }
   }
@@ -213,8 +217,18 @@ final class TurnCoordinator {
   /// +276: every payment path funnels here — when the LAST owed
   /// label settles and no badge stands, the machine is genuinely
   /// ownerless again and the next turn's frames re-name it.
+  /// Badge, promise, or a NAMELESS (pre-naming) debt: single-owner
+  /// artifacts that freeze the machine's identity while they stand
+  /// (+279 — named debts do not, they carry their own sid).
+  bool get _hasOwnedArtifact =>
+      _backgrounded ||
+      _detachedPromise ||
+      _agentDebts.any((d) => d.sid == null);
+
   void _releaseOwnerIfDark() {
-    if (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty) {
+    if (!_backgrounded &&
+        !_detachedPromise &&
+        !_agentDebts.any((d) => d.sid != null)) {
       _workOwner = null;
     }
   }
@@ -224,11 +238,42 @@ final class TurnCoordinator {
   /// no receipt bubble (nothing will ever report it), no banner.
   /// Returns true when the badge belonged to one of [ids].
   bool retireIfOwned(Iterable<String> ids) {
-    final o = _workOwner;
-    if (o == null || !ids.contains(o)) return false;
-    retireBadgeAndWork(); // also releases the owner (see below)
-    return true;
+    final before = _agentDebts.length;
+    _agentDebts.removeWhere((d) => d.sid != null && ids.contains(d.sid));
+    final paidSomething = _agentDebts.length != before;
+    if (_agentDebts.isEmpty && !_backgrounded && !_detachedPromise) {
+      retireBadgeAndWork();
+      return paidSomething || _workOwner != null && ids.contains(_workOwner);
+    }
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last.label : '';
+    return paidSomething;
   }
+
+  /// +279: the scoped payment the health nets make: a clean report
+  /// about conversation [sid] settles exactly THAT conversation's
+  /// debts (nameless legacy rows ride with it — in that world there
+  /// was only one conversation) and returns what it paid, records
+  /// included so each receipt card stamps for its own thread. The
+  /// banner retires only when the ledger AND the badge are empty —
+  /// another conversation's owed shell keeps it lit, out of sight on
+  /// this tab, at home on that one.
+  List<({String? sid, String label})> settleDebtsOwnedBy(String? sid) {
+    final paid = _agentDebts
+        .where((d) => d.sid == sid || d.sid == null)
+        .toList(growable: false);
+    _agentDebts.removeWhere((d) => d.sid == sid || d.sid == null);
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last.label : '';
+    _releaseOwnerIfDark();
+    return paid;
+  }
+
+  /// +279: is the single-owner badge (the detached turn / cut promise)
+  /// owned by a conversation OTHER than [sid]? Its clean health may
+  /// not retire that one.
+  bool badgeOwnedByOtherThan(String? sid) =>
+      (_backgrounded || _detachedPromise) &&
+      _workOwner != null &&
+      _workOwner != sid;
   // on the bridge with no ear on it: the terminal badge stays lit until
   // a heard turn starts, /stop lands, or a probe proves nothing open.
   DateTime? _since; // wall clock the in-flight bridge turn started
@@ -254,7 +299,13 @@ final class TurnCoordinator {
   // proves the TURN went unheard, not that the process died (the
   // three-sleep field report: the chat called 'Bash sleep 120'
   // finished while all three shells were still running).
-  final List<String> _agentDebts = [];
+  // +279: ONE LEDGER LINE, ONE OWNER. The single-owner list held two
+  // sleep debts under the FIRST conversation's stamp (the +276 freeze
+  // refused the second re-name) — so the second conversation's banner
+  // hid on its OWN tab ('when I switch to another session and do the
+  // same test, it doesn't show the banner'). Each owed shell now
+  // carries the sid of the conversation that launched it.
+  final List<({String? sid, String label})> _agentDebts = [];
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
   // own 'finished' receipt pays the promise (behaviours 2/4).
@@ -279,7 +330,17 @@ final class TurnCoordinator {
 
   /// Every owed shell's label, in launch order (a copy — the caller
   /// pays from it while the ledger drains).
-  List<String> get agentDebts => List.of(_agentDebts);
+  List<String> get agentDebts => [for (final d in _agentDebts) d.label];
+
+  /// +279: the conversation that owes the NEWEST debt — the banner's
+  /// home while any shell is owed (its label is the newest debt's
+  /// label too: the line names the newest thing still running).
+  String? get debtOwner {
+    for (final d in _agentDebts.reversed) {
+      if (d.sid != null) return d.sid;
+    }
+    return null;
+  }
 
   /// The most recent takeover's trigger (null before the first one).
   TurnTrigger? get lastTakeover => _lastTakeover;
@@ -307,7 +368,7 @@ final class TurnCoordinator {
     // already names ITS conversation; the next turn (in whatever tab
     // the user typed it) must not inherit that owner, nor later
     // condemn it with its own clean health.
-    if (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty) {
+    if (!_backgrounded && !_detachedPromise && !_hasOwnedArtifact) {
       _workOwner = null;
     }
     return _seq;
@@ -327,7 +388,13 @@ final class TurnCoordinator {
   void becomeHeard() {
     _pttPressPending = false; // heard is decided: nothing pending
     _backgrounded = false;
-    _since = _clock();
+    // +279: while a shell is owed, the CLOCK belongs to the debt —
+    // the field: 'the second count on the background tool is reset
+    // when I swipe back' (the landing's re-attach claimed a heard
+    // turn and re-anchored the age to now, four seconds into a
+    // fifty-second sleep). A heard turn with nothing owed anchors
+    // fresh, as always.
+    if (_agentDebts.isEmpty && !_detachedPromise) _since = _clock();
   }
 
   /// The bridge just picked up work we waited behind (the 'started'
@@ -344,7 +411,7 @@ final class TurnCoordinator {
     // A picked-up turn drops the snapshot, but a PROCESS still running
     // is not unheard by the pickup (+140): the line re-labels to the
     // newest owed shell instead of blanking on it.
-    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last.label : '';
   }
 
   /// The cut disposition: the bridge put a running tool into background
@@ -364,11 +431,17 @@ final class TurnCoordinator {
   /// `tool backgrounded` frame — live or replayed). The bottom line
   /// names THAT step, not whatever the last snapshot held; the promise
   /// is paid by the report's `finished` receipt or /health proof.
-  void noteAgentWork(String label) {
+  void noteAgentWork(String label, {String? sid}) {
     final name = label.isNotEmpty
         ? label
         : (_lastToolStep.isNotEmpty ? _lastToolStep : 'Background shell');
-    if (!_agentDebts.contains(name)) _agentDebts.add(name);
+    // +279: the debt belongs to the conversation whose stream
+    // launched it (the pump's own view id; the machine's current
+    // owner as the fallback an old bridge forces).
+    final owner = sid ?? _workOwner;
+    if (!_agentDebts.any((d) => d.label == name && d.sid == owner)) {
+      _agentDebts.add((sid: owner, label: name));
+    }
     _bgWork = name;
     // +278: the debt's age starts at its OWN birth — the launch
     // receipt, not the last heard turn (a debt raised after a
@@ -382,9 +455,18 @@ final class TurnCoordinator {
   /// newest still-owed shell, blanking only when the ledger runs dry.
   /// Returns the label the line now names ('' when none). A cut tool's
   /// label is not in the ledger: the call is then a no-op.
-  String payAgentDebt(String label) {
-    _agentDebts.remove(label);
-    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+  String payAgentDebt(String label, {String? sid}) {
+    // +279: a receipt pays ITS OWNED debt — prefer the newest entry
+    // labelled so AND owned by the speaker's conversation; an
+    // un-stamped match keeps the +140 law for old wires (same label
+    // in two conversations: the newest one is the one reporting).
+    final i = sid == null
+        ? _agentDebts.lastIndexWhere((d) => d.label == label)
+        : _agentDebts.lastIndexWhere(
+            (d) => d.label == label && (d.sid == sid || d.sid == null),
+          );
+    if (i >= 0) _agentDebts.removeAt(i);
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last.label : '';
     _releaseOwnerIfDark(); // +276
     return _bgWork;
   }
@@ -445,7 +527,7 @@ final class TurnCoordinator {
     _detachedPromise = false; // the receipt paid it
     // The SNAPSHOT goes; an owed process does not (+140) — the ledger
     // re-labels the line, and only a real payment clears a debt.
-    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+    _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last.label : '';
     _releaseOwnerIfDark(); // +276
   }
 
