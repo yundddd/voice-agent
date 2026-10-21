@@ -298,15 +298,22 @@ then creates the session and the tab it lives in.
 Navigation is horizontal: a **left-swipe** on the channel jumps to the
 NEWER tab, a **right-swipe** to the OLDER one, and when the first tab
 is all you have — the state first-launch leaves you in — the
-right-swipe IS the creation sheet (the `+` pill opens the same sheet
-from anywhere). The gesture is not a cut: the thread rides the finger
-while the drag is down, and the commit SLIDES the old thread out
-against the swipe while the new one slides in across it — each tab
-wears a barely-there gradient tint of its own (a golden-angle hue
-behind the bubbles), so the crossfade itself says "a different
-session is arriving". Refused switches spring the thread back with
-not a swap. The tab pills (tap to jump, `+` to ask) sit
-above the control chips for the same job. Each tab is `(harness,
+right-swipe IS the creation sheet. The pills live IN THE APP BAR —
+they replaced the title and the fingerprint line: a horizontally
+scrollable strip shares the row with the corner buttons (which never
+scroll), the fixed `+` on its end is always in place, and every pill
+wears an ✕ that FORGETS the tab (its thread leaves with it; the
+active tab's relief onto its neighbour obeys the rest law; deleting
+the last tab fires no verb at all). The conversation's fingerprint
+rides the pill's tooltip. The gesture is not a cut: the thread rides
+the finger while the drag is down (and lifts like a grabbed card,
+while the NEXT session's own hue glows in from the edge being pulled
+open — past the first tab that edge wears the + slot and says so),
+and the commit SLIDES the old thread out against the swipe while the
+new one slides in across it — each tab wears a barely-there gradient
+tint of its own (a golden-angle hue behind the bubbles), so the
+crossfade itself says "a different session is arriving". Refused
+switches spring the thread back with not a swap. Each tab is `(harness,
 folder, model, sessions…)` in `bridge_prefs.json`; switching calls
 `POST /seat {"sessionId":…}` which resumes that exact conversation
 (and rewrites the project's pointer, so a bridge restart wakes on the

@@ -78,16 +78,11 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// legible as motion, not guessed after a layout change.
   double _dragDx = 0;
 
-  /// +230: the session's own wash — a barely-there hue per tab
-  /// (golden-angle steps so neighbours never collide), painted as a
-  /// top-left → bottom-right gradient behind the bubbles. Subtle at
-  /// rest, unmistakable mid-crossfade: the tint DIFFERENT is the
-  /// message that a new session is arriving.
-  static List<Color> _sessionTint(int tab) {
-    final hue = ((tab * 137) % 360).toDouble();
-    final c = HSLColor.fromAHSL(1.0, hue, 0.45, 0.55).toColor();
-    return [c.withValues(alpha: 0.10), c.withValues(alpha: 0.02)];
-  }
+  /// +230: the session's own wash — see [AssistantScreenSupport].
+  static List<Color> _sessionTint(int tab) => [
+        AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.10),
+        AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.02),
+      ];
 
   /// Slide direction for the swap animation: -1 exits left (walked
   /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
@@ -128,6 +123,95 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// A pill tap: jump the seat to that tab. A refusal (mid-turn, a
   /// bridge too old, the wire down) surfaces as a one-line snackbar —
   /// the channel simply stayed where it was, which IS the truth.
+  /// A pill in the bar's session strip: the harness glyph, the folder
+  /// it works in (its label), and an ✕ that FORGETS the tab (and its
+  /// thread — the replace law; see removeSessionTab). The pill wears
+  /// the conversation's fingerprint as its tooltip — the title line
+  /// the strip replaced still has a home. The active tab wears the
+  /// container colour; a tap jumps (slides) there.
+  Widget _sessionPill(BuildContext context, VoiceAssistant a,
+      dynamic v, SessionTabInfo t) {
+    final scheme = Theme.of(context).colorScheme;
+    final active = t.index == v.tabIndex;
+    final tint = AssistantScreenSupport.sessionTint(t.index);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: '${t.harness} · ${t.dir}'
+            '${t.currentId == null ? '' : '\n${t.currentId}'}',
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          decoration: BoxDecoration(
+            color: active
+                ? scheme.secondaryContainer
+                : tint.withValues(alpha: 0.10),
+            border: Border.all(
+                color: active ? scheme.primary : scheme.outlineVariant),
+            borderRadius: const BorderRadius.all(Radius.circular(16)),
+          ),
+          child: InkWell(
+            borderRadius: const BorderRadius.all(Radius.circular(16)),
+            onTap: () => _slideTo(a, t.index),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    t.harness == 'opencode'
+                        ? Icons.terminal
+                        : Icons.chat,
+                    size: 14,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 5),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 130),
+                    child: Text(
+                      t.label,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: active
+                                ? scheme.onSurface
+                                : scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  // The ✕ — forget this tab. Greyed while it is the
+                  // ONLY tab holding a seat mid-move would refuse
+                  // anyway; the refusal's reason comes back as the
+                  // snackbar the same _tabTap law uses.
+                  InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => _tabRemove(a, t.index),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(Icons.close,
+                          size: 15, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _tabRemove(VoiceAssistant a, int index) {
+    unawaited(() async {
+      // The seat will land on the NEIGHBOUR (older side) — tell the
+      // switcher so the thread slides that way, not as a jump cut.
+      setState(() => _slideDir = 1);
+      final err = await a.removeSessionTab(index);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      }
+    }());
+  }
+
   void _tabTap(VoiceAssistant a, int index) {
     unawaited(() async {
       final err = await a.switchSession(index);
@@ -664,24 +748,38 @@ class _AssistantScreenState extends State<AssistantScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+        // +230 (field round): the SESSION STRIP lives in the bar —
+        // the title and the fingerprint line retire (the Bridge screen
+        // still shows the id with its full detail; each pill wears it
+        // as a tooltip). The scroller takes the row's flexible middle
+        // — SAME LINE as the corner buttons, which never scroll —
+        // while the NEW-session + is fixed at the end of the strip:
+        // the way out of an empty list must not itself be scrollable.
+        titleSpacing: 12,
+        centerTitle: false,
+        title: Row(
           children: [
-            const Text('Voice Agent'),
-            // The conversation's fingerprint, directly under the title: a
-            // steady id across many talks is the continuity proof (the
-            // bridge --resume's this one after its own restart); a change
-            // means /new or a respawn moved it. The Bridge screen shows
-            // the same value with its claudeUp/turn detail.
-            Text(
-              v.sessionId == null || v.sessionId!.isEmpty
-                  ? 'no session yet'
-                  : 'session ${v.sessionId}',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontFamily: 'monospace',
-                color: v.bridgeBusy ? scheme.primary : scheme.onSurfaceVariant,
-              ),
+            Expanded(
+              child: v.tabs.isEmpty
+                  ? Text(
+                      'Voice Agent',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    )
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final t in v.tabs) _sessionPill(context, a, v, t),
+                        ],
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              // ALWAYS shown, outside the scroller.
+              tooltip: 'New session',
+              icon: const Icon(Icons.add),
+              onPressed: () => _newSessionTap(a),
             ),
           ],
         ),
@@ -838,9 +936,79 @@ class _AssistantScreenState extends State<AssistantScreen>
                               // (mid-turn, unheard owed) spring the
                               // thread back with no swap at all:
                               // the key did not change.
-                              Transform.translate(
-                                offset: Offset(_dragDx, 0),
-                                child: AnimatedSwitcher(
+                              // +230: the drag IN MOTION: the thread
+                              // lifts like a grabbed card (a hair of
+                              // scale and tilt per pixel parted) and
+                              // the NEXT session's own hue glows in
+                              // from the edge being pulled open —
+                              // the swipe announces itself while the
+                              // finger is still down, not only at the
+                              // commit. Past the first tab the parted
+                              // edge glows the creation slot's primary
+                              // and a + fades in: that gesture means
+                              // NEW, and it looks like it.
+                              Builder(builder: (context) {
+                                final part =
+                                    (_dragDx.abs() / 160).clamp(0.0, 1.0);
+                                final toOlder = _dragDx > 0;
+                                final atFirst = v.tabIndex == 0;
+                                final edgeTint = toOlder && atFirst
+                                    ? scheme.primary
+                                    : AssistantScreenSupport.sessionTint(
+                                        (v.tabIndex + (toOlder ? -1 : 1))
+                                            .clamp(0, v.tabs.isEmpty ? 0 : v.tabs.length - 1));
+                                return Stack(
+                                  children: [
+                                    // The glow pad UNDER the card, on the
+                                    // parted edge.
+                                    if (part > 0)
+                                      Positioned(
+                                        left: toOlder ? 0 : null,
+                                        right: toOlder ? null : 0,
+                                        top: 0,
+                                        bottom: 0,
+                                        child: IgnorePointer(
+                                          child: Container(
+                                            width: 64,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: toOlder
+                                                    ? Alignment.centerLeft
+                                                    : Alignment.centerRight,
+                                                end: toOlder
+                                                    ? Alignment.centerRight
+                                                    : Alignment.centerLeft,
+                                                colors: [
+                                                  edgeTint.withValues(
+                                                      alpha: 0.35 * part),
+                                                  edgeTint.withValues(alpha: 0),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    // The + slot past the FIRST tab
+                                    // (right-drag home of the new
+                                    // session).
+                                    if (toOlder && atFirst && part > 0)
+                                      Positioned(
+                                        left: 6,
+                                        top: 0,
+                                        bottom: 0,
+                                        child: Opacity(
+                                          opacity: part,
+                                          child: Center(
+                                            child: Icon(Icons.add_circle_outline,
+                                                color: scheme.primary),
+                                          ),
+                                        ),
+                                      ),
+                                    Transform.translate(
+                                      offset: Offset(_dragDx, 0),
+                                      child: Transform.scale(
+                                        scale: 1 - 0.03 * part,
+                                        child: AnimatedSwitcher(
                                   duration: const Duration(milliseconds: 260),
                                   switchInCurve: Curves.easeOutCubic,
                                   switchOutCurve: Curves.easeInCubic,
@@ -890,8 +1058,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                                       ),
                                     ),
                                   ),
-                                ),
-                              ),
+                                    ),
+                                  ),
+                                  ),
+                                  ],
+                                );
+                              }),
 
                               // The working row: spinner, one-line
                               // activity, meter — permanently the
@@ -935,51 +1107,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                   ),
                 ),
               ),
-              // +230: the tab strip — one pill per session, creation
-              // order, the live one lit; tap jumps, the trailing +
-              // asks the creation questions (same sheet the first
-              // swipe-right brings). It rides the row the chips own,
-              // above the fold, because tabs ARE housekeeping.
-              if (v.tabs.isNotEmpty)
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 4),
-                      for (final t in v.tabs)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
-                            avatar: Icon(
-                              t.harness == 'opencode'
-                                  ? Icons.terminal
-                                  : Icons.chat,
-                              size: 16,
-                            ),
-                            label: Text(
-                              '${t.index + 1} · ${t.label}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            backgroundColor: t.index == v.tabIndex
-                                ? scheme.secondaryContainer
-                                : null,
-                            // A bridge without /seat cannot move: the
-                            // pill shows the ledger but rests (the
-                            // creation + still works — /seat fresh is
-                            // the same verb, so creation rests too).
-                            onPressed: v.canSeat ? () => _slideTo(a, t.index) : null,
-                          ),
-                        ),
-                      ActionChip(
-                        avatar: const Icon(Icons.add, size: 18),
-                        label: const Text('New session'),
-                        onPressed: v.canSeat ? () => _newSessionTap(a) : null,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                  ),
-                ),
-              if (v.bridgeConfigured) ...[
+if (v.bridgeConfigured) ...[
                 // Session housekeeping: /new and /compact (see
                 // VoiceAssistant.bridgeControl for what they do on the
                 // wire). Taps deliberately interrupt any voice reply
@@ -1213,3 +1341,18 @@ String hintFor({
     _ => 'Start conversation',
   },
 };
+
+/// +230: the session's own wash — a barely-there hue per tab
+/// (golden-angle steps so neighbours never collide), painted as a
+/// top-left → bottom-right gradient behind the bubbles, worn as the
+/// pill's inactive tint, and glowed from the edge mid-drag. Subtle
+/// at rest, unmistakable in motion: a different session is visibly a
+/// different PLACE.
+class AssistantScreenSupport {
+  const AssistantScreenSupport._();
+
+  static Color sessionTint(int tab) {
+    final hue = ((tab * 137) % 360).toDouble();
+    return HSLColor.fromAHSL(1.0, hue, 0.45, 0.55).toColor();
+  }
+}

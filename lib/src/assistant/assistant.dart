@@ -1060,12 +1060,18 @@ class VoiceAssistant extends ChangeNotifier {
   /// mid-turn switch would resetConversation over a live answer, so
   /// the law matches the harness row's: the switch RESTS while a
   /// turn (or a queued prompt) is open. Returns the refusal reason.
-  Future<String?> switchSession(int index) async {
+  Future<String?> switchSession(int index, {bool force = false}) async {
     final g = _gateway;
     final prefs = _bridgePrefs;
     if (g == null) return 'bridge not configured';
     if (index < 0 || index >= prefs.tabs.length) return 'no such session tab';
-    if (index == prefs.activeTab.clamp(0, prefs.tabs.length - 1)) return null;
+    // `force` re-seats even onto the index the ledger already calls
+    // active — removeSessionTab needs it: when the ACTIVE tab dies,
+    // the clamped index can land on the neighbour without the seat
+    // ever having moved there.
+    if (!force && index == prefs.activeTab.clamp(0, prefs.tabs.length - 1)) {
+      return null;
+    }
     if (!_seatCap) return 'the bridge is too old to switch sessions';
     final h = await bridgeHealth(); // the FRESH glance, not the cached era
     final rest = _seatRest(h); // mid-turn, or unheard frames owed
@@ -1088,6 +1094,49 @@ class VoiceAssistant extends ChangeNotifier {
     await _saveBridgePrefs();
     await _refreshSession();
     notifyListeners();
+    return null;
+  }
+
+  /// +230: ✕ on the pill — FORGET A TAB. The tab's bubbles leave with
+  /// it (the same replace law as /new: a deleted thread whose store
+  /// rows stayed would resurrect under a re-created tab wearing the
+  /// same session id); the shared prologue and every OTHER tab stand.
+  /// The bridge is only touched when the doomed tab HOLDS the seat
+  /// and a neighbour exists to take it — then the move obeys the rest
+  /// law (mid-turn / unheard-owed refuses, and the tab stays, because
+  /// deleting an active thread behind a live turn's back is exactly
+  /// the silent-eat this law exists to stop). Deleting the LAST tab
+  /// fires no verb at all: the bridge keeps its seat (it is the
+  /// bridge's own memory now), the ledger goes empty, and the fixed
+  /// + re-asks the question whenever the user wants a session again.
+  Future<String?> removeSessionTab(int index) async {
+    final prefs = _bridgePrefs;
+    if (index < 0 || index >= prefs.tabs.length) return 'no such session tab';
+    final active = prefs.activeTab.clamp(0, prefs.tabs.length - 1);
+    final isActive = index == active;
+    if (isActive && prefs.tabs.length > 1) {
+      // Relieving the seat is a seat verb.
+      final rest = _seatRest(await bridgeHealth());
+      if (rest != null) return rest;
+    }
+    final doomed = prefs.tabs.removeAt(index);
+    _chat.removeSessions({
+      ...doomed.sessionIds,
+      ChatStore.pendingSession, // its nameless birth turn goes too
+    });
+    if (!isActive && index < active) prefs.activeTab = active - 1;
+    if (prefs.tabs.isEmpty) prefs.activeTab = 0;
+    await _saveBridgePrefs();
+    notifyListeners();
+    if (isActive && prefs.tabs.isNotEmpty) {
+      // The seat must live somewhere: the NEIGHBOUR (previous, or the
+      // next when the first tab died) — `force`, because the clamped
+      // active index can already point at it while the seat never
+      // moved there.
+      final dest = index == 0 ? 0 : index - 1;
+      final err = await switchSession(dest, force: true);
+      if (err != null) return err; // tab gone; the move's reason rides back
+    }
     return null;
   }
 

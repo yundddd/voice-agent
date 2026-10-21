@@ -394,6 +394,54 @@ void main() {
       expect(a.view.chat.any((e) => e.blocks.contains('seen in X')), isTrue);
     });
 
+    test('✕ forgets a tab: its thread leaves, neighbours stand, the '
+        'active seat relieves to the neighbour', () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-x'); // tab 0
+      unawaited(a.runQuickCommand('mine', bubble: 'mine'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'claude', dir: '/proj-y'); // tab 1, active
+      await settle();
+      // 1) A NON-active tab: pure forget, no seat verb.
+      final before = harness.seatCalls.length;
+      expect(await a.removeSessionTab(0), isNull);
+      expect(harness.seatCalls.length, before);
+      expect(a.view.tabs, hasLength(1));
+      expect(a.view.tabIndex, 0); // the strip closed up, active tracked
+      expect(a.chat.any((e) => e.blocks.contains('mine')), isFalse,
+          reason: 'the doomed tab\'s thread left with it');
+      // 2) Rebuild to two tabs and delete the ACTIVE one while a turn
+      // is open: the relief move is a seat verb — it rests.
+      await a.createSession(harness: 'opencode', dir: '/proj-z'); // tab 1
+      await a.switchSession(0);
+      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      expect(await a.removeSessionTab(0),
+          'the harness is mid-turn — stop it before switching sessions');
+      expect(a.view.tabs, hasLength(2)); // nothing half-happened
+      harness.healthState = {...harness.healthState!}..remove('turnOpen');
+      // 3) Now it goes, and the NEIGHBOUR takes the seat.
+      expect(await a.removeSessionTab(0), isNull);
+      expect(a.view.tabs, hasLength(1));
+      expect(a.view.tabIndex, 0);
+      expect(harness.seatCalls.last['dir'], '/proj-z');
+    });
+
+    test('deleting the LAST tab fires no verb and re-opens the question',
+        () async {
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      expect(await a.removeSessionTab(0), isNull);
+      expect(a.view.tabs, isEmpty); // empty ledger
+      expect(harness.seatCalls.length, 1); // create only — no seat verb
+      // The + (always on the bar) still works: creation answers again.
+      expect(await a.createSession(harness: 'claude', dir: '/proj-x'), isNull);
+      expect(a.view.tabs, hasLength(1));
+    });
+
     test('a bridge without the seat flag refuses the verb it cannot answer',
         () async {
       await a.createSession(harness: 'opencode', dir: '/proj-x');
