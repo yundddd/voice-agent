@@ -48,7 +48,8 @@ class EnvProbe {
   int generation = 1;
   int seq = 1;
   bool busy = true, badge = false, errored = false;
-  String? errorWhy; // +219: the reason the wire carried must arrive
+  String? errorWhy;
+  String? errorSession; // +275: who the verdict was filed for // +219: the reason the wire carried must arrive
 
   final List<Activity> statuses = [];
   final List<AssistantPhase> phases = [];
@@ -101,9 +102,10 @@ class EnvProbe {
     markSpeaking: () => phase = AssistantPhase.speaking,
     idleReady: () => idled = true,
     fail: fails.add,
-    noteHarnessError: (why) {
+    noteHarnessError: (why, session) {
       errored = true;
       errorWhy = why;
+      errorSession = session; // +275: the stamp must name the hearer
     },
     noteReplyText: replyTexts.add,
     noteUnheardSay: unheardSays.add,
@@ -645,6 +647,85 @@ void main() {
       await r;
       out.complete();
       await settle();
+    });
+
+    test('+275: pins are per conversation — B\u2019s pickup leaves A\u2019s park alone',
+        () async {
+      final owner = ['ses-A'];
+      final store = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        session: () => owner.first,
+      );
+      store.addUser('parked in A', queued: true);
+      owner[0] = 'ses-B';
+      store.addUser('parked in B', queued: true);
+      expect(store.queuedFor('ses-A')?.blocks.single, 'parked in A',
+          reason: 'A keeps its pin while B parks too — isolation');
+      expect(store.queuedFor('ses-B')?.blocks.single, 'parked in B');
+      store.unpinQueued(session: 'ses-B');
+      expect(store.queuedFor('ses-B'), isNull, reason: 'B was taken');
+      expect(store.queuedFor('ses-A'), isNotNull,
+          reason: 'A was never taken — its spinner box persists');
+    });
+
+    test('+275: the error verdict stamps for the conversation that '
+        'heard it, not for the seat the user swiped to', () async {
+      // The tape shape: reattached pump of X, user swipes to Y, X's
+      // turn dies with a provider error. The receipt card used to be
+      // stamped for Y (the live seat) — the wrong-tab error text.
+      probe.seatedNow = null; // birth pump, nameless at start
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 10,
+          contextWindow: 20,
+          ctxSession: 'ses-X',
+        ),
+      );
+      await settle();
+      probe.seatedNow = 'ses-Y'; // the user moves on while X works
+      wire.add(
+        const BridgeEvent.forTest(
+          'done',
+          isError: true,
+          text: 'model rejected',
+          session: 'ses-X',
+        ),
+      );
+      await r;
+      out.complete();
+      await settle();
+      expect(probe.errorSession, 'ses-X',
+          reason: 'the verdict belongs to the thread that heard it');
+    });
+
+    test('+275: a nameless birth self-names from its OWN stream, and '
+        'the adoption sweep stops stealing strangers', () async {
+      final owner = [null];
+      final store = ChatStore(
+        persist: (_) async {},
+        repaint: () {},
+        session: () => owner[0] ?? ChatStore.pendingSession,
+      );
+      // Two nameless births: one prompt typed into each.
+      store.addUser('typed into birth A', queued: false);
+      final stranger = store.beginTurn(); // another conversation's bubble
+      expect(stranger.session, ChatStore.pendingSession);
+      // The seat now speaks A's name: only the typed paperwork the
+      // seat itself owes adopts it (userOnly sweep); the stranger's
+      // assistant bubble keeps its sentinel until ITS wire names it.
+      expect(store.adoptPending('ses-A', userOnly: true), 1);
+      expect(store.entries.first.session, 'ses-A');
+      expect(stranger.session, ChatStore.pendingSession,
+          reason: '+275: no more cross-birth adoption theft');
+      // And A's own pump, meeting its ctx frame, self-names its
+      // bubble — identity flows from the stream that spoke.
+      store.namePendingOf([stranger], 'ses-A');
+      expect(stranger.session, 'ses-A');
     });
 
     test('+274: the parser reads the wire stamp, and absence is trust',

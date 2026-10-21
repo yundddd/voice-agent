@@ -71,16 +71,42 @@ class ChatStore {
 
   /// Name every sentinel-carried bubble (the birth-turn adoption).
   /// Returns how many took the name.
-  int adoptPending(String id) {
+  ///
+  /// +275: [userOnly] restricts the sweep to the seat's OWN paperwork
+  /// (a prompt typed while its conversation had no name yet). With
+  /// tabs there are MULTIPLE nameless births alive at once, and a
+  /// sweep of every sentinel hands one conversation's id to another
+  /// conversation's bubbles — the adoption twin of the mixing bug.
+  /// Pump-born entries skip the sweep and self-name from the wire
+  /// instead (see [namePendingOf]); an old single-seat caller keeps
+  /// the full sweep.
+  int adoptPending(String id, {bool userOnly = false}) {
     var n = 0;
     for (final e in _entries) {
-      if (e.session == pendingSession) {
+      if (e.session == pendingSession &&
+          (!userOnly || e.fromUser)) {
         e.session = id;
         n++;
       }
     }
     if (n != 0) touch();
     return n;
+  }
+
+  /// +275: the pump learned its conversation's name from the wire
+  /// (a context frame, a _sess stamp); the bubbles it filed while
+  /// nameless take that name — and nobody else's do. This is the
+  /// isolation adoption: identity flows from the stream that spoke,
+  /// never from whoever the seat drifted to meanwhile.
+  void namePendingOf(Iterable<ChatEntry> mine, String id) {
+    var n = 0;
+    for (final e in mine) {
+      if (e.session == pendingSession) {
+        e.session = id;
+        n++;
+      }
+    }
+    if (n != 0) touch();
   }
 
   /// +223 migration: bubbles born under a harness but before the
@@ -149,11 +175,36 @@ class ChatStore {
   /// any. Cleared the first time that turn's stream shows life — the
   /// harness picked it up, so the message drops from the pinned card
   /// into the conversation flow where its answer will follow.
-  ChatEntry? get queuedBubble => _queued?.queued == true ? _queued : null;
+  ///
+  /// +275: the pin is PER CONVERSATION. The old single slot meant
+  /// queueing in tab B silently de-pinned (or shadowed) tab A's parked
+  /// prompt — the field read it as 'the spinner box does not persist
+  /// for each session'. Every conversation keeps its own pin; the
+  /// seat's is the one the view renders.
+  ChatEntry? queuedFor(String? session) {
+    for (final e in _entries.reversed) {
+      if (e.queued && _ownsPin(e, session)) return e;
+    }
+    return null;
+  }
+
+  /// +275: does this entry's pin belong to [session]? The sentinel
+  /// doubles for a store that never learned sessions at all (the
+  /// +223-era log and every test world without a getter): that single
+  /// conversation holds plain null, and holds it alone.
+  bool _ownsPin(ChatEntry e, String? session) {
+    final want = session ?? _sessionOwner ?? pendingSession;
+    return e.session == want ||
+        (want == pendingSession && e.session == null);
+  }
+
+  ChatEntry? get queuedBubble => queuedFor(_sessionOwner);
 
   /// The pinned message's text for the renderer (kept a plain string so
   /// the view widget needs no import of the log model).
   String? get queuedText => queuedBubble?.blocks.join(' ');
+  String? queuedTextFor(String? session) =>
+      queuedFor(session)?.blocks.join(' ');
 
   /// The bubble the in-flight working line rides — see [liveTurnFor].
   /// [parkedBehind]: a prompt is queued and has not STARTED (pin
@@ -224,7 +275,7 @@ class ChatStore {
     entry.transcribing = false;
     entry.rev++; // +202: the pulse gave way to words — the bubble changed
     if (queued) {
-      unpinQueued();
+      unpinQueued(session: entry.session);
       entry.queued = true;
       _queued = entry;
     }
@@ -233,9 +284,11 @@ class ChatStore {
   }
 
   void addUser(String text, {bool queued = false}) {
-    // One pin at a time: a newer queued press outranks the old one,
-    // whose turn is by definition dead (superseded on the wire).
-    if (queued) unpinQueued();
+    // One pin at a time PER CONVERSATION (+275): a newer queued press
+    // outranks the OLD ONE in the same thread, whose turn is by
+    // definition dead (superseded on the wire) — another tab's park
+    // is nobody's rival.
+    if (queued) unpinQueued(session: _sessionOwner);
     final entry = ChatEntry.user(text, queued: queued, createdMs: _nowMs())
       ..harness = _era
       ..session = _sessionOwner;
@@ -293,6 +346,10 @@ class ChatStore {
     bool cancelled = false,
     bool receipt = false,
     String receiptId = '',
+    // +275: WHOSE note — a pump filing a verdict stamps its OWN
+    // conversation, not the seat that happens to be painted while the
+    // frame lands (the wrong-tab error-card leak).
+    String? session,
   }) {
     if (_entries.isNotEmpty) {
       final last = _entries.last;
@@ -321,7 +378,7 @@ class ChatStore {
         )
         ..blocks.add(text)
         ..harness = _era
-        ..session = _sessionOwner,
+        ..session = session ?? _sessionOwner,
     );
     trace?.call('msg note: "${_abbrev(text)}"');
     touch();
@@ -382,9 +439,23 @@ class ChatStore {
     touch();
   }
 
-  void unpinQueued() {
-    final q = _queued;
-    _queued = null;
+  void unpinQueued({String? session}) {
+    // +275: a pickup lifts ITS conversation's pin. Without the scope,
+    // B's started marker ate A's parked prompt's pin (and the 'queue
+    // taken' receipt) — another face of the same missing isolation.
+    // No argument keeps the old law: lift every pin (single-thread
+    // worlds and clear-all paths).
+    // The owner whose pin lifts: the asked-for session, else (the
+    // legacy call shape) the conversation the store currently stamps
+    // — in a single-thread world the same thing.
+    ChatEntry? q;
+    for (final e in _entries.reversed) {
+      if (e.queued && _ownsPin(e, session)) {
+        q = e;
+        break;
+      }
+    }
+    if (identical(_queued, q)) _queued = null;
     if (q != null && q.queued) {
       q.queued = false;
       q.pickedUpMs = _nowMs();
@@ -392,6 +463,9 @@ class ChatStore {
       trace?.call(
         'msg queue taken: ${q.createdMs == 0 ? 'waited ?' : 'waited ${formatWait(q.pickedUpMs - q.createdMs)}'}',
       );
+      // Any other pin stands (per-conversation law); the legacy
+      // pointer tracks nothing anymore — scans answer now.
+      _queued = null;
       touch();
     }
   }

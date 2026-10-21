@@ -475,11 +475,13 @@ class VoiceAssistant extends ChangeNotifier {
       // the other's, nothing deleted.
       chat: _chat.entries.where(_entryVisible).toList(growable: false),
       chatVersion: _chat.version,
-      queued: queuedBubble == null
+      // +275: the pin shown is the VISIBLE conversation's — another
+      // tab may park its own prompt, and both pins stand.
+      queued: _chat.queuedFor(_sessionId) == null
           ? null
           : QueuedPin(
-              text: queuedText ?? '',
-              createdMs: queuedBubble!.createdMs,
+              text: _chat.queuedTextFor(_sessionId) ?? '',
+              createdMs: _chat.queuedFor(_sessionId)!.createdMs,
             ),
       backgrounded: BgWork(
         visible: showsBackgroundedWork,
@@ -1530,7 +1532,11 @@ class VoiceAssistant extends ChangeNotifier {
         // the pre-law history adopts the session that was already in
         // use. Order matters: stamp first, notify after, so no paint
         // ever shows a thread that just changed owners.
-        _chat.adoptPending(s);
+        // +275: sweep only the seat's OWN paperwork (a prompt typed
+        // while it had no name). Pump-born bubbles self-name from
+        // their stream — a full sweep here would steal another
+        // conversation's nameless birth into THIS id.
+        _chat.adoptPending(s, userOnly: true);
         if (!_bridgePrefs.sessionBackfilled) {
           _bridgePrefs.sessionBackfilled = true;
           unawaited(_saveBridgePrefs());
@@ -2355,10 +2361,14 @@ class VoiceAssistant extends ChangeNotifier {
     // the era that heard it, so each thread keeps its own failures.
     // Adjacency-idempotent like every note: a replay of one error-done
     // files one card.
-    noteHarnessError: (why) {
+    noteHarnessError: (why, session) {
+      // +275: the error card belongs to the conversation that HEARD
+      // it (the pump's stamp), not to whatever tab the seat paints
+      // when the frame lands — the wrong-tab receipt leak.
       _chat.addSystemNote(
         _error = why ?? 'the harness reported an error',
         receipt: true,
+        session: session,
       );
     },
     noteReplyText: _hide.noteReplyText,

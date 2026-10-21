@@ -139,7 +139,11 @@ final class BridgeTurnEnv {
   final void Function(String message) fail;
 
   /// A `done` frame carrying the harness's own error flag.
-  final void Function(String? why) noteHarnessError;
+  /// +275: the verdict arrives WITH its conversation — the pump is
+  /// the only party who knows which thread heard the error, and the
+  /// note must be stamped for THAT thread, not for whatever tab the
+  /// seat drifted to while the frame was in flight.
+  final void Function(String? why, String? session) noteHarnessError;
 
   /// Hide/resume bookkeeping (see HideResume): the newest block fed to
   /// the speaker, a say that landed unheard while hidden, the drop
@@ -457,7 +461,8 @@ class BridgeTurn {
       turn.becomeHeard();
       return;
     }
-    chat.unpinQueued();
+    // +275: lift THIS conversation's pin, not every tab's.
+    chat.unpinQueued(session: _viewSid);
     if (_pickupDone) return;
     if (isTool && ev.toolName == 'started' && ev.toolKind == 'background') {
       return; // the started case below claims the pickup
@@ -518,11 +523,26 @@ class BridgeTurn {
       // focus gate below can finally tell 'mine' from 'the one you
       // left' even for streams that opened nameless.
       if (ev.ctxSession != null) {
+        final nameless = _viewSid == null;
         _viewSid = ev.ctxSession;
         // +257: the same stamp teaches the COORDINATOR whose turn the
         // machine holds — the seat marker signs THAT, not whichever
         // tab is looking.
         turn.noteWorkOwner(ev.ctxSession!);
+        // +275 ISOLATION: the wire just answered WHOSE bubbles these
+        // are. Everything this pump filed under the nameless-birth
+        // sentinel takes THIS name — and only these. The old
+        // sweep-every-sentinel adoption (/health) could hand one
+        // conversation's id to another conversation's paperwork the
+        // moment two threads were alive; identity now flows from the
+        // stream that spoke the words, never from whoever the seat
+        // happens to watch.
+        if (nameless) {
+          chat.namePendingOf(
+            [turnBubble, ?pinnedEntry],
+            ev.ctxSession!,
+          );
+        }
       }
       // +249: the bar belongs to the conversation it is seated on. A
       // context frame from a backgrounded thread updates the METER
@@ -540,7 +560,10 @@ class BridgeTurn {
         // +219: the wire's reason, not a generic one — the status line
         // says WHAT the harness said ('Access to model denied…'), the
         // fallback only when an old bridge sent the flag alone.
-        env.noteHarnessError(ev.text.isEmpty ? null : ev.text);
+        env.noteHarnessError(
+          ev.text.isEmpty ? null : ev.text,
+          _viewSid,
+        );
       }
     } else if (ev.kind == 'error') {
       // a relayed bridge error IS the turn's end
@@ -672,7 +695,10 @@ class BridgeTurn {
       // drop). Otherwise the prior turn settled before the flush: the
       // tool that predates a polite pickup is closed by definition, so
       // retire the line now.
-      chat.unpinQueued();
+      // +275: the started marker belongs to a conversation; the pin
+      // it lifts is THAT conversation's parked prompt, never a
+      // stranger tab's.
+      chat.unpinQueued(session: _viewSid);
       env.notePickup();
       // +170: a pickup is a turn's birth — counters start fresh, and a
       // `settled` carried over from the prompt this queued BEHIND must

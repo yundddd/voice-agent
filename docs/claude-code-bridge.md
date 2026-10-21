@@ -329,6 +329,40 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## Sessions are isolated worlds (shipped +275)
+
+Tim's law, from the two-session tape: *each session works as a single
+session, agnostic of what the other is doing.* +274 put an owner stamp
+on the wire; +275 makes the phone actually live by it. Three more
+identities were still being read from the LIVE SEAT (wherever the
+user's thumb last was) instead of from the conversation they belonged
+to:
+
+- **The error receipt.** `noteHarnessError` filed its card with the
+  store's current-session getter — so a backgrounded thread's provider
+  error landed in the tab you had swiped to. The seam now carries the
+  pump's own conversation (`_viewSid`, learned from that stream's
+  frames) and stamps the note for the thread that HEARD it.
+- **The queued pin.** The store kept ONE `_queued` slot, so parking a
+  prompt in tab B silently shadowed A's park, and B's pickup lifted
+  A's pin (the field read: 'the spinner box does not persist for each
+  session'). Pins are now a per-conversation property read by scan:
+  `queuedFor(session)` — every tab keeps its own parked prompt, and
+  unpinning happens for the conversation whose `started` marker
+  arrived. The view renders the visible conversation's pin.
+- **Birth adoption.** `/health` naming the seat used to rename EVERY
+  sentinel-carried bubble — with two nameless births alive, one
+  conversation's id was handed to the other's bubbles. The sweep now
+  takes only the seat's own typed paperwork (`userOnly`);
+  pump-born bubbles self-name from the wire that speaks them
+  (`namePendingOf`, fired the moment the pump's own context frame
+  names it). A store that never learned sessions (+223-era logs,
+  plain-null stamps) still owns the sentinel's rights.
+
+Walks: per-conversation pins with a scoped pickup; the error verdict
+stamped for the hearing thread, not the seated one; self-naming with
+the no-theft adoption.
+
 ## The fold's farewell waits for its answer (shipped +273)
 
 A polite (slide-right) queue folds into the RUNNING turn at the
