@@ -579,6 +579,35 @@ void main() {
       expect(a.view.tabs, hasLength(1));
     });
 
+    testWidgets('a two-provider catalog folds under shelves until tapped',
+        (tester) async {
+      harness.modelsMenu = <String, Object?>{
+        'harness': 'opencode',
+        'current': null,
+        'models': [
+          {'id': 'acme/alpha', 'label': 'Acme Alpha'},
+          {'id': 'acme/beta', 'label': 'Acme Beta'},
+          {'id': 'other/gamma', 'label': 'other/gamma'},
+        ],
+      };
+      await open(tester);
+      // Two provider shelves, folded: the models are NOT on screen —
+      // that was the flood. The shelves count their wares.
+      expect(find.text('acme · 2'), findsOneWidget);
+      expect(find.text('other · 1'), findsOneWidget);
+      expect(find.text('Acme Alpha'), findsNothing);
+      await tester.tap(find.text('acme · 2'));
+      await tester.pumpAndSettle();
+      expect(find.text('Acme Alpha'), findsOneWidget); // unfolded
+      expect(find.text('other/gamma'), findsNothing); // the other shelf holds
+      await tester.tap(find.text('Acme Beta'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select this folder'));
+      await tester.tap(find.text('Start session'));
+      await tester.pumpAndSettle();
+      expect(harness.seatCalls.last['model'], 'acme/beta');
+    });
+
     testWidgets('a refused seat keeps the sheet open with the reason',
         (tester) async {
       harness.seatRefused = 'opencode is resting';
