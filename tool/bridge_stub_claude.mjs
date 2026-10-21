@@ -97,6 +97,14 @@ const bgBeat = Number(process.env.STUB_BG_BEAT_MS ?? 300);
 const bgSays = (process.env.STUB_BG_SAYS ??
   'The background command finished. It printed:\n\nBGOUT-hello\n\n(exit code 0)')
   .split('\n').map((x) => x.trim()).filter(Boolean);
+// +252: a stub resumed under an id ANSWERS under that id — the exact
+// law the real CLI enforces (session_id is stable and resume-able, see
+// the header). Unresumed, the stub is 'stub-session' as ever, so every
+// older walk sees the identical wire.
+const _argv = process.argv.slice(2);
+const _r = _argv.indexOf('--resume');
+const SESSION = _r >= 0 ? _argv[_r + 1] : 'stub-session';
+
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
 let turnSeq = 0; // timers of a superseded/cut turn must not speak again
@@ -112,12 +120,12 @@ function finishTurn(gen) {
   if (gen !== turnSeq) return;
   for (const s of says()) {
     out({
-      type: 'assistant', session_id: 'stub-session',
+      type: 'assistant', session_id: SESSION,
       message: { role: 'assistant', content: [{ type: 'text', text: s }] },
     });
   }
   out({
-    type: 'result', subtype: 'success', session_id: 'stub-session',
+    type: 'result', subtype: 'success', session_id: SESSION,
     is_error: false, total_cost_usd: 0,
     usage: { input_tokens: 100, output_tokens: 42 },
   });
@@ -164,7 +172,7 @@ process.stdin.on('data', (b) => {
         const cancelled = process.env.STUB_TOOL_CANCELLED === '1';
         setTimeout(() => {
           out({
-            type: 'user', session_id: 'stub-session',
+            type: 'user', session_id: SESSION,
             message: { role: 'user',
               content: [{ type: 'tool_result', tool_use_id: id,
                           ...(cancelled
@@ -176,7 +184,7 @@ process.stdin.on('data', (b) => {
                             : { content: toolDoneText }) }] },
           });
           out({
-            type: 'assistant', session_id: 'stub-session',
+            type: 'assistant', session_id: SESSION,
             message: { role: 'assistant',
               content: [{ type: 'text', text: toolDoneText }] },
           });
@@ -185,7 +193,7 @@ process.stdin.on('data', (b) => {
       openToolId = null;
       out({
         type: 'result', subtype: 'error_during_execution',
-        session_id: 'stub-session', is_error: true, total_cost_usd: 0,
+        session_id: SESSION, is_error: true, total_cost_usd: 0,
         errors: ['interrupted by user'],
       });
       return;
@@ -216,13 +224,13 @@ process.stdin.on('data', (b) => {
       setTimeout(() => {
         if (gen !== turnSeq) return;
         out({
-          type: 'assistant', session_id: 'stub-session',
+          type: 'assistant', session_id: SESSION,
           message: { role: 'assistant',
             content: [{ type: 'text', text: 'Prompt is too long' }] },
         });
         out({
           type: 'result', subtype: 'error_during_execution',
-          session_id: 'stub-session', is_error: true, total_cost_usd: 0,
+          session_id: SESSION, is_error: true, total_cost_usd: 0,
           result: 'Prompt is too long',
         });
       }, delay);
@@ -236,12 +244,12 @@ process.stdin.on('data', (b) => {
       setTimeout(() => {
         if (gen !== turnSeq) return;
         out({ type: 'system', subtype: 'status', status: 'compacting',
-              session_id: 'stub-session' });
+              session_id: SESSION });
       }, Math.max(10, delay >> 2));
       setTimeout(() => {
         if (gen !== turnSeq) return;
         out({ type: 'system', subtype: 'compact_boundary',
-              session_id: 'stub-session' });
+              session_id: SESSION });
         finishTurn(gen);
       }, delay);
       return;
@@ -251,7 +259,7 @@ process.stdin.on('data', (b) => {
         if (gen !== turnSeq) return;
         openToolId = 'tool-' + gen;
         out({
-          type: 'assistant', session_id: 'stub-session',
+          type: 'assistant', session_id: SESSION,
           message: { role: 'assistant', content: [
             {
               type: 'tool_use', id: openToolId, name: 'Bash',
@@ -291,7 +299,7 @@ process.stdin.on('data', (b) => {
               });
             }
             out({
-              type: 'user', session_id: 'stub-session',
+              type: 'user', session_id: SESSION,
               message: { role: 'user', content: receipts },
             });
           }, 80);
@@ -314,10 +322,10 @@ process.stdin.on('data', (b) => {
               out(bgNotifySystem
                 ? {
                     type: 'system', subtype: 'task_notification',
-                    session_id: 'stub-session', content: text,
+                    session_id: SESSION, content: text,
                   }
                 : {
-                    type: 'user', session_id: 'stub-session',
+                    type: 'user', session_id: SESSION,
                     message: { role: 'user',
                       content: `<task-notification>${text}` +
                         `</task-notification>` },
@@ -327,14 +335,14 @@ process.stdin.on('data', (b) => {
                   if (gen !== turnSeq) return;
                   for (const t of bgSays) {
                     out({
-                      type: 'assistant', session_id: 'stub-session',
+                      type: 'assistant', session_id: SESSION,
                       message: { role: 'assistant',
                         content: [{ type: 'text', text: t }] },
                     });
                   }
                   out({
                     type: 'result', subtype: 'success',
-                    session_id: 'stub-session', is_error: false,
+                    session_id: SESSION, is_error: false,
                     total_cost_usd: 0,
                     usage: { input_tokens: 100, output_tokens: 42 },
                   });
@@ -350,14 +358,14 @@ process.stdin.on('data', (b) => {
             setTimeout(() => {
               if (gen !== turnSeq) return;
               out({
-                type: 'assistant', session_id: 'stub-session',
+                type: 'assistant', session_id: SESSION,
                 message: { role: 'assistant', content: [{
                   type: 'tool_use', id: `read-${gen}`, name: 'Read',
                   input: { file_path: `/tmp/stub-tasks/tbg${gen}.output` },
                 }] },
               });
               out({
-                type: 'user', session_id: 'stub-session',
+                type: 'user', session_id: SESSION,
                 message: { role: 'user', content: [{
                   type: 'tool_result', tool_use_id: `read-${gen}`,
                   content: '1\tBGOUT-hello\n2\t\n3\t[exited with code 0]',
@@ -369,7 +377,7 @@ process.stdin.on('data', (b) => {
                 if (gen !== turnSeq) return;
                 for (const t of bgSays) {
                   out({
-                    type: 'assistant', session_id: 'stub-session',
+                    type: 'assistant', session_id: SESSION,
                     message: { role: 'assistant',
                       content: [{ type: 'text', text: t }] },
                   });
@@ -378,7 +386,7 @@ process.stdin.on('data', (b) => {
                   if (gen !== turnSeq) return;
                   out({
                     type: 'result', subtype: 'success',
-                    session_id: 'stub-session', is_error: false,
+                    session_id: SESSION, is_error: false,
                     total_cost_usd: 0,
                     usage: { input_tokens: 100, output_tokens: 42 },
                   });
@@ -395,7 +403,7 @@ process.stdin.on('data', (b) => {
         setTimeout(() => {
           if (gen !== turnSeq) return;
           out({
-            type: 'assistant', session_id: 'stub-session',
+            type: 'assistant', session_id: SESSION,
             message: { role: 'assistant', content: [{
               type: 'tool_use', id: `tool2-${gen}`, name: 'Bash',
               input: { command: 'echo second', description: 'step two' },
@@ -404,7 +412,7 @@ process.stdin.on('data', (b) => {
           setTimeout(() => {
             if (gen !== turnSeq) return;
             out({
-              type: 'user', session_id: 'stub-session',
+              type: 'user', session_id: SESSION,
               message: { role: 'user', content: [{
                 type: 'tool_result', tool_use_id: `tool2-${gen}`,
                 content: 'second',
@@ -421,4 +429,4 @@ process.stdin.on('data', (b) => {
 });
 // The real CLI re-emits init per message; the bridge only reads session_id
 // off whatever carries one, so one greeting is plenty.
-out({ type: 'system', subtype: 'init', session_id: 'stub-session' });
+out({ type: 'system', subtype: 'init', session_id: SESSION });

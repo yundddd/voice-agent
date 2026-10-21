@@ -1331,3 +1331,68 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
       await stopBridge(proc);
     }
   });
+
+// +252 step 2: THE SESSION REGISTRY. /health carries one row per
+// conversation the bridge has seated this life: turn birth lights it,
+// turn death rests it with the last context size it earned, and a seat
+// move keeps the first conversation's row standing beside the
+// second's. The ledger, not yet the router: exactly one turn is open
+// at a time and turnSid says whose machine it is.
+const PORT20 = PORT1 + 60;
+test('the registry reports every conversation the bridge has seated (+252)',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT20);
+    try {
+      await up(PORT20);
+      // Conversation A: an unnamed birth turn, heard start to finish.
+      const a = await call(PORT20, `/talk?token=${TOKEN}`,
+        { body: 'registry first', method: 'POST' });
+      await until('A open', async () => {
+        const h = await health(PORT20);
+        return h.turnOpen === true &&
+          h.sessions?.some((r) => r.turnOpen === true);
+      });
+      await until('A done', async () =>
+        sseEvents(a.text).some((e) => e.ev === 'done'));
+      await until('A rested', async () => {
+        const rows = (await health(PORT20)).sessions;
+        return rows.length === 1 && rows[0].turnOpen === false;
+      });
+      const hA = await health(PORT20);
+      const rowA = hA.sessions[0];
+      assert.ok(rowA.sid, 'the birth turn got its row when the harness named it');
+      assert.ok(rowA.ctx.in > 0, 'the closed turn left its size on the row');
+      assert.equal(hA.turnSid, null, 'a rested conversation holds no machine');
+
+      // The seat moves to a named conversation; its turn lights a
+      // SECOND row while the first stands untouched beside it.
+      const seat = await call(PORT20, `/seat?token=${TOKEN}`,
+        { body: JSON.stringify({ sessionId: 'ses-registry-b' }),
+          method: 'POST' });
+      assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
+      const b = await call(PORT20, `/talk?token=${TOKEN}`,
+        { body: 'registry second', method: 'POST' });
+      await until('B open', async () => {
+        const h = await health(PORT20);
+        return h.turnSid === 'ses-registry-b' &&
+          h.sessions.some((r) => r.turnOpen === true);
+      });
+      await until('B done', async () =>
+        sseEvents(b.text).some((e) => e.ev === 'done'));
+      await until('both rest', async () => {
+        const rows = (await health(PORT20)).sessions;
+        return rows.length === 2 && rows.every((r) => r.turnOpen === false);
+      });
+      const rows = (await health(PORT20)).sessions;
+      assert.ok(rows.find((r) => r.sid === rowA.sid && !r.turnOpen),
+        'A rests beside B, its history intact');
+      assert.ok(rows.find((r) => r.sid === 'ses-registry-b'),
+        'B is known by the name the seat gave it');
+      assert.deepEqual(seen(stubLog), ['registry first', 'registry second'],
+        'both conversations spoke to the harness under their own seats');
+    } finally {
+      await stopBridge(proc);
+    }
+  });

@@ -80,6 +80,25 @@ the FOCUSED channel; the tab strip reads the others.
   verdict "rides as text" to every transport) is just each channel
   minding its own state.
 
+### Era notes from the steps as they land
+
+Step 1 (+252, phone): landed as written — SessionChannel with one
+instance, all 466 walks the extraction proof.
+
+Step 2 (+253, bridge): landed as a WRAP — `sessions` map in
+claude_bridge.mjs, rows minted at turn birth (or at the harness
+speaking a birth turn's name mid-flight), resting with their context
+size at death; `/health` answers `sessions` + `turnSid` beside the old
+globals. Two boundary discoveries, both of which the map documents:
+the record swap can only happen at TURN boundaries, not seat moves —
+a backgrounded turn's stream owns the parse globals until its result
+lands (that is exactly why the +249 ctxOwner gate exists, and it
+retires only when parsing itself goes per-record); and one turn is
+live at a time today (the queue is a single slot), so this era the
+map is a LEDGER that reports who held the machine, not yet a router
+that serves two. Per-session rings and a per-row queue slot — the
+actual concurrent-inactive-receive — are the map's next increment.
+
 ## Migration order (tests green at every step)
 
 1. Phone first: extract `SessionChannel` from `VoiceAssistant`'s

@@ -644,6 +644,52 @@ let lastCtx = {'in': 0, 'window': 0}; // {in, window} snapshot for /health
 // the vacationer's luggage (the field report: the bar showed the old
 // session's context until the new session's first turn).
 let ctxOwner = null;
+// ── +252 step 2: THE SESSION REGISTRY (docs/session-channels-design.md) ──
+// One row per conversation this bridge has seated while alive. The LIVE
+// turn is still parsed by the globals above — one turn machine, the
+// 250-era laws — and this map is where every conversation's numbers
+// REST when its turn closes or the seat moves on. Rows update at the
+// same sites the globals do: a turn's birth (talk/proactive), its death
+// (result/exit/reset), and the authoritative context snapshot. /health
+// answers them under `sessions` for one era of dual shape: when the
+// phone starts reading the map, the +249 owner-gate becomes a row
+// lookup, and /seat can shrink toward a speaker-focus pointer. This era
+// the map is a LEDGER, not yet a router: one turn is live at a time
+// (the queue is a single slot), and the rows say so honestly.
+const sessions = new Map(); // sid -> {sid,harness,dir,model,ctx,turnOpen,queued,updatedAt}
+const SESSIONS_CAP = 32;
+function sessionRow(sid, patch = {}) {
+  if (!sid) return null;
+  let r = sessions.get(sid);
+  if (!r) {
+    // Evict the oldest resting row (never a live turn, never the seat).
+    if (sessions.size >= SESSIONS_CAP) {
+      for (const [k, v] of sessions) {
+        if (!v.turnOpen && k !== sessionId) { sessions.delete(k); break; }
+      }
+    }
+    r = { sid, harness, dir, model: null, ctx: { in: 0, window: 0 },
+          turnOpen: false, queued: false, updatedAt: Date.now() };
+    sessions.set(sid, r);
+  }
+  Object.assign(r, patch, { updatedAt: Date.now() });
+  return r;
+}
+// The conversation the global turn state currently describes (survives
+// a seat move: a backgrounded turn still owns the machine until its
+// result lands — the same truth ctxOwner names for the context bar).
+let turnSid = null;
+function noteTurnOpen() {
+  turnSid = sessionId;
+  sessionRow(sessionId, { turnOpen: true, queued: false,
+                          harness, dir, model: currentModel() });
+}
+function noteTurnClosed() {
+  if (!turnSid) return;
+  sessionRow(turnSid, { turnOpen: false, queued: false,
+                        ctx: { in: lastCtx.in, window: lastCtx.window } });
+  turnSid = null;
+}
 // ── In-token PREVIEW (why the phone was dead air over a big read) ──
 // The API only reports a call's input tokens in its `message_start` —
 // which arrives AFTER the server has taken the whole prompt in (tens of
@@ -1002,6 +1048,7 @@ function onChildExit(code, sig) {
       (turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
                 : 'while idle (expected: /new kill or between-turns exit)'));
     turnOpen = false;
+    noteTurnClosed(); // +252: a death mid-turn is journalled on the row too
     openTools.clear();
     detached.clear(); // a dead process retires no tool: no tool_result
                       // will ever land to say 'finished' — the receipts
@@ -1449,7 +1496,15 @@ function handleEvent(line) {
       (m.type === 'system' && m.subtype === 'status'
         ? ' body=' + JSON.stringify(m).slice(0, 400) : ''));
   }
-  if (m.session_id) sessionId = m.session_id;
+  if (m.session_id) {
+    // +252: the registry follows the NAME. A birth turn is minted its
+    // row the moment the harness first speaks an id (the sentinel was
+    // honest until then), and a refused resume — the CLI mints fresh
+    // where --resume asked — moves the open turn's row to the truth.
+    if (m.session_id !== sessionId && turnSid && turnOpen) noteTurnClosed();
+    sessionId = m.session_id;
+    if (m.session_id !== turnSid && turnOpen) noteTurnOpen();
+  }
   if (m.type === 'stream_event') {
     const e = m.event ?? {};
     census.types[e.type] = (census.types[e.type] || 0) + 1;
@@ -1784,6 +1839,7 @@ function handleEvent(line) {
     if (lastCtx.in) {
       relay('context', { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
+    noteTurnClosed(); // +252: the row keeps the size the globals just earned
     // Per-turn verdict on what the upstream actually delivered (see
     // census): the answer to "the app showed no progress" that is
     // written by the wire, not by hope.
@@ -1915,6 +1971,7 @@ function handleEvent(line) {
   // a stray tool_result is bookkeeping, not a mouth.
   if (!turnOpen && m.type === 'assistant') {
     turnOpen = true;
+    noteTurnOpen(); // +252: an unprompted turn still belongs to someone
     proactiveTurn = true;
     turnBeganAt = Date.now();
     console.error('  [proactive] the harness speaks unprompted ' +
@@ -2214,6 +2271,7 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   backlog.length = 0; // a new turn: the old one's buffered frames are stale
   cutForPrompt = false; // a fresh turn closes with its own done (+106)
   turnOpen = true;
+  noteTurnOpen(); // +252: the registry remembers who owns the machine
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
   census = newCensus(); // one wire-shape census per turn
@@ -2316,6 +2374,7 @@ function flushPending() {
   if (!pending) return;
   const p = pending;
   pending = null;
+  sessionRow(turnSid, { queued: false }); // +252: the queue emptied
   // The disposition notice and everything after it belong to the
   // RESERVED turn, not the one whose `done` just fired (the result
   // handler relays that farewell BEFORE flushing — it stays stamped
@@ -2488,6 +2547,10 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
       hadTools: openTools.size > 0,
       backgrounded: cut && openTools.size > 0,
     };
+    // +252: the queue belongs to the conversation holding the floor
+    // (the +246 reading: a mid-turn flush rides with ITS turn, not
+    // with whatever tab is looking).
+    sessionRow(turnSid, { queued: true });
     const note = {
       name: 'queued',
       // +98: the notice names the OUTCOME the interrupt gesture caused
@@ -2708,6 +2771,7 @@ setInterval(pumpAppLog, appLogEveryMs || 3600000).unref(); // cheap when off
 function resetConversation() {
   sessionId = null;
   turnOpen = false;
+  noteTurnClosed(); // +252: rest in peace — the row keeps the last size
   openTools.clear();
   agentTasks.clear();
   bgTools.clear();
@@ -2863,6 +2927,15 @@ const server = http.createServer((req, res) => {
       // conversation holds the pen.
       context: { in: ctxOwner === sessionId ? lastCtx.in : 0,
                  window: ctxWindow },
+      // +252 step 2: the session registry — one row per conversation
+      // this bridge has seated while alive. A LEDGER, not yet a
+      // router: exactly one turn can be open (the single queue slot
+      // says so), and the rows report whose it was and what it knew.
+      // `turnSid` names the conversation the global turn state
+      // describes — the seat id when they differ is the honest sign
+      // of a backgrounded turn still holding the machine (+246).
+      sessions: [...sessions.values()],
+      turnSid,
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
