@@ -68,17 +68,58 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// fresh install (one tab, so any right-swipe is "past the first")
   /// IS the question "new session?". The `+` pill opens the same
   /// sheet from anywhere; past the newest tab, left is nothing.
+  ///
+  /// The drag itself is not invisible: _dragDx tracks the finger and
+  /// the thread rides it (Transform below, 1:1), so the gesture shows
+  /// the seam BEFORE the commit; on release the thread either springs
+  /// back or hands the baton to the AnimatedSwitcher — the swap
+  /// slides in the swipe's direction and the session's own gradient
+  /// tint crossfades with it, so "which session am I entering" is
+  /// legible as motion, not guessed after a layout change.
+  double _dragDx = 0;
+
+  /// +230: the session's own wash — a barely-there hue per tab
+  /// (golden-angle steps so neighbours never collide), painted as a
+  /// top-left → bottom-right gradient behind the bubbles. Subtle at
+  /// rest, unmistakable mid-crossfade: the tint DIFFERENT is the
+  /// message that a new session is arriving.
+  static List<Color> _sessionTint(int tab) {
+    final hue = ((tab * 137) % 360).toDouble();
+    final c = HSLColor.fromAHSL(1.0, hue, 0.45, 0.55).toColor();
+    return [c.withValues(alpha: 0.10), c.withValues(alpha: 0.02)];
+  }
+
+  /// Slide direction for the swap animation: -1 exits left (walked
+  /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
+  /// gesture and the pill tap alike, read by the transition builder.
+  int _slideDir = -1;
+
+  /// Commit a thread slide in the given exit direction (the fling's,
+  /// or the pill jump's sign against the current index).
+  void _slideTo(VoiceAssistant a, int index) {
+    setState(() {
+      _slideDir = index >= a.view.tabIndex ? -1 : 1;
+      _dragDx = 0; // the switcher takes over the motion
+    });
+    _tabTap(a, index);
+  }
+
+  void _onTabDragUpdate(DragUpdateDetails d) =>
+      setState(() => _dragDx += d.delta.dx);
+
   void _onTabSwipe(VoiceAssistant a, double vx) {
-    if (vx.abs() < 450) return; // a drift, not a fling
+    final was = _dragDx;
+    setState(() => _dragDx = 0); // spring/commit from wherever the finger landed
+    if (vx.abs() < 450 && was.abs() < 120) return; // a drift, not a fling
     final v = a.view;
     if (v.tabs.isEmpty) {
       if (vx > 0) _newSessionTap(a); // the first-launch gesture
       return;
     }
-    if (vx < 0) {
-      if (v.tabIndex < v.tabs.length - 1) _tabTap(a, v.tabIndex + 1);
+    if (vx < 0 || was < -120) {
+      if (v.tabIndex < v.tabs.length - 1) _slideTo(a, v.tabIndex + 1);
     } else if (v.tabIndex > 0) {
-      _tabTap(a, v.tabIndex - 1);
+      _slideTo(a, v.tabIndex - 1);
     } else {
       _newSessionTap(a); // past the first tab sits the NEW slot
     }
@@ -727,6 +768,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // oldest, the question.
                     child: GestureDetector(
                       behavior: HitTestBehavior.deferToChild,
+                      onHorizontalDragUpdate: _onTabDragUpdate,
+                      onHorizontalDragCancel: () =>
+                          setState(() => _dragDx = 0),
                       onHorizontalDragEnd: (d) => _onTabSwipe(
                         a,
                         d.velocity.pixelsPerSecond.dx,
@@ -779,14 +823,75 @@ class _AssistantScreenState extends State<AssistantScreen>
                                 ),
                               ],
                               const SizedBox(height: 16),
-                              for (final e in v.chat)
-                                if (e.fromUser ||
-                                    e.blocks.isNotEmpty ||
-                                    // A file bubble has no text
-                                    // blocks — the slip IS the
-                                    // bubble.
-                                    e.isFile)
-                                  _bubbleFor(e, a, context),
+                              // +230: the thread — one ANIMATED
+                              // swap per tab. The finger's own dx
+                              // rides the thread while the drag is
+                              // down (Transform.translate), and on
+                              // commit the outgoing thread slides
+                              // out against the swipe while the
+                              // incoming one slides in from the
+                              // other side, crossfading the tab's
+                              // own gradient tint — a different
+                              // session is visibly a different
+                              // place, in motion, not after a
+                              // layout change. Refused switches
+                              // (mid-turn, unheard owed) spring the
+                              // thread back with no swap at all:
+                              // the key did not change.
+                              Transform.translate(
+                                offset: Offset(_dragDx, 0),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 260),
+                                  switchInCurve: Curves.easeOutCubic,
+                                  switchOutCurve: Curves.easeInCubic,
+                                  transitionBuilder: (child, anim) {
+                                    final incoming = child.key is ValueKey<int> &&
+                                        (child.key as ValueKey<int>).value ==
+                                            v.tabIndex;
+                                    final from = (incoming ? -_slideDir : _slideDir) * 0.35;
+                                    return FadeTransition(
+                                      opacity: anim,
+                                      child: SlideTransition(
+                                        position: Tween<Offset>(
+                                          begin: Offset(from, 0.01),
+                                          end: Offset.zero,
+                                        ).animate(anim),
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                  child: DecoratedBox(
+                                    key: ValueKey(v.tabIndex),
+                                    decoration: BoxDecoration(
+                                      borderRadius:
+                                          const BorderRadius.all(
+                                              Radius.circular(18)),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: _sessionTint(v.tabIndex),
+                                      ),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          for (final e in v.chat)
+                                            if (e.fromUser ||
+                                                e.blocks.isNotEmpty ||
+                                                // A file bubble has no text
+                                                // blocks — the slip IS the
+                                                // bubble.
+                                                e.isFile)
+                                              _bubbleFor(e, a, context),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
 
                               // The working row: spinner, one-line
                               // activity, meter — permanently the
@@ -862,7 +967,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                             // pill shows the ledger but rests (the
                             // creation + still works — /seat fresh is
                             // the same verb, so creation rests too).
-                            onPressed: v.canSeat ? () => _tabTap(a, t.index) : null,
+                            onPressed: v.canSeat ? () => _slideTo(a, t.index) : null,
                           ),
                         ),
                       ActionChip(

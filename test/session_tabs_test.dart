@@ -520,6 +520,13 @@ void main() {
     tearDown(() => a.dispose());
 
     Future<void> open(WidgetTester tester) async {
+      // A phone-tall viewport: the creation sheet caps at 82% of the
+      // screen and SCROLLS below it — the default 600-px test window
+      // would leave the Start button below the fold by design.
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: Builder(builder: (c) => TextButton(
@@ -542,21 +549,33 @@ void main() {
       expect(find.text('opus'), findsOneWidget);
       expect(find.text('Default'), findsOneWidget);
       expect(find.text('proj-b'), findsOneWidget);
-      // Switch harness: the menu refetches (the fake answers for both).
-      await tester.tap(find.text('Opencode'));
+      // The folder section is a BROWSER: no pre-ticked 'Current', no
+      // per-row confirm buttons — rows ENTER folders, one SELECT files
+      // the folder you stand in, and the path you stand on is spelled
+      // out. Start without one is refused IN the sheet.
+      expect(find.textContaining('Current'), findsNothing);
+      expect(find.text('Here'), findsNothing);
+      await tester.tap(find.text('Start session'));
       await tester.pumpAndSettle();
-      // Pick a model and a folder, and START: one fresh seat, the
-      // sheet pops itself, the tab is filed.
+      expect(find.text('pick a working folder first'), findsOneWidget);
+      // Tap a folder to enter (the fake re-answers the same listing,
+      // standing at /home/tim), then SELECT, then a model, then START:
+      // one fresh seat, the sheet pops itself, the tab is filed.
+      await tester.tap(find.text('proj-b'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select this folder'));
+      await tester.pumpAndSettle();
+      expect(find.text('Selected'), findsOneWidget);
       await tester.tap(find.text('opus'));
-      await tester.tap(find.text('Here').last); // proj-b's row
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Start session'));
       await tester.pumpAndSettle();
       expect(find.text('New session'), findsNothing); // answered, dismissed
       final call = harness.seatCalls.last;
-      expect(call['harness'], 'opencode');
+      expect(call['harness'], 'claude'); // (menu still answers for claude here)
       expect(call['model'], 'opus');
       expect(call['fresh'], isTrue);
-      expect(call['dir'], '/home/tim/proj-b');
+      expect(call['dir'], '/home/tim'); // the listing's own absolute folder
       expect(a.view.tabs, hasLength(1));
     });
 
@@ -564,6 +583,8 @@ void main() {
         (tester) async {
       harness.seatRefused = 'opencode is resting';
       await open(tester);
+      await tester.tap(find.text('Select this folder'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Start session'));
       await tester.pumpAndSettle();
       expect(find.text('New session'), findsOneWidget); // still asking
