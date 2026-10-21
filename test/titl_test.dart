@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:piper_phonemize/piper_phonemize.dart' as piper;
 import 'package:voice_agent/src/speech/titl_engine.dart';
 
 void main() {
@@ -15,63 +14,19 @@ void main() {
   };
 
   group('teacher-in-the-loop text plumbing', () {
-    test('aliases fold, unknowns drop, a stop is appended', () {
-      // espeak 'think' older IPA uses 'T' (folds to θ); 'ɾ' folds to the
-      // pack's capital-T flap token, one pass so it is never re-theta'd;
-      // the bogus codepoint 0x2044 (fraction slash) is not in the vocab.
+    // The espeak fold tables retired with the plugin (the lexicon
+    // pronouncer feeds pre-trained entries — see lexicon_test.dart);
+    // what stays pinned here is the vocab assembly both paths share.
+    test('unknown chars drop and a stop is appended', () {
+      // 0x2044 (fraction slash) is not in the vocab: dropped, never
+      // guessed — a wrong id would speak a wrong phoneme, a dropped
+      // char only shortens one.
       final words = [
-        'Tɪŋk'.codeUnits,
-        'ɾaT'.codeUnits,
+        'aʊ'.codeUnits, // both legal singletons here
         [0x2044],
       ];
       final ph = TitlEngine.phonemesFromWords(words, vocab.keys.toSet());
-      expect(ph, 'θɪŋk Taθ.');
-    });
-
-    test('espeak diphthongs fold to the trained Kokoro singletons', () {
-      // The bug these guard: feeding raw 'aʊ' (two legal ids) made the
-      // graph say 'sown'; the whole alphabet is trained with one 'W'.
-      final words = [
-        'saʊnd'.codeUnits,
-        'meɪd'.codeUnits,
-        'maɪ'.codeUnits,
-        'bɔɪ'.codeUnits,
-        'hoʊm'.codeUnits,
-      ];
-      final ph = TitlEngine.phonemesFromWords(
-        words,
-        vocab.keys.toSet(),
-        folds: TitlEngine.foldEspeakEn,
-      );
-      expect(ph, 'sWnd mAd mI bY hOm.');
-    });
-
-    test('US branch folds rhotics and strips every length mark', () {
-      final words = [
-        'wˈɜːd'.codeUnits, // NURSE: the piper data omits the r; add it
-        'ɹˈɜːɹm'.codeUnits,
-        'nɪəɹ'.codeUnits, // NEAR → iə
-        'bʊtˈoʊn̩'.codeUnits, // syllabic mark → ᵊ prefix, never a stray id
-      ];
-      final ph = TitlEngine.phonemesFromWords(
-        words,
-        vocab.keys.toSet(),
-        folds: TitlEngine.foldEspeakEn,
-      );
-      expect(ph, 'wˈɜɹd ɹˈɜɹm niəɹ bʊtˈOᵊn.');
-      expect(ph.contains('ː'), isFalse);
-    });
-
-    test('flap rescue survives the fold table unchanged', () {
-      // 'ɾ'→'T' lives in the alias pass AFTER the fold (Misaki's tail
-      // rule); a flap must never re-enter the 'T'→'θ' alias.
-      final words = ['ˈwɔːɾɚ'.codeUnits];
-      final ph = TitlEngine.phonemesFromWords(
-        words,
-        vocab.keys.toSet(),
-        folds: TitlEngine.foldEspeakEn,
-      );
-      expect(ph, 'ˈwɔTəɹ.');
+      expect(ph, 'aʊ.');
     });
 
     test('ids are padded at both ends and stay under the graph window', () {
@@ -101,72 +56,5 @@ void main() {
       expect(spacedRuns.length, 2);
       expect(spacedRuns.first.length, lessThanOrEqualTo(512));
     });
-  });
-
-  group('live espeak-ng phonemizer (host native)', () {
-    test('Hello world maps to a non-trivial id run', () async {
-      // flutter test can't resolve package URIs; read the generated
-      // package config instead and point at the pub cache copy.
-      final cfg =
-          (jsonDecode(File('.dart_tool/package_config.json').readAsStringSync())
-                  as Map<String, Object?>)['packages']
-              as List;
-      final entry = cfg.cast<Map<String, Object?>>().firstWhere(
-        (m) => m['name'] == 'piper_phonemize',
-      );
-      final pkgRoot = Uri.parse(entry['rootUri'] as String).toFilePath();
-      final dataDir = '$pkgRoot/espeak-ng-data';
-      if (!Directory(dataDir).existsSync()) return; // packaged differently
-      await piper.initBindingsAsync('$pkgRoot/linux/x64');
-      piper.PiperPhonemize.initialize(dataDir);
-      final words = piper.PiperPhonemize.phonemize(
-        'Hello world, this works.',
-        voice: 'en-us',
-      );
-      expect(words, isNotEmpty);
-      final ph = TitlEngine.phonemesFromWords(words, vocab.keys.toSet());
-      expect(ph.length, greaterThan(8));
-      final runs = TitlEngine.idsFromPhonemes(ph, vocab);
-      expect(runs.single.length, greaterThan(10));
-      // 'hello' survives as o + stress-ish IPA: sanity that we are not
-      // looking at an empty drop-everything pass.
-      expect(
-        runs.single.any((id) => id == vocab['o'] || id == vocab['ə']),
-        isTrue,
-      );
-    });
-
-    test(
-      'live espeak + fold reproduces the trained spelling of sound',
-      () async {
-        // The regression this whole pass exists for: espeak hands over
-        // 'sˈaʊnd', the graph was trained on 'sˈWnd' (verified against
-        // `titl --phonemes` output for MithrilMan/teacher-in-the-loop).
-        final cfg =
-            (jsonDecode(
-                      File('.dart_tool/package_config.json').readAsStringSync(),
-                    )
-                    as Map<String, Object?>)['packages']
-                as List;
-        final entry = cfg.cast<Map<String, Object?>>().firstWhere(
-          (m) => m['name'] == 'piper_phonemize',
-        );
-        final pkgRoot = Uri.parse(entry['rootUri'] as String).toFilePath();
-        final dataDir = '$pkgRoot/espeak-ng-data';
-        if (!Directory(dataDir).existsSync()) return; // packaged differently
-        await piper.initBindingsAsync('$pkgRoot/linux/x64');
-        piper.PiperPhonemize.initialize(dataDir);
-        final words = piper.PiperPhonemize.phonemize(
-          'The word sound is tricky.',
-          voice: 'en-us',
-        );
-        final ph = TitlEngine.phonemesFromWords(
-          words,
-          vocab.keys.toSet(),
-          folds: TitlEngine.foldEspeakEn,
-        );
-        expect(ph, contains('sˈWnd'));
-      },
-    );
   });
 }

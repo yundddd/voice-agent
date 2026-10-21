@@ -31,14 +31,21 @@ class TtsSpec {
   final String kokoroModel, kokoroVoices, kokoroTokens, kokoroDataDir;
   final String kokoroLexicon;
   // Teacher-in-the-loop: the 8M student graph + Kokoro phoneme vocab;
-  // espeak data arrives unpacked by the piper_phonemize plugin (its own
-  // copy, extracted to app support — independent of the Kokoro pack's).
-  // Students are single-voice models, so a speaker style here is *another
-  // graph*: [titlModels]/[titlVocabs]/[espeakVoices] are comma-joined
-  // parallel lists indexed by sid (same shape as [kokoroLexicon]), each
-  // student pack carrying its own model + vocab copy.
-  final String titlModels, titlVocabs, espeakVoices;
-  final String espeakDataDir;
+  // words come from the lexicon files in [lexiconPaths] (the students'
+  // espeak-free front-end, lib/lexicon_pronouncer.dart — Kokoro's own
+  // us-en/gb-en files). Students are single-voice models, so a speaker
+  // style here is *another graph*: [titlModels]/[titlVocabs] are
+  // comma-joined parallel lists indexed by sid (same shape as
+  // [kokoroLexicon]), each student pack carrying its own model + vocab
+  // copy. The Italian pair (and with it the GPL piper_phonemize
+  // plugin) retired: the students speak English, fully off the lexicon.
+  final String titlModels, titlVocabs;
+
+  /// Comma-joined lexicon-us-en/gb-en paths in priority order; the
+  /// first readable file wins per word. No readable file at all is a
+  /// TitlException at synth time, not a silent fallback: the plugin
+  /// that could fall back is gone.
+  final String lexiconPaths;
   final int sid;
 
   const TtsSpec.kokoro({
@@ -51,14 +58,12 @@ class TtsSpec {
   }) : engine = 'kokoro',
        titlModels = '',
        titlVocabs = '',
-       espeakVoices = '',
-       espeakDataDir = '';
+       lexiconPaths = '';
 
   const TtsSpec.titl({
     required this.titlModels,
     required this.titlVocabs,
-    required this.espeakDataDir,
-    this.espeakVoices = 'en-us',
+    required this.lexiconPaths,
     this.sid = 0,
   }) : engine = 'titl',
        kokoroModel = '',

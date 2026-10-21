@@ -3,8 +3,6 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'package:piper_phonemize/piper_phonemize.dart' as piper;
-
 import '../models/model_packs.dart';
 import 'kokoro_voices.dart';
 import 'speech_worker.dart' show TtsSpec;
@@ -25,6 +23,12 @@ class TtsVoice {
   /// ANY of its packs is on disk, and only downloads the picked pack.
   final bool perSidPacks;
 
+  /// Packs every style of this voice shares (for the students: the
+  /// Kokoro lexicon files their espeak-free front-end reads). Shared
+  /// packs download with the first style and never gate 'installed' —
+  /// without them the English path silently falls back to espeak.
+  final List<ModelPack> sharedPacks;
+
   const TtsVoice({
     required this.id,
     required this.label,
@@ -32,6 +36,7 @@ class TtsVoice {
     required this.sizeLabel,
     required this.packs,
     this.perSidPacks = false,
+    this.sharedPacks = const [],
   });
 
   String get dirName => packs.first.dirName;
@@ -53,9 +58,11 @@ class TtsVoice {
   /// inside the one loaded graph.
   Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
     if (id == 'titl') {
-      // espeak-ng data rides the piper_phonemize plugin (extracted once
-      // into app support); graph + Kokoro vocab come from each pack.
-      return titlSpec(modelsDir, await piper.extractEspeakNgData(), sid);
+      // The students speak English off Kokoro's own lexicon files (the
+      // shared tts-lexicon-en pack, or the teacher pack's copies); the
+      // GPL piper_phonemize plugin that used to stand behind them left
+      // the APK with the Italian pair.
+      return titlSpec(modelsDir, sid);
     }
     // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
     // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
@@ -74,26 +81,44 @@ class TtsVoice {
   }
 
   /// The student spec for one picked style: parallel model/vocab lists
-  /// in pack order (sid indexes them), one espeak voice per student
-  /// (af_heart reads English, the Italian pair read Italian — their
-  /// training language), and THE PICKED SID riding the spec: the
-  /// worker's synth default reads it from there, and dropping it was
-  /// how every style after the first silently spoke af_heart again.
-  /// Pure (no plugin extraction) so tests can pin the wiring.
-  TtsSpec titlSpec(String modelsDir, String espeakDataDir, int sid) =>
-      TtsSpec.titl(
-        titlModels: [
-          for (final pack in packs) _f(modelsDir, pack.dirName, 'model.onnx'),
-        ].join(','),
-        titlVocabs: [
-          for (final pack in packs) _f(modelsDir, pack.dirName, 'vocab.json'),
-        ].join(','),
-        espeakVoices: 'en-us,it,it',
-        espeakDataDir: espeakDataDir,
-        sid: sid,
-      );
+  /// in pack order (sid indexes them), and THE PICKED SID riding the
+  /// spec: the worker's synth default reads it from there, and dropping
+  /// it was how every style after the first silently spoke af_heart
+  /// again. Pure (no I/O) so tests can pin the wiring.
+  ///
+  /// The lexicon candidates list prefers the student's own shared pack,
+  /// then the teacher pack's copies (dirName literal matches the
+  /// 'kokoro' voice below) — first readable file wins per word, so
+  /// whichever packs a device happens to have are enough, and the
+  /// shared pack only downloads when neither file is there yet.
+  TtsSpec titlSpec(String modelsDir, int sid) => TtsSpec.titl(
+    titlModels: [
+      for (final pack in packs) _f(modelsDir, pack.dirName, 'model.onnx'),
+    ].join(','),
+    titlVocabs: [
+      for (final pack in packs) _f(modelsDir, pack.dirName, 'vocab.json'),
+    ].join(','),
+    lexiconPaths: [
+      // US before GB (the students only ever read en-us), shared
+      // pack before teacher pack.
+      for (final file in const ['lexicon-us-en.txt', 'lexicon-gb-en.txt'])
+        for (final dir in [_lexDirName, _kokoroDirName])
+          _f(modelsDir, dir, file),
+    ].join(','),
+    sid: sid,
+  );
+
+  static const _lexDirName = 'tts-lexicon-en';
+  static const _kokoroDirName = 'kokoro-multi-lang-v1_0';
 
   Future<bool> installedIn(String modelsDir) async {
+    // Shared packs are part of 'installed': the students without their
+    // lexicon cannot speak (no espeak fallback anymore), and the
+    // startup check that skips ensureIn for installed voices must
+    // therefore see them as needing the (small) download.
+    for (final shared in sharedPacks) {
+      if (!await packInstalled(modelsDir, shared)) return false;
+    }
     for (final pack in packs) {
       final there = await packInstalled(modelsDir, pack);
       if (there && perSidPacks) return true;
@@ -107,6 +132,9 @@ class TtsVoice {
     ModelProgress? onProgress,
     int? sid,
   }) async {
+    for (final shared in sharedPacks) {
+      await ensurePack(modelsDir, shared, onProgress: onProgress);
+    }
     if (perSidPacks && sid != null && sid < packs.length) {
       await ensurePack(modelsDir, packs[sid], onProgress: onProgress);
       return;
@@ -118,7 +146,7 @@ class TtsVoice {
 
   /// Delete the unpacked model files (frees disk; re-downloadable anytime).
   Future<void> deleteIn(String modelsDir) async {
-    for (final pack in packs) {
+    for (final pack in [...packs, ...sharedPacks]) {
       await deletePack(modelsDir, pack);
     }
   }
@@ -135,30 +163,25 @@ const ttsVoices = <TtsVoice>[
     id: 'titl',
     label: 'Students (8M)',
     note:
-        'Faster and lighter than Kokoro, sounds close — but only '
-        '3 speakers, not 54.',
+        'Faster and lighter than Kokoro, sounds close — one English '
+        'voice, no 54-style browsing.',
     sizeLabel: '9 MB per style',
     perSidPacks: true,
+    sharedPacks: [
+      ModelPack(
+        label: 'voice: student lexicon',
+        url:
+            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-lexicon-en.zip',
+        dirName: TtsVoice._lexDirName,
+        markerFile: 'lexicon-us-en.txt',
+      ),
+    ],
     packs: [
       ModelPack(
         label: 'voice: TITL af_heart',
         url:
             'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-af_heart.zip',
         dirName: 'tts-titl-af_heart',
-        markerFile: 'model.onnx',
-      ),
-      ModelPack(
-        label: 'voice: TITL if_sara',
-        url:
-            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-if_sara.zip',
-        dirName: 'tts-titl-if_sara',
-        markerFile: 'model.onnx',
-      ),
-      ModelPack(
-        label: 'voice: TITL im_nicola',
-        url:
-            'https://github.com/yundddd/voice-agent/releases/download/models-v1/tts-titl-im_nicola.zip',
-        dirName: 'tts-titl-im_nicola',
         markerFile: 'model.onnx',
       ),
     ],
@@ -198,15 +221,23 @@ class TtsPrefs {
 
   Map<String, Object> toJson() => {'voice': voiceId, 'sid': sid};
 
-  static TtsPrefs fromJson(Map<String, Object?> j) => TtsPrefs(
-    // 'titl-heart' was the lone af_heart voice before the roster grew.
-    voiceId: switch (j['voice'] as String?) {
+  static TtsPrefs fromJson(Map<String, Object?> j) {
+    final voiceId = switch (j['voice'] as String?) {
       null => 'titl',
       'titl-heart' => 'titl',
       final v => v,
-    },
-    sid: j['sid'] as int? ?? 0,
-  );
+    };
+    var sid = j['sid'] as int? ?? 0;
+    // The Italian student styles (sids 1–2) retired with the plugin:
+    // an old pick of theirs lands on the one student that is left
+    // rather than on an empty roster slot. Only per-sid voices clamp —
+    // Kokoro keeps 54 styles inside its single pack.
+    final voice = voiceById(voiceId);
+    if (voice != null && voice.perSidPacks && sid >= voice.packs.length) {
+      sid = 0;
+    }
+    return TtsPrefs(voiceId: voiceId, sid: sid);
+  }
 }
 
 File _prefsFile(String modelsDir) => File(p.join(modelsDir, 'tts_prefs.json'));

@@ -1,0 +1,111 @@
+sound s ˈ W n d
+water w ˈ ɔ ɾ ə ɹ
+hello h ə l ˈ O
+world w ˈ ɜ ɹ l d
+this ð ɪ s
+works w ˈ ɜ ɹ k s
+the ð i
+a A
+i ˈ I
+am æ m
+eight ˈ A t
+million m ˈ ɪ l j ᵊ n
+billion b ˈ ɪ l j ə n
+thousand θ ˈ W z ᵊ n d
+hundred h ˈ ʌ n d ɹ ə d
+point p ˈ Y n t
+zero z ˈ ɪ ɹ O
+one w ˈ ʌ n
+two t ˈ u
+three θ ɹ ˈ i
+four f ˈ ɔ ɹ
+five f ˈ I v
+six s ˈ ɪ k s
+seven s ˈ ɛ v ə n
+nine n ˈ I n
+ten t ˈ ɛ n
+thirteen θ ˌ ɜ ɹ t ˈ i n
+fourteen f ˌ ɔ ɹ t ˈ i n
+twenty t w ˈ ɛ n t i
+twenty-one t w ˌ ɛ n t i w ˈ ʌ n
+teacher t ˈ i ʧ ə ɹ
+tricky t ɹ ˈ ɪ k i
+token t ˈ O k ᵊ n
+is ɪ z
+dog d ˈ ɔ ɡ
+make m ˌ A k
+box b ˈ ɑ k s
+boxes b ˈ ɑ k s ᵻ z
+dish d ˈ ɪ ʃ
+start s t ˈ ɑ ɹ t
+started s t ˈ ɑ ɹ ɾ ᵻ d
+bake b ˈ A k
+baked b ˈ A k t
+study s t ˈ ʌ d i
+studies s t ˈ ʌ d i z
+walk w ˈ ɔ k
+walking w ˈ ɔ k ɪ ŋ
+quickly k w ˈ ɪ k l i
+quick k w ˈ ɪ k
+fast f ˈ æ s t
+fastest f ˈ æ s t ᵻ s t
+speak s p ˈ i k
+speaker s p ˈ i k ə ɹ
+phone f ˈ O n
+don't d ˈ O n t
+it's ɪ t s
+you j u
+we're w ɪ ɹ
+done d ˈ ʌ n
+worry w ˈ ɜ ɹ i
+fine f ˈ I n
+see s ˈ i
+got ɡ ɑ t
+and æ n d
+to t u
+still s t ˈ ɪ l
+down d ˌ W n
+like l ˈ I k
+file f ˈ I l
+megabyte m ˈ ɛ ɡ ə b ˌ I t
+megabytes m ˈ ɛ ɡ ə b ˌ I t s
+parameter p ə ɹ ˈ æ m ə ɾ ə ɹ
+rename ɹ i n ˈ A m
+were w ɜ ɹ
+by b I
+developer d ə v ˈ ɛ l ə p ə ɹ
+at æ t
+run ɹ ˈ ʌ n
+build b ˈ ɪ l d
+speed s p ˈ i d
+it ɪ t
+costs k ˈ ɔ s t s
+cost k ˈ ɔ s t
+month m ˈ ʌ n θ
+or ɔ ɹ
+off ˈ ɔ f
+percent p ə ɹ s ˈ ɛ n t
+dollar d ˈ ɑ l ə ɹ
+but b ˌ ʌ t
+student s t ˈ u d ᵊ n t
+lot l ˈ ɑ t
+has h æ z
+failure f ˈ A l j ə ɹ
+passing p ˈ æ s ɪ ŋ
+test t ˈ ɛ s t
+tests t ˈ ɛ s t s
+eleven ə l ˈ ɛ v ᵊ n
+twelve t w ˈ ɛ l v
+fifteen f ˌ ɪ f t ˈ i n
+sixteen s ˌ ɪ k s t ˈ i n
+seventeen s ˌ ɛ v ə n t ˈ i n
+eighteen ˌ A t ˈ i n
+nineteen n ˌ I n t ˈ i n
+thirty θ ˈ ɜ ɹ ɾ i
+forty f ˈ ɔ ɹ ɾ i
+fifty f ˈ ɪ f t i
+sixty s ˈ ɪ k s t i
+seventy s ˈ ɛ v ə n t i
+eighty ˈ A ɾ i
+ninety n ˈ I n d i
+trillion t ɹ ˈ ɪ l j ə n

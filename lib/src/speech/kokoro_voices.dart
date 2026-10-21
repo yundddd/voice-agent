@@ -90,31 +90,18 @@ class KokoroSpeaker {
 }
 
 /// The student voice's roster (`TtsVoice` id 'titl'): sid = pack index
-/// into its three graph packs, mirroring the upstream release
+/// into its graph packs, mirroring the upstream release
 /// (MithrilMan/teacher-in-the-loop). Single-voice models, so each style
-/// is its own graph rather than a speaker embedding.
+/// is its own graph rather than a speaker embedding. The Italian pair
+/// (if_sara, im_nicola) retired with the GPL espeak plugin they were
+/// the only reason for — English students need no native phonemizer at
+/// all, they read Kokoro's lexicon files.
 const List<KokoroSpeaker> titlRoster = [
   KokoroSpeaker(
     sid: 0,
     name: 'af_heart',
     description: 'American English · female',
     english: true,
-  ),
-  KokoroSpeaker(
-    sid: 1,
-    name: 'if_sara',
-    description: 'Italian · female',
-    english: false,
-    previewText:
-        'Buongiorno! Ecco come suona il vostro assistente con questa voce.',
-  ),
-  KokoroSpeaker(
-    sid: 2,
-    name: 'im_nicola',
-    description: 'Italian · male',
-    english: false,
-    previewText:
-        'Buongiorno! Ecco come suona il vostro assistente con questa voce.',
   ),
 ];
 

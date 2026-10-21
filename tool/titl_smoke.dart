@@ -1,33 +1,44 @@
 // Host smoke test for the teacher-in-the-loop engine: phonemize with
-// the piper plugin's espeak-ng, run the student graph on sherpa's x64
-// libonnxruntime, and write a WAV we can listen to (or analyze) before
-// ever booting the phone-side path. Run via tool/titl_smoke.sh.
+// the pure-Dart LexiconPronouncer over Kokoro's own lexicon files (the
+// students' espeak-free front-end), run the student graph on sherpa's
+// x64 libonnxruntime, and write a WAV we can listen to (or analyze)
+// before ever booting the phone-side path.
+//
+//   dart run tool/titl_smoke.dart [--lex <lexicon-us-en.txt[,gb]>] <words…>
+//
+// Model + vocab load from /tmp/titl/ (unzip a tts-titl-af_heart.zip
+// there); the lexicon defaults to the same dir.
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:piper_phonemize/piper_phonemize.dart' as piper;
+import 'package:voice_agent/src/speech/lexicon_pronouncer.dart';
 import 'package:voice_agent/src/speech/titl_engine.dart';
 
 Future<void> main(List<String> argv) async {
-  final text = argv.isEmpty
+  String arg(String name, String dflt) {
+    final i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : dflt;
+  }
+
+  final text = argv.where((a) => !a.startsWith('--')).join(' ').isEmpty
       ? 'Hello from the small student. I am eight million parameters of '
             'Kokoro, distilled down to nine megabytes, and I still sound '
             'like the teacher.'
-      : argv.join(' ');
-  const pubCache = '/home/tim/.pub-cache/hosted/pub.dev';
-  await piper.initBindingsAsync('$pubCache/piper_phonemize-1.5.7/linux/x64');
-  piper.PiperPhonemize.initialize(
-    '$pubCache/piper_phonemize-1.5.7/espeak-ng-data',
+      : argv.where((a) => !a.startsWith('--')).join(' ');
+  final pron = LexiconPronouncer.loadAll(
+    arg('--lex', '/tmp/titl/lexicon-us-en.txt').split(','),
   );
+  if (pron == null) {
+    stderr.writeln('no lexicon file readable — pass --lex <path>');
+    exit(1);
+  }
   final engine = TitlEngine.load(
     modelPath: '/tmp/titl/model.onnx',
     vocabPath: '/tmp/titl/vocab.json',
   );
-  final words = piper.PiperPhonemize.phonemize(text, voice: 'en-us');
   final phonemes = TitlEngine.phonemesFromWords(
-    words,
+    pron.phonemize(text),
     engine.vocab.keys.toSet(),
-    folds: TitlEngine.foldEspeakEn,
   );
   stdout.writeln('phonemes: $phonemes');
   final t0 = DateTime.now();

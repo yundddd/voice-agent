@@ -97,7 +97,7 @@ void main() {
         tts: const TtsSpec.titl(
           titlModels: '',
           titlVocabs: '',
-          espeakDataDir: '',
+          lexiconPaths: '',
         ),
       );
       addTearDown(w.dispose);
@@ -193,7 +193,7 @@ void main() {
           tts: const TtsSpec.titl(
             titlModels: '',
             titlVocabs: '',
-            espeakDataDir: '',
+            lexiconPaths: '',
             sid: 2,
           ),
           ttsNumSpeakers: 8,

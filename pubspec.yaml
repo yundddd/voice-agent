@@ -1,7 +1,7 @@
 name: voice_agent
 description: "On-device voice assistant prototype: speech -> text -> speech, fully offline."
 publish_to: 'none'
-version: 0.1.0+223
+version: 0.1.0+224
 
 environment:
   sdk: ^3.10.0
@@ -25,13 +25,10 @@ dependencies:
   # Runtime asset extraction (models copied out of assets to app support dir)
   path_provider: ^2.1.3
   path: ^1.9.0
-  # Vendored slim copy of piper_phonemize 1.5.7: espeak-ng data trimmed
-  # to English (+Italian, for the two student voices tomorrow) and the 18 MB
-  # web WASM bundle dropped — full package ballooned the APK past the
-  # Telegram 50 MB cap. Re-sync with upstream by copying a new release
-  # over third_party/ and re-applying the prune commands in the README.
-  piper_phonemize:
-    path: third_party/piper_phonemize
+  # (The vendored piper_phonemize fork lived here until the Italian
+  # student voices retired: the English students read Kokoro's own
+  # lexicon files via lib/speech/lexicon_pronouncer.dart, so the GPL
+  # espeak plugin — fork, pruned espeak-ng data and all — left the APK.)
   ffi: ^2.2.0
 
 dev_dependencies:

@@ -15,10 +15,10 @@ library;
 
 import 'dart:typed_data';
 
-import 'package:piper_phonemize/piper_phonemize.dart' as piper;
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import '../models/model_paths.dart';
+import 'lexicon_pronouncer.dart';
 import 'speech_engine.dart';
 import 'titl_engine.dart';
 
@@ -125,12 +125,10 @@ class RealBackends extends WorkerBackends {
   @override
   Future<TtsBackend> buildTts(TtsSpec s) async {
     if (s.engine == 'titl') {
-      await piper.initBindingsAsync();
-      piper.PiperPhonemize.initialize(s.espeakDataDir);
       return TitlTts(
         models: s.titlModels.split(','),
         vocabs: s.titlVocabs.split(','),
-        espeakVoices: s.espeakVoices.split(','),
+        lexiconPaths: s.lexiconPaths,
       );
     }
     return SherpaTts(
@@ -258,27 +256,43 @@ class SherpaTts implements TtsBackend {
   void free() => _tts.free();
 }
 
-/// The 8M students: espeak-ng (bundled natives) → Kokoro vocab ids →
-/// small ONNX graphs on sherpa's own libonnxruntime. Each student IS one
-/// voice, so the roster is one graph per sid — loaded lazily the first
-/// time that sid is spoken (a 9 MB load, no pack required until picked:
-/// a missing pack surfaces as a clear engine-load error at audition)
-/// and cached for the worker's life. The phonemizer voice is per-sid
-/// too (English students read 'en-us', Italian ones 'it').
+/// The 8M students: Kokoro's own lexicon files through the
+/// espeak-free front-end (lib/lexicon_pronouncer.dart) → Kokoro vocab
+/// ids → small ONNX graphs on sherpa's own libonnxruntime. Each student
+/// IS one voice, so the roster is one graph per sid — loaded lazily the
+/// first time that sid is spoken (a 9 MB load, no pack required until
+/// picked: a missing pack surfaces as a clear engine-load error at
+/// audition) and cached for the worker's life.
 class TitlTts implements TtsBackend {
   TitlTts({
     required this.models,
     required this.vocabs,
-    required this.espeakVoices,
+    required this.lexiconPaths,
   });
 
   final List<String> models;
   final List<String> vocabs;
-  final List<String> espeakVoices;
+  final String lexiconPaths;
   final Map<int, TitlEngine> _engines = {};
+  LexiconPronouncer? _pron;
 
   @override
   int get numSpeakers => models.length;
+
+  /// The lexicon is parsed on first use (one dictionary load,
+  /// mirroring the graphs' lazy one). A missing pack is a loud error,
+  /// not a silent espeak detour: the plugin is out of the APK, and
+  /// 'student voice silent' must name its own cause.
+  LexiconPronouncer _pronouncer() {
+    return _pron ??=
+        LexiconPronouncer.loadAll(
+          lexiconPaths.split(',').where((p) => p.trim().isNotEmpty),
+        ) ??
+        (throw TitlException(
+          'student lexicon pack missing — re-download the voice '
+          '(tts-lexicon-en.zip)',
+        ));
+  }
 
   @override
   (Float32List, int) generate({
@@ -291,19 +305,14 @@ class TitlTts implements TtsBackend {
       at,
       () => TitlEngine.load(modelPath: models[at], vocabPath: vocabs[at]),
     );
-    final voice = espeakVoices[at % espeakVoices.length];
-    final words = piper.PiperPhonemize.phonemize(text, voice: voice);
+    // Lexicon entries are the trained alphabet verbatim (flap and
+    // glottal folded at parse time), so the assembly pass needs no
+    // aliases and no folds — just the vocab filter and the stop rule.
     return (
       engine.synth(
         TitlEngine.phonemesFromWords(
-          words,
+          _pronouncer().phonemize(text),
           engine.vocab.keys.toSet(),
-          // Italian graphs were trained on espeak's own tap; the English
-          // fold maps it to Misaki's capital-T flap token. Italian takes
-          // no diphthong folds either — Misaki's Italian backend feeds
-          // espeak's output nearly verbatim.
-          aliases: voice.startsWith('it') ? espeakAliasesIt : espeakAliases,
-          folds: voice.startsWith('it') ? null : TitlEngine.foldEspeakEn,
         ),
         speed: speed,
       ),
