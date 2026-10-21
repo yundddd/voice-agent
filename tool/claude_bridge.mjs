@@ -502,6 +502,21 @@ let lastCompactingRelay = 0; // throttle for the status:"compacting" frame
 // is the host turn's `done` re-stamped to it, so the phone's pump ends
 // exactly as cleanly as on a real turn handover. 0 = no fold open.
 let foldedTurnId = 0;
+// +273: the fold's farewell must wait for the fold's ANSWER. The
+// +163 probe showed the CLI folding a mid-tool message into the SAME
+// turn — true when it answers; but the field tape (21:02) caught the
+// other shape: the fold lands on the last tool round of a closing
+// host message, the host's `result` arrives with NOTHING said since
+// the fold write, and the CLI only THEN runs the steered prompt as a
+// fresh call. Re-stamping that early done closed the steered phone's
+// pump seconds before its answer was even born — the reply fell
+// orphan into the unheard backlog and replayed minutes later under
+// the NEXT question ('I ask A, it answers the question before A').
+// foldUnanswered is armed at the fold and cleared by any assistant
+// word; a result met with it still armed HOLDS (once — foldHeld) and
+// defers the re-stamp to the steer run's own result.
+let foldUnanswered = false;
+let foldHeld = false;
 // Tool calls an interrupt (or a cuttool queue) orphaned: tool_use id →
 // the step label the phone put on its banner. Their late tool_results
 // relay a `tool finished` frame — the banner's retirement word — and
@@ -670,6 +685,7 @@ function newConv(seed) {
     child: null, childDead: true, turnOpen: false, curRes: null,
     proactiveTurn: false, pending: null, contextFull: false,
     lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
+    foldUnanswered: false, foldHeld: false,
     turnStartAt: 0, turnBeganAt: 0,
     tokIn: 0, tokOutExact: 0, tokMsgBase: 0, tokLastMsgOut: 0,
     tokChars: 0, tokKind: '', thinkBuf: '', curMsg: null,
@@ -689,6 +705,7 @@ function bundleSave(r) {
   r.turnOpen = turnOpen; r.curRes = curRes; r.proactiveTurn = proactiveTurn;
   r.pending = pending; r.contextFull = contextFull;
   r.lastCompactingRelay = lastCompactingRelay; r.foldedTurnId = foldedTurnId;
+  r.foldUnanswered = foldUnanswered; r.foldHeld = foldHeld;
   r.cutForPrompt = cutForPrompt; r.turnStartAt = turnStartAt;
   r.turnBeganAt = turnBeganAt;
   r.tokIn = tokIn; r.tokOutExact = tokOutExact; r.tokMsgBase = tokMsgBase;
@@ -710,6 +727,7 @@ function bundleLoad(r) {
   curRes = r.curRes; proactiveTurn = r.proactiveTurn; pending = r.pending;
   contextFull = r.contextFull; lastCompactingRelay = r.lastCompactingRelay;
   foldedTurnId = r.foldedTurnId; cutForPrompt = r.cutForPrompt;
+  foldUnanswered = r.foldUnanswered; foldHeld = r.foldHeld;
   turnStartAt = r.turnStartAt; turnBeganAt = r.turnBeganAt;
   tokIn = r.tokIn; tokOutExact = r.tokOutExact; tokMsgBase = r.tokMsgBase;
   tokLastMsgOut = r.tokLastMsgOut; tokChars = r.tokChars; tokKind = r.tokKind;
@@ -1160,6 +1178,7 @@ function onChildExit(code, sig) {
                       // will ever land to say 'finished' — the receipts
                       // are gone, and /health honestly drops to 0
     foldedTurnId = 0; // +163: no result will ever come to re-stamp it
+    foldUnanswered = false; foldHeld = false; // +273: nothing to hold
     agentTasks.clear();
     bgTools.clear();
     heldFinished.length = 0; // no flush will ever come to owe them
@@ -2020,6 +2039,27 @@ function handleEvent(line) {
     // "shows no updates at all" — the fresh turn was born dead ~300 ms
     // in). The queued turn's own frames — and the +81 'started' marker
     // on the ring transport — say everything that needs saying.
+    // +273: the fold holds its farewell. A result that arrives with
+    // the steered prompt still unanswered did NOT close the steer —
+    // it only closed the host's message, and the CLI is running the
+    // steered prompt right now (stdin was written; the answer is the
+    // continuation this pump is waiting for). No done, view kept,
+    // turnOpen stays lit (the /health rest law rightly refuses seat
+    // moves through it — a steer IS mid-flight), progress line for
+    // the spinner. One hold per fold: a steer run that stays silent
+    // anyway closes on the next result like anything else.
+    if (foldedTurnId && foldUnanswered && !foldHeld) {
+      foldHeld = true;
+      turnOpen = true; // the steer run has not reported yet
+      console.error('  [steer] host result without an answer — holding ' +
+        'the folded view for the steer run');
+      relay('tool', {
+        name: 'queued',
+        detail: 'your message is running now',
+        _turn: foldedTurnId,
+      });
+      return;
+    }
     if (!(pending && cutForPrompt)) {
       // +219: an error's REASON rides the done frame now (declared
       // where the result branch built it; a clean turn never sets it).
@@ -2091,6 +2131,10 @@ function handleEvent(line) {
   }
   switch (m.type) {
     case 'assistant': {
+      // +273: the CLI has a mouth on this event — post-fold, it is
+      // proof the steer is being consumed (woven in or freshly run),
+      // so the next result may re-stamp the folded farewell.
+      foldUnanswered = false;
       // Snapshot handling. The proxy re-emits the growing message but NOT
       // necessarily as an appending prefix: under thinking mode we observed
       // event 1 = [thinking] and event 2 = [text] under the SAME message id,
@@ -2382,6 +2426,7 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   curTurnId = turnId ?? ++nextTurnId;
   foldedTurnId = 0; // +163: a fresh turn's farewell closes its OWN id —
   // a stale fold id must never re-stamp a later done.
+  foldUnanswered = false; foldHeld = false; // +273: ditto the hold
   turnStartAt = Date.now() - 5000; // slack: clock skew
   turnBeganAt = Date.now(); // the receipt's honest duration clock
   curRes = { res, keep, turnStart: turnStartAt };
@@ -2440,6 +2485,7 @@ function foldPending() {
   const p = pending;
   pending = null;
   foldedTurnId = p.turnId; // the host's `done` will carry this id
+  foldUnanswered = true; foldHeld = false; // +273 until the CLI speaks
   // The view seat moves FIRST (a marker relayed to the old listener
   // would die with its stream): everything the host turn says from
   // here — the corrected continuation — goes to the phone that

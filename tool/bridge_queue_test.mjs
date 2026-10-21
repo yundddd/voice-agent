@@ -1400,3 +1400,62 @@ test('two conversations work at once, each with its own row (+257)',
       await stopBridge(proc);
     }
   });
+
+// ── +273: a folded prompt's farewell waits for its ANSWER ──────────────
+// Field tape: a polite queue folded into a closing host turn got its
+// re-stamped `done` 3 s after the fold — before the CLI had even run
+// the steered prompt. The pump closed, the real answer (a whole edit-
+// build-commit run) fell orphan into the unheard backlog, and replayed
+// minutes later under the NEXT question: 'I ask A, it answers the
+// question before A.' The law now: a result that arrives with the fold
+// still unanswered HOLDS — the view stays, no done rides — until the
+// steer run's own result closes it.
+const PORT21 = PORT1 + 61;
+test('+273 folded done waits for the steer run — no answer, no farewell',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
+    const log = join(dir, 'stub.log');
+    const proc = startBridge(log, PORT21, {
+      STUB_TOOL: 'npm test', STUB_STEER_SILENT: '1',
+      STUB_SAYS: 'Steered answer.', STUB_RESULT_MS: '1500',
+      STUB_TOOL_START_MS: '400', // the fold boundary lands well
+                                 // after B's park can possibly arrive
+    });
+    try {
+      await up(PORT21);
+      // A: the host turn (opens a tool round, answers nothing after).
+      const a = await call(PORT21, `/talk?token=${TOKEN}`,
+        { body: 'host work', method: 'POST' });
+      await until('host turn open', async () =>
+        (await health(PORT21)).turnOpen === true);
+      // B: the polite park — it must steer, not queue behind.
+      const b = await call(PORT21, `/talk?token=${TOKEN}&interrupt=0`,
+        { body: 'my steered word', method: 'POST' });
+      await until('B folded', async () =>
+        b.text.includes('"kind":"steered"'));
+      const turnB = JSON.parse(/data: (\{.*?\})/.exec(b.text)[1]).turn;
+
+      // The steer run's whole life must land on B's stream BEFORE its
+      // done: the hold notice, then the answer, then the farewell —
+      // and ONLY the farewell may close it.
+      await until('B done', async () => sseEvents(b.text).some(
+        (e) => e.ev === 'done' && e.data._turn === turnB));
+      const evsB = sseEvents(b.text);
+      const iHold = evsB.findIndex((e) => e.ev === 'tool' &&
+        /running now/.test(String(e.data.detail)));
+      const iSay = evsB.findIndex((e) => e.ev === 'say' &&
+        e.data.text === 'Steered answer.');
+      const iDone = evsB.findIndex((e) => e.ev === 'done');
+      assert.ok(iHold >= 0, 'the hold told the phone nothing was broken');
+      assert.ok(iSay > iHold && iDone > iSay,
+        `order broken: hold=${iHold} say=${iSay} done=${iDone} — ` +
+        'the farewell outran the answer it belongs to');
+
+      // And the answer did NOT also leak a first done at the host's
+      // result (the exact bug): B saw exactly ONE done in its life.
+      assert.equal(evsB.filter((e) => e.ev === 'done').length, 1);
+      assert.ok(seen(log).includes('my steered word'));
+    } finally {
+      await stopBridge(proc);
+    }
+  });

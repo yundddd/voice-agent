@@ -304,6 +304,31 @@ Regression walk: `node --test tool/bridge_queue_test.mjs` — the stub
 knows `STUB_TOO_LONG` (re-enact the refusal) and `STUB_COMPACT` (play
 the compaction tape).
 
+## The fold's farewell waits for its answer (shipped +273)
+
+A polite (slide-right) queue folds into the RUNNING turn at the
+tool_result boundary (+163) — probe-verified when the CLI answers the
+steer inside the same turn. The 21:02 field tape caught the other
+shape: the fold lands on the host's LAST tool round, the host closes
+with a result that acknowledges nothing, and the CLI only then runs
+the steered prompt as a fresh call. The re-stamped `done` arrived
+three seconds after the fold and retired the steered phone's pump —
+the real answer (a whole read-edit-build run) fell orphan into the
+unheard backlog and replayed minutes later under the NEXT question.
+User-visible law violated: *the reply you queued is the reply you
+hear* — the field said it as 'I ask A, it answers the question before
+A.'
+
+The bridge now tracks `foldUnanswered` (armed at the fold, cleared by
+ANY assistant word after it). A `result` met with the fold still
+unanswered HOLDS — no done, view kept, `turnOpen` stays lit (a steer
+IS mid-flight), spinner line 'your message is running now' — and
+defers the re-stamp to the steer run's own result. One hold per fold
+(`foldHeld`): a steer run that stays silent anyway closes on the next
+result like anything else. Regression walk:
+`STUB_STEER_SILENT` re-enacts the tape exactly (one timed script, the
+folded prompt's arrival does not restart it).
+
 ## The opencode harness (`--harness opencode`, shipped +211)
 
 The bridge can speak to the OpenCode v2 service instead of a `claude -p`

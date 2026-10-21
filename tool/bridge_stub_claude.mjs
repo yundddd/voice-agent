@@ -109,6 +109,7 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
 let turnSeq = 0; // timers of a superseded/cut turn must not speak again
 let openToolId = null; // survives the cut when STUB_TOOL_DONE_MS is set
+let steerTapeAt = 0; // +273: the silent-fold tape plays once, off the host message
 let compactedOnce = false; // +250: after the tape's compaction, turns
 // answer normally — the too-long echo is the FIRST turns' state, not a
 // personality
@@ -252,6 +253,50 @@ process.stdin.on('data', (b) => {
               session_id: SESSION });
         finishTurn(gen);
       }, delay);
+      return;
+    }
+    // +273: STUB_STEER_SILENT re-enacts the field tape: a host turn
+    // whose ONE tool round is the fold boundary — the tool_result
+    // takes the fold, the host closes with a result that never
+    // acknowledges it, and only the following (second) run — the
+    // steered prompt's own — speaks. The bridge must hold the folded
+    // done across result #1 and let the pump close on result #2.
+    if (process.env.STUB_STEER_SILENT === '1' && toolCmd) {
+      // ONE tape for the whole exchange, timed off the HOST message:
+      // the folded prompt's arrival must not restart it — the real
+      // CLI runs the steer AFTER the host's result, never mid-way.
+      if (!steerTapeAt) {
+        steerTapeAt = Date.now();
+        const at = (ms, f) => setTimeout(f, Math.max(10, steerTapeAt + ms - Date.now()));
+        at(toolStartMs, () => {
+          openToolId = 'tool-' + gen;
+          out({ type: 'assistant', session_id: SESSION,
+                message: { role: 'assistant', content: [{
+                  type: 'tool_use', id: openToolId, name: 'Bash',
+                  input: { command: toolCmd } }] } });
+        });
+        at(toolStartMs + 120, () => {
+          out({ type: 'user', session_id: SESSION,
+                message: { role: 'user', content: [{
+                  type: 'tool_result', tool_use_id: openToolId,
+                  content: 'tool out' }] } });
+        });
+        at(delay, () => { // result #1: the host's silent farewell
+          out({ type: 'result', subtype: 'success', session_id: SESSION,
+                is_error: false, total_cost_usd: 0,
+                usage: { input_tokens: 100, output_tokens: 42 } });
+        });
+        at(delay + 300, () => { // the steer run speaks — and closes
+          for (const t of says()) {
+            out({ type: 'assistant', session_id: SESSION,
+                  message: { role: 'assistant',
+                    content: [{ type: 'text', text: t }] } });
+          }
+          out({ type: 'result', subtype: 'success', session_id: SESSION,
+                is_error: false, total_cost_usd: 0,
+                usage: { input_tokens: 110, output_tokens: 20 } });
+        });
+      }
       return;
     }
     if (toolCmd) {
