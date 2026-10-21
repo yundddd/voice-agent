@@ -151,6 +151,23 @@ class _AssistantScreenState extends State<AssistantScreen>
     });
   }
 
+  /// +264 (the field's second read of the new slide: 'it scrolls
+  /// from top to bottom when I swipe'): the tail correction (+230)
+  /// used to ride the swap's first VISIBLE frame — the +200 glide
+  /// covered a few thousand pixels in eight frames and the reader
+  /// watched a brand-new session do its housekeeping. Now the
+  /// entering thread is pinned to its newest word while it is still
+  /// OFF-SCREEN, at the hop's edge: by the time the slide-in paints,
+  /// the scroll has nothing left to move. These two fields carry the
+  /// duty across the hop's frames; _followTick honours them at the
+  /// tail, and the slide-in leg waits on the pin (a frame's debt,
+  /// not a timer's guess).
+  bool _enteringPending = false;
+  double _enteringPinned = -1; // extent the pin last landed on
+  int _enteringSettled = 0; // consecutive ticks with an unchanging tail
+  int _enteringWaits = 0; // total — a thread that never stops growing
+  // reveals anyway (the follow owns it from there)
+
   /// A stolen gesture (the vertical scroll claimed the pointer) is
   /// not a commit: the thread was never away from home.
   void _onTabDragCancel() {
@@ -582,7 +599,30 @@ class _AssistantScreenState extends State<AssistantScreen>
         // changes, so this exemption can never outlive its reason.
         _stick = false;
       }
-      if (!_userTouch && _stick) {
+      // +264: an ENTERING thread answers to the pin, not to the
+      // algebra — snap its tail every frame (the glide is the very
+      // thing the field read as 'scrolling from top to bottom'), and
+      // the slide-in starts only once the extent has held still for
+      // two ticks (or after a ten-tick cap — an endlessly-growing
+      // thread reveals anyway, the follow owns it from there).
+      if (_enteringPending) {
+        final ext = pos.maxScrollExtent;
+        if (pos.pixels != ext) pos.jumpTo(ext);
+        _enteringWaits++;
+        if (ext == _enteringPinned && !_userTouch) {
+          _enteringSettled++;
+        } else {
+          _enteringSettled = 0;
+        }
+        _enteringPinned = ext;
+        if (_enteringSettled >= 2 || _enteringWaits > 12) {
+          setState(() {
+            _enteringPending = false;
+            _offsetTarget = 0;
+            _offsetDur = const Duration(milliseconds: 240);
+          });
+        }
+      } else if (!_userTouch && _stick) {
         final delta = pos.maxScrollExtent - pos.pixels;
         if (delta > 8) {
           _assistant.logFollow(
@@ -836,31 +876,29 @@ class _AssistantScreenState extends State<AssistantScreen>
       // card start exactly where it was caught. The tail correction
       // below then rides this same frame, behind that card.
       if (_flipArmed) {
-        // +264 HAND-OFF: the receipt is in and the index moved.
-        // Finish the exit (80 ms — from anywhere, including dead
-        // at the edge), hop the absent thread to the far side (zero
-        // duration AT THE OFF-SCREEN EDGE: there is nothing to see —
-        // the content swap rides this hop), then ease home. Three
-        // setState legs, one continuous slide: no rest, no fade, no
-        // second act.
+        // +264 HAND-OFF, second reading (Tim: 'it will scroll from
+        // top to bottom'): finish the exit (80 ms), hop the absent
+        // thread to the far edge (zero duration — off-screen, the
+        // content swap rides the hop), and then WAIT: the reveal is
+        // released by _followTick only after the fresh thread has
+        // been pinned to its tail for two settled frames, so the
+        // first painted row of a new session is its LAST message.
+        // The scroll's housekeeping never plays in front of anyone.
         _flipArmed = false;
         _flipFuse?.cancel();
+        _enteringPending = true;
+        _enteringPinned = -1;
+        _enteringSettled = 0;
+        _enteringWaits = 0;
         _offsetTarget = _exitDir * MediaQuery.sizeOf(context).width;
         _offsetDur = const Duration(milliseconds: 80);
         SchedulerBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          setState(() {
-            _offsetTarget = -_exitDir * MediaQuery.sizeOf(context).width;
-            _offsetDur = Duration.zero;
-          });
-          SchedulerBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() {
-                _offsetTarget = 0;
-                _offsetDur = const Duration(milliseconds: 240);
-              });
-            }
-          });
+          if (mounted) {
+            setState(() {
+              _offsetTarget = -_exitDir * MediaQuery.sizeOf(context).width;
+              _offsetDur = Duration.zero;
+            });
+          }
         });
       }
       _lastPaintedTab = v.tabIndex;
