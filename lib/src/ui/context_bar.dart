@@ -35,34 +35,39 @@ class ContextBar extends StatelessWidget {
         : frac >= 0.70
         ? scheme.tertiary
         : scheme.primary;
+    // +284 (Tim): ONE row of text. The line used to ride a 62%-width
+    // column — sized before the model name joined it (+241) — and the
+    // name-plus-numbers sentence wrapped to two and three rows. The
+    // readout now owns the full width its padding allows, and a
+    // one-line clamp with an ellipsis keeps the strip a strip even on
+    // the longest sentence (a narrow device or a wide model id).
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 0, 28, 12),
-      child: SizedBox(
-        width: MediaQuery.sizeOf(context).width * 0.62,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              view.label,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontFamily: 'monospace',
-                color: busy ? scheme.primary : scheme.onSurfaceVariant,
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            view.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontFamily: 'monospace',
+              color: busy ? scheme.primary : scheme.onSurfaceVariant,
             ),
-            const SizedBox(height: 5),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                // No window yet but the harness is working: an honest
-                // indeterminate shimmer instead of a fake zero.
-                value: view.fill,
-                minHeight: 4,
-                backgroundColor: scheme.surfaceContainerHighest,
-                valueColor: AlwaysStoppedAnimation(fill),
-              ),
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              // No window yet but the harness is working: an honest
+              // indeterminate shimmer instead of a fake zero.
+              value: view.fill,
+              minHeight: 4,
+              backgroundColor: scheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation(fill),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
