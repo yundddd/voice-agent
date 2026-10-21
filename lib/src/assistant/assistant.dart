@@ -680,7 +680,6 @@ class VoiceAssistant extends ChangeNotifier {
   bool get _harnessBackgrounded => _turn.backgrounded;
 
   /// Wall clock the in-flight bridge turn started.
-  DateTime? get _harnessSince => _turn.since;
 
   /// Busy-flag ownership token (turns claim it via the coordinator).
   int get _bridgeTurnSeq => _turn.seq;
@@ -865,29 +864,49 @@ class VoiceAssistant extends ChangeNotifier {
   bool get showsBackgroundedWork =>
       _turn.backgroundUnheard || _turn.detachedPromise || _turn.agentWork;
 
-  /// +278: does the lit banner belong to the conversation on screen?
-  /// The owner is the thread the debt's stream stamped (or the away
-  /// marker's, from before the naming law); an un-named ledger (the
-  /// pre-tab world, a bridge that names nothing) belongs to the only
-  /// conversation there was — the seat.
+  /// +278→+279.1: does the lit banner belong to the conversation on
+  /// screen? Ownership is resolved PER SEAT: this thread's own owed
+  /// row answers yes; a ledger owed ONLY elsewhere answers no (the
+  /// oldest debt's tab must show its own banner, not be hidden by a
+  /// newer stranger's — 'swipe to the previous session that is also
+  /// doing the sleep and the banner is gone'). With no debt rows,
+  /// the single-owner badge answers by its stamp; an unstamped badge
+  /// (the pre-tab world) belongs to the only conversation there is.
   bool get _bannerAtHome {
-    final o = _turn.workOwner ?? _turnHomeSid;
-    return o == null || o == _sessionId;
+    if (_turn.debtFor(_sessionId) != null) return true;
+    if (_turn.agentWork) return false; // every row belongs to another
+    return !_turn.badgeOwnedByOtherThan(_sessionId);
   }
 
-  String get backgroundedWork =>
-      showsBackgroundedWork && _bannerAtHome ? _bgWork : '';
+  /// The banner's clock: this seat's debt row's launch-time when one
+  /// is owed, else the badge's own clock (+279.1 — never a global
+  /// _since standing in for another conversation's sleep).
+  DateTime? get _bannerSince {
+    final d = _turn.debtFor(_sessionId);
+    if (d != null) {
+      return DateTime.fromMillisecondsSinceEpoch(d.sinceMs);
+    }
+    return _turn.since;
+  }
+
+  String get backgroundedWork {
+    if (!showsBackgroundedWork || !_bannerAtHome) return '';
+    return _turn.debtFor(_sessionId)?.label ?? _bgWork;
+  }
 
   /// Start of the backgrounded turn (epoch ms, 0 = unknown) for the
   /// bottom line's 'since HH:MM:SS'; its live age is [harnessElapsed].
   int get harnessSinceMs =>
-      _harnessSince == null ? 0 : _harnessSince!.millisecondsSinceEpoch;
+      _bannerSince == null ? 0 : _bannerSince!.millisecondsSinceEpoch;
 
-  /// How long the in-flight bridge turn has been working (zero when idle):
-  /// the elapsed readout on the chat window's Claude Code-style spinner.
-  Duration get harnessElapsed => _harnessSince == null
+  /// How long the conversation's work (its banner's debt, or the
+  /// in-flight turn) has been running: the elapsed readout on the
+  /// chat window's spinner and the backgrounded-work line (+279.1:
+  /// the seat's OWN row's age — session B never counts session A's
+  /// sleep).
+  Duration get harnessElapsed => _bannerSince == null
       ? Duration.zero
-      : _clock().difference(_harnessSince!);
+      : _clock().difference(_bannerSince!);
   bool get bridgeVoice => _bridgePrefs.voice;
   String get bridgeUrlText => _bridgePrefs.url;
   String get bridgeTokenText => _bridgePrefs.token;

@@ -375,6 +375,19 @@ crumbled the moment two conversations ran the same test. Tape
   watermark and go through TTS. The two-minute archaeology rule still
   files cold reports silently.
 
++279.1 (the same tape's next volley — two sleeps, both sessions, at
+once): the ledger rows were per-conversation but two relics remained
+single-owner. The BANNER AGE came from one shared `_since`, so the
+second session's line counted the FIRST session's sleep; now every
+row carries its own `sinceMs` and the banner's clock is the SEAT's
+row (`debtFor(seat)`), while `_since` reverted to badge/turn duty.
+And the owner check read the NEWEST debt globally, so the OLDER
+sleep's tab failed it and hid its own banner ('swipe to the previous
+session... the banner is gone'); `_bannerAtHome` now resolves per
+seat: this thread's own row answers yes, a ledger owed only elsewhere
+answers no, and only with zero debt rows does the badge's stamp
+decide.
+
 ## The banner belongs to its session (shipped +278, phone side)
 
 The sleep-50 tape proved +278's bridge law (the shell survived eight

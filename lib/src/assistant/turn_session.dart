@@ -257,7 +257,8 @@ final class TurnCoordinator {
   /// banner retires only when the ledger AND the badge are empty —
   /// another conversation's owed shell keeps it lit, out of sight on
   /// this tab, at home on that one.
-  List<({String? sid, String label})> settleDebtsOwnedBy(String? sid) {
+  List<({String? sid, String label, int sinceMs})> settleDebtsOwnedBy(
+      String? sid) {
     final paid = _agentDebts
         .where((d) => d.sid == sid || d.sid == null)
         .toList(growable: false);
@@ -305,7 +306,12 @@ final class TurnCoordinator {
   // hid on its OWN tab ('when I switch to another session and do the
   // same test, it doesn't show the banner'). Each owed shell now
   // carries the sid of the conversation that launched it.
-  final List<({String? sid, String label})> _agentDebts = [];
+  // +279.1: and its own CLOCK. Two sleeps side by side, the field
+  // read the shared _since as 'the second session shows the count
+  // from the first session on the banner' — the age belongs to the
+  // launch, row by row.
+  final List<({String? sid, String label, int sinceMs})> _agentDebts =
+      [];
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
   // own 'finished' receipt pays the promise (behaviours 2/4).
@@ -335,6 +341,22 @@ final class TurnCoordinator {
   /// +279: the conversation that owes the NEWEST debt — the banner's
   /// home while any shell is owed (its label is the newest debt's
   /// label too: the line names the newest thing still running).
+  /// +279.1: the banner this CONVERSATION would show: its newest owed
+  /// row (nameless legacy rows answer to any seat — that world had
+  /// only one conversation), with its own launch-time. Null when this
+  /// thread owes no shell: the banner elsewhere is nobody's business
+  /// here — 'swipe to the previous session that is also doing the
+  /// sleep and the banner is gone' was the newest-debt-globally owner
+  /// check failing the OLDER debt's own tab.
+  ({String label, int sinceMs})? debtFor(String? sid) {
+    for (final d in _agentDebts.reversed) {
+      if (d.sid == sid || d.sid == null) {
+        return (label: d.label, sinceMs: d.sinceMs);
+      }
+    }
+    return null;
+  }
+
   String? get debtOwner {
     for (final d in _agentDebts.reversed) {
       if (d.sid != null) return d.sid;
@@ -388,13 +410,11 @@ final class TurnCoordinator {
   void becomeHeard() {
     _pttPressPending = false; // heard is decided: nothing pending
     _backgrounded = false;
-    // +279: while a shell is owed, the CLOCK belongs to the debt —
-    // the field: 'the second count on the background tool is reset
-    // when I swipe back' (the landing's re-attach claimed a heard
-    // turn and re-anchored the age to now, four seconds into a
-    // fifty-second sleep). A heard turn with nothing owed anchors
-    // fresh, as always.
-    if (_agentDebts.isEmpty && !_detachedPromise) _since = _clock();
+    // +279.1: debts carry their own launch-time (see _agentDebts),
+    // so the re-attach landing's re-anchor cannot rewind a sleeping
+    // shell's banner age any more — it only restarts the BADGE's
+    // clock, which is exactly what 'heard again' means.
+    _since = _clock();
   }
 
   /// The bridge just picked up work we waited behind (the 'started'
@@ -440,7 +460,11 @@ final class TurnCoordinator {
     // owner as the fallback an old bridge forces).
     final owner = sid ?? _workOwner;
     if (!_agentDebts.any((d) => d.label == name && d.sid == owner)) {
-      _agentDebts.add((sid: owner, label: name));
+      _agentDebts.add((
+        sid: owner,
+        label: name,
+        sinceMs: _clock().millisecondsSinceEpoch,
+      ));
     }
     _bgWork = name;
     // +278: the debt's age starts at its OWN birth — the launch

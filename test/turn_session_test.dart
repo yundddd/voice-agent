@@ -423,9 +423,23 @@ void main() {
       turn.noteAgentWork('Bash sleep 15', sid: 'ses-A');
       // Tab B launches its own shell while A's is still owed \u2014 the
       // tape's 'switch to another session and do the same test'.
+      time.advance(const Duration(seconds: 20));
       turn.claimSlot();
       turn.noteWorkOwner('ses-B');
       turn.noteAgentWork('Bash sleep 20', sid: 'ses-B');
+      // +279.1: EACH tab's banner answers for its own thread \u2014 its
+      // own label and its own launch-time (the field: 'the second
+      // session shows the count from the first session'; 'swipe to
+      // the previous session ... the banner is gone').
+      final aBanner = turn.debtFor('ses-A');
+      final bBanner = turn.debtFor('ses-B');
+      expect(aBanner?.label, 'Bash sleep 15');
+      expect(bBanner?.label, 'Bash sleep 20');
+      expect(
+        bBanner!.sinceMs - aBanner!.sinceMs,
+        const Duration(seconds: 20).inMilliseconds,
+        reason: 'the ages are the launches \u2014 20 s apart, not shared',
+      );
       expect(
         turn.workOwner,
         'ses-B',
@@ -467,12 +481,15 @@ void main() {
       // The swipe-back landing: the catch-up attach claims a heard
       // turn. The 30 s the sleep has already run must survive it.
       t.becomeHeard();
-      expect(t.since, born, reason: 'the debt owns the clock');
+      final row = t.debtFor('ses-A');
+      expect(row?.sinceMs, born?.millisecondsSinceEpoch,
+          reason: 'the ROW keeps its launch-time across the landing');
       // Only once the ledger is clear does the next heard turn
       // anchor fresh.
       t.settleDebtsOwnedBy('ses-A');
       t.becomeHeard();
       expect(t.since, isNot(born));
+      expect(t.debtFor('ses-A'), isNull);
     });
 
     test('+276: retireIfOwned buries the banner only with the '
