@@ -139,7 +139,14 @@ class ConeOverlay extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: TextStyle(
+            // +293 (the M3 type law): the role is labelLarge — the
+            // scale's job for a small action word — and the identity
+            // rides as NAMED deltas: the doubled weight and the wide
+            // marching letterspacing that make it read across the
+            // cone. The size belongs to the table now, and with it
+            // the user's text scale: a hand-set fontSize is deaf to
+            // big-font settings.
+            style: Theme.of(context).textTheme.labelLarge!.copyWith(
               // +292: the armed label is the theme's highest-emphasis
               // ink (the warm near-white — same weight off the
               // amber, no hard blue-white off-palette), and the
@@ -148,7 +155,6 @@ class ConeOverlay extends StatelessWidget {
                   ? ColorScheme.of(context).onSurface
                   : idleLabelColor.withValues(alpha: 0.9),
               fontWeight: FontWeight.w800,
-              fontSize: 15,
               letterSpacing: 3,
               shadows: [
                 Shadow(

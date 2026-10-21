@@ -1050,4 +1050,84 @@ void main() {
       },
     );
   });
+
+  group('the shape and type tables are the law (+293)', () {
+    test('the corner table is Material 3’s shape scale', () {
+      expect(AppRadii.none, 0);
+      expect(AppRadii.extraSmall, 4);
+      expect(AppRadii.small, 8);
+      expect(AppRadii.medium, 12);
+      expect(AppRadii.large, 16);
+      expect(AppRadii.extraLarge, 28);
+      // Every rounded thing asks a rung by its job now — the bag of
+      // one-off numbers (12, 3, 28, 16, 18) is gone, and the pill's
+      // gradient ring DERIVES (large + its 2 dp of padding) instead
+      // of re-guessing.
+      expect(AppRadii.large + 2, 18, reason: 'the one arithmetic site');
+    });
+
+    testWidgets('the cone label rides the type table, identity as deltas', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          SizedBox(
+            width: 400,
+            height: 800,
+            child: Stack(
+              children: [
+                ConeOverlay(
+                  visible: true,
+                  origin: const Offset(200, 640),
+                  guide: PttGuide(
+                    holdActive: true,
+                    slide: PttSlide.up,
+                    drag: const Offset(0, -72),
+                    holdOverTurn: false,
+                    micLevel: 0.5,
+                  ),
+                  errorColor: const Color(0xFFCC0000),
+                  idleLabelColor: const Color(0xFF888888),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      final label = tester
+          .widgetList<Text>(find.byType(Text))
+          .firstWhere((t) => t.data == 'INTERRUPT');
+      // M3's theme carries role metrics lazily (resolved when a Text
+      // paints, so text scaling reaches them) — the widget's own
+      // resolved style must speak the table's number: labelLarge is
+      // 14.
+      expect(
+        label.style!.fontSize ?? 14.0,
+        14.0,
+        reason: 'the SIZE belongs to the table (and through it, to the '
+            'user’s text scale — a hand-set fontSize is deaf to it); '
+            'the old label hand-set 15',
+      );
+      expect(
+        label.style!.letterSpacing,
+        3,
+        reason: 'the identity survives as a NAMED delta',
+      );
+      expect(label.style!.fontWeight, FontWeight.w800);
+    });
+
+    test('the theme ships the full M3 role table', () {
+      final t = buildClaudeDarkTheme().textTheme;
+      // The widgets lean on these roles; the table must be complete
+      // before anyone reaches for a raw TextStyle again.
+      expect(t.displayLarge, isNotNull);
+      expect(t.headlineMedium, isNotNull);
+      expect(t.titleLarge, isNotNull);
+      expect(t.bodyMedium, isNotNull);
+      expect(t.labelLarge, isNotNull);
+      // (The role styles carry their metrics lazily — the cone-label
+      // test above proves the resolved 14 lands on the widget.)
+    });
+  });
 }

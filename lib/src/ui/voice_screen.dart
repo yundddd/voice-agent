@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
 import '../assistant/assistant.dart';
 import '../speech/kokoro_voices.dart';
 
@@ -242,7 +243,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppRadii.medium),
                   ),
                   child: Row(
                     children: [
@@ -480,7 +481,7 @@ class _StylePickerState extends State<_StylePicker> {
                     hintText: 'Search — af_heart, British, male…',
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppRadii.medium),
                     ),
                     isDense: true,
                   ),

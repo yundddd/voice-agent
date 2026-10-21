@@ -14,6 +14,7 @@ import 'package:flutter/scheduler.dart';
 // the app palette with.
 import 'package:material_color_utilities/hct/hct.dart';
 
+import 'theme.dart';
 import '../assistant/assistant.dart';
 import 'bridge_screen.dart' show ModelPickerSheet;
 import 'chat_view.dart';
@@ -358,10 +359,14 @@ class _AssistantScreenState extends State<AssistantScreen>
             border: Border.all(
               color: active ? scheme.primary : scheme.outlineVariant,
             ),
-            borderRadius: const BorderRadius.all(Radius.circular(16)),
+            borderRadius: const BorderRadius.all(
+              Radius.circular(AppRadii.large),
+            ),
           ),
           child: InkWell(
-            borderRadius: const BorderRadius.all(Radius.circular(16)),
+            borderRadius: const BorderRadius.all(
+              Radius.circular(AppRadii.large),
+            ),
             onTap: () => _slideOut(a, t.index),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -447,7 +452,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// size, the icon 18 px, the whole chip ~6 dp narrower per side than
   /// the stock ActionChip. Tap targets stay finger-honest (compact
   /// visualDensity, padded target).
-  ActionChip _controlChip({
+  ActionChip _controlChip(
+    BuildContext context, {
     required Widget avatar,
     required Widget label,
     VoidCallback? onPressed,
@@ -462,7 +468,11 @@ class _AssistantScreenState extends State<AssistantScreen>
     // are as large as the width allows. Gaps between chips are 2 dp.
     padding: const EdgeInsets.only(left: 3, right: 6),
     labelPadding: EdgeInsets.zero,
-    labelStyle: const TextStyle(fontSize: 13),
+    // +293 (the M3 type law): the base is the scale's labelLarge —
+    // a chip verb is its job — and +245's measured 13 survives as a
+    // NAMED delta on the role, not as a bare orphan style: the chip
+    // inherits the family, the weight, and the user's text scale.
+    labelStyle: Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 13),
   );
 
   /// +242: the '/model' chip's verb — the settings sheet's own picker
@@ -1291,10 +1301,11 @@ class _AssistantScreenState extends State<AssistantScreen>
                                         ),
                                         child: DecoratedBox(
                                           decoration: BoxDecoration(
-                                            borderRadius:
-                                                const BorderRadius.all(
-                                                  Radius.circular(18),
-                                                ),
+                                            borderRadius: const BorderRadius.all(
+                                              Radius.circular(
+                                                AppRadii.large + 2,
+                                              ), // ring = pill + its 2dp padding
+                                            ),
                                             gradient: LinearGradient(
                                               begin: Alignment.topLeft,
                                               end: Alignment.bottomRight,
@@ -1401,6 +1412,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                               // verbs must fit the width, no sideways hunt.
                               padding: const EdgeInsets.only(right: 2),
                               child: _controlChip(
+                                context,
                                 avatar: Icon(_chipIcons[chip], size: 17),
                                 label: Text(chip),
                                 onPressed: v.seatBusy
@@ -1415,6 +1427,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                               ),
                             ),
                           _controlChip(
+                            context,
                             // +280: the brake lights for work THIS
                             // conversation owns — away labor is the
                             // gear badge's story, not a pedal to press

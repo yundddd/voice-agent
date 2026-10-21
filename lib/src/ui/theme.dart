@@ -128,6 +128,24 @@ ThemeData buildClaudeDarkTheme() {
   );
 }
 
+/// +293 (the M3 shape scale): corner radii are a TABLE, not a bag of
+/// numbers. Every rounded thing now asks a rung by its job — the tiny
+/// shimmer bar is extraSmall because it is a sliver, the cards are
+/// medium, the session pills are large, the talk surface's top is
+/// extraLarge — and the whole app's roundness can be re-argued in one
+/// place. Values are M3's default scale (4/8/12/16/28); the one
+/// arithmetic site (the pill's gradient ring) adds the padding to
+/// [large] and says so, because that radius was never chosen — it
+/// was derived.
+abstract final class AppRadii {
+  static const double none = 0;
+  static const double extraSmall = 4;
+  static const double small = 8;
+  static const double medium = 12;
+  static const double large = 16;
+  static const double extraLarge = 28;
+}
+
 /// +292: M3's extended colors ride a ThemeExtension — a role the base
 /// scheme does not define (success) gets an owner instead of a
 /// literal. Ask with [AppExtended.success]; the fallback keeps a

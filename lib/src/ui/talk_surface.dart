@@ -30,6 +30,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
 import '../assistant/view.dart';
 
 class TalkSurface extends StatefulWidget {
@@ -171,7 +172,9 @@ class _TalkSurfaceState extends State<TalkSurface>
           onPointerUp: (e) => widget.onPointerUp(e.position),
           onPointerCancel: (_) => widget.onPointerCancel(),
           child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(AppRadii.extraLarge),
+            ),
             child: ColoredBox(
               color: scheme.surfaceContainerLow,
               child: AnimatedBuilder(

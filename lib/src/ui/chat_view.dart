@@ -22,6 +22,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
 import '../assistant/view.dart';
 import '../chat/chat_log.dart';
 import 'harness_spinner.dart';
@@ -123,14 +124,18 @@ class ChatBubble extends StatelessWidget {
                           : scheme.secondaryContainer,
                       shape: isReceipt
                           ? RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.medium,
+                              ),
                               side: BorderSide(
                                 color: receiptInk.withValues(alpha: 0.6),
                               ),
                             )
                           : entry.isFile
                           ? RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.medium,
+                              ),
                               side: BorderSide(
                                 color: scheme.tertiary.withValues(alpha: 0.6),
                               ),

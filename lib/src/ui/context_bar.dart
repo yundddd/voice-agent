@@ -15,6 +15,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
 import '../assistant/view.dart';
 
 class ContextBar extends StatelessWidget {
@@ -57,7 +58,7 @@ class ContextBar extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           ClipRRect(
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(AppRadii.extraSmall),
             child: LinearProgressIndicator(
               // No window yet but the harness is working: an honest
               // indeterminate shimmer instead of a fake zero.
