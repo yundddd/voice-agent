@@ -219,37 +219,63 @@ void main() {
     });
   });
 
-  group('the fling settles on one spring, never a snapback (+261)', () {
-    // Tim's feel report on the swipe: 'after I swipe, the spring
-    // re-animates itself'. The two-beat motion was a state-zero snap
-    // plus a switcher slide starting from scratch; the law now is ONE
-    // continuous gesture — position AND velocity ride a spring, and
-    // the swap inherits the travel already paid. Layout needs the
-    // device; the LAW is pinned at the source, same as the band's.
+  group('the fling hands its seam to the swap (+263)', () {
+    // Tim's feel report, second reading: 'I want a very smooth
+    // transition — no jitter, continuous motion'. +261's spring still
+    // played three acts (settle, wait, re-animate) because /seat is
+    // ASYNC; the law now is a HELD SEAM — the release freezes at the
+    // finger's offset, and the switch animation starts from exactly
+    // that frozen value. Layout needs the device; the LAW is pinned
+    // at the source, same as the band's.
     final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
-    test('the release hands velocity to a spring simulation', () {
-      expect(ui, contains('SpringSimulation('));
-      expect(ui, contains('.animateWith('));
-    });
-    test('no snap-to-zero of the drag offset anywhere', () {
-      expect(
-        RegExp(r'_dragDx\s*=\s*0').hasMatch(ui),
-        isFalse,
-        reason:
-            'the offset is a spring value now; the old field snapping '
-            'to zero WAS the re-animation Tim saw',
-      );
-    });
-    test('the swap inherits the travelled distance', () {
-      // The enterer's slide is the old travel minus what the finger
-      // already paid — the clause that makes a deep fling crossfade
-      // in place instead of starting a second journey.
-      expect(ui, contains('(1 - _draggedFraction)'));
+    test('a committed release FREEZES the seam, it does not settle', () {
       expect(
         ui,
-        contains('final dragDx = _settle.value'),
-        reason: 'one ticking value for glow, tilt and translate',
+        contains('_frozenAt = was;'),
+        reason:
+            'the thread holds at the finger while /seat runs — '
+            'a settle before the swap IS the re-animation the field reads',
       );
+    });
+    test('the swap begins at the frozen fraction, both directions', () {
+      // Leaving starts WHERE THE FINGER LEFT IT; the newcomer enters
+      // from the opened edge (_swapFrom - _slideDir), so the
+      // animation's first frame is the seam, not a new story.
+      expect(
+        ui,
+        contains(
+          '? _swapFrom -\n                                                                _slideDir',
+        ),
+      );
+      expect(ui, contains(': _swapFrom)'));
+    });
+    test('one deceleration curve for both halves of the hand-off', () {
+      // The ease-IN exit from a dead stop was the thrown-card jolt.
+      final swaps = RegExp('switchOutCurve:\\s*Curves\\.(\\w+)').firstMatch(ui);
+      expect(swaps, isNotNull);
+      expect(
+        swaps!.group(1),
+        'easeOutCubic',
+        reason: 'in and out share the finger\'s fast-then-settling shape',
+      );
+    });
+    test('only a closing seam may animate the offset', () {
+      // Finger / frozen / swapping frames state the value (zero
+      // duration — the gesture's truth is painted as stated); the
+      // 240 ms ease exists for ONE branch: the thaw.
+      expect(ui, contains('_dragLive'));
+      expect(ui, contains('_frozenAt != null ||'));
+      expect(ui, contains('Duration.zero'));
+      expect(
+        RegExp(r'SpringSimulation|AnimationController\.unbounded').hasMatch(ui),
+        isFalse,
+        reason:
+            'the +261 spring settled BEFORE the swap — three acts '
+            'again; the freeze replaced it on purpose',
+      );
+    });
+    test('a lost receipt may not hold the seam forever', () {
+      expect(ui, contains('_swapFuse'));
     });
   });
 
