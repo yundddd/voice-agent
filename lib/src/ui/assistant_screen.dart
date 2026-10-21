@@ -837,13 +837,17 @@ class _AssistantScreenState extends State<AssistantScreen>
                             backgroundColor: t.index == v.tabIndex
                                 ? scheme.secondaryContainer
                                 : null,
-                            onPressed: () => _tabTap(a, t.index),
+                            // A bridge without /seat cannot move: the
+                            // pill shows the ledger but rests (the
+                            // creation + still works — /seat fresh is
+                            // the same verb, so creation rests too).
+                            onPressed: v.canSeat ? () => _tabTap(a, t.index) : null,
                           ),
                         ),
                       ActionChip(
                         avatar: const Icon(Icons.add, size: 18),
                         label: const Text('New session'),
-                        onPressed: () => _newSessionTap(a),
+                        onPressed: v.canSeat ? () => _newSessionTap(a) : null,
                       ),
                       const SizedBox(width: 4),
                     ],
