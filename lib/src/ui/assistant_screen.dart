@@ -251,13 +251,13 @@ class _AssistantScreenState extends State<AssistantScreen>
     label: label,
     onPressed: onPressed,
     visualDensity: VisualDensity.compact,
-    // +244: the 'microspace' Tim clocked is the chip's own left
-    // padding — the frame Material draws before the avatar. It goes
-    // to 4; labelPadding already died at zero. With the 16 px glyph
-    // and a 12 pt label the whole row loses ~30 dp.
-    padding: const EdgeInsets.only(left: 4, right: 8),
+    // +245: the law in one line — the ONLY dead space left is the
+    // 3 dp the icon needs off the border; every other reclaimed point
+    // went back INTO the chip (label 12→13, glyph 16→17) so the verbs
+    // are as large as the width allows. Gaps between chips are 2 dp.
+    padding: const EdgeInsets.only(left: 3, right: 6),
     labelPadding: EdgeInsets.zero,
-    labelStyle: const TextStyle(fontSize: 12),
+    labelStyle: const TextStyle(fontSize: 13),
   );
 
   /// +242: the '/model' chip's verb — the settings sheet's own picker
@@ -1217,9 +1217,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                           // +243: chips wear a compact skin; +244
                           // tightens it again at Tim's read: four
                           // verbs must fit the width, no sideways hunt.
-                          padding: const EdgeInsets.only(right: 4),
+                          padding: const EdgeInsets.only(right: 2),
                           child: _controlChip(
-                            avatar: Icon(_chipIcons[chip], size: 16),
+                            avatar: Icon(_chipIcons[chip], size: 17),
                             label: Text(chip),
                             onPressed: v.bridgeBusy
                                 ? null
@@ -1235,7 +1235,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                       _controlChip(
                         avatar: Icon(
                           Icons.stop_circle_outlined,
-                          size: 16,
+                          size: 17,
                           color: v.agentBusy ? null : scheme.outline,
                         ),
                         label: Text(
