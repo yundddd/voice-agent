@@ -286,12 +286,7 @@ class BridgeClient extends HarnessGateway {
   Future<Map<String, Object>?> models({String? harness, String? dir}) async {
     try {
       final res = await HttpClient()
-          .getUrl(
-            _u('/models', {
-              'harness': ?harness,
-              'dir': ?dir,
-            }),
-          )
+          .getUrl(_u('/models', {'harness': ?harness, 'dir': ?dir}))
           .then((r) => r.close())
           .timeout(const Duration(seconds: 6));
       final text = await res.transform(utf8.decoder).join();
@@ -320,22 +315,29 @@ class BridgeClient extends HarnessGateway {
     try {
       final req = await client.postUrl(_u('/seat'));
       req.headers.contentType = ContentType.json;
-      req.add(utf8.encode(jsonEncode({
-        'harness': ?harness,
-        'dir': ?dir,
-        'model': ?model,
-        // fresh and 'read the pointer' stay distinct on the wire:
-        // only a named id sends sessionId, only a blank start sends
-        // fresh — a JSON null would mean fresh to the bridge.
-        if (fresh) 'fresh': true,
-        if (!fresh && sessionId != null) 'sessionId': sessionId,
-      })));
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'harness': ?harness,
+            'dir': ?dir,
+            'model': ?model,
+            // fresh and 'read the pointer' stay distinct on the wire:
+            // only a named id sends sessionId, only a blank start sends
+            // fresh — a JSON null would mean fresh to the bridge.
+            if (fresh) 'fresh': true,
+            if (!fresh && sessionId != null) 'sessionId': sessionId,
+          }),
+        ),
+      );
       final res = await req.close();
       final text = (await res.transform(utf8.decoder).join()).trim();
       if (res.statusCode == 404) return null; // pre-seat bridge
       final j = BridgeEvent.tryJson(text);
       if (j is! Map) {
-        return {'ok': false, 'error': text.isEmpty ? 'HTTP ${res.statusCode}' : text};
+        return {
+          'ok': false,
+          'error': text.isEmpty ? 'HTTP ${res.statusCode}' : text,
+        };
       }
       if (res.statusCode == 200 && j['ok'] == true) {
         return j.cast<String, Object>();

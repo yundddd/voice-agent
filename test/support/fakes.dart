@@ -236,7 +236,9 @@ class FakeHarness implements HarnessGateway {
   Future<Map<String, Object>?> healthInfo() async {
     final h = healthState;
     if (h == null) return null;
-    final m = h.containsKey('turnOpen') ? h : {...h, 'turnOpen': turnOpenOnServer};
+    final m = h.containsKey('turnOpen')
+        ? h
+        : {...h, 'turnOpen': turnOpenOnServer};
     return m.cast<String, Object>(); // nulls ride, like the real JSON
   }
 

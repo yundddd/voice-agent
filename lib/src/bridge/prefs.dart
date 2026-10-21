@@ -60,7 +60,6 @@ class SessionTab {
   );
 }
 
-
 /// The field defaults ship pointing at the dev machine's always-on demo
 /// bridge (tailscale IP, port 8732, --token testtok): a fresh install
 /// gets working command chips with zero typing — the Tailscale app on

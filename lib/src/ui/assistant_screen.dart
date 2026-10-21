@@ -901,6 +901,11 @@ class _AssistantScreenState extends State<AssistantScreen>
           }
         });
       }
+      // +266: the band rides the thread — and it rides the CACHE:
+      // the tab left files its line, the destination restores its
+      // own (away frames kept it current), so neither a borrowed
+      // command nor a placeholder rest line ever flashes.
+      a.settleBandOnLanding(_lastPaintedTab, v.tabIndex);
       _lastPaintedTab = v.tabIndex;
       _stick = true; // the follow owns the tail again, as on any tail growth
       SchedulerBinding.instance.addPostFrameCallback((_) {

@@ -1312,14 +1312,61 @@ class VoiceAssistant extends ChangeNotifier {
       );
       _reply.stopPlayback();
     }
-    // +259: a landing also RE-STAMPS the band. The say path has had its
-    // watermark since +254; the top line was the leak the tape caught —
-    // a NEW session opened the previous conversation's 'Bash …' still
-    // printed there, because the band is global and nobody swept it.
-    // The destination's at-rest line goes up now; its own live stream
-    // repaints a work line the moment a frame lands (and the working
-    // row never needed the band to say work — the +171 belt dresses a
-    // lit box in work words on its own).
+  }
+
+  /// +266: the band's sweep moved HERE out of the landing itself
+  /// (+259's first home): a switch's slide gives the screen ~300 ms
+  /// of visible transition, and a band that flipped to 'Ready. Hold
+  /// the button…' the moment /seat was SENT played that flip in
+  /// front of the reader ('I see a split second of the chat window
+  /// showing ready hold button text'). The band belongs to the
+  /// thread, so it changes when the THREAD changes — the screen
+  /// calls this at the tab-index hand-off, while the thread is
+  /// off-screen and the flip's content swap rides the hop. The say
+  /// path's watermark (+254) still lands at the landing proper: it
+  /// is a law about frames, not about pixels.
+  /// The tab whose bubbles are currently on screen — the band cache's
+  /// key, and what a frame's owner is compared against.
+  int get _activeTab => _bridgePrefs.activeTab;
+
+  /// +266 (Tim's own closing insight: 'we can cache the sessions'
+  /// conversation, right? — so the rest line should NEVER flash'):
+  /// every tab's band line is its own, remembered. Leaving a tab
+  /// files whatever it was showing under ITS key; landing restores
+  /// the destination's cached line — the last truth its own stream
+  /// painted, which for a working thread is still the command mid-
+  /// flight; only a tab that never spoke (a birth, a first visit)
+  /// has no cache, and its rest line is not a placeholder, it is
+  /// that conversation's honest state. Away frames feed this same
+  /// map through [cacheAwayBand], so the cached line stays CURRENT
+  /// while you are on another tab — coming home shows what the
+  /// harness is doing NOW, not a snapshot of when you left.
+  final Map<int, Activity> _bandByTab = {};
+
+  /// +266: the band's sweep moved HERE out of the landing itself
+  /// (+259's first home): a switch's slide gives the screen ~300 ms
+  /// of visible transition, and a band that flipped to 'Ready. Hold
+  /// the button…' the moment /seat was SENT played that flip in
+  /// front of the reader ('I see a split second of the chat window
+  /// showing ready hold button text'). The band belongs to the
+  /// thread, so it changes when the THREAD changes — the screen
+  /// calls this at the tab-index hand-off, while the thread is
+  /// off-screen and the flip's content swap rides the hop. The say
+  /// path's watermark (+254) still lands at the landing proper: it
+  /// is a law about frames, not about pixels.
+  void settleBandOnLanding(int fromTab, int toTab) {
+    if (fromTab < 0 || fromTab == toTab) return; // first paint, or no move
+    _bandByTab[fromTab] = _activity;
+    final own = _bandByTab[toTab];
+    if (own != null) {
+      _logDebug(
+        'switch: band — tab $toTab resumes on its OWN cached line '
+        "('${own.text(mode: _mode)}')",
+      );
+      _activity = own;
+      notifyListeners();
+      return;
+    }
     if (_activity is StepLine ||
         _activity is TurnWaiting ||
         _activity is QueuedVerdict) {
@@ -1332,6 +1379,16 @@ class VoiceAssistant extends ChangeNotifier {
           : const IdleHint();
       notifyListeners();
     }
+  }
+
+  /// +266: the away-conversation's frames refresh ITS cache and
+  /// leave the painted band alone (the +259 gate in the turn loop
+  /// calls this at the same door it declined to paint): the line you
+  /// come home to is the CURRENT command, not the one you left.
+  void cacheAwayBand(String? sid, Activity act) {
+    if (sid == null) return;
+    final i = _bridgePrefs.tabs.indexWhere((t) => t.sessionIds.contains(sid));
+    if (i >= 0 && i != _activeTab) _bandByTab[i] = act;
   }
 
   /// +230: ✕ on the pill — FORGET A TAB. The tab's bubbles leave with
@@ -2265,7 +2322,8 @@ class VoiceAssistant extends ChangeNotifier {
     hasError: () => _error.isNotEmpty,
     mergeContext: _mergeContext,
     seatedSession: () => _sessionId,
-    setStatus: _setStatus,
+    cacheAwayBand: cacheAwayBand, // +266: away frames keep the owner's
+    setStatus: _setStatus, // cache current, not the painted band
     setPhase: (ph) => _phase = ph,
     markSpeaking: () => _phase = AssistantPhase.speaking,
     idleReady: _idleReady,

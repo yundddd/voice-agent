@@ -19,10 +19,10 @@ void main() {
     // must be inside what the bundler would have packed.
     test('every espeak asset file is covered by a pubspec entry', () {
       final pubspec = File('pubspec.yaml').readAsStringSync();
-      final declared = RegExp(r'^\s+- (assets\S+/)$', multiLine: true)
-          .allMatches(pubspec)
-          .map((m) => m.group(1)!)
-          .toSet();
+      final declared = RegExp(
+        r'^\s+- (assets\S+/)$',
+        multiLine: true,
+      ).allMatches(pubspec).map((m) => m.group(1)!).toSet();
       // What a directory entry ACTUALLY bundles: plain files one deep.
       final bundled = <String>{
         for (final dir in declared)

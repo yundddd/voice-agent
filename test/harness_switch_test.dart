@@ -54,8 +54,7 @@ void main() {
       server.listen((req) async {
         seen.add('${req.method} ${req.uri}');
         if (req.uri.path == '/harness') {
-          final body =
-              jsonDecode(await utf8.decodeStream(req)) ;
+          final body = jsonDecode(await utf8.decodeStream(req));
           if (replyBody != null) {
             req.response.write(replyBody); // the flipped-to name
           } else if (body['to'] != 'claude' && body['to'] != 'opencode') {
@@ -154,11 +153,15 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('opencode on the wire, and the switch aims at claude',
-        (tester) async {
+    testWidgets('opencode on the wire, and the switch aims at claude', (
+      tester,
+    ) async {
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'opencode',
-        'dir': '/home/tim/voice-agent', 'sessionId': 'ses_oc',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'opencode',
+        'dir': '/home/tim/voice-agent',
+        'sessionId': 'ses_oc',
       };
       await openScreen(tester);
       expect(find.text('OpenCode'), findsOneWidget);
@@ -175,8 +178,12 @@ void main() {
 
     testWidgets('a live turn parks the switch', (tester) async {
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'sessionId': 'ses_cl', 'turnOpen': true,
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/x',
+        'sessionId': 'ses_cl',
+        'turnOpen': true,
       };
       await openScreen(tester);
       expect(find.text('Claude Code'), findsOneWidget);
@@ -228,40 +235,51 @@ void main() {
       store.addSystemNote('note');
       store.addFile(name: 'x', path: '/tmp/x', size: 1);
       store.beginTurn();
-      expect(store.entries, hasLength(5),
-          reason: 'five mutators, five entries');
+      expect(
+        store.entries,
+        hasLength(5),
+        reason: 'five mutators, five entries',
+      );
       expect(
         store.entries.map((e) => e.harness),
         everyElement('opencode'),
-        reason: 'EVERY birth stamps the era — one missed mutator is a '
+        reason:
+            'EVERY birth stamps the era — one missed mutator is a '
             'bubble invisible under exactly one harness',
       );
       // A bridge with no switch answer (null provider): every entry is
       // un-era, and un-era means SHARED — the row's whole point is
       // those bubbles show under every thread.
       final legacy = ChatStore(
-        persist: (_) async {}, repaint: () {}, harness: () => null,
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => null,
       );
       legacy.addUser('un-era\u2019d');
       expect(legacy.entries.single.harness, isNull);
     });
 
-    test('the era round-trips through disk; a legacy line decodes un-era',
-        () async {
-      final store = ChatStore(
-        persist: (_) async {},
-        repaint: () {},
-        harness: () => 'claude',
-      );
-      store.addUser('under claude');
-      final back = ChatEntry.fromJson(store.entries.single.toJson());
-      expect(back.harness, 'claude');
-      // A pre-split JSON line carries no 'h' — it must decode un-era
-      // (shared), not as any particular era.
-      final legacy = ChatEntry.fromJson({'user': true, 'blocks': ['old']});
-      expect(legacy.harness, isNull);
-      expect(ChatEntry.user('x').toJson().containsKey('h'), isFalse);
-    });
+    test(
+      'the era round-trips through disk; a legacy line decodes un-era',
+      () async {
+        final store = ChatStore(
+          persist: (_) async {},
+          repaint: () {},
+          harness: () => 'claude',
+        );
+        store.addUser('under claude');
+        final back = ChatEntry.fromJson(store.entries.single.toJson());
+        expect(back.harness, 'claude');
+        // A pre-split JSON line carries no 'h' — it must decode un-era
+        // (shared), not as any particular era.
+        final legacy = ChatEntry.fromJson({
+          'user': true,
+          'blocks': ['old'],
+        });
+        expect(legacy.harness, isNull);
+        expect(ChatEntry.user('x').toJson().containsKey('h'), isFalse);
+      },
+    );
 
     test('+214 migration: legacy bubbles take their era from the bridge\u2019s '
         'timeline, once, and never from a returning guess', () async {
@@ -273,7 +291,9 @@ void main() {
       // known, so every entry lands un-era and the migration is the
       // first thing to name one.
       final store = ChatStore(
-        persist: (_) async {}, repaint: () {}, harness: () => null,
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => null,
         nowMs: () => clock,
       );
       store.addUser('prehistory'); // born 0 = older than the record
@@ -281,125 +301,159 @@ void main() {
       store.beginTurn();
       clock = 3500; // born after the flip back to claude
       store.addSystemNote('x');
-      final n = store.migrateUnera('opencode', timeline: const [
-        (since: 1000, harness: 'opencode'),
-        (since: 3000, harness: 'claude'),
-      ]);
+      final n = store.migrateUnera(
+        'opencode',
+        timeline: const [
+          (since: 1000, harness: 'opencode'),
+          (since: 3000, harness: 'claude'),
+        ],
+      );
       expect(n, 3);
-      expect(store.entries.map((e) => e.harness),
-          ['opencode', 'opencode', 'claude']);
+      expect(store.entries.map((e) => e.harness), [
+        'opencode',
+        'opencode',
+        'claude',
+      ]);
       // A bridge with no timeline (pre-+214): every legacy bubble
       // wears the fallback — the observed era, the best witness left.
       final bare = ChatStore(
-        persist: (_) async {}, repaint: () {}, harness: () => null,
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => null,
       );
       bare.addUser('legacy');
       expect(bare.migrateUnera('claude'), 1);
       expect(bare.entries.single.harness, 'claude');
     });
 
-    test('the migration fires once: a later un-era bubble keeps its null',
-        () async {
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'sessionId': 'ses_cl',
-        'harnessHistory': [
-          {'since': 1, 'harness': 'opencode'},
-          {'since': 5000, 'harness': 'claude'},
-        ],
-      };
-      a.chat.add(ChatEntry.user('born before the split', createdMs: 2000));
-      await a.setBridge(url: 'http://harness.test', token: 'tok');
-      await settle();
-      // The first era glance migrated the past: the legacy bubble is
-      // opencode's now (it was born between the lines), hidden from
-      // the claude thread it used to clutter.
-      expect(a.chat.single.harness, 'opencode');
-      expect(a.view.chat, isEmpty,
-          reason: 'the claude thread no longer wears opencode\u2019s history');
-      // A bubble made un-era LATER (bridge torn down → offline
-      // prologue) must NOT be re-stamped by the flag-guarded
-      // migration: the flag is spent, the prologue stays shared.
-      a.chat.add(ChatEntry.user('later offline turn', createdMs: 9000));
-      await a.setBridgeHarness('opencode');
-      harness.healthState = {
-        ...harness.healthState!, 'harness': 'opencode',
-      };
-      await a.setBridgeHarness('claude');
-      await settle();
-      final offline = a.chat.firstWhere(
-          (e) => e.blocks.contains('later offline turn'));
-      expect(offline.harness, isNull,
-          reason: 'the migration flag is spent: the shared prologue '
-              'stays shared, never re-stamped by a returning guess');
-    });
+    test(
+      'the migration fires once: a later un-era bubble keeps its null',
+      () async {
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'harness': 'claude',
+          'dir': '/x',
+          'sessionId': 'ses_cl',
+          'harnessHistory': [
+            {'since': 1, 'harness': 'opencode'},
+            {'since': 5000, 'harness': 'claude'},
+          ],
+        };
+        a.chat.add(ChatEntry.user('born before the split', createdMs: 2000));
+        await a.setBridge(url: 'http://harness.test', token: 'tok');
+        await settle();
+        // The first era glance migrated the past: the legacy bubble is
+        // opencode's now (it was born between the lines), hidden from
+        // the claude thread it used to clutter.
+        expect(a.chat.single.harness, 'opencode');
+        expect(
+          a.view.chat,
+          isEmpty,
+          reason: 'the claude thread no longer wears opencode\u2019s history',
+        );
+        // A bubble made un-era LATER (bridge torn down → offline
+        // prologue) must NOT be re-stamped by the flag-guarded
+        // migration: the flag is spent, the prologue stays shared.
+        a.chat.add(ChatEntry.user('later offline turn', createdMs: 9000));
+        await a.setBridgeHarness('opencode');
+        harness.healthState = {...harness.healthState!, 'harness': 'opencode'};
+        await a.setBridgeHarness('claude');
+        await settle();
+        final offline = a.chat.firstWhere(
+          (e) => e.blocks.contains('later offline turn'),
+        );
+        expect(
+          offline.harness,
+          isNull,
+          reason:
+              'the migration flag is spent: the shared prologue '
+              'stays shared, never re-stamped by a returning guess',
+        );
+      },
+    );
 
-    test('flipping harnesses splits the transcript and keeps the log', () async {
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'sessionId': 'ses_cl',
-      };
-      await a.setBridge(url: 'http://harness.test', token: 'tok');
-      await settle();
-      // A shared prologue (a legacy/pre-split line): null = every thread.
-      a.chat.add(ChatEntry.user('the shared prologue', createdMs: 1));
-      // One Claude turn: a user bubble + its assistant reply block.
-      // The send rides an open view until the fake closes it — the
-      // turn-flow tests' dance, not an await-through-done.
-      unawaited(a.runQuickCommand('claude only', bubble: 'claude only'));
-      await settle();
-      harness.finishView();
-      await settle();
-      expect(
-        a.view.chat.where((e) => e.blocks.contains('claude only')),
-        hasLength(1),
-        reason: 'the claude-era bubble is not on the claude thread',
-      );
+    test(
+      'flipping harnesses splits the transcript and keeps the log',
+      () async {
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'harness': 'claude',
+          'dir': '/x',
+          'sessionId': 'ses_cl',
+        };
+        await a.setBridge(url: 'http://harness.test', token: 'tok');
+        await settle();
+        // A shared prologue (a legacy/pre-split line): null = every thread.
+        a.chat.add(ChatEntry.user('the shared prologue', createdMs: 1));
+        // One Claude turn: a user bubble + its assistant reply block.
+        // The send rides an open view until the fake closes it — the
+        // turn-flow tests' dance, not an await-through-done.
+        unawaited(a.runQuickCommand('claude only', bubble: 'claude only'));
+        await settle();
+        harness.finishView();
+        await settle();
+        expect(
+          a.view.chat.where((e) => e.blocks.contains('claude only')),
+          hasLength(1),
+          reason: 'the claude-era bubble is not on the claude thread',
+        );
 
-      // The real bridge's /health names the new era the instant
-      // /harness answers — the fake moves its answer along too.
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'opencode',
-        'dir': '/x', 'sessionId': 'ses_oc',
-      };
-      await a.setBridgeHarness('opencode');
-      await settle();
-      // A real opencode turn, so the thread has something of ITS OWN
-      // (a flip files nothing — the thread's content is conversations,
-      // not announcements).
-      unawaited(a.runQuickCommand('opencode only', bubble: 'opencode only'));
-      await settle();
-      harness.finishView();
-      await settle();
-      // The log keeps EVERYTHING — the split is render-side only.
-      expect(
-        a.chat.map((e) => e.harness),
-        containsAll(<String?>[null, 'claude', 'opencode']),
-      );
-      // The thread is the flip's whole statement: prologue and this
-      // era's turn in, the other era's bubbles out, no narration
-      // filed (+215 — the signpost bubble explained a fact the screen
-      // already showed and repeated itself every flip).
-      final onThread = a.view.chat.map((e) => e.blocks.join(' ')).join();
-      expect(onThread, contains('the shared prologue'));
-      expect(onThread, contains('opencode only'));
-      expect(onThread, isNot(contains('claude only')));
-      expect(onThread, isNot(contains('holds the pen')),
-          reason: 'the flip files no signpost bubble');
+        // The real bridge's /health names the new era the instant
+        // /harness answers — the fake moves its answer along too.
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'harness': 'opencode',
+          'dir': '/x',
+          'sessionId': 'ses_oc',
+        };
+        await a.setBridgeHarness('opencode');
+        await settle();
+        // A real opencode turn, so the thread has something of ITS OWN
+        // (a flip files nothing — the thread's content is conversations,
+        // not announcements).
+        unawaited(a.runQuickCommand('opencode only', bubble: 'opencode only'));
+        await settle();
+        harness.finishView();
+        await settle();
+        // The log keeps EVERYTHING — the split is render-side only.
+        expect(
+          a.chat.map((e) => e.harness),
+          containsAll(<String?>[null, 'claude', 'opencode']),
+        );
+        // The thread is the flip's whole statement: prologue and this
+        // era's turn in, the other era's bubbles out, no narration
+        // filed (+215 — the signpost bubble explained a fact the screen
+        // already showed and repeated itself every flip).
+        final onThread = a.view.chat.map((e) => e.blocks.join(' ')).join();
+        expect(onThread, contains('the shared prologue'));
+        expect(onThread, contains('opencode only'));
+        expect(onThread, isNot(contains('claude only')));
+        expect(
+          onThread,
+          isNot(contains('holds the pen')),
+          reason: 'the flip files no signpost bubble',
+        );
 
-      // Flip BACK: the claude-era bubbles were never gone — they were
-      // only on the other thread.
-      harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'sessionId': 'ses_cl',
-      };
-      await a.setBridgeHarness('claude');
-      await settle();
-      final back = a.view.chat.map((e) => e.blocks.join(' ')).join();
-      expect(back, contains('claude only'));
-      expect(back, isNot(contains('opencode only')));
-      expect(back, isNot(contains('holds the pen')));
-    });
+        // Flip BACK: the claude-era bubbles were never gone — they were
+        // only on the other thread.
+        harness.healthState = {
+          'ok': true,
+          'claudeUp': true,
+          'harness': 'claude',
+          'dir': '/x',
+          'sessionId': 'ses_cl',
+        };
+        await a.setBridgeHarness('claude');
+        await settle();
+        final back = a.view.chat.map((e) => e.blocks.join(' ')).join();
+        expect(back, contains('claude only'));
+        expect(back, isNot(contains('opencode only')));
+        expect(back, isNot(contains('holds the pen')));
+      },
+    );
   });
 
   modelPickerTests();
@@ -422,18 +476,19 @@ void modelPickerTests() {
         if (req.uri.path == '/models') {
           req.response
             ..headers.contentType = ContentType.json
-            ..write(jsonEncode({
-              'ok': true,
-              'harness': 'claude',
-              'current': 'opus',
-              'models': [
-                {'id': 'default', 'label': 'default'},
-                {'id': 'opus', 'label': 'opus'},
-              ],
-            }));
+            ..write(
+              jsonEncode({
+                'ok': true,
+                'harness': 'claude',
+                'current': 'opus',
+                'models': [
+                  {'id': 'default', 'label': 'default'},
+                  {'id': 'opus', 'label': 'opus'},
+                ],
+              }),
+            );
         } else if (req.uri.path == '/model') {
-          final body =
-              jsonDecode(await utf8.decodeStream(req)) ;
+          final body = jsonDecode(await utf8.decodeStream(req));
           if (body['id'] == 'pi') {
             req.response.statusCode = HttpStatus.badRequest;
             req.response.write('could not set the model: not in --models: pi');
@@ -456,12 +511,14 @@ void modelPickerTests() {
       expect(seen.single, contains('token=tok'));
     });
 
-    test('a pick answers null; an off-menu id answers the honest reason',
-        () async {
-      expect(await client.setModel('opus'), isNull);
-      final why = await client.setModel('pi');
-      expect(why, contains('not in --models'));
-    });
+    test(
+      'a pick answers null; an off-menu id answers the honest reason',
+      () async {
+        expect(await client.setModel('opus'), isNull);
+        final why = await client.setModel('pi');
+        expect(why, contains('not in --models'));
+      },
+    );
 
     test('+218 prefs: the lastModels map round-trips; legacy json starts '
         'empty', () {
@@ -471,14 +528,16 @@ void modelPickerTests() {
       expect(BridgePrefs.fromJson({}).lastModels, isEmpty);
     });
 
-    test('an unreachable bridge is a null menu and a reason for picks',
-        () async {
-      await server.close(force: true);
-      expect(await client.models(), isNull);
-      expect(await client.setModel('opus'), isNotNull);
-      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      await server.close(); // keep tearDown's close a no-op
-    });
+    test(
+      'an unreachable bridge is a null menu and a reason for picks',
+      () async {
+        await server.close(force: true);
+        expect(await client.models(), isNull);
+        expect(await client.setModel('opus'), isNotNull);
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        await server.close(); // keep tearDown's close a no-op
+      },
+    );
   });
 
   group('assistant model methods', () {
@@ -506,8 +565,11 @@ void modelPickerTests() {
 
     test('a pick lands and the row label is the truth on return', () async {
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'model': 'default',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/x',
+        'model': 'default',
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
       await settle();
@@ -520,43 +582,67 @@ void modelPickerTests() {
       harness.setModelError = 'not in --models: pi';
       expect(await a.setBridgeModel('pi'), contains('not in --models'));
       expect((await a.bridgeHealth())!['model'], 'opus');
-      expect(a.bridgeLastModel, 'opus',
-          reason: 'a REFUSED pick does not rewrite the memory');
+      expect(
+        a.bridgeLastModel,
+        'opus',
+        reason: 'a REFUSED pick does not rewrite the memory',
+      );
     });
 
     test('+220: an error-done files its reason as a card in the '
         'channel, era-stamped — the status line is not history', () async {
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'opencode',
-        'dir': '/x', 'model': null,
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'opencode',
+        'dir': '/x',
+        'model': null,
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
       await settle();
       unawaited(a.runQuickCommand('answer me', bubble: 'answer me'));
       await settle();
       // The provider refuses the picked model — +219's frame, end to end.
-      harness.emit(BridgeEvent.forTest('done',
-          isError: true, text: 'Access to model denied.'));
+      harness.emit(
+        BridgeEvent.forTest(
+          'done',
+          isError: true,
+          text: 'Access to model denied.',
+        ),
+      );
       await settle();
       final card = a.chat.where((e) => e.receipt).toList();
       expect(card, hasLength(1));
-      expect(card.single.blocks.single, 'Access to model denied.',
-          reason: 'the chat window must say WHAT happened — the caption '
-              'row flickers and forgets');
-      expect(card.single.harness, 'opencode',
-          reason: 'the failure belongs to the era that heard it');
+      expect(
+        card.single.blocks.single,
+        'Access to model denied.',
+        reason:
+            'the chat window must say WHAT happened — the caption '
+            'row flickers and forgets',
+      );
+      expect(
+        card.single.harness,
+        'opencode',
+        reason: 'the failure belongs to the era that heard it',
+      );
       expect(card.single.fromUser, isFalse);
       // And the bubble the dead turn opened leaves no corpse: an
       // empty shell is swept at the done, the CARD is the verdict.
-      expect(a.chat.where((e) => !e.fromUser && e.blocks.isEmpty), isEmpty,
-          reason: 'no ghost bubble beside the card');
+      expect(
+        a.chat.where((e) => !e.fromUser && e.blocks.isEmpty),
+        isEmpty,
+        reason: 'no ghost bubble beside the card',
+      );
     });
 
     test('+220: a flag-only error-done (old bridge) still files a card '
         'with the bridge\u2019s own words', () async {
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'model': 'default',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/x',
+        'model': 'default',
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
       await settle();
@@ -564,15 +650,23 @@ void modelPickerTests() {
       await settle();
       harness.emit(BridgeEvent.forTest('done', isError: true));
       await settle();
-      expect(a.chat.any((e) => e.receipt &&
-          e.blocks.contains('the harness reported an error')), isTrue);
+      expect(
+        a.chat.any(
+          (e) =>
+              e.receipt && e.blocks.contains('the harness reported an error'),
+        ),
+        isTrue,
+      );
     });
 
-        test('+218 memory is per era: claude remembers its alias, opencode '
+    test('+218 memory is per era: claude remembers its alias, opencode '
         'its provider path', () async {
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'model': 'default',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/x',
+        'model': 'default',
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
       await settle();
@@ -581,7 +675,9 @@ void modelPickerTests() {
       // Flip eras: the opencode thread has NO memory yet — last
       // time's claude alias must not haunt it as a suggestion.
       harness.healthState = <String, Object?>{
-        ...harness.healthState!, 'harness': 'opencode', 'model': null,
+        ...harness.healthState!,
+        'harness': 'opencode',
+        'model': null,
       };
       await a.setBridgeHarness('opencode');
       await settle();
@@ -589,9 +685,7 @@ void modelPickerTests() {
       await a.setBridgeModel('acme/beta');
       expect(a.bridgeLastModel, 'acme/beta');
       // Flip BACK: the claude memory is where it was left.
-      harness.healthState = {
-        ...harness.healthState!, 'harness': 'claude',
-      };
+      harness.healthState = {...harness.healthState!, 'harness': 'claude'};
       await a.setBridgeHarness('claude');
       await settle();
       expect(a.bridgeLastModel, 'opus');
@@ -627,11 +721,16 @@ void modelPickerTests() {
     testWidgets('the row shows the current; the sheet lists the menu '
         'and a pick travels POST /model', (tester) async {
       harness.healthState = {
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
-        'dir': '/x', 'model': 'default',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/x',
+        'model': 'default',
       };
       harness.modelsMenu = {
-        'ok': true, 'harness': 'claude', 'current': 'default',
+        'ok': true,
+        'harness': 'claude',
+        'current': 'default',
         'models': [
           {'id': 'default', 'label': 'default'},
           {'id': 'opus', 'label': 'opus'},
@@ -654,8 +753,9 @@ void modelPickerTests() {
       expect(find.text('acme/beta'), findsWidgets); // row wears the pick
     });
 
-    testWidgets('a pre-+216 bridge: the label admits it, the switch is dead',
-        (tester) async {
+    testWidgets('a pre-+216 bridge: the label admits it, the switch is dead', (
+      tester,
+    ) async {
       harness.healthState = {
         'ok': true, 'claudeUp': true, 'harness': 'claude',
         'dir': '/x', // NO 'model' field at all
@@ -665,7 +765,7 @@ void modelPickerTests() {
       final tune = find.widgetWithIcon(IconButton, Icons.tune);
       expect(tester.widget<IconButton>(tune).onPressed, isNull);
     });
- 
+
     testWidgets('+218: an amnesiac bridge shows the remembered pick — '
         'row and sheet both', (tester) async {
       harness.healthState = <String, Object?>{
@@ -674,7 +774,9 @@ void modelPickerTests() {
       };
       harness.modelSetsHealth = false; // accepts picks, forgets on restart
       harness.modelsMenu = <String, Object?>{
-        'ok': true, 'harness': 'claude', 'current': null,
+        'ok': true,
+        'harness': 'claude',
+        'current': null,
         'models': [
           {'id': 'default', 'label': 'default'},
           {'id': 'opus', 'label': 'opus'},
@@ -689,7 +791,9 @@ void modelPickerTests() {
       // A fresh screen state re-reads /health: model null, but the
       // app remembers — the row wears it labelled as memory, not truth.
       await tester.pumpWidget(
-        MaterialApp(home: BridgeScreen(key: UniqueKey(), assistant: a)),
+        MaterialApp(
+          home: BridgeScreen(key: UniqueKey(), assistant: a),
+        ),
       );
       await tester.pump();
       await tester.pump();
@@ -726,8 +830,10 @@ void sessionThreadTests() {
       );
       store.addUser('birth turn');
       store.beginTurn();
-      expect(store.entries.map((e) => e.session),
-          everyElement(ChatStore.pendingSession));
+      expect(
+        store.entries.map((e) => e.session),
+        everyElement(ChatStore.pendingSession),
+      );
       expect(store.adoptPending('ses_A'), 2);
       expect(store.entries.every((e) => e.session == 'ses_A'), isTrue);
       // The codec carries it.
@@ -736,7 +842,9 @@ void sessionThreadTests() {
       // Migration: era-stamped but un-owned history joins the session
       // already in use; true prologue (no era) never does.
       final old = ChatStore(
-        persist: (_) async {}, repaint: () {}, harness: () => 'claude',
+        persist: (_) async {},
+        repaint: () {},
+        harness: () => 'claude',
       );
       old.addUser('pre-law memory'); // harness-stamped, session null
       final raw = ChatEntry.user('offline prologue');
@@ -769,7 +877,9 @@ void sessionThreadTests() {
         'projects clears the window and coming back restores it', () async {
       // First conversation ever: /health carries NO sessionId yet.
       harness.healthState = <String, Object?>{
-        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
         'dir': '/proj-a',
       };
       await a.setBridge(url: 'http://harness.test', token: 'tok');
@@ -783,32 +893,38 @@ void sessionThreadTests() {
       expect(a.view.chat.any((e) => e.blocks.contains('talk in A')), isTrue);
       // The id arrives with the result's wake (/health now names ses-A):
       // the sentinel turns into ownership, visibly unchanged.
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-A'} ;
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-A'};
       await a.setBridgeDir('/proj-a'); // any awaited refresh path works
       await settle();
-      expect(a.chat.firstWhere((e) =>
-          e.blocks.contains('talk in A')).session, 'ses-A',
-          reason: 'the birth turn adopted its own session');
+      expect(
+        a.chat.firstWhere((e) => e.blocks.contains('talk in A')).session,
+        'ses-A',
+        reason: 'the birth turn adopted its own session',
+      );
       // MOVE to another project whose remembered session is ses-B:
       // the window CLEARS (ses-A's bubbles leave the view) …
       harness.healthState = {
-        ...harness.healthState!, 'dir': '/proj-b', 'sessionId': 'ses-B',
-      } ;
+        ...harness.healthState!,
+        'dir': '/proj-b',
+        'sessionId': 'ses-B',
+      };
       await a.setBridgeDir('/proj-b');
       await settle();
-      expect(a.view.chat.where((e) =>
-          e.blocks.contains('talk in A')), isEmpty);
+      expect(a.view.chat.where((e) => e.blocks.contains('talk in A')), isEmpty);
       // … the store never forgot a word …
-      expect(a.chat.where((e) =>
-          e.blocks.contains('talk in A')), hasLength(1));
+      expect(a.chat.where((e) => e.blocks.contains('talk in A')), hasLength(1));
       // … and MOVING BACK restores the thread exactly.
       harness.healthState = {
-        ...harness.healthState!, 'dir': '/proj-a', 'sessionId': 'ses-A',
-      } ;
+        ...harness.healthState!,
+        'dir': '/proj-a',
+        'sessionId': 'ses-A',
+      };
       await a.setBridgeDir('/proj-a');
       await settle();
-      expect(a.view.chat.where((e) =>
-          e.blocks.contains('talk in A')), hasLength(1));
+      expect(
+        a.view.chat.where((e) => e.blocks.contains('talk in A')),
+        hasLength(1),
+      );
     });
   });
 }

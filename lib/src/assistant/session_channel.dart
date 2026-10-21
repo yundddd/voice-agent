@@ -19,7 +19,11 @@ import 'token_ticker.dart';
 import 'turn_session.dart';
 
 final class SessionChannel {
-  SessionChannel({required this.turn, required this.ticker, required this.chain});
+  SessionChannel({
+    required this.turn,
+    required this.ticker,
+    required this.chain,
+  });
 
   /// The wire turn machine, the token ticker and the retry ladder —
   /// constructed by VoiceAssistant (their envs reach the gateway, the

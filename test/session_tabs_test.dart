@@ -538,6 +538,11 @@ void main() {
         // borrowed command must be gone at the landing, not merely
         // unpainted until the next frame.
         expect(await a.switchSession(1), isNull);
+        // +266: the band changes when the THREAD changes — the screen
+        // performs that at the flip's off-screen hand-off, which this
+        // assistant-level walk plays itself.
+        a.settleBandOnLanding(0, 1);
+        await settle();
         expect(
           a.view.status,
           isNot(contains('Bash')),
@@ -568,8 +573,25 @@ void main() {
           isTrue,
           reason: 'and the refusal to paint is itself auditable',
         );
-        // COMING HOME: the seated conversation gets its line back.
+        // COMING HOME: the seated conversation gets its line back —
+        // and NOT the stale one. The away frame above went into X's
+        // cache (+266), so the restored band names what the harness
+        // ran LAST, not what was running when the swipe left. No
+        // rest-line flash, no wait for the next frame: the cache IS
+        // the state, kept current by the same gate that declined to
+        // paint it.
         expect(await a.switchSession(0), isNull);
+        a.settleBandOnLanding(1, 0);
+        await settle();
+        expect(
+          a.view.status,
+          'Bash dart analyze…',
+          reason: 'the cache stayed current while the tab was away',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('resumes on its OWN cached line')),
+          isTrue,
+        );
         expect(
           a.view.turnHomeHere,
           isTrue,

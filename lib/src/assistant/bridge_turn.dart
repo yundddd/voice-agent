@@ -84,6 +84,11 @@ final class BridgeTurnEnv {
     /// +249: the conversation the seat currently holds — the context
     /// frame's owner check.
     this.seatedSession,
+
+    /// +266: the band cache's back door — a frame whose conversation
+    /// is NOT on screen updates THAT tab's remembered band line
+    /// instead of the painted one (see VoiceAssistant.cacheAwayBand).
+    this.cacheAwayBand,
     required this.setStatus,
     required this.setPhase,
     required this.markSpeaking,
@@ -124,6 +129,7 @@ final class BridgeTurnEnv {
   final bool Function() busy, badgeLit, hasError;
   final void Function(int tokens, int window) mergeContext;
   final String? Function()? seatedSession;
+  final void Function(String? sid, Activity a)? cacheAwayBand;
   final void Function(Activity a) setStatus;
   final void Function(AssistantPhase p) setPhase;
 
@@ -764,6 +770,10 @@ class BridgeTurn {
     if (bandHome) {
       env.setStatus(act);
     } else {
+      // +266: 'kept' is not 'lost' — the owner's cache learns the new
+      // command, so the band you come home to names what is running
+      // NOW, not what was running when you swiped away.
+      env.cacheAwayBand?.call(_viewSid, act);
       env.log(
         'unfocused conversation: band kept, $stepLine not painted'
         '${transport.wireTag(ev)}',

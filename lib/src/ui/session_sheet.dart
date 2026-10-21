@@ -31,14 +31,13 @@ class SessionSetup {
 Future<SessionSetup?> showSessionSheet(
   BuildContext context, {
   required VoiceAssistant a,
-}) =>
-    showModalBottomSheet<SessionSetup>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (_) => _SessionSheet(a: a),
-    );
+}) => showModalBottomSheet<SessionSetup>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  showDragHandle: true,
+  builder: (_) => _SessionSheet(a: a),
+);
 
 class _SessionSheet extends StatefulWidget {
   const _SessionSheet({required this.a});
@@ -182,56 +181,64 @@ class _SessionSheetState extends State<_SessionSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('New session',
-                    style: Theme.of(context).textTheme.headlineSmall),
+                Text(
+                  'New session',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
                 const SizedBox(height: 4),
-                Text('Which harness, which model, which folder.',
-                    style: Theme.of(context).textTheme.bodyMedium),
+                Text(
+                  'Which harness, which model, which folder.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
                 const SizedBox(height: 16),
-                Text('Answers with',
-                    style: Theme.of(context).textTheme.labelLarge),
+                Text(
+                  'Answers with',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
                 const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      style: big.copyWith(
-                        backgroundColor: WidgetStatePropertyAll(
-                          _harness == 'claude'
-                              ? scheme.primary
-                              : scheme.surfaceContainerHighest,
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: big.copyWith(
+                          backgroundColor: WidgetStatePropertyAll(
+                            _harness == 'claude'
+                                ? scheme.primary
+                                : scheme.surfaceContainerHighest,
+                          ),
+                          foregroundColor: WidgetStatePropertyAll(
+                            _harness == 'claude'
+                                ? scheme.onPrimary
+                                : scheme.onSurface,
+                          ),
                         ),
-                        foregroundColor: WidgetStatePropertyAll(
-                          _harness == 'claude'
-                              ? scheme.onPrimary
-                              : scheme.onSurface,
-                        ),
+                        icon: const Icon(Icons.chat),
+                        label: const Text('Claude Code'),
+                        onPressed: () => _pickHarness('claude'),
                       ),
-                      icon: const Icon(Icons.chat),
-                      label: const Text('Claude Code'),
-                      onPressed: () => _pickHarness('claude'),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      style: big.copyWith(
-                        backgroundColor: WidgetStatePropertyAll(
-                          _harness == 'opencode'
-                              ? scheme.primary
-                              : scheme.surfaceContainerHighest,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: big.copyWith(
+                          backgroundColor: WidgetStatePropertyAll(
+                            _harness == 'opencode'
+                                ? scheme.primary
+                                : scheme.surfaceContainerHighest,
+                          ),
+                          foregroundColor: WidgetStatePropertyAll(
+                            _harness == 'opencode'
+                                ? scheme.onPrimary
+                                : scheme.onSurface,
+                          ),
                         ),
-                        foregroundColor: WidgetStatePropertyAll(
-                          _harness == 'opencode'
-                              ? scheme.onPrimary
-                              : scheme.onSurface,
-                        ),
+                        icon: const Icon(Icons.terminal),
+                        label: const Text('Opencode'),
+                        onPressed: () => _pickHarness('opencode'),
                       ),
-                      icon: const Icon(Icons.terminal),
-                      label: const Text('Opencode'),
-                      onPressed: () => _pickHarness('opencode'),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
                 const SizedBox(height: 20),
                 Text('Model', style: Theme.of(context).textTheme.labelLarge),
                 const SizedBox(height: 8),
@@ -281,10 +288,11 @@ class _SessionSheetState extends State<_SessionSheet> {
                               : '${entry.key} · ${entry.value.length}',
                         ),
                       ),
-                      onPressed: () => setState(() =>
-                          _open.contains(entry.key)
-                              ? _open.remove(entry.key)
-                              : _open.add(entry.key)),
+                      onPressed: () => setState(
+                        () => _open.contains(entry.key)
+                            ? _open.remove(entry.key)
+                            : _open.add(entry.key),
+                      ),
                     ),
                   ),
                   AnimatedSize(
@@ -302,8 +310,8 @@ class _SessionSheetState extends State<_SessionSheet> {
                                   _BigChoice(
                                     label: '${m['label'] ?? m['id']}',
                                     selected: _model == m['id'],
-                                    onTap: () => setState(
-                                        () => _model = '${m['id']}'),
+                                    onTap: () =>
+                                        setState(() => _model = '${m['id']}'),
                                   ),
                               ],
                             ),
@@ -318,56 +326,66 @@ class _SessionSheetState extends State<_SessionSheet> {
                 // folders you can ENTER, not a wall of duplicate
                 // confirm buttons. The path you stand on is spelled
                 // out, and Up walks back.
-                Text('Working folder',
-                    style: Theme.of(context).textTheme.labelLarge),
+                Text(
+                  'Working folder',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
                 const SizedBox(height: 8),
-                Text(_listBaseAbs ?? '…',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          fontFamily: 'monospace',
-                        )),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52),
-                        backgroundColor:
-                            _dir != null && _dir == _listBaseAbs
-                                ? scheme.tertiaryContainer
-                                : scheme.primary,
-                        foregroundColor:
-                            _dir != null && _dir == _listBaseAbs
-                                ? scheme.onTertiaryContainer
-                                : scheme.onPrimary,
-                      ),
-                      icon: Icon(_dir != null && _dir == _listBaseAbs
-                          ? Icons.check_circle
-                          : Icons.check),
-                      label: Text(_dir != null && _dir == _listBaseAbs
-                          ? 'Selected'
-                          : 'Select this folder'),
-                      onPressed: _listBaseAbs == null
-                          ? null
-                          : () => setState(() => _dir = _listBaseAbs),
-                    ),
+                Text(
+                  _listBaseAbs ?? '…',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontFamily: 'monospace',
                   ),
-                  if (_in.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(88, 52),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          backgroundColor: _dir != null && _dir == _listBaseAbs
+                              ? scheme.tertiaryContainer
+                              : scheme.primary,
+                          foregroundColor: _dir != null && _dir == _listBaseAbs
+                              ? scheme.onTertiaryContainer
+                              : scheme.onPrimary,
+                        ),
+                        icon: Icon(
+                          _dir != null && _dir == _listBaseAbs
+                              ? Icons.check_circle
+                              : Icons.check,
+                        ),
+                        label: Text(
+                          _dir != null && _dir == _listBaseAbs
+                              ? 'Selected'
+                              : 'Select this folder',
+                        ),
+                        onPressed: _listBaseAbs == null
+                            ? null
+                            : () => setState(() => _dir = _listBaseAbs),
                       ),
-                      icon: const Icon(Icons.arrow_back, size: 18),
-                      label: const Text('Up'),
-                      onPressed: () {
-                        final i = _in.lastIndexOf('/');
-                        setState(() => _in = i < 0 ? '' : _in.substring(0, i));
-                        _fetchDirs();
-                      },
                     ),
+                    if (_in.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(88, 52),
+                        ),
+                        icon: const Icon(Icons.arrow_back, size: 18),
+                        label: const Text('Up'),
+                        onPressed: () {
+                          final i = _in.lastIndexOf('/');
+                          setState(
+                            () => _in = i < 0 ? '' : _in.substring(0, i),
+                          );
+                          _fetchDirs();
+                        },
+                      ),
+                    ],
                   ],
-                ]),
+                ),
                 const SizedBox(height: 10),
                 for (final d in _dirs)
                   Padding(
@@ -379,8 +397,10 @@ class _SessionSheetState extends State<_SessionSheet> {
                       icon: const Icon(Icons.chevron_right, size: 20),
                       label: Align(
                         alignment: Alignment.centerLeft,
-                        child: Text('${d['name']}',
-                            overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          '${d['name']}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       // Tap to ENTER: the folder expands, the SELECT
                       // on top follows.
@@ -395,36 +415,39 @@ class _SessionSheetState extends State<_SessionSheet> {
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: LinearProgressIndicator(),
-                ),
+                  ),
                 if (_dir != null && _dir != _listBaseAbs)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       'Selected: $_dir',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: scheme.tertiary,
-                            fontFamily: 'monospace',
-                          ),
+                        color: scheme.tertiary,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
                 if (_note != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
-                    child: Text(_note!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
+                    child: Text(
+                      _note!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
                   ),
                 const SizedBox(height: 14),
                 FilledButton.icon(
                   style: big.copyWith(
                     backgroundColor: WidgetStatePropertyAll(
-                        _dir == null
-                            ? scheme.surfaceContainerHighest
-                            : scheme.primary),
+                      _dir == null
+                          ? scheme.surfaceContainerHighest
+                          : scheme.primary,
+                    ),
                     foregroundColor: WidgetStatePropertyAll(
-                        _dir == null
-                            ? scheme.onSurfaceVariant
-                            : scheme.onPrimary),
+                      _dir == null ? scheme.onSurfaceVariant : scheme.onPrimary,
+                    ),
                   ),
                   icon: _submitting
                       ? const SizedBox(
@@ -465,15 +488,18 @@ class _BigChoice extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 140, minHeight: 52),
       child: OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
-          backgroundColor:
-              selected ? scheme.secondaryContainer : Colors.transparent,
+          backgroundColor: selected
+              ? scheme.secondaryContainer
+              : Colors.transparent,
           side: BorderSide(
             color: selected ? scheme.primary : scheme.outlineVariant,
             width: selected ? 2 : 1,
           ),
         ),
-        icon: Icon(icon ?? (selected ? Icons.check : Icons.circle_outlined),
-            size: 18),
+        icon: Icon(
+          icon ?? (selected ? Icons.check : Icons.circle_outlined),
+          size: 18,
+        ),
         label: Text(label, overflow: TextOverflow.ellipsis),
         onPressed: onTap,
       ),
