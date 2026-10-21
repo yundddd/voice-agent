@@ -1907,7 +1907,16 @@ class VoiceAssistant extends ChangeNotifier {
     if (_turn.workOwner == null && wasOwner != null) {
       _clearOwnedBand(wasOwner);
     }
-    _bgFinishedBubble(detail, cancelled: cancelled, taskId: taskId);
+    // +279.1: the period card stamps for the conversation that OWED
+    // the shell (the frame's wire stamp), not the thread that was
+    // watching when it landed — 'it shows something from the other
+    // session' was this card riding the live seat's name.
+    _bgFinishedBubble(
+      detail,
+      cancelled: cancelled,
+      taskId: taskId,
+      session: session ?? wasOwner,
+    );
   }
 
   /// The persistent bubble a finished background process earns — the

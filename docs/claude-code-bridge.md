@@ -388,6 +388,18 @@ seat: this thread's own row answers yes, a ledger owed only elsewhere
 answers no, and only with zero debt rows does the badge's stamp
 decide.
 
++279.1 part two (the 22:23 tape): xray ran a FOREGROUND sleep while
+voice-agent's background sleep-20 finished — and its receipt card
+appeared ON XRAY ('it shows something from the other session'), while
+voice-agent's banner kept counting past its own twenty seconds. The
+debt's `sid` and the receipt's session both resolved
+`_viewSid ?? ev.session` — the WATCHER over the WIRE. +274's own law
+says the stamp is the authority: every payment and every new row now
+takes `ev.session ?? _viewSid` (the pump's view id only as the
+old-bridge fallback), and the period card finally carries the session
+stamp the net-settlements already learned to pass. The pump-test
+probe's emulation of the receipt law gained the per-row payment too.
+
 ## The banner belongs to its session (shipped +278, phone side)
 
 The sleep-50 tape proved +278's bridge law (the shell survived eight

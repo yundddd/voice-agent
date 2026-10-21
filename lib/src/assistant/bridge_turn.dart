@@ -761,7 +761,13 @@ class BridgeTurn {
         ev.detail,
         cancelled: ev.toolKind == 'cancelled',
         taskId: ev.taskId,
-        session: _viewSid ?? ev.session, // +279
+        // +279.1: THE FRAME NAMES ITS OWN DEBT (the tape: voice-
+        // agent's 'Bash sleep 20' receipt rode xray's pump — paying
+        // with the PUMP's id missed the row, the debt kept counting,
+        // and the receipt card stamped for the watching tab). The
+        // wire stamp first; the pump's view id only as the
+        // old-bridge fallback.
+        session: ev.session ?? _viewSid,
       );
       return;
     }
@@ -773,9 +779,11 @@ class BridgeTurn {
       // frame still learns the work exists). The `finished` receipt
       // retires it; the heartbeat keeps watching for the UNPROMPTED
       // report turn meanwhile.
-      // +279: the debt is stamped for the conversation that launched
-      // it — the pump's own view id, not wherever the seat drifts.
-      turn.noteAgentWork(ev.detail, sid: _viewSid ?? ev.session);
+      // +279→+279.1: the debt is stamped for the conversation that
+      // launched it — and the WIRE STAMP is the authority (the frame
+      // says whose stream it rode, +274); the pump's view id is only
+      // the fallback for a bridge too old to stamp.
+      turn.noteAgentWork(ev.detail, sid: ev.session ?? _viewSid);
       // +170: the harness backgrounded a shell — a tool IS running,
       // whatever the last message's message_stop said.
       ticker.markToolStep();

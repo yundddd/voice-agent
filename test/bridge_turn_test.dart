@@ -140,8 +140,9 @@ class EnvProbe {
       lastReceiptId = taskId; // +186: the frame's task id rides the seam
       retiredBg.add((d, cancelled));
       // The assistant's law (see _retireBgWork): the promise is paid,
-      // and a lit badge goes with it.
+      // the OWING row settles (+279.1), and a lit badge goes with it.
       coord?.clearBgWork();
+      coord?.payAgentDebt(d, sid: session);
       if (badge) coord?.retireBadgeAndWork();
     },
     parkCutTrace: (e) => parked = e,
@@ -649,6 +650,44 @@ void main() {
         isTrue,
       );
       wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
+    test('+279.1: a receipt seen through ANOTHER conversation\u2019s '
+        'pump pays the owning thread and stamps for it', () async {
+      // The 22:23 tape: voice-agent owed sleep-20 while xray ran a
+      // foreground sleep; voice-agent\u2019s finished frame rode xray\u2019s
+      // pump, the payment tried xray\u2019s ledger row (miss — the debt
+      // kept counting), and the receipt card stamped for xray
+      // (\u2018something from the other session\u2019 on screen).
+      turn.noteWorkOwner('ses-A');
+      turn.noteAgentWork('Bash sleep 20', sid: 'ses-A');
+      probe.seatedNow = 'ses-B'; // the pump belongs to the WATCHER
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 20',
+          session: 'ses-A', // the wire names the debt\u2019s thread
+        ),
+      );
+      await settle();
+      expect(
+        turn.agentWork,
+        isFalse,
+        reason: 'the payment hits the OWNING row, not the watcher\u2019s',
+      );
+      expect(
+        probe.receiptSession,
+        'ses-A',
+        reason: 'and the receipt speaks for ses-A\u2019s thread',
+      );
+      wire.add(const BridgeEvent.forTest('done'));
       await r;
       out.complete();
       await settle();
