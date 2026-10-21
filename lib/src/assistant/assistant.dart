@@ -1239,10 +1239,16 @@ class VoiceAssistant extends ChangeNotifier {
     // shape: A working, swipe to B — row gone, correct; swipe back to
     // A — the old capture overwrote the marker with B, orphaning the
     // box again, and a further swipe to B showed it thinking there).
+    // +276: _turn.agentWork joins the capture — a turn that CLOSED
+    // politely while leaving an owed background shell is still live
+    // work with a home to sign for (the sleep-15 tape: the capture
+    // read 'no live work', the marker stayed dark, and the spinner
+    // had nothing to ride when the user came back).
     if (_bridgeBusy ||
         _turn.backgrounded ||
         _harnessBackgrounded ||
-        _ticker.isOn) {
+        _ticker.isOn ||
+        _turn.agentWork) {
       // +257: THE TURN KNOWS WHOSE IT IS. A claimed context frame
       // names the conversation the machine holds — sign the marker
       // to THAT, not to the seat (a reattach claim for a stranger's
@@ -1432,6 +1438,10 @@ class VoiceAssistant extends ChangeNotifier {
       if (rest != null) return rest;
     }
     final doomed = prefs.tabs.removeAt(index);
+    // +276: a deleted conversation retires the banner IT owed —
+    // nothing will ever report a backgrounded shell whose thread
+    // the user threw away.
+    _turn.retireIfOwned({...doomed.sessionIds, ChatStore.pendingSession});
     _chat.removeSessions({
       ...doomed.sessionIds,
       ChatStore.pendingSession, // its nameless birth turn goes too
@@ -1597,18 +1607,22 @@ class VoiceAssistant extends ChangeNotifier {
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
-        missedNow == 0) {
+        missedNow == 0 &&
+        _healthSpeaksForBadge(h, 'health')) {
       // None-detached AND nothing unheard is proof for EVERY owed
       // shell at once (+140): capture the ledger before the
       // retirement clears it and file one period per name — the chat
       // states what finished, not what the banner happened to be
       // wearing.
       final paid = _turn.agentDebts;
+      // +276: the receipt cards belong to the conversation that owed
+      // the work — capture its name BEFORE the retirement clears it.
+      final ownedBy = _turn.workOwner;
       _turn.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: health — nothing open, none detached');
       notifyListeners();
       for (final shell in paid) {
-        _bgFinishedBubble(shell);
+        _bgFinishedBubble(shell, session: ownedBy);
       }
     } else if (h != null &&
         showsBackgroundedWork &&
@@ -1628,6 +1642,30 @@ class VoiceAssistant extends ChangeNotifier {
     // lit starts the heartbeat: +133's agent-backgrounded work reports
     // UNPROMPTED, and an idle phone has no other channel to hear it.
     if (showsBackgroundedWork) _scheduleBgProbe();
+  }
+
+  /// +276: does THIS /health report speak for the conversation the
+  /// banner owes its work to? A /health names the SEAT — it can only
+  /// prove absence in the conversation it describes. The badge's home
+  /// is the conversation its own stream stamped (the pump's owner, or
+  /// the away marker). Different conversations, different truths: a
+  /// clean report from tab B must never retire tab A's spinner —
+  /// the field tape (21:38:28): swiping to an idle tab filed
+  /// 'Bash sleep 15 finished.' two seconds into the sleep and took
+  /// the backgrounded-work line with it, so coming home showed a
+  /// stale band and no box. No owner known (pre-tab worlds, bridges
+  /// that name nothing) keeps the old global proof.
+  bool _healthSpeaksForBadge(Map<String, Object>? h, String door) {
+    final badgeOwner = _turn.workOwner ?? _turnHomeSid;
+    if (badgeOwner == null) return true;
+    final speaks = h?['sessionId'];
+    if (speaks is String && speaks == badgeOwner) return true;
+    _logDebug(
+      'bg line holds: $door said clean for '
+      '${speaks is String ? '${speaks.substring(0, 8)}…' : 'an unnamed seat'}, '
+      'the badge belongs to ${badgeOwner.substring(0, 8)}…',
+    );
+    return false;
   }
 
   // ── The background line's heartbeat (0.1.0+133) ────────────────────────
@@ -1664,13 +1702,18 @@ class VoiceAssistant extends ChangeNotifier {
     if (h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
-        missed == 0) {
+        missed == 0 &&
+        // +276: the heartbeat asks /health — the SAME scoped proof
+        // applies: while the user reads another tab, a clean report
+        // about THAT conversation is silence about this debt.
+        _healthSpeaksForBadge(h, 'idle probe')) {
       final paid = _turn.agentDebts; // one period per owed shell (+140)
+      final ownedBy = _turn.workOwner; // +276: stamp before retiring
       _turn.retireBadgeAndWork();
       _logDebug('bg line retired: idle probe — nothing open, none detached');
       notifyListeners();
       for (final shell in paid) {
-        _bgFinishedBubble(shell);
+        _bgFinishedBubble(shell, session: ownedBy);
       }
       return;
     }
@@ -1754,6 +1797,10 @@ class VoiceAssistant extends ChangeNotifier {
     String who, {
     bool cancelled = false,
     String taskId = '',
+    // +276: the thread the receipt belongs to — the badge's owner
+    // when a scoped proof pays it, never wherever the seat happens
+    // to sit when the payment lands.
+    String? session,
   }) {
     if (who.isEmpty) return;
     // +186: the strict dedup — the TASK's own id. A task finishes
@@ -1778,6 +1825,7 @@ class VoiceAssistant extends ChangeNotifier {
       cancelled: cancelled,
       receipt: true,
       receiptId: taskId,
+      session: session,
     );
     _logDebug(
       'msg bg done: "$who" ${cancelled ? 'cancelled' : 'finished'} '
@@ -2701,6 +2749,10 @@ class VoiceAssistant extends ChangeNotifier {
           if (tab == null) {
             _chat.clearAll();
           } else {
+            // +276: the thread this tab had is gone — any banner it
+            // owed dies with it (a shell still running in a erased
+            // conversation has no ear to report to).
+            _turn.retireIfOwned({...tab.sessionIds, ChatStore.pendingSession});
             _chat.removeSessions({...tab.sessionIds, ChatStore.pendingSession});
             tab.sessionIds.clear();
             unawaited(_saveBridgePrefs());

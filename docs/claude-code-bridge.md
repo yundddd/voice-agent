@@ -329,6 +329,42 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## A health report speaks only for the conversation it describes (shipped +276)
+
+The field tape (21:38, two tabs): tab A ran *"sleep 15 in the
+background"*; the turn closed politely leaving `agent backgrounded
+"Bash sleep 15" — banner lit`; the user swiped to idle tab B; and
+B's clean /health retired the banner GLOBALLY — filing the lie
+*"Bash sleep 15 finished."* two seconds into the sleep, clearing the
+badge, and leaving the swipe home with a stale band and no spinner
+box. The capture that signs the work's home didn't help: it only
+fires for busy/badge/ticker flags, and an owed-but-closed turn has
+none of those.
+
++276 makes the away-work ledger a conversation's own:
+
+- **Owner freeze.** `noteWorkOwner` re-names the machine only while
+  the ledger is dark. A debt stamped by its stream KEEPS its home;
+  the next claim (in whatever tab the user typed) neither un-names
+  it (`claimSlot` gates too) nor inherits it. When the last label
+  pays (`payAgentDebt`, `clearBgWork`, `retireBadge`) the machine is
+  ownerless again and the next stream claims it.
+- **Scoped proof.** Both retirement nets (the /health safety net and
+  the bg-line heartbeat) run `_healthSpeaksForBadge`: a clean report
+  retires the banner only if it names the badge's own conversation
+  (no owner known = pre-tab worlds keep the old global proof). The
+  hold is journalled: `bg line holds: health said clean for
+  <seat>…, the badge belongs to <owner>…`.
+- **Capture sees debts.** The swipe-away marker capture includes
+  `_turn.agentWork`, so a closed turn with an owed background shell
+  still signs its home — the box has something to ride on the way
+  back.
+- **Owned receipts.** The period-cards the nets file are stamped
+  for the badge's owner, not the seat the payment landed on.
+- **Gone means gone.** Deleting a tab or /new-ing a thread retires
+  the banner IT owed (`retireIfOwned`) — no orphan line haunting
+  other tabs forever.
+
 ## Sessions are isolated worlds (shipped +275)
 
 Tim's law, from the two-session tape: *each session works as a single

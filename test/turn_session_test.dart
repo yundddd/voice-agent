@@ -386,6 +386,53 @@ void main() {
       expect(turn.since, since);
     });
 
+    test('+276: an owed badge keeps its conversation — a later claim '
+        'or a later tab\u2019s context frame cannot re-name it', () {
+      turn.claimSlot();
+      turn.noteWorkOwner('ses-A');
+      turn.noteAgentWork('Bash sleep 15');
+      // The user moves to tab B and starts a fresh turn THERE while
+      // A's shell is still owed (the 21:38 tape, one beat later).
+      turn.claimSlot();
+      expect(
+        turn.workOwner,
+        'ses-A',
+        reason: 'the claim must not un-name a ledger that still owes',
+      );
+      turn.noteWorkOwner('ses-B');
+      expect(
+        turn.workOwner,
+        'ses-A',
+        reason:
+            '+276: the badge\u2019s home does not move to whoever spoke '
+            'last \u2014 otherwise B\u2019s own clean health retires '
+            'A\u2019s sleep mid-flight',
+      );
+      // The debt pays, the ledger goes dark — and ONLY now is the
+      // machine ownerless again.
+      turn.payAgentDebt('Bash sleep 15');
+      expect(turn.workOwner, isNull);
+      turn.noteWorkOwner('ses-B');
+      expect(turn.workOwner, 'ses-B', reason: 'free to name again');
+    });
+
+    test('+276: retireIfOwned buries the banner only with the '
+        'conversation that owed it', () {
+      turn.claimSlot();
+      turn.noteWorkOwner('ses-A');
+      turn.noteAgentWork('Bash sleep 15');
+      expect(turn.retireIfOwned({'ses-B'}), isFalse);
+      expect(
+        turn.agentWork,
+        isTrue,
+        reason: 'another tab dying says nothing about this debt',
+      );
+      expect(turn.retireIfOwned({'ses-A'}), isTrue);
+      expect(turn.agentWork, isFalse, reason: 'the thread is gone');
+      expect(turn.bgWork, isEmpty);
+      expect(turn.workOwner, isNull);
+    });
+
     test('retireBadge keeps the snapshot; retireBadgeAndWork blanks it', () {
       turn.markBackgrounded();
       turn.noteToolStep('Bash sleep 60…');

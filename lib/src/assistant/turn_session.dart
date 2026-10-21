@@ -194,7 +194,41 @@ final class TurnCoordinator {
   // someone else's thoughts).
   String? _workOwner;
   String? get workOwner => _workOwner;
-  void noteWorkOwner(String sid) => _workOwner = sid;
+  void noteWorkOwner(String sid) {
+    // +276: THE BADGE'S HOME DOES NOT MOVE. While unheard work is
+    // owed, the owner its own stream stamped stands — a later turn's
+    // context frame from another tab re-names nothing. (Unpaid debts
+    // have no other proof of where they live, and an owner that
+    // drifts to the newest tab hands every clean health report the
+    // license to retire a stranger's work — the 21:38:28 tape: a
+    // clean probe of tab 1 filed 'Bash sleep 15 finished.' two
+    // seconds into the sleep.) Once the ledger is dark, the machine
+    // is unnamed again and the next stream claims it freely.
+    if (_workOwner == null ||
+        (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty)) {
+      _workOwner = sid;
+    }
+  }
+
+  /// +276: every payment path funnels here — when the LAST owed
+  /// label settles and no badge stands, the machine is genuinely
+  /// ownerless again and the next turn's frames re-name it.
+  void _releaseOwnerIfDark() {
+    if (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty) {
+      _workOwner = null;
+    }
+  }
+
+  /// +276: the conversation that OWED the banner is gone (its tab
+  /// deleted, or /new wiped its thread): the debt dies with it —
+  /// no receipt bubble (nothing will ever report it), no banner.
+  /// Returns true when the badge belonged to one of [ids].
+  bool retireIfOwned(Iterable<String> ids) {
+    final o = _workOwner;
+    if (o == null || !ids.contains(o)) return false;
+    retireBadgeAndWork(); // also releases the owner (see below)
+    return true;
+  }
   // on the bridge with no ear on it: the terminal badge stays lit until
   // a heard turn starts, /stop lands, or a probe proves nothing open.
   DateTime? _since; // wall clock the in-flight bridge turn started
@@ -268,7 +302,14 @@ final class TurnCoordinator {
   int claimSlot() {
     _seq++;
     _busy = true;
-    _workOwner = null; // +257: a new claim is unnamed until a frame says whose
+    // +257: a new claim is unnamed until a frame says whose — but
+    // +276: only while nothing is owed. A badge or an unpaid debt
+    // already names ITS conversation; the next turn (in whatever tab
+    // the user typed it) must not inherit that owner, nor later
+    // condemn it with its own clean health.
+    if (!_backgrounded && !_detachedPromise && _agentDebts.isEmpty) {
+      _workOwner = null;
+    }
     return _seq;
   }
 
@@ -339,6 +380,7 @@ final class TurnCoordinator {
   String payAgentDebt(String label) {
     _agentDebts.remove(label);
     _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+    _releaseOwnerIfDark(); // +276
     return _bgWork;
   }
 
@@ -399,6 +441,7 @@ final class TurnCoordinator {
     // The SNAPSHOT goes; an owed process does not (+140) — the ledger
     // re-labels the line, and only a real payment clears a debt.
     _bgWork = _agentDebts.isNotEmpty ? _agentDebts.last : '';
+    _releaseOwnerIfDark(); // +276
   }
 
   /// The badge goes out and the clock stops, but the snapshot is KEPT:
@@ -409,6 +452,7 @@ final class TurnCoordinator {
     _pttPressPending = false; // the badge is gone; the verdict is moot
     _since = null;
     _detachedPromise = false; // no badge, no promise: work proven over
+    _releaseOwnerIfDark(); // +276
   }
 
   /// Badge out, clock stopped, snapshot blanked: retired work is not
@@ -418,6 +462,7 @@ final class TurnCoordinator {
     retireBadge();
     _bgWork = '';
     _agentDebts.clear(); // retired work is not owed work any more
+    _workOwner = null; // +276: nothing owed — the next stream names it
   }
 
   /// The Stop chip over a DETACHED turn: /stop lands on invisible work
