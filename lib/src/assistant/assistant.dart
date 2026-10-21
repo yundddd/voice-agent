@@ -1228,7 +1228,15 @@ class VoiceAssistant extends ChangeNotifier {
         _turn.backgrounded ||
         _harnessBackgrounded ||
         _ticker.isOn) {
-      if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
+      // +257: THE TURN KNOWS WHOSE IT IS. A claimed context frame
+      // names the conversation the machine holds — sign the marker
+      // to THAT, not to the seat (a reattach claim for a stranger's
+      // work used to sign it to the watching tab and orphan the real
+      // home). Unstamped (a bridge too old to name sessions): the
+      // +251 seat-presumption, guard included.
+      if (_turn.workOwner != null) {
+        _turnHomeSid = _turn.workOwner;
+      } else if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
         _turnHomeSid = _sessionId;
       }
       // +255: the capture's whole input set, journalled (the +247
@@ -1238,9 +1246,24 @@ class VoiceAssistant extends ChangeNotifier {
       // destination).
       _logDebug(
         'work home: busy=$_bridgeBusy detached=${_turn.backgrounded} '
-        'ticker=${_ticker.isOn} -> marker=${_turnHomeSid ?? '-'} '
-        'seat=${_sessionId ?? 'unnamed'}',
+        'ticker=${_ticker.isOn} owner=${_turn.workOwner ?? '-'} '
+        '-> marker=${_turnHomeSid ?? '-'} seat=${_sessionId ?? 'unnamed'}',
       );
+      // +257 (Tim's law, round three): LEAVING IS DROPPING. The
+      // barge-in doctrine — 'for barge in just drop' — is the tab
+      // switch's too: every word still queued for the conversation
+      // being left dies unheard (its mid was TAKEN at the take, so
+      // the return's mail fetch files it silently and never re-
+      // speaks it), and the speaker falls silent at once. An
+      // in-audio cut with no trace is the one thing the barge-in
+      // spec forbids, so the drop is named.
+      if (_reply.playing || _reply.queuedCount > 0) {
+        _logDebug(
+          'switch: ear let go — ${_reply.queuedCount} queued '
+          'block(s) dropped unheard',
+        );
+        _reply.stopPlayback();
+      }
       // The bar belongs to the conversation, like the row: blank it
       // now; /health's owner gate keeps it honest until the seated
       // conversation's own turn names a size (/mergeContext ignores
@@ -2024,8 +2047,17 @@ class VoiceAssistant extends ChangeNotifier {
     bool parkBehind = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
-    // +249: a turn the SEAT starts is by definition at home here.
-    _turnHomeSid = null;
+    // +249→+257: a turn the SEAT starts is at home here — but ONLY
+    // where that was already true. A marker naming ANOTHER
+    // conversation is backgrounded work, and work does not change
+    // homes because this tab decided to speak (the xray volley:
+    // typing in x-ray cleared claude's marker, and the next reattach
+    // of claude's turn lit the wrong tab's box). The away marker
+    // retires on proof: the done of THAT conversation's own view
+    // (see noteWorkHome).
+    if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
+      _turnHomeSid = null;
+    }
     final gateway = _gateway;
     if (gateway == null) {
       _fail('No bridge — open the terminal icon and set url + token.');
@@ -2245,6 +2277,17 @@ class VoiceAssistant extends ChangeNotifier {
     isHeard: _heard.isHeard,
     commitHeard: _heard.commit,
     focusAtMs: () => _chan.focusAtMs, // +253: the channel keeps the time
+    // +257: DONE IS THE PROOF — the away marker retires when the
+    // conversation it guards says its period, and not one frame
+    // earlier: a swipe, a supersede, or an age-out must never orphan
+    // work that is still thinking.
+    noteWorkHome: (sid) {
+      if (_turnHomeSid == sid) {
+        _turnHomeSid = null;
+        _logDebug('work home: done — marker retired, every tab its '
+            'own face again');
+      }
+    },
     turnOpenOnWire: () async {
       final h = await _gateway?.healthInfo();
       return h != null && h['turnOpen'] == true;

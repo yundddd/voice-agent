@@ -202,8 +202,13 @@ void main() {
     late FakeHarness harness;
     late VoiceAssistant a;
     // +253: the engine is captured, not inline — the watermark walks
-    // read what it was (and was NOT) given a voice for.
+    // read what it was (and was NOT) given a voice for. +257: the
+    // player too — 'leaving is dropping' counts its stops.
     late FakeSpeechEngine engine;
+    late FakeAudioOutput out;
+    // +257: the scheduler too — audio reaching the player is one
+    // advanced tick deep (the pump runs on the clock, not microtasks).
+    late FakeScheduler time;
 
     setUp(() async {
       harness = FakeHarness();
@@ -215,12 +220,13 @@ void main() {
         'seat': true,
       };
       engine = FakeSpeechEngine();
+      out = FakeAudioOutput();
       a = VoiceAssistant(
         worker: engine,
         micSource: FakeMic(),
-        audioOutput: FakeAudioOutput(),
+        audioOutput: out,
         gatewayFactory: (_, _) => harness,
-        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        scheduler: time = FakeScheduler(DateTime(2026, 1, 1, 12)),
         clock: () => DateTime(2026, 1, 1, 12),
       );
       await a.setBridge(url: 'http://harness.test', token: 'tok');
@@ -650,6 +656,125 @@ void main() {
       );
       expect(a.view.showWorkingRow, isFalse);
       harness.finishView();
+    });
+
+    test('+257: leaving drops the audio; the claimed turn names its own '
+        'home; and the done retires the marker', () async {
+      // The volley's closing three, in one field shape: (1) the swipe
+      // away CUTS the speaker mid-sentence and flushes what was queued
+      // — barge-in's drop law, journalled, nothing untraceable; (2) a
+      // mail fetch on the watching tab claims the BACKGROUNDed turn —
+      // its context frame names the real conversation, and the marker
+      // signs to THAT, never to the seat whose slot lit up; (3) the
+      // away turn's done retires the marker — proof, not age.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // Work in X, heard: a paragraph reaches the speaker (the fake
+      // player holds the chunk — audio is ON AIR).
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 300,
+          contextWindow: 500,
+          ctxSession: 'ses-X',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'mid sentence', mid: 31),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50)); // the pump delivers
+      await settle();
+      expect(out.playing, isTrue, reason: 'audio on air before the swipe');
+      // THE SWIPE: speaker cut, queue flushed, drop journalled.
+      harness.healthState = {...harness.healthState!, 'missed': 1};
+      expect(await a.switchSession(1), isNull);
+      await settle();
+      expect(
+        out.stopCount,
+        greaterThan(0),
+        reason: 'leaving is dropping — mid-sentence, no ceremony',
+      );
+      expect(out.playing, isFalse);
+      expect(
+        a.view.turnHomeHere,
+        isFalse,
+        reason: 'the STATED owner (ses-X) holds the marker, not the seat',
+      );
+      // X keeps streaming into its still-open view while Y is on
+      // screen (the switch dropped the AUDIO, not the subscription):
+      // the busy slot is lit for a stranger right here on Y — this is
+      // the shape the sharing bug wore. The view's frames keep naming
+      // ses-X, so the marker holds, and Y stays a quiet audience.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 320,
+          contextWindow: 500,
+          ctxSession: 'ses-X',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'away words stream on', mid: 32),
+      );
+      await settle();
+      expect(
+        engine.synthesized,
+        isNot(contains('away words stream on')),
+        reason: 'the conversation you left speaks into its thread, mute',
+      );
+      expect(
+        a.view.turnHomeHere,
+        isFalse,
+        reason: 'a lit busy slot on the watching tab may not move the marker',
+      );
+      expect(a.view.showWorkingRow, isFalse, reason: 'no borrowed box on Y');
+      // The reattach path itself is inert while the view is heard —
+      // nothing to steal when the ear never let go.
+      expect(await a.reattachBackgroundTurn(), isFalse);
+      // COME HOME: the stated owner re-signs the marker on the way
+      // (owner beats seat), and arrival finds the box at its door.
+      expect(await a.switchSession(0), isNull);
+      await settle();
+      expect(
+        a.view.turnHomeHere,
+        isTrue,
+        reason: 'the work was always ses-X\'s — coming back proves it',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason: 'home, still working: the box is lit where it belongs',
+      );
+      // PROOF RETIRES IT: X's turn says its period (heard now — it
+      // speaks like any live answer).
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('work home: done — marker retired')),
+        isTrue,
+        reason: 'the farewell retires the marker, and says so',
+      );
     });
 
     test('+256: the unnamed destination is a reset — a mid-turn swipe '

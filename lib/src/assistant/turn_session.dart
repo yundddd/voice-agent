@@ -184,6 +184,17 @@ final class TurnCoordinator {
   int _seq = 0; // busy-slot ownership token (each turn claims its own)
   bool _busy = false; // a bridge turn is in flight (chips disabled)
   bool _backgrounded = false; // a turn the phone detached keeps working
+  // +257: WHOSE turn the machine currently holds. Every `context`
+  // frame names its conversation (the bridge's ctxOwner stamp) — the
+  // stated truth beats any inference from which tab is looking, and
+  // it is what the seat's marker capture signs on: backgrounded work
+  // goes home to the conversation that OWNS it, never to whichever
+  // tab's claim happened to light the busy slot (the xray volley's
+  // last sharing bug: a mail fetch on the wrong tab lit the box for
+  // someone else's thoughts).
+  String? _workOwner;
+  String? get workOwner => _workOwner;
+  void noteWorkOwner(String sid) => _workOwner = sid;
   // on the bridge with no ear on it: the terminal badge stays lit until
   // a heard turn starts, /stop lands, or a probe proves nothing open.
   DateTime? _since; // wall clock the in-flight bridge turn started
@@ -257,6 +268,7 @@ final class TurnCoordinator {
   int claimSlot() {
     _seq++;
     _busy = true;
+    _workOwner = null; // +257: a new claim is unnamed until a frame says whose
     return _seq;
   }
 

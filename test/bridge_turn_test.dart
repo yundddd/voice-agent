@@ -79,6 +79,9 @@ class EnvProbe {
   int focusMs = 0;
   String? seatedNow;
 
+  /// +257: every done-driven marker retirement the pump reported.
+  final List<String> workHomed = [];
+
   BridgeTurnEnv get env => BridgeTurnEnv(
     mode: () => mode,
     backgrounded: () => backgrounded,
@@ -143,6 +146,7 @@ class EnvProbe {
     commitHeard: took.add,
     focusAtMs: () => focusMs,
     seatedSession: () => seatedNow,
+    noteWorkHome: workHomed.add,
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);
@@ -477,6 +481,11 @@ void main() {
         ),
         isTrue,
         reason: 'the ctx frame named the conversation; the gate read it',
+      );
+      expect(
+        probe.workHomed,
+        ['ses-newborn'],
+        reason: '+257: the done of the named conversation retires its marker',
       );
     });
 

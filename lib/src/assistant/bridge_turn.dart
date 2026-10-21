@@ -115,6 +115,7 @@ final class BridgeTurnEnv {
     required this.isHeard,
     required this.commitHeard,
     required this.focusAtMs,
+    required this.noteWorkHome,
   });
 
   final InteractionMode Function() mode;
@@ -240,6 +241,12 @@ final class BridgeTurnEnv {
   /// that is NOT the seated one is out-of-earshot work, whatever its
   /// age — the gear badge is its sign, the thread is its delivery.
   final int Function() focusAtMs;
+
+  /// +257: this view's conversation finished its turn (a done of
+  /// _viewSid's own, not an age-out): the assistant retires that
+  /// conversation's away-marker — backgrounded work is only background
+  /// until it isn't.
+  final void Function(String sid) noteWorkHome;
 
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
@@ -504,7 +511,13 @@ class BridgeTurn {
       // a birth turn's view learns its own identity here, and the
       // focus gate below can finally tell 'mine' from 'the one you
       // left' even for streams that opened nameless.
-      if (ev.ctxSession != null) _viewSid = ev.ctxSession;
+      if (ev.ctxSession != null) {
+        _viewSid = ev.ctxSession;
+        // +257: the same stamp teaches the COORDINATOR whose turn the
+        // machine holds — the seat marker signs THAT, not whichever
+        // tab is looking.
+        turn.noteWorkOwner(ev.ctxSession!);
+      }
       // +249: the bar belongs to the conversation it is seated on. A
       // context frame from a backgrounded thread updates the METER
       // (that turn's own ledger keeps its truth) but not the BAR of a
@@ -886,6 +899,14 @@ class BridgeTurn {
 
   void _teardown(PumpOutcome outcome) {
     _pulse?.cancel(); // no pulse outliving its turn
+    // +257: DONE IS THE PROOF. A view that watched its conversation's
+    // turn close retires that conversation's seat marker — backgrounded
+    // work has an end, and from the farewell on, every tab is its own
+    // face again (never an age-out, never a swipe: the turn's own
+    // period). A view that died without one keeps the marker: the work
+    // is still running somewhere, and the reattach chain is going to
+    // get it.
+    if (outcome.sawDone && _viewSid != null) env.noteWorkHome(_viewSid!);
     // The pointer may have moved during this turn (a death-resume
     // forks; /new cleared it): re-read it after the bridge's result
     // event has written the sid file, so every exit path of every
