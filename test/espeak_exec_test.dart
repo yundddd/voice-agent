@@ -4,10 +4,40 @@
 // data dir as the shipped binaries (host build, --ipa, file arg).
 // If the fold or the vocabulary drifts, the students drift with it —
 // this file is the drift alarm.
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/speech/espeak_exec.dart';
 
 void main() {
+  group('asset wiring', () {
+    // +239: the first phone build died on 'Unable to load asset
+    // assets/espeak-data/lang/gmw/en' — Flutter directory entries pack
+    // ONLY the files directly inside them, so a subtree needs its own
+    // pubspec line. This walk replays those exact semantics over the
+    // real pubspec.yaml: whatever espeak_exec.dart asks rootBundle for
+    // must be inside what the bundler would have packed.
+    test('every espeak asset file is covered by a pubspec entry', () {
+      final pubspec = File('pubspec.yaml').readAsStringSync();
+      final declared = RegExp(r'^\s+- (assets\S+/)$', multiLine: true)
+          .allMatches(pubspec)
+          .map((m) => m.group(1)!)
+          .toSet();
+      // What a directory entry ACTUALLY bundles: plain files one deep.
+      final bundled = <String>{
+        for (final dir in declared)
+          if (Directory(dir).existsSync())
+            for (final e in Directory(dir).listSync())
+              if (e is File) '$dir${e.uri.pathSegments.last}',
+      };
+      for (final rel in espeakAssetFiles) {
+        final asset = '$espeakAssetPrefix/$rel';
+        expect(File(asset).existsSync(), isTrue, reason: '$asset missing');
+        expect(bundled, contains(asset), reason: '$asset declared nowhere');
+      }
+    });
+  });
+
   group('foldEspeakEn', () {
     test('diphthongs collapse to the trained singletons', () {
       expect(foldEspeakEn('aʊ'), 'W'); // sound's OW, the "sown" bug
