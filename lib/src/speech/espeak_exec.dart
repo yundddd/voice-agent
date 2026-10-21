@@ -151,26 +151,20 @@ class EspeakExec {
   /// Raw espeak IPA for [text]. Throws TitlException naming stderr —
   /// a student whose voice front-end died must name it, not whisper.
   String ipa(String text) {
-    final tmpDir = Directory.systemTemp.createTempSync('va_espeak_');
-    final tmp = File('${tmpDir.path}/input.txt');
-    try {
-      tmp.writeAsStringSync(text);
-      final r = Process.runSync(
-        binPath,
-        // --stdin keeps argv free of the text; -w drops the (unused)
-        // synthesis to /dev/null so --ipa is the only thing on stdout.
-        ['-v', 'en-us', '--ipa', '-w', '/dev/null', tmp.path],
-        environment: {'ESPEAK_DATA_PATH': dataDir},
-      );
-      if (r.exitCode != 0) {
-        throw EspeakException(
-          'espeak exec failed (${r.exitCode}): ${r.stderr}',
-        );
-      }
-      return (r.stdout as String).replaceAll('\n', ' ').trim();
-    } finally {
-      tmpDir.deleteSync(recursive: true);
+    // The text rides argv, not a temp file: espeak's bare argument IS
+    // the text (-f is the file input, and a file path passed bare is
+    // spoken as the first thing you hear — the shipped build's first
+    // field report: every reply prefaced by '/tmp/dart-…/input.txt').
+    // -w still drops the synthesis to /dev/null so --ipa owns stdout.
+    final r = Process.runSync(
+      binPath,
+      ['-v', 'en-us', '--ipa', '-w', '/dev/null', text],
+      environment: {'ESPEAK_DATA_PATH': dataDir},
+    );
+    if (r.exitCode != 0) {
+      throw EspeakException('espeak exec failed (${r.exitCode}): ${r.stderr}');
     }
+    return (r.stdout as String).replaceAll('\n', ' ').trim();
   }
 
   /// IPA string → synth-ready phonemes (fold, alias, vocab-filter,
