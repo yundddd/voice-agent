@@ -595,7 +595,7 @@ void main() {
           ),
         ),
       );
-      expect(find.text('context 21.00k / 200.00k · 11%'), findsOne);
+      expect(find.text('context 21.00k/200.00k 11%'), findsOne);
     });
 
     testWidgets('no numbers yet, harness working: measuring', (tester) async {
@@ -626,7 +626,7 @@ void main() {
         ),
       );
       expect(
-        find.text('aliyun/qwen3.8-flash · context 21.00k / 200.00k · 11%'),
+        find.text('aliyun/qwen3.8-flash · context 21.00k/200.00k 11%'),
         findsOne,
         reason:
             'the bar the eye checks for context is the one line '
@@ -647,7 +647,7 @@ void main() {
           ),
         ),
       );
-      expect(find.text('context 21.00k / 200.00k · 11%'), findsOne);
+      expect(find.text('context 21.00k/200.00k 11%'), findsOne);
     });
   });
 

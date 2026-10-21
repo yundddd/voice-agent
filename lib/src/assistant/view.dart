@@ -115,11 +115,16 @@ final class ContextBarView {
   /// The one-line readout; 'measuring…' until a `result` names a number.
   String get label {
     final pct = frac * 100;
+    // +285 (Tim, 'the percentage is cut off'): the numbers ride a
+    // bare slash and the percent hangs off a single space — no dotted
+    // padding around either — so the sentence ends in its percent on
+    // one row instead of ellipsizing it away. (The percent sign is
+    // its own delimiter; it needs no dots to be read.)
     final body = tokensIn == 0
         ? 'context · measuring…'
         : frac > 0
-        ? 'context ${fmtTokenCount(tokensIn)} / ${fmtTokenCount(window)} '
-              '· ${pct >= 10 ? pct.toStringAsFixed(0) : pct.toStringAsFixed(1)}%'
+        ? 'context ${fmtTokenCount(tokensIn)}/${fmtTokenCount(window)} '
+              '${pct >= 10 ? pct.toStringAsFixed(0) : pct.toStringAsFixed(1)}%'
         : 'context ${fmtTokenCount(tokensIn)} · window unknown';
     final m = model;
     return (m == null || m.isEmpty) ? body : '$m · $body';

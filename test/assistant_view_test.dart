@@ -697,7 +697,7 @@ void main() {
         );
         await settle();
         expect(a.view.context.tokensIn, 21000);
-        expect(a.view.context.label, contains('21.00k / 200.00k'));
+        expect(a.view.context.label, contains('21.00k/200.00k'));
       },
     );
   });
