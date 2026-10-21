@@ -329,6 +329,71 @@ void main() {
       expect(a.view.tabIndex, 1); // and the view stayed put
     });
 
+    test('unheard messages rest the seat — a tab verb may not eat the backlog',
+        () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      await a.createSession(harness: 'claude', dir: '/proj-y');
+      harness.healthState = {...harness.healthState!, 'missed': 2};
+      final before = harness.seatCalls.length;
+      expect(await a.switchSession(0),
+          'the bridge owes unheard messages — they land first');
+      expect(
+        await a.createSession(harness: 'claude', dir: '/proj-z'),
+        'the bridge owes unheard messages — they land first',
+      );
+      expect(harness.seatCalls.length, before,
+          reason: 'a seat move resets the conversation — over the '
+              'unplayed backlog that would silently eat unseen messages');
+      expect(a.view.tabIndex, 1); // stayed put, honestly
+      // The tap that was refused armed the drain; the replay lands
+      // (missed goes to 0) and the very next switch moves.
+      harness.healthState = {...harness.healthState!}..remove('missed');
+      expect(await a.switchSession(0), isNull);
+      expect(a.view.tabIndex, 0);
+    });
+
+    test('the boot reconcile holds while a replay is owed, reconciles after',
+        () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      // The seat moved out of band AND the bridge owes frames: the
+      // reconcile must wait for the mail, not resetConversation it.
+      harness.healthState = <String, Object?>{
+        ...harness.healthState!,
+        'harness': 'claude', 'dir': '/elsewhere',
+        'sessionId': 'ses-stranger', 'missed': 3,
+      };
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      expect(harness.seatCalls.length, 1); // create only — reconcile held
+      // The replay lands (whatever path clears the backlog): the
+      // NEXT glance reconciles, no re-boot needed.
+      harness.healthState = {...harness.healthState!}..remove('missed');
+      await a.setBridgeModel('default'); // any awaited refresh path
+      await settle();
+      expect(harness.seatCalls.length, 2);
+      expect(harness.seatCalls.last['dir'], '/proj-x');
+    });
+
+    test('a tab switch restores the FULL thread — everything it ever spoke',
+        () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('seen in X', bubble: 'seen in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      final tabXCount = a.view.chat.length;
+      await a.createSession(harness: 'claude', dir: '/proj-y');
+      await settle();
+      await a.switchSession(0);
+      expect(a.view.tabIndex, 0);
+      expect(a.view.chat, hasLength(tabXCount)); // whole thread restored
+      expect(a.view.chat.any((e) => e.blocks.contains('seen in X')), isTrue);
+    });
+
     test('a bridge without the seat flag refuses the verb it cannot answer',
         () async {
       await a.createSession(harness: 'opencode', dir: '/proj-x');
@@ -359,6 +424,60 @@ void main() {
       expect(call['fresh'], isTrue); // the tab had no id — fresh is its truth
       expect(harness.seatCalls.length, 2); // create + exactly one re-home
       expect(a.view.tabs.single.harness, 'opencode'); // the ledger held
+    });
+  });
+
+  group('fling law (assistant-side)', () {
+    late FakeHarness harness;
+    late VoiceAssistant a;
+
+    setUp(() async {
+      harness = FakeHarness();
+      harness.healthState = <String, Object?>{
+        'ok': true, 'claudeUp': true, 'harness': 'claude',
+        'dir': '/proj-a', 'seat': true,
+      };
+      a = VoiceAssistant(
+        worker: FakeSpeechEngine(),
+        micSource: FakeMic(),
+        audioOutput: FakeAudioOutput(),
+        gatewayFactory: (_, _) => harness,
+        scheduler: FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      await a.createSession(harness: 'claude', dir: '/proj-y');
+      await a.switchSession(0);
+    });
+    tearDown(() => a.dispose());
+
+    test('a fling LEFT walks newer and a fling RIGHT walks older', () async {
+      // The screen's gesture math: vx < -450 -> tabIndex+1 when one
+      // exists; vx > 450 -> tabIndex-1, and at the FIRST tab a
+      // rightward fling is the creation popup (asserted at the sheet
+      // group, which pumps the real sheet). Here: the two jumps.
+      expect(a.view.tabIndex, 0);
+      // left (newer): 0 -> 1
+      expect(await a.switchSession(a.view.tabIndex + 1), isNull);
+      expect(a.view.tabIndex, 1);
+      // right (older): 1 -> 0
+      expect(await a.switchSession(a.view.tabIndex - 1), isNull);
+      expect(a.view.tabIndex, 0);
+    });
+
+    test('a restored thread shows every bubble, including ones the tab '
+        'never painted', () async {
+      // File a message into tab 0's thread while tab 1 holds the
+      // view (the shape a late-landing background report takes):
+      // stamped to ses-X, invisible now, VISIBLE when the tab is back.
+      await a.switchSession(1);
+      final v0 = a.view;
+      expect(v0.chat.any((e) => e.blocks.contains('late for X')), isFalse);
+      await a.switchSession(0);
+      expect(a.view.chat.any((e) => e.blocks.contains('late for X')), isFalse,
+          reason: 'nothing filed it yet — the filter only shows the truth');
     });
   });
 

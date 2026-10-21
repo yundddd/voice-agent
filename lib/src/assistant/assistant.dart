@@ -938,7 +938,17 @@ class VoiceAssistant extends ChangeNotifier {
     // and nothing is mid-turn to be killed by the move — put the
     // seat back on the user's tab, once, silently.
     if (!_seatReconciled) {
-      if (h['turnOpen'] == true || h['queued'] == true) return;
+      // The rest law covers the reconcile too: a backlog (missed > 0)
+      // means the bridge still owes this phone a replay — re-seating
+      // now would resetConversation over it and lose the unseen
+      // messages before the resume path can drain them. The flag
+      // stays unspent: the next glance reconciles once the replay
+      // has landed.
+      if (h['turnOpen'] == true ||
+          h['queued'] == true ||
+          ((h['missed'] as num?)?.toInt() ?? 0) > 0) {
+        return;
+      }
       final mismatch = eraNow != tab.harness ||
           h['dir'] != tab.dir ||
           (tab.currentId != null && sid != tab.currentId);
@@ -978,10 +988,40 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
-  /// Create a session — the first-launch answer and the swipe-right
-  /// popup's alike: seat the bridge on (harness, model, folder) with
-  /// a BLANK conversation and append the tab it lives in. Returns the
-  /// failure reason, null on success.
+  /// The seat's rest law (+230, extended by the unseen-message rule):
+  /// no seat VERB (create, switch, boot reconcile) may fire while the
+  /// bridge is mid-turn, mid-queue, or — the new clause — holding a
+  /// BACKLOG of unheard frames (missed > 0). Every seat move runs
+  /// resetConversation, which DROPS that backlog: a swipe past the
+  /// newest tab must not silently eat the answer the phone has not
+  /// read yet, on any tab. The refusal is self-healing: it arms the
+  /// reattach chain NOW (the same +168 mail-fetch, honest dark), so
+  /// the replay lands within a round trip and the next swipe moves.
+  /// Null = free to move; a string is the reason, in words.
+  String? _seatRest(Map<String, Object>? h) {
+    if (h == null) return null; // unreachable: the verb's own error speaks
+    if (h['turnOpen'] == true || h['queued'] == true) {
+      return 'the harness is mid-turn — stop it before switching sessions';
+    }
+    if (((h['missed'] as num?)?.toInt() ?? 0) > 0) {
+      if (!_bridgeBusy &&
+          !_turn.backgrounded &&
+          !_benchCapturing &&
+          !_benchBusy &&
+          _ptt.pointers == 0 &&
+          !_chain.armed) {
+        _chain.start(
+          gen: _generation,
+          seq: _bridgeTurnSeq,
+          firstProbe: Duration.zero,
+        );
+      }
+      return 'the bridge owes unheard messages — they land first';
+    }
+    return null;
+  }
+
+  /// The first-launch / swipe-right creation...
   Future<String?> createSession({
     required String harness,
     String? model,
@@ -989,6 +1029,11 @@ class VoiceAssistant extends ChangeNotifier {
   }) async {
     final g = _gateway;
     if (g == null) return 'bridge not configured — set url and token';
+    // The rest law applies to creation too: /seat resets, and a
+    // reset drops the backlog — unseen messages leave with the seat
+    // that owed them.
+    final rest = _seatRest(await bridgeHealth());
+    if (rest != null) return rest;
     final r = await g.seat(
         harness: harness, dir: dir, model: model, fresh: true);
     if (r == null) {
@@ -1023,9 +1068,8 @@ class VoiceAssistant extends ChangeNotifier {
     if (index == prefs.activeTab.clamp(0, prefs.tabs.length - 1)) return null;
     if (!_seatCap) return 'the bridge is too old to switch sessions';
     final h = await bridgeHealth(); // the FRESH glance, not the cached era
-    if (h != null && (h['turnOpen'] == true || h['queued'] == true)) {
-      return 'the harness is mid-turn — stop it before switching sessions';
-    }
+    final rest = _seatRest(h); // mid-turn, or unheard frames owed
+    if (rest != null) return rest;
     final tab = prefs.tabs[index];
     final r = await g.seat(
       harness: tab.harness,

@@ -53,6 +53,14 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// it leaves.
   bool _sheetUp = false;
 
+  /// The tab strip's own last-painted index (+230): a THREAD CHANGE
+  /// always opens at its newest word — unseen messages are the point
+  /// of coming back — so the stick re-arms and the view lands on the
+  /// tail whatever position the old thread left behind. (Within a
+  /// thread the +192 law stands: the reader's scroll-away is sacred,
+  /// the follow only re-pins a view already resting at the tail.)
+  int _lastPaintedTab = -1;
+
   /// +230: swipe classification for the tab gestures. Tabs live on a
   /// horizontal strip in creation order; a fling LEFT walks NEWER, a
   /// fling RIGHT walks OLDER — and the slot to the LEFT of the first
@@ -557,6 +565,19 @@ class _AssistantScreenState extends State<AssistantScreen>
       SchedulerBinding.instance.addPostFrameCallback((_) async {
         await showSessionSheet(context, a: a);
         if (mounted) _sheetUp = false;
+      });
+    }
+    // +230: the tab changed (or this is the first paint of a ledger)
+    // — land the channel on the NEW thread's newest word, unseen
+    // messages first. jumpTo after the frame: the new thread's extent
+    // is only real once it has been laid out.
+    if (v.tabIndex != _lastPaintedTab) {
+      _lastPaintedTab = v.tabIndex;
+      _stick = true; // the follow owns the tail again, as on any tail growth
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scroll.hasClients) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        }
       });
     }
 
