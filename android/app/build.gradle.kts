@@ -14,6 +14,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // +238: extract native libs to nativeLibraryDir at install — the
+    // ONLY place Android >= 10 will exec() from, and the espeak-ng
+    // child process needs that. Costs a few MB of on-device storage,
+    // buys the GPL boundary drawn at exec instead of at the linker.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.voiceagent.voice_agent"

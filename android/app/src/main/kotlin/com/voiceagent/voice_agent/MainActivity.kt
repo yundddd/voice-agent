@@ -18,6 +18,21 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // The 'voiceagent/runtime' channel: where the app's native
+        // libs were EXTRACTED to — the only directory Android's W^X
+        // rule lets us exec() from (API 29+ blocks exec inside the app
+        // data dir). The student TTS's espeak-ng rides in jniLibs under
+        // a lib*.so name to get that path; see espeak_exec.dart.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "voiceagent/runtime",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "nativeLibDir") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            result.success(applicationInfo.nativeLibraryDir)
+        }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "voiceagent/files",

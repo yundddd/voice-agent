@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../speech/espeak_exec.dart';
 import 'model_unpack.dart';
 
 export 'model_unpack.dart';
@@ -34,6 +35,21 @@ Future<String> unpackModels({ModelProgress? onProgress}) async {
     await vadFile.writeAsBytes(
       vadData.buffer.asUint8List(vadData.offsetInBytes, vadData.lengthInBytes),
     );
+  }
+
+  // +238: the out-of-process espeak's pruned English data (936 KB of
+  // phondata/lang/intonations, assets listed in espeak_exec.dart).
+  // Copied out like silero — versioned by content: a re-shipped asset
+  // tree changes sizes and re-copies on the next launch.
+  for (final rel in espeakAssetFiles) {
+    final dest = File(p.join(modelsDir, espeakDataDirName, rel));
+    final data = await rootBundle.load('$espeakAssetPrefix/$rel');
+    if (!await dest.exists() || dest.lengthSync() != data.lengthInBytes) {
+      await dest.create(recursive: true);
+      await dest.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
+    }
   }
 
   return modelsDir;

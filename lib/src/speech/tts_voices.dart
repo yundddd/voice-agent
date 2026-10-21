@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../models/model_packs.dart';
+import 'espeak_exec.dart';
 import 'kokoro_voices.dart';
 import 'speech_worker.dart' show TtsSpec;
 
@@ -58,11 +59,19 @@ class TtsVoice {
   /// inside the one loaded graph.
   Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
     if (id == 'titl') {
-      // The students speak English off Kokoro's own lexicon files (the
-      // shared tts-lexicon-en pack, or the teacher pack's copies); the
-      // GPL piper_phonemize plugin that used to stand behind them left
-      // the APK with the Italian pair.
-      return titlSpec(modelsDir, sid);
+      // +238: the students' PRIMARY front-end is espeak-ng as a child
+      // process — GPL at arm's length, letter names for APK and TTS
+      // back where the dictionary ladder had none. The nativeLibraryDir
+      // (the only exec-able dir on modern Android) comes from the
+      // platform; where it answers '' (desktop, tests) the lexicon
+      // ladder from +224 stays the fallback voice.
+      final libDir = await nativeLibDir();
+      return titlSpec(
+        modelsDir,
+        sid,
+        espeakBin: libDir.isEmpty ? '' : p.join(libDir, espeakLibName),
+        espeakDataDir: p.join(modelsDir, espeakDataDirName),
+      );
     }
     // English-only wiring (see TtsSpec.kokoro: the Dart binding drops
     // dictDir, so the zh jieba path can't load — us-en + gb-en lexicons
@@ -91,7 +100,12 @@ class TtsVoice {
   /// 'kokoro' voice below) — first readable file wins per word, so
   /// whichever packs a device happens to have are enough, and the
   /// shared pack only downloads when neither file is there yet.
-  TtsSpec titlSpec(String modelsDir, int sid) => TtsSpec.titl(
+  TtsSpec titlSpec(
+    String modelsDir,
+    int sid, {
+    String espeakBin = '',
+    String espeakDataDir = '',
+  }) => TtsSpec.titl(
     titlModels: [
       for (final pack in packs) _f(modelsDir, pack.dirName, 'model.onnx'),
     ].join(','),
@@ -105,6 +119,8 @@ class TtsVoice {
         for (final dir in [_lexDirName, _kokoroDirName])
           _f(modelsDir, dir, file),
     ].join(','),
+    espeakBin: espeakBin,
+    espeakDataDir: espeakDataDir,
     sid: sid,
   );
 

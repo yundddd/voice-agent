@@ -42,10 +42,18 @@ class TtsSpec {
   final String titlModels, titlVocabs;
 
   /// Comma-joined lexicon-us-en/gb-en paths in priority order; the
-  /// first readable file wins per word. No readable file at all is a
-  /// TitlException at synth time, not a silent fallback: the plugin
-  /// that could fall back is gone.
+  /// first readable file wins per word. With the +238 out-of-process
+  /// espeak present (both espeak* fields), this ladder is the
+  /// FALLBACK — desktop smokes and any device that cannot exec; on a
+  /// student whose front-end binary is missing it is still the voice
+  /// and no one is silenced.
   final String lexiconPaths;
+
+  /// +238: the out-of-process espeak-ng — the jniLibs executable path
+  /// (nativeLibraryDir, the only exec-able dir on Android >= 10) and
+  /// the unpacked pruned data root. '' / '' when the binary is not
+  /// (desktop, unit tests): the students fall back to the ladder.
+  final String espeakBin, espeakDataDir;
   final int sid;
 
   const TtsSpec.kokoro({
@@ -58,12 +66,16 @@ class TtsSpec {
   }) : engine = 'kokoro',
        titlModels = '',
        titlVocabs = '',
-       lexiconPaths = '';
+       lexiconPaths = '',
+       espeakBin = '',
+       espeakDataDir = '';
 
   const TtsSpec.titl({
     required this.titlModels,
     required this.titlVocabs,
     required this.lexiconPaths,
+    this.espeakBin = '',
+    this.espeakDataDir = '',
     this.sid = 0,
   }) : engine = 'titl',
        kokoroModel = '',

@@ -19,6 +19,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import '../models/model_paths.dart';
 import 'asr_chunk.dart';
+import 'espeak_exec.dart';
 import 'lexicon_pronouncer.dart';
 import 'speech_engine.dart';
 import 'titl_engine.dart';
@@ -145,6 +146,8 @@ class RealBackends extends WorkerBackends {
         models: s.titlModels.split(','),
         vocabs: s.titlVocabs.split(','),
         lexiconPaths: s.lexiconPaths,
+        espeakBin: s.espeakBin,
+        espeakDataDir: s.espeakDataDir,
       );
       // First speech used to pay for everything lazily — the ~300 ms
       // dictionary parse, the ORT session build (graph optimization
@@ -373,11 +376,20 @@ class TitlTts implements TtsBackend {
     required this.models,
     required this.vocabs,
     required this.lexiconPaths,
+    this.espeakBin = '',
+    this.espeakDataDir = '',
   });
 
   final List<String> models;
   final List<String> vocabs;
   final String lexiconPaths;
+
+  /// +238: the out-of-process rule engine (see espeak_exec.dart). When
+  /// the binary and its data are BOTH present it is the front-end —
+  /// letter names and all; otherwise the +224 lexicon ladder speaks.
+  final String espeakBin;
+  final String espeakDataDir;
+  EspeakExec? _espeak;
   final Map<int, TitlEngine> _engines = {};
   LexiconPronouncer? _pron;
 
@@ -391,7 +403,18 @@ class TitlTts implements TtsBackend {
   /// messenger for a broken pack.
   void warm(int sid) {
     try {
-      _pronouncer();
+      // Warm the front-end this voice will ACTUALLY use: the exec when
+      // it can run (first child-process spawn + dict load, ~50 ms),
+      // the dictionary parse otherwise.
+      final es = _espeak ??= EspeakExec(
+        binPath: espeakBin,
+        dataDir: espeakDataDir,
+      );
+      if (es.usable) {
+        es.ipa('warm up.');
+      } else {
+        _pronouncer();
+      }
       final at = sid % models.length;
       final engine = _engines.putIfAbsent(
         at,
@@ -429,19 +452,31 @@ class TitlTts implements TtsBackend {
       at,
       () => TitlEngine.load(modelPath: models[at], vocabPath: vocabs[at]),
     );
-    // Lexicon entries are the trained alphabet verbatim (flap and
-    // glottal folded at parse time), so the assembly pass needs no
-    // aliases and no folds — just the vocab filter and the stop rule.
-    return (
-      engine.synth(
-        TitlEngine.phonemesFromWords(
-          _pronouncer().phonemize(text),
-          engine.vocab.keys.toSet(),
-        ),
-        speed: speed,
-      ),
-      TitlEngine.sampleRate,
+    // +238 law: the rule engine speaks when it can run — espeak's
+    // output goes through the Misaki fold, the same table the graph
+    // was trained under from +167 to +223. Where it cannot (no binary,
+    // no exec right), the dictionary ladder — and it says so once per
+    // engine load in the warm diagnostics, never mid-sentence.
+    final es = _espeak ??= EspeakExec(
+      binPath: espeakBin,
+      dataDir: espeakDataDir,
     );
+    final String phonemes;
+    if (es.usable) {
+      phonemes = EspeakExec.phonemesFromIpa(
+        es.ipa(text),
+        engine.vocab.keys.toSet(),
+      );
+    } else {
+      // Lexicon entries are the trained alphabet verbatim (flap and
+      // glottal folded at parse time), so the assembly pass needs no
+      // aliases and no folds — just the vocab filter and the stop rule.
+      phonemes = TitlEngine.phonemesFromWords(
+        _pronouncer().phonemize(text),
+        engine.vocab.keys.toSet(),
+      );
+    }
+    return (engine.synth(phonemes, speed: speed), TitlEngine.sampleRate);
   }
 
   @override

@@ -1,7 +1,7 @@
 name: voice_agent
 description: "On-device voice assistant prototype: speech -> text -> speech, fully offline."
 publish_to: 'none'
-version: 0.1.0+237
+version: 0.1.0+238
 
 environment:
   sdk: ^3.10.0
@@ -40,3 +40,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models/silero_vad.onnx
+    # +238: the out-of-process student front-end's pruned English data
+    # (directory entry: includes the lang/gmw subtree).
+    - assets/espeak-data/
