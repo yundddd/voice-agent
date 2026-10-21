@@ -9,6 +9,10 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+// +292: the session face derives its bubbles from the M3 tone table
+// (see sessionTheme) — the same reference math theme.dart generates
+// the app palette with.
+import 'package:material_color_utilities/hct/hct.dart';
 
 import '../assistant/assistant.dart';
 import 'bridge_screen.dart' show ModelPickerSheet;
@@ -1681,17 +1685,25 @@ class AssistantScreenSupport {
   /// MINTS THIS ONCE per (base, hue) and reuses the instance — a fresh
   /// ThemeData per frame would defeat the +202 bubble cache (see
   /// _sessionThemeFor).
+  ///
+  /// +292 (the M3 study): the re-seed is the SPEC's own arithmetic,
+  /// not ColorScheme.fromSeed's detour. The old path ran the hue
+  /// through the tonalSpot algorithm — the same wash this file's
+  /// theme comment complains about — so every session's cards landed
+  /// pastel and a sibling hue 30 from ours could render nearly the
+  /// same peach. Now the hue rides the tone table directly: the
+  /// container at tone 30 (the spec's container tone), its ink at
+  /// tone 90 (so every session's bubble text meets the contrast law
+  /// BY CONSTRUCTION), the assistant's card the same shape at low
+  /// chroma. The hue survives the math — that is the fidelity law.
   static ThemeData sessionTheme(ThemeData base, int hue) {
-    final seeded = ColorScheme.fromSeed(
-      seedColor: sessionTint(hue),
-      brightness: base.brightness,
-    );
+    final h = hue.toDouble();
     return base.copyWith(
       colorScheme: base.colorScheme.copyWith(
-        primaryContainer: seeded.primaryContainer,
-        onPrimaryContainer: seeded.onPrimaryContainer,
-        secondaryContainer: seeded.secondaryContainer,
-        onSecondaryContainer: seeded.onSecondaryContainer,
+        primaryContainer: Color(Hct.from(h, 40, 30).toInt()),
+        onPrimaryContainer: Color(Hct.from(h, 18, 90).toInt()),
+        secondaryContainer: Color(Hct.from(h, 14, 30).toInt()),
+        onSecondaryContainer: Color(Hct.from(h, 5, 90).toInt()),
       ),
     );
   }

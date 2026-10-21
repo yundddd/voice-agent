@@ -5,6 +5,9 @@
 // differences (see assistant_view_test.dart).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+// +292: the tone-law tests read the schemes back in the space the
+// spec is written in.
+import 'package:material_color_utilities/hct/hct.dart';
 import 'package:voice_agent/src/assistant/activity.dart';
 import 'package:voice_agent/src/assistant/state.dart';
 import 'package:voice_agent/src/assistant/view.dart';
@@ -953,5 +956,98 @@ void main() {
         tint.colorScheme.secondaryContainer,
       );
     });
+  });
+
+  group('the tone table is the law (+292)', () {
+    final scheme = buildClaudeDarkTheme().colorScheme;
+    double tone(Color c) => Hct.fromInt(c.toARGB32()).tone;
+
+    test('the pinned Claude laws survive the math', () {
+      // The M3 generation kept what the app's own laws pinned: the
+      // EXACT brand orange (never a tonalSpot wash of it), the black
+      // canvas (Claude Code's, not the spec's tone-6 grey), and
+      // black ink under the saturated fills.
+      expect(scheme.primary, const Color(0xFFD97757));
+      expect(scheme.surface, Colors.black);
+      expect(scheme.onPrimary, Colors.black);
+      expect(scheme.onTertiary, Colors.black);
+    });
+
+    test('the container ladder is a ladder, not two identical rungs', () {
+      final rungs = [
+        scheme.surfaceContainerLowest,
+        scheme.surfaceContainerLow,
+        scheme.surfaceContainer,
+        scheme.surfaceContainerHigh,
+        scheme.surfaceContainerHighest,
+      ];
+      for (var i = 1; i < rungs.length; i++) {
+        expect(
+          tone(rungs[i]),
+          greaterThan(tone(rungs[i - 1])),
+          reason:
+              'rung $i must read above rung ${i - 1} — the hand-picked '
+              'scheme ran High and Highest as the SAME color',
+        );
+      }
+    });
+
+    test('every on-color sits the spec distance above its container', () {
+      // Tone 30 under, tone 90 over: the contrast the old scheme
+      // hoped for by eye is arithmetic now.
+      final pairs = {
+        'primary': (scheme.primaryContainer, scheme.onPrimaryContainer),
+        'secondary': (scheme.secondaryContainer, scheme.onSecondaryContainer),
+        'tertiary': (scheme.tertiaryContainer, scheme.onTertiaryContainer),
+        'error': (scheme.errorContainer, scheme.onErrorContainer),
+        'inverse': (scheme.inverseSurface, scheme.onInverseSurface),
+      };
+      for (final e in pairs.entries) {
+        expect(
+          (tone(e.value.$2) - tone(e.value.$1)).abs(),
+          greaterThanOrEqualTo(45),
+          reason:
+              '${e.key} container/on-container pair fails the tone '
+              'law (the inverse pair runs FLIPPED by design — a light '
+              'chip with dark ink — so the law is the distance, not '
+              'the sign)',
+        );
+      }
+    });
+
+    test('the session face keeps the tone law at any hue the picker draws', () {
+      final base = buildClaudeDarkTheme();
+      for (final hue in [0, 47, 120, 199, 260, 333]) {
+        final tint = AssistantScreenSupport.sessionTheme(base, hue).colorScheme;
+        expect(
+          tone(tint.primaryContainer),
+          closeTo(30, 2),
+          reason:
+              'the session hue survives the math at the container '
+              'tone — no pastel wash, whatever the hue',
+        );
+        expect(
+          tone(tint.onPrimaryContainer),
+          closeTo(90, 2),
+          reason: 'and the ink always meets it from tone 90',
+        );
+        expect(tint.surface, base.colorScheme.surface);
+        expect(tint.primary, base.colorScheme.primary);
+      }
+    });
+
+    test(
+      'the completion green has an owner (the extension), not a literal',
+      () {
+        final theme = buildClaudeDarkTheme();
+        expect(
+          theme.extension<AppExtendedColors>(),
+          isNotNull,
+          reason:
+              'M3 extended colors ride a ThemeExtension — the latency '
+              'strip asks the theme for its green now',
+        );
+      },
+    );
   });
 }

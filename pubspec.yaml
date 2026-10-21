@@ -1,7 +1,7 @@
 name: voice_agent
 description: "On-device voice assistant prototype: speech -> text -> speech, fully offline."
 publish_to: 'none'
-version: 0.1.0+291
+version: 0.1.0+292
 
 environment:
   sdk: ^3.10.0
@@ -25,6 +25,12 @@ dependencies:
   # Runtime asset extraction (models copied out of assets to app support dir)
   path_provider: ^2.1.3
   path: ^1.9.0
+  # +292: Google's reference M3 color math (HCT). Transitive today —
+  # the Flutter SDK itself runs on it — named explicitly because our
+  # palette is now generated with it directly (theme.dart, the
+  # session face). Version rides whatever the SDK pins; keep it in
+  # step when flutter upgrades.
+  material_color_utilities: ^0.13.0
   # (The vendored piper_phonemize fork lived here until the Italian
   # student voices retired: the English students read Kokoro's own
   # lexicon files via lib/speech/lexicon_pronouncer.dart, so the GPL

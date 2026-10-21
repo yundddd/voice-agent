@@ -6,6 +6,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../assistant/view.dart';
+import 'theme.dart'; // +292: context.success — the extended completion green
 
 class LatencyStrip extends StatelessWidget {
   const LatencyStrip({super.key, required this.latency});
@@ -35,7 +36,10 @@ class LatencyStrip extends StatelessWidget {
       child: Icon(
         Icons.arrow_forward,
         size: 14,
-        color: done ? Colors.green : Theme.of(context).disabledColor,
+        // +292: the completion green is an M3 extended color (the
+        // theme owns it) — not a Colors.green smuggled past the
+        // palette.
+        color: done ? context.success : Theme.of(context).disabledColor,
       ),
     );
     final lit = latency.hopReply; // the PC wakes when the first byte back lands
@@ -50,7 +54,7 @@ class LatencyStrip extends StatelessWidget {
         Icon(
           Icons.computer,
           size: 18,
-          color: lit ? Colors.green : Theme.of(context).disabledColor,
+          color: lit ? context.success : Theme.of(context).disabledColor,
         ),
         arrow(latency.hopReply),
         cell('reply', latency.playSeconds, 1),

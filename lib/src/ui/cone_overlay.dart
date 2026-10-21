@@ -140,15 +140,19 @@ class ConeOverlay extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
+              // +292: the armed label is the theme's highest-emphasis
+              // ink (the warm near-white — same weight off the
+              // amber, no hard blue-white off-palette), and the
+              // legibility shadow asks the scheme's shadow role.
               color: armed
-                  ? Colors.white
+                  ? ColorScheme.of(context).onSurface
                   : idleLabelColor.withValues(alpha: 0.9),
               fontWeight: FontWeight.w800,
               fontSize: 15,
               letterSpacing: 3,
               shadows: [
                 Shadow(
-                  color: Colors.black.withValues(alpha: 0.35),
+                  color: ColorScheme.of(context).shadow.withValues(alpha: 0.35),
                   blurRadius: 6,
                 ),
               ],
