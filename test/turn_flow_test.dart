@@ -1971,6 +1971,64 @@ void main() {
       );
     });
 
+    test('+234: a press that drops the unheard tail SAYS SO — the cut owns '
+        'the silence, not the TTS', () async {
+      // The field tape behind 'one chunk skips TTS completely': the
+      // reply's last frame parked behind the on-air chunk, the button
+      // went down 13 ms later to RECORD THE NEXT QUESTION, stopPlayback
+      // ate the queue, and the journal looked like a synthesis failure
+      // because the drop left no trace. Per spec the press may drop
+      // anything in flight or arriving before the release; what it may
+      // not do is go unannounced.
+      a.setMode(InteractionMode.pushToTalk);
+      await withBridge();
+      unawaited(a.runQuickCommand('pull the logs'));
+      await settle();
+      harness.emit(const BridgeEvent.forTest('say', text: 'On the air now.'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'Queued behind it.'),
+      );
+      await settle();
+      expect(out.playing, isTrue, reason: 'one chunk audible, one in flight');
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'backgrounded': false,
+        'queued': false,
+        'missed': 3,
+      };
+      harness.emit(BridgeEvent.forTest('done')); // wire ends mid-voice
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('drain parked')),
+        isTrue,
+        reason: 'the verdict parks behind the on-air chunk (+124)',
+      );
+
+      a.pttDown(Offset.zero); // the press — by spec, free to drop
+      await settle();
+      expect(
+        a.debugLog.any(
+          (l) =>
+              l.contains('barge-in drops the unheard tail') &&
+              l.contains('2 inaudible chunk(s)') &&
+              l.contains('a parked drain'),
+        ),
+        isTrue,
+        reason:
+            'the journal counts the cut-down: queue, on-air chunk, '
+            'and the forgiven verdict',
+      );
+      expect(out.playing, isFalse, reason: 'the cut itself landed');
+      expect(
+        harness.attachCount,
+        0,
+        reason: 'the press FORGIVES the parked drain — no reattach fires',
+      );
+    });
+
     test('+171: the natural end under a folded turn leaves the box '
         "lit and the caption on duty — no 'Ready' for the churn", () async {
       // The 12:30 field tape: the agent routed /compact through its

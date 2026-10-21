@@ -3417,6 +3417,40 @@ class VoiceAssistant extends ChangeNotifier {
         );
       }
       _reply.stopDebug();
+      // +234 (spec): a press may drop everything in flight or arriving
+      // before the release — but it must not do it SILENTLY. The field
+      // report 'one chunk skips TTS completely' was this cut eating a
+      // reply's last sentence between the drain's park (13 ms earlier)
+      // and the press, and the tape looked like a TTS failure because
+      // nothing said the press was the cause. Count what dies (the
+      // un-played queue, the on-air chunk, the parked drain verdict —
+      // a drained replay would only re-file it by age anyway), say so
+      // in the journal and on the line, THEN cut.
+      final dropped = _reply.queuedCount + (_reply.playing ? 1 : 0);
+      if (dropped > 0 || _drainAfterSpeech != null) {
+        _logDebug(
+          'ptt DOWN: barge-in drops the unheard tail — '
+          '$dropped inaudible chunk(s), '
+          '${_drainAfterSpeech == null ? 'no' : 'a'} parked drain; '
+          'in flight or arriving before release is expendable by spec',
+        );
+        // The caption belongs to the claim (+171): while a tool or a
+        // backgrounded turn still owns the line, the journal carries
+        // the trace and the row keeps naming the work. The status
+        // speaks only when the dropped tail WAS the whole story.
+        if (!(_bridgeBusy || _turn.backgrounded || _bgWork.isNotEmpty)) {
+          _activity = const StatusText(
+            'Cut the reply — its unheard tail was dropped.',
+          );
+        }
+        // The press pays the parked drain by FORGIVING it: the text is
+        // already in the chat (frames paint on arrival), the spec says
+        // the audio is the press's to take, and leaving the verdict
+        // standing would keep the brake lit over a debt the user just
+        // cancelled. The next turn's teardown re-arms its own verdict.
+        _drainAfterSpeech = null;
+        notifyListeners();
+      }
       _reply.stopPlayback();
       _turn.detach(TurnTrigger.pttPress);
       if (_ptt.bridgeHold) {
