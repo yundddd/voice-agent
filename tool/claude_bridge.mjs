@@ -3441,7 +3441,24 @@ const server = http.createServer((req, res) => {
         // then describe the destination's own life, which is what
         // makes a mid-swipe answer survive the swipe.
         const leaving = focus;
-        const backgroundable = turnOpen && !fresh;
+        // +278: a CLOSED turn is not a finished conversation. The
+        // field tape said it plainly: every seat move 'killed' a
+        // backgrounded `Bash sleep 15` a second after the swipe, and
+        // the model itself reported the corpses ('killed at session
+        // teardown... the fourth background sleep'). The turn had
+        // closed politely; the SHELL was still alive in the child
+        // that resetConversation() was about to SIGTERM. The
+        // conversation being left is backgroundable whenever IT
+        // OWES LIVE WORK — an open tool parked out of earshot
+        // (detached), a run_in_background shell (agentTasks), or a
+        // backgrounded tool whose result has not landed yet
+        // (bgTools) — not only while its turn streams. The debt's
+        // 'finished' receipt then still arrives, into ITS backlog,
+        // for the phone to pay when the user comes home.
+        const backgroundable =
+          (turnOpen || detached.size > 0 || agentTasks.size > 0 ||
+           bgTools.size > 0) &&
+          !fresh;
         if (!backgroundable) resetConversation(); // ends the conversation being left
         const eraFlip = to !== harness;
         if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat

@@ -329,6 +329,31 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## A seat move never executes a living shell (shipped +278)
+
+The +277 tape closed the loop on the phone and opened a wound on the
+bridge: the sleep banner *held* across the swipe, the marker rode it
+home, and coming back the phone retired everything — because /health
+honestly said `detached: 0`. The sleep was really dead, twice, and
+the model named the cause itself: *"killed at session teardown… the
+fourth background sleep."* `/seat`'s +246 clause backgrounded a turn
+only while `turnOpen` — but a turn that had already CLOSED politely
+while its backgrounded shell lived took the `resetConversation()`
+path, and the reset SIGTERMs the child that was still running the
+owed work. Every swipe executed the sleeper.
+
++278: the conversation being left is backgroundable while it OWES
+LIVE WORK — `turnOpen`, or a non-empty `detached` (interrupt-parked
+tools), `agentTasks` (run_in_background shells), or `bgTools`
+(backgrounded tools awaiting their result) — not only while it
+streams. The child lives, its `finished` receipt rides into ITS
+backlog session-stamped, and the phone pays the banner when the user
+comes home (which is exactly what the +276/277 laws were built to
+do). `fresh:true` (the /new word) still resets and kills: that verb
+means *erase*. Tape: seat move inside the debt window → straight
+back → the named `finished` frame arrives, `detached` returns to 0,
+the row stands (+257's ledger).
+
 ## A band line lives as long as its work (shipped +277)
 
 The +276 tape's last scar: X's `Bash sleep 15` debt settled on the

@@ -1401,6 +1401,85 @@ test('two conversations work at once, each with its own row (+257)',
     }
   });
 
+// ── +278: a seat move never executes a living shell ─────────────────────
+// Field tape (twice): 'do a 15 second sleep in the background' — the
+// launch receipt lit the banner, the turn closed politely, the user
+// swiped tabs — and the sleep died. The model itself counted the
+// corpses: 'killed at session teardown... the fourth background
+// sleep'. /seat's backgroundable clause read only turnOpen: a turn
+// that had ALREADY closed took the resetConversation path, and the
+// reset SIGTERMs the child that was still running the owed shell.
+// The law now: the conversation being left is backgroundable while
+// it owes LIVE work — detached cuts, agent tasks, backgrounded
+// tools awaiting their result — not only while it streams.
+const PORT22 = PORT1 + 62;
+test('+278 seat move inside the debt window: the shell survives, the receipt lands',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT22, {
+      STUB_TOOL: 'sleep 10', STUB_TOOL_START_MS: '100',
+      STUB_TOOL_BG: '1', STUB_BG_DONE_MS: '1400', STUB_RESULT_MS: '200',
+      STUB_SAYS: 'launched', STUB_TURNS: '1',
+    });
+    try {
+      await up(PORT22);
+      await call(PORT22, `/talk?token=${TOKEN}&poll=1`,
+        { body: 'bg for me', method: 'POST' });
+      // The poll transport closes its /talk response early: the launch
+      // frames are read where they actually ride — the ring.
+      await until('launch receipt frames on the ring', async () => {
+        const ring = JSON.parse(
+          (await call(PORT22, `/poll?token=${TOKEN}&since=0`)).text);
+        return ring.events.some((e) => e.data?.name === 'backgrounded' &&
+          e.data?.detail === 'Bash sleep 10');
+      });
+      await until('A closed its turn', async () =>
+        (await health(PORT22)).turnOpen === false);
+      let owed = false;
+      for (let i = 0; i < 10 && !owed; i++) {
+        owed = (await health(PORT22)).detached >= 1;
+        if (!owed) await sleep(100);
+      }
+      assert.ok(owed, 'the debt window opened (the +133 proof)');
+
+      // THE SWIPE: seat moves to a named stranger while the shell
+      // lives. This is where +277 killed it — the closed turn took
+      // the reset path and the child died mid-sleep.
+      const seat = await call(PORT22, `/seat?token=${TOKEN}`,
+        { body: JSON.stringify({ sessionId: 'walk278-b' }),
+          method: 'POST' });
+      assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
+      // And straight back — the pointer still names A's session.
+      const home = await call(PORT22, `/seat?token=${TOKEN}`,
+        { body: JSON.stringify({ sessionId: 'stub-session' }),
+          method: 'POST' });
+      assert.equal(
+        JSON.parse(home.text).sessionId, 'stub-session',
+        'the return re-seated the conversation that owes the work');
+
+      // The receipt the SIGTERMed child could never send: the named
+      // `finished` frame must ride A's stream (missed counts it while
+      // the phone was away; the poll ring carries it now).
+      await until('the owed shell finished under its own name', async () => {
+        const ring = JSON.parse(
+          (await call(PORT22, `/poll?token=${TOKEN}&since=0`)).text);
+        return ring.events.some((e) =>
+          e.data?.name === 'finished' &&
+          e.data?.detail === 'Bash sleep 10');
+      }, 6000);
+      assert.equal((await health(PORT22)).detached, 0,
+        'the debt paid and closed itself');
+      // The pre-fix signature: resetConversation would have logged a
+      // child death here and the ring would carry no receipt at all.
+      const rows = (await health(PORT22)).sessions;
+      assert.ok(rows.find((r) => r.sid === 'stub-session'),
+        'the conversation that held the shell still has its row');
+    } finally {
+      await stopBridge(proc);
+    }
+  });
+
 // ── +273: a folded prompt's farewell waits for its ANSWER ──────────────
 // Field tape: a polite queue folded into a closing host turn got its
 // re-stamped `done` 3 s after the fold — before the CLI had even run
