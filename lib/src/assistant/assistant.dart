@@ -489,7 +489,13 @@ class VoiceAssistant extends ChangeNotifier {
               createdMs: _chat.queuedFor(_sessionId)!.createdMs,
             ),
       backgrounded: BgWork(
-        visible: showsBackgroundedWork,
+        // +278: TIM's law, from the sleep-50 tape: the banner
+        // PERSISTED across the swipe — and leaked onto the stranger
+        // tab while it held. Holding is the state law (the debt is
+        // owed wherever the thumb rests); the PAINTING is the
+        // session law: the line belongs to the conversation that
+        // owes it, so it renders on that tab only.
+        visible: showsBackgroundedWork && _bannerAtHome,
         label: backgroundedWork,
         sinceMs: harnessSinceMs,
         elapsed: harnessElapsed,
@@ -859,7 +865,18 @@ class VoiceAssistant extends ChangeNotifier {
   bool get showsBackgroundedWork =>
       _turn.backgroundUnheard || _turn.detachedPromise || _turn.agentWork;
 
-  String get backgroundedWork => showsBackgroundedWork ? _bgWork : '';
+  /// +278: does the lit banner belong to the conversation on screen?
+  /// The owner is the thread the debt's stream stamped (or the away
+  /// marker's, from before the naming law); an un-named ledger (the
+  /// pre-tab world, a bridge that names nothing) belongs to the only
+  /// conversation there was — the seat.
+  bool get _bannerAtHome {
+    final o = _turn.workOwner ?? _turnHomeSid;
+    return o == null || o == _sessionId;
+  }
+
+  String get backgroundedWork =>
+      showsBackgroundedWork && _bannerAtHome ? _bgWork : '';
 
   /// Start of the backgrounded turn (epoch ms, 0 = unknown) for the
   /// bottom line's 'since HH:MM:SS'; its live age is [harnessElapsed].
@@ -1307,6 +1324,12 @@ class VoiceAssistant extends ChangeNotifier {
     _noteFocusMoved();
     await _saveBridgePrefs();
     await _refreshSession();
+    // +278: coming HOME to a conversation that owes a background
+    // report asks the bridge IMMEDIATELY — the catch-up must not
+    // wait for the next heartbeat beat (the report's frames land,
+    // the banner pays or relights with its true age, and a fresh
+    // enough report speaks).
+    if (showsBackgroundedWork) _scheduleBgProbe(every: Duration.zero);
     notifyListeners();
     return null;
   }
@@ -1788,7 +1811,17 @@ class VoiceAssistant extends ChangeNotifier {
         firstProbe: Duration.zero,
       );
     }
-    _scheduleBgProbe(); // ask again while the line stays lit
+    // +278: the user SITTING on the owed conversation deserves to be
+    // TOLD, not to ask: at home the beat tightens to 2 s (the sleep-
+    // 50 tape: the shell finished at 42.5, the 10 s beat could not
+    // answer before 45+, and 'Did the sleep finish?' at 46.6 beat
+    // the phone to the news). Away, the slow beat suffices — the
+    // landing's catch-up probe (see switchSession) covers the return.
+    _scheduleBgProbe(
+      every: _bannerAtHome
+          ? const Duration(seconds: 2)
+          : const Duration(seconds: 10),
+    );
   }
 
   /// The proof-of-completion the background banner waits for (bridge

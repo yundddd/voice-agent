@@ -370,6 +370,11 @@ final class TurnCoordinator {
         : (_lastToolStep.isNotEmpty ? _lastToolStep : 'Background shell');
     if (!_agentDebts.contains(name)) _agentDebts.add(name);
     _bgWork = name;
+    // +278: the debt's age starts at its OWN birth — the launch
+    // receipt, not the last heard turn (a debt raised after a
+    // re-attach mail-fetch would otherwise anchor at the fetch or,
+    // worse, not at all).
+    _since ??= _clock();
   }
 
   /// A named `finished` receipt pays ITS OWN shell and only its own
@@ -527,8 +532,16 @@ final class TurnCoordinator {
     if (hardStop) unawaited(_hardStop());
     _busy = false;
     if (!_backgrounded) {
-      _since = null;
-      _bgWork = '';
+      // +278: a turn that CLOSED POLITELY while leaving an owed
+      // background shell is a debt window, not a dead end — the
+      // banner stays lit (agentWork) and its age must KEEP RUNNING
+      // (the field: 'the background banner no longer increments the
+      // time count' — detach zeroed the clock because only the
+      // badge used to mean 'work out of earshot').
+      if (_agentDebts.isEmpty && !_detachedPromise) {
+        _since = null;
+        _bgWork = '';
+      }
     }
     final pump = _pump;
     _pump = null;
@@ -545,7 +558,10 @@ final class TurnCoordinator {
   void releaseOwnership(int mySeq) {
     if (_seq != mySeq) return;
     _busy = false;
-    if (!_backgrounded) _since = null;
+    // +278: the debt window keeps its clock here too (see detach).
+    if (!_backgrounded && _agentDebts.isEmpty && !_detachedPromise) {
+      _since = null;
+    }
   }
 
   /// Teardown: hand back the pump slot, IF this loop still owns it (an

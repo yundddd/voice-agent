@@ -692,8 +692,15 @@ void main() {
       );
       expect(
         a.view.backgrounded.visible,
+        isFalse,
+        reason:
+            '+278: the debt STANDS on Y, but the banner belongs to X '
+            '\u2014 held out of sight, not retired, and not leaked',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('bg line holds')),
         isTrue,
-        reason: 'X still owes the work \u2014 the banner stands',
+        reason: 'the hold is the state law; hiding is only the paint law',
       );
       // COME HOME: the sleep has ended while the tab was away
       // (X's detached count is back to 0); X\u2019s OWN clean health

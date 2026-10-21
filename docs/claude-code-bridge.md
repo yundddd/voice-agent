@@ -329,6 +329,34 @@ tool band files to the OWNER's +266 away-cache, so the tab you come
 home to names what actually ran. Walks pin all of it, plus the
 parser's absence-of-stamp = trust clause.
 
+## The banner belongs to its session (shipped +278, phone side)
+
+The sleep-50 tape proved +278's bridge law (the shell survived eight
+seat moves; its receipt filed) and exposed the banner's three last
+leaks:
+
+- **It painted on stranger tabs.** +276's `bg line holds` keeps the
+  DEBT alive wherever the thumb rests — but holding is the state law,
+  and the field's law for the PAINT is ownership: the bottom line
+  renders only on the conversation that owes it
+  (`BgWork.visible: showsBackgroundedWork && _bannerAtHome`, owner =
+  the stamped `workOwner` or the away marker; ownerless ledgers are
+  the pre-tab world's and belong to the seat).
+- **Its clock was dead.** The age anchored only at `becomeHeard` and
+  `detach`/`releaseOwnership` zeroed it whenever the badge was dark —
+  but a politely-closed turn with an owed shell is a badge-less debt
+  window: the banner showed a frozen 0 s. Now `noteAgentWork` anchors
+  the clock at the debt's own birth and the teardown paths spare
+  `_since` while anything is owed.
+- **It reported late, so the user reported first.** The heartbeat's
+  10 s beat meant a shell finishing under it stayed news for up to
+  ten seconds — and the phone, sitting at home with the banner lit,
+  said nothing ('I had to ask if it finished'). At home the beat
+  tightens to 2 s, and `switchSession` fires a catch-up probe the
+  moment it lands on a conversation that owes a report: a fresh
+  report attaches, speaks (the archaeology age law still silences
+  anything older than two minutes), and pays the banner.
+
 ## A seat move never executes a living shell (shipped +278)
 
 The +277 tape closed the loop on the phone and opened a wound on the
