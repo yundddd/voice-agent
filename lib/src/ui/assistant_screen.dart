@@ -719,6 +719,20 @@ class _AssistantScreenState extends State<AssistantScreen>
       if (_enteringPending) {
         final ext = pos.maxScrollExtent;
         if (pos.pixels != ext) pos.jumpTo(ext);
+        // +283 (Tim, 'swiping between sessions sometimes leaves the
+        // window COMPLETELY BLACK until I scroll or touch'): the
+        // follow loop rides postFrame callbacks, and those ride only
+        // frames someone ELSE scheduled. Once the entering thread is
+        // pinned there is nothing dirty left — the next frame never
+        // comes, settled freezes short of its two, the leg never
+        // starts, and the thread sits a screen-width off-stage on the
+        // black canvas until a touch's first frame kicks the loop
+        // again. (The 1.5 s fuse cannot help: the swap frame cancelled
+        // it. The countdown is the ONLY way home, so while it is
+        // armed the loop owns its next frame — bounded, because the
+        // 12-tick cap still speaks, and the strand it prevents is the
+        // whole window.)
+        SchedulerBinding.instance.scheduleFrame();
         _enteringWaits++;
         if (ext == _enteringPinned && !_userTouch) {
           _enteringSettled++;
