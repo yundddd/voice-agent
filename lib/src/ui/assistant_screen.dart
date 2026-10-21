@@ -204,6 +204,32 @@ class _AssistantScreenState extends State<AssistantScreen>
     AssistantScreenSupport.sessionTint(hue).withValues(alpha: 0.02),
   ];
 
+  /// +279: the thread's tinted theme, MEMOIZED on (base theme, hue).
+  /// ColorScheme.fromSeed is real tonal math, and the +202 bubble cache
+  /// fences on theme IDENTITY — minting a fresh instance per notification
+  /// would rebuild every bubble on every tick, the exact tax +202 was
+  /// built to lift. The hue changes when the seat moves; between moves
+  /// this one instance is the stable ink every rebuild reads. (A hue
+  /// change still re-colours the log the honest way: ChatBubble consumes
+  /// the Theme through its own context, so the dependency rebuilds it —
+  /// no cache entry can serve yesterday's face.)
+  ThemeData? _tintedTheme;
+  ThemeData? _tintedBase;
+  int? _tintedHue;
+
+  ThemeData _sessionThemeFor(BuildContext context, int hue) {
+    final base = Theme.of(context);
+    final cached = _tintedTheme;
+    if (cached != null && identical(_tintedBase, base) && _tintedHue == hue) {
+      return cached;
+    }
+    final tinted = AssistantScreenSupport.sessionTheme(base, hue);
+    _tintedTheme = tinted;
+    _tintedBase = base;
+    _tintedHue = hue;
+    return tinted;
+  }
+
   /// +271: the CURRENT tab's hue from the projection (the tab list is
   /// already carried there; falling back to the legacy law keeps a
   /// no-tabs render honest).
@@ -1228,34 +1254,53 @@ class _AssistantScreenState extends State<AssistantScreen>
                                             offset: Offset(_paintX.value, 0),
                                             child: child,
                                           ),
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          borderRadius: const BorderRadius.all(
-                                            Radius.circular(18),
-                                          ),
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                            colors: _sessionTint(_hueOf(v)),
-                                          ),
+                                      child: Theme(
+                                        // +279: the chat window WEARS the
+                                        // hue, not just a wash behind it.
+                                        // The +230 gradient is barely-there
+                                        // by design, and the field read it
+                                        // as 'only the chips change': the
+                                        // thread subtree now sits under a
+                                        // Theme derived from the session's
+                                        // own hue, so the bubbles themselves
+                                        // re-ink while the rest of the screen
+                                        // keeps the Claude palette. One
+                                        // memoized instance per (theme, hue)
+                                        // — see [_sessionThemeFor].
+                                        data: _sessionThemeFor(
+                                          context,
+                                          _hueOf(v),
                                         ),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 2,
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                const BorderRadius.all(
+                                                  Radius.circular(18),
+                                                ),
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                              colors: _sessionTint(_hueOf(v)),
+                                            ),
                                           ),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              for (final e in v.chat)
-                                                if (e.fromUser ||
-                                                    e.blocks.isNotEmpty ||
-                                                    // A file bubble has no text
-                                                    // blocks — the slip IS the
-                                                    // bubble.
-                                                    e.isFile)
-                                                  _bubbleFor(e, a, context),
-                                            ],
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                for (final e in v.chat)
+                                                  if (e.fromUser ||
+                                                      e.blocks.isNotEmpty ||
+                                                      // A file bubble has no
+                                                      // text blocks — the
+                                                      // slip IS the bubble.
+                                                      e.isFile)
+                                                    _bubbleFor(e, a, context),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -1340,7 +1385,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                               child: _controlChip(
                                 avatar: Icon(_chipIcons[chip], size: 17),
                                 label: Text(chip),
-                                onPressed: v.bridgeBusy
+                                onPressed: v.seatBusy
                                     ? null
                                     // +242: the model chip pops the SAME
                                     // sheet the settings page uses — the
@@ -1352,18 +1397,22 @@ class _AssistantScreenState extends State<AssistantScreen>
                               ),
                             ),
                           _controlChip(
+                            // +280: the brake lights for work THIS
+                            // conversation owns — away labor is the
+                            // gear badge's story, not a pedal to press
+                            // on an idle tab.
                             avatar: Icon(
                               Icons.stop_circle_outlined,
                               size: 17,
-                              color: v.agentBusy ? null : scheme.outline,
+                              color: v.stopHere ? null : scheme.outline,
                             ),
                             label: Text(
                               'Stop',
                               style: TextStyle(
-                                color: v.agentBusy ? null : scheme.outline,
+                                color: v.stopHere ? null : scheme.outline,
                               ),
                             ),
-                            onPressed: v.agentBusy ? a.bridgeStop : null,
+                            onPressed: v.stopHere ? a.bridgeStop : null,
                           ),
                         ],
                       ),
@@ -1427,10 +1476,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                         // Claude Code-style context-usage readout, right
                         // above the talk button where eyes already sit
                         // mid-turn. Fed by live `context` events (and the
-                        // post-turn /health merge).
+                        // post-turn /health merge). +280 (Tim): the bar
+                        // speaks for THIS conversation only — it paints
+                        // when this tab has numbers (its own last known
+                        // reading, cached on the tab and worn at the
+                        // landing) or when a turn THIS tab owns is open
+                        // ([ContextBarView.busy] is the +256-scoped
+                        // signal). A stranger tab's backgrounded work
+                        // used to hold the strip up here as a
+                        // 'measuring…' shimmer for a computation this
+                        // seat is not doing.
                         if (v.bridgeConfigured &&
-                            (v.context.tokensIn > 0 || v.bridgeBusy))
-                          ContextBar(view: v.context, busy: v.bridgeBusy),
+                            (v.context.tokensIn > 0 || v.context.busy))
+                          ContextBar(view: v.context, busy: v.context.busy),
                         // Conversation mode's label rides ABOVE the panel
                         // (the field asked the button itself to sit at the
                         // screen's bottom edge — a label under it would
@@ -1585,9 +1643,11 @@ String hintFor({
 /// (+271: random at creation, maximally distant from its siblings,
 /// so neighbours never collide), painted as a
 /// top-left → bottom-right gradient behind the bubbles, worn as the
-/// pill's inactive tint, and glowed from the edge mid-drag. Subtle
-/// at rest, unmistakable in motion: a different session is visibly a
-/// different PLACE.
+/// pill's inactive tint, and glowed from the edge mid-drag. +271 gave
+/// each session a random face, and the field still read the wash as
+/// 'only the chips change' — so +279 lets the chat window wear it too:
+/// the thread's bubbles re-ink through a Theme derived from the hue
+/// ([sessionTheme]). A different session is visibly a different PLACE.
 class AssistantScreenSupport {
   const AssistantScreenSupport._();
 
@@ -1598,4 +1658,27 @@ class AssistantScreenSupport {
   /// pre-+271 fallback (SessionTab.hueOrDefault).
   static Color sessionTint(int hue) =>
       HSLColor.fromAHSL(1.0, hue.toDouble(), 0.45, 0.55).toColor();
+
+  /// +279: the chat window's OWN theme — the app palette with exactly
+  /// the two bubble-container roles (the user's and the assistant's
+  /// cards) re-seeded from this session's hue. Everything else stays
+  /// pinned to the Claude palette: the black canvas, the warm inks,
+  /// the error line, the file slip's tertiary outline. The screen
+  /// MINTS THIS ONCE per (base, hue) and reuses the instance — a fresh
+  /// ThemeData per frame would defeat the +202 bubble cache (see
+  /// _sessionThemeFor).
+  static ThemeData sessionTheme(ThemeData base, int hue) {
+    final seeded = ColorScheme.fromSeed(
+      seedColor: sessionTint(hue),
+      brightness: base.brightness,
+    );
+    return base.copyWith(
+      colorScheme: base.colorScheme.copyWith(
+        primaryContainer: seeded.primaryContainer,
+        onPrimaryContainer: seeded.onPrimaryContainer,
+        secondaryContainer: seeded.secondaryContainer,
+        onSecondaryContainer: seeded.onSecondaryContainer,
+      ),
+    );
+  }
 }

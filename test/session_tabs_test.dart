@@ -617,122 +617,124 @@ void main() {
       },
     );
 
-    test('+277: a settled background debt buries its tab\u2019s stale '
-        'band \u2014 and an idle stranger tab cannot settle it at all',
-        () async {
-      // The 21:49 field tape, end to end: X runs a backgrounded
-      // shell, its turn closes politely with the debt owed, and the
-      // user swipes. (+276) the idle tab\u2019s clean /health must not
-      // retire the banner \u2014 and when X\u2019s OWN health finally
-      // settles the debt, the cached \u2018Bash sleep 15\u2026\u2019 row
-      // goes with it, so coming home shows the rest line, not a
-      // spinner-shaped lie about work that stopped existing.
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
-      await a.setBridgeDir('/proj-x');
-      await settle();
-      await a.createSession(harness: 'opencode', dir: '/proj-y');
-      unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
-      await a.setBridgeDir('/proj-y');
-      await settle();
-      // Seat X: a turn opens, the harness backgrounds a shell, the
-      // turn closes with the debt owed.
-      expect(await a.switchSession(0), isNull);
-      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
-      unawaited(a.runQuickCommand('sleep for me', bubble: 'sleep for me'));
-      await settle();
-      harness.emit(
-        const BridgeEvent.forTest(
-          'context',
-          inputTokens: 10,
-          contextWindow: 20,
-          ctxSession: 'ses-X',
-        ),
-      );
-      harness.emit(
-        const BridgeEvent.forTest(
-          'tool',
-          toolName: 'backgrounded',
-          detail: 'Bash sleep 15',
-        ),
-      );
-      // The bridge counts the owed shell in its detached ledger —
-      // the honest tape says detached=1 while the sleep runs (the
-      // 21:49:43 resume probe), and 0 once it is over.
-      harness.healthState = {...harness.healthState!, 'detached': 1};
-      await settle();
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      await settle();
-      // SWIPE to idle Y: Y\u2019s clean health speaks only for Y (+276).
-      // (Y's own ledger has nothing detached — the count rides the
-      // seated conversation.)
-      harness.healthState = {
-        ...harness.healthState!,
-        'sessionId': 'ses-Y',
-        'detached': 0,
-      };
-      expect(await a.switchSession(1), isNull);
-      a.settleBandOnLanding(0, 1);
-      await settle();
-      expect(
-        a.debugLog.any((l) => l.contains('bg line holds')),
-        isTrue,
-        reason: 'the hold is named on the tape, not silently survived',
-      );
-      expect(
-        a.view.backgrounded.visible,
-        isFalse,
-        reason:
-            '+278: the debt STANDS on Y, but the banner belongs to X '
-            '\u2014 held out of sight, not retired, and not leaked',
-      );
-      expect(
-        a.debugLog.any((l) => l.contains('bg line holds')),
-        isTrue,
-        reason: 'the hold is the state law; hiding is only the paint law',
-      );
-      // COME HOME: the sleep has ended while the tab was away
-      // (X's detached count is back to 0); X\u2019s OWN clean health
-      // settles the debt \u2014 the banner retires, the receipt files,
-      // and the tab\u2019s cached command line is buried with it
-      // (+277).
-      harness.healthState = {
-        ...harness.healthState!,
-        'sessionId': 'ses-X',
-        'detached': 0,
-      };
-      expect(await a.switchSession(0), isNull);
-      a.settleBandOnLanding(1, 0);
-      await settle();
-      expect(
-        a.debugLog.any((l) => l.contains('bg line retired')),
-        isTrue,
-        reason: 'this time the proof speaks for the badge\u2019s thread',
-      );
-      expect(
-        a.view.status,
-        isNot(contains('Bash sleep 15')),
-        reason:
-            'the band must not resurrect the dead command \u2014 the '
-            'tape\u2019s lie was a spinner that outlived its work',
-      );
-      expect(
-        a.debugLog.any((l) => l.contains('resumes on its OWN cached line')),
-        isFalse,
-        reason: 'the cache entry is gone, not merely unpainted',
-      );
-    });
+    test(
+      '+277: a settled background debt buries its tab\u2019s stale '
+      'band \u2014 and an idle stranger tab cannot settle it at all',
+      () async {
+        // The 21:49 field tape, end to end: X runs a backgrounded
+        // shell, its turn closes politely with the debt owed, and the
+        // user swipes. (+276) the idle tab\u2019s clean /health must not
+        // retire the banner \u2014 and when X\u2019s OWN health finally
+        // settles the debt, the cached \u2018Bash sleep 15\u2026\u2019 row
+        // goes with it, so coming home shows the rest line, not a
+        // spinner-shaped lie about work that stopped existing.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x');
+        await settle();
+        await a.createSession(harness: 'opencode', dir: '/proj-y');
+        unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+        await a.setBridgeDir('/proj-y');
+        await settle();
+        // Seat X: a turn opens, the harness backgrounds a shell, the
+        // turn closes with the debt owed.
+        expect(await a.switchSession(0), isNull);
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        unawaited(a.runQuickCommand('sleep for me', bubble: 'sleep for me'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'context',
+            inputTokens: 10,
+            contextWindow: 20,
+            ctxSession: 'ses-X',
+          ),
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'backgrounded',
+            detail: 'Bash sleep 15',
+          ),
+        );
+        // The bridge counts the owed shell in its detached ledger —
+        // the honest tape says detached=1 while the sleep runs (the
+        // 21:49:43 resume probe), and 0 once it is over.
+        harness.healthState = {...harness.healthState!, 'detached': 1};
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        // SWIPE to idle Y: Y\u2019s clean health speaks only for Y (+276).
+        // (Y's own ledger has nothing detached — the count rides the
+        // seated conversation.)
+        harness.healthState = {
+          ...harness.healthState!,
+          'sessionId': 'ses-Y',
+          'detached': 0,
+        };
+        expect(await a.switchSession(1), isNull);
+        a.settleBandOnLanding(0, 1);
+        await settle();
+        expect(
+          a.debugLog.any((l) => l.contains('bg line holds')),
+          isTrue,
+          reason: 'the hold is named on the tape, not silently survived',
+        );
+        expect(
+          a.view.backgrounded.visible,
+          isFalse,
+          reason:
+              '+278: the debt STANDS on Y, but the banner belongs to X '
+              '\u2014 held out of sight, not retired, and not leaked',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('bg line holds')),
+          isTrue,
+          reason: 'the hold is the state law; hiding is only the paint law',
+        );
+        // COME HOME: the sleep has ended while the tab was away
+        // (X's detached count is back to 0); X\u2019s OWN clean health
+        // settles the debt \u2014 the banner retires, the receipt files,
+        // and the tab\u2019s cached command line is buried with it
+        // (+277).
+        harness.healthState = {
+          ...harness.healthState!,
+          'sessionId': 'ses-X',
+          'detached': 0,
+        };
+        expect(await a.switchSession(0), isNull);
+        a.settleBandOnLanding(1, 0);
+        await settle();
+        expect(
+          a.debugLog.any((l) => l.contains('bg line retired')),
+          isTrue,
+          reason: 'this time the proof speaks for the badge\u2019s thread',
+        );
+        expect(
+          a.view.status,
+          isNot(contains('Bash sleep 15')),
+          reason:
+              'the band must not resurrect the dead command \u2014 the '
+              'tape\u2019s lie was a spinner that outlived its work',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('resumes on its OWN cached line')),
+          isFalse,
+          reason: 'the cache entry is gone, not merely unpainted',
+        );
+      },
+    );
 
     test('+270: the return SPEAKS — a switch cut kills the mouth, not '
         'the turn', () async {
@@ -1467,6 +1469,192 @@ void main() {
       expect(harness.seatCalls.length, 2); // create + exactly one re-home
       expect(a.view.tabs.single.harness, 'opencode'); // the ledger held
     });
+
+    test('+280: the context bar comes home wearing its OWN numbers', () async {
+      // Tim's ask: the swipe used to land on a 'measuring…'
+      // placeholder for a conversation whose sizes the phone KNOWS.
+      // The reading now belongs to the tab (persisted like the hue):
+      // the landing paints it, every later truth UPDATES it.
+      // X: born, named, and it speaks a size mid-turn.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('name X', bubble: 'name X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x'); // the naming refresh, as in +259
+      await settle();
+      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 12000,
+          contextWindow: 200000,
+          ctxSession: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(a.view.context.tokensIn, 12000);
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      // Y: born fresh — the bar it lands on knows NOTHING, and X's
+      // 12k does not ride over.
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      await settle();
+      expect(
+        a.view.context.tokensIn,
+        0,
+        reason: 'a fresh tab wears its own blank, not the old seat\'s',
+      );
+      // Y gets its name and its OWN size.
+      unawaited(a.runQuickCommand('name Y', bubble: 'name Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      unawaited(a.runQuickCommand('work in Y', bubble: 'work in Y'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 3000,
+          contextWindow: 100000,
+          ctxSession: 'ses-Y',
+        ),
+      );
+      await settle();
+      expect(a.view.context.tokensIn, 3000);
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      // SWIPE HOME to X: no /health named a context (the scripted
+      // snapshot has none), yet the bar arrives ALREADY DRESSED.
+      expect(await a.switchSession(0), isNull);
+      a.settleBandOnLanding(1, 0);
+      await settle();
+      expect(
+        a.view.context.tokensIn,
+        12000,
+        reason: 'the cached reading, not the measuring placeholder',
+      );
+      expect(a.view.context.window, 200000);
+      // And when X outgrows the memory, the next truth updates it.
+      unawaited(a.runQuickCommand('more in X', bubble: 'more in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 40000,
+          contextWindow: 200000,
+          ctxSession: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(a.view.context.tokensIn, 40000);
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      // Each conversation keeps its OWN memory: back to Y reads 3k.
+      expect(await a.switchSession(1), isNull);
+      a.settleBandOnLanding(0, 1);
+      await settle();
+      expect(
+        a.view.context.tokensIn,
+        3000,
+        reason: 'X grew; Y remembers what Y last said',
+      );
+    });
+
+    test(
+      '+280: the control row belongs to the tab, not to the machine',
+      () async {
+        // The field tape: one agent working in X, and the idle tab Y
+        // wore a LIT brake for a turn it does not own — 'that agent is
+        // not even busy'. The +249 owner law now covers the row of
+        // verbs, not just the row that spins.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('name X', bubble: 'name X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x');
+        await settle();
+        await a.createSession(harness: 'opencode', dir: '/proj-y');
+        // Y gets a name too — an UNNAMED destination is a fresh seat,
+        // and fresh resets rather than backgrounds a live turn (+256).
+        unawaited(a.runQuickCommand('name Y', bubble: 'name Y'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+        await a.setBridgeDir('/proj-y');
+        await settle();
+        // Seat X and start churn there; name the frame's owner while
+        // it streams (the same stamp +259's leak test rides).
+        expect(await a.switchSession(0), isNull);
+        unawaited(a.runQuickCommand('build in X', bubble: 'build in X'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'context',
+            inputTokens: 500,
+            contextWindow: 9000,
+            ctxSession: 'ses-X',
+          ),
+        );
+        harness.healthState = {...harness.healthState!, 'turnOpen': true};
+        await settle();
+        // At home mid-turn the law is the old one: chips greyed, the
+        // brake lit — this tab's turn, this tab's verbs.
+        expect(a.view.seatBusy, isTrue);
+        expect(a.view.stopHere, isTrue);
+        // SWIPE to Y mid-turn: the turn backgrounds (+246).
+        expect(await a.switchSession(1), isNull);
+        a.settleBandOnLanding(0, 1);
+        await settle();
+        expect(
+          a.view.agentBusy,
+          isTrue,
+          reason:
+              'the machine does hold X\'s turn — the gear badge still '
+              'carries that cross-session sign (+230)',
+        );
+        expect(a.view.turnHomeHere, isFalse);
+        expect(
+          a.view.stopHere,
+          isFalse,
+          reason: 'Y\'s brake sits GREY: it has nothing here to stop',
+        );
+        expect(
+          a.view.seatBusy,
+          isFalse,
+          reason: 'Y is not thinking — its slash chips press and its mic talks',
+        );
+        // And Y opens on its OWN blank bar, not X's mid-build reading.
+        expect(a.view.context.tokensIn, 0);
+        // COMING HOME: X's turn is still open on the wire; the row,
+        // the brake and the bar all remember.
+        expect(await a.switchSession(0), isNull);
+        a.settleBandOnLanding(1, 0);
+        await settle();
+        expect(
+          a.view.stopHere,
+          isTrue,
+          reason: 'the brake lights again where the work lives',
+        );
+        expect(a.view.seatBusy, isTrue);
+        expect(a.view.context.tokensIn, 500);
+      },
+    );
   });
 
   group('fling law (assistant-side)', () {
@@ -1571,6 +1759,22 @@ void main() {
       });
       expect(legacy.hue, isNull);
       expect(legacy.hueOrDefault(2), (2 * 137) % 360);
+    });
+    test('a cached context reading round-trips; a fresh tab has none', () {
+      // +280: the bar's memory belongs to its tab like the hue does —
+      // persisted, and absent (never zero-sketched) until spoken.
+      final t = SessionTab(
+        harness: 'claude',
+        dir: '/p',
+        ctxIn: 12000,
+        ctxWindow: 200000,
+      );
+      final back = SessionTab.fromJson(t.toJson());
+      expect(back.ctxIn, 12000);
+      expect(back.ctxWindow, 200000);
+      final fresh = SessionTab(harness: 'claude', dir: '/p');
+      expect(fresh.toJson().containsKey('ctxIn'), isFalse);
+      expect(SessionTab.fromJson(fresh.toJson()).ctxIn, isNull);
     });
     test('pickHue runs far from the colours already worn', () {
       // The seeded samples below are the property, not the literals:

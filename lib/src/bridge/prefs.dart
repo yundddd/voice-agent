@@ -24,6 +24,8 @@ class SessionTab {
     List<String>? sessionIds,
     this.createdMs = 0,
     this.hue,
+    this.ctxIn,
+    this.ctxWindow,
   }) : sessionIds = sessionIds ?? [];
 
   String harness; // 'claude' | 'opencode'
@@ -69,6 +71,17 @@ class SessionTab {
   /// one when it predates +271.
   int hueOrDefault(int index) => hue ?? (index * 137) % 360;
 
+  /// +280 (Tim): the conversation's LAST KNOWN context sizes — what
+  /// the bar read the last time this tab had a number. Like the hue,
+  /// this belongs to the conversation and is persisted: swiping home
+  /// wakes the bar wearing what the conversation last said instead of
+  /// a 'measuring' placeholder, and every later /health or context
+  /// frame UPDATES the cached reading as truth arrives. null = never
+  /// spoken (a fresh tab, or a /new that blanked the conversation —
+  /// a blanked conversation has no yesterday to fall back on).
+  int? ctxIn;
+  int? ctxWindow;
+
   /// The conversation this tab is CURRENTLY (the newest id it ever
   /// wore); null while the birth turn has not been named yet.
   String? get currentId => sessionIds.isEmpty ? null : sessionIds.last;
@@ -89,6 +102,8 @@ class SessionTab {
     // (the local promotion the guard needs: 'hue != null ? h : ...'
     // would still carry the field's nullability into the map)
     if (hue != null) 'hue': (hue as int),
+    if (ctxIn != null) 'ctxIn': (ctxIn as int),
+    if (ctxWindow != null) 'ctxWindow': (ctxWindow as int),
   };
   static SessionTab fromJson(Map<String, Object?> j) => SessionTab(
     harness: j['harness'] == 'opencode' ? 'opencode' : 'claude',
@@ -100,6 +115,8 @@ class SessionTab {
     ],
     createdMs: (j['createdMs'] as num?)?.toInt() ?? 0,
     hue: j['hue'] is num ? (j['hue'] as num).toInt() % 360 : null,
+    ctxIn: j['ctxIn'] is num ? (j['ctxIn'] as num).toInt() : null,
+    ctxWindow: j['ctxWindow'] is num ? (j['ctxWindow'] as num).toInt() : null,
   );
 }
 

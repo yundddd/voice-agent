@@ -338,6 +338,24 @@ final class AssistantView {
   bool get agentBusy =>
       agentWorking || bridgeBusy || drainOwed || backgrounded.visible;
 
+  /// +280 (Tim): the CONTROL ROW's owner law — the +249 doctrine,
+  /// extended from the row that SPINS to the row of VERBS. Work
+  /// backgrounded by a swipe is real (the gear badge still carries
+  /// that cross-session sign, +230), but it is not THIS tab's: the
+  /// tab that is not working must read idle and ACT idle — its slash
+  /// chips pressable (they speak into its own seat) and its brake
+  /// grey (a lit brake that has nothing to stop HERE is the lie the
+  /// field caught: 'that agent is not even busy'). Scoped off
+  /// [agentBusy]/[bridgeBusy], which stay the machine truths the
+  /// queue laws, the talk-surface stop and the hints read.
+  bool get stopHere => turnHomeHere && agentBusy;
+
+  /// A live turn THIS conversation has open — the arm that holds the
+  /// slash chips greyed mid-turn at home (a press there would supersede
+  /// an answer in flight). Away work does not hold them: the seated
+  /// tab is free to talk.
+  bool get seatBusy => turnHomeHere && bridgeBusy;
+
   /// +168: the current view is an /attach drain (claimed while
   /// turnOpen=false) — replay only, no generating turn. Projected
   /// from VoiceAssistant._drainReading.

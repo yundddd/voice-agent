@@ -9,8 +9,10 @@ import 'package:voice_agent/src/assistant/activity.dart';
 import 'package:voice_agent/src/assistant/state.dart';
 import 'package:voice_agent/src/assistant/view.dart';
 import 'package:voice_agent/src/chat/chat_log.dart';
+import 'package:voice_agent/src/ui/assistant_screen.dart';
 import 'package:voice_agent/src/ui/chat_view.dart';
 import 'package:voice_agent/src/ui/context_bar.dart';
+import 'package:voice_agent/src/ui/theme.dart';
 import 'package:voice_agent/src/ui/latency_strip.dart';
 import 'package:voice_agent/src/ui/cone_overlay.dart';
 import 'package:voice_agent/src/ui/talk_surface.dart';
@@ -859,6 +861,97 @@ void main() {
       await tester.pumpWidget(overlay(false));
       await tester.pump(const Duration(milliseconds: 200));
       expect(_bandOpacity(tester, 'INTERRUPT'), 0);
+    });
+  });
+
+  group('the session face on the chat window (+279)', () {
+    final base = buildClaudeDarkTheme();
+
+    test('the tint re-seeds the bubble containers, nothing else', () {
+      final warm = AssistantScreenSupport.sessionTheme(base, 30).colorScheme;
+      final cool = AssistantScreenSupport.sessionTheme(base, 210).colorScheme;
+      // The picker keeps sibling hues distant — so the cards they ink
+      // must differ exactly where the bubbles paint.
+      expect(warm.primaryContainer, isNot(cool.primaryContainer));
+      expect(warm.secondaryContainer, isNot(cool.secondaryContainer));
+      expect(warm.primaryContainer, isNot(base.colorScheme.primaryContainer));
+      // Everything the face does NOT own stays Claude's: the black
+      // canvas, the warm inks, the orange accent, the error line, the
+      // file slip's tertiary, the working row's neutral card.
+      for (final tint in [warm, cool]) {
+        expect(tint.surface, base.colorScheme.surface);
+        expect(tint.onSurface, base.colorScheme.onSurface);
+        expect(tint.primary, base.colorScheme.primary);
+        expect(tint.error, base.colorScheme.error);
+        expect(tint.tertiary, base.colorScheme.tertiary);
+        expect(
+          tint.surfaceContainerHigh,
+          base.colorScheme.surfaceContainerHigh,
+        );
+      }
+    });
+
+    test('the same hue re-mints an equal scheme (the memo can trust it)', () {
+      expect(
+        AssistantScreenSupport.sessionTheme(base, 123),
+        AssistantScreenSupport.sessionTheme(base, 123),
+      );
+    });
+
+    testWidgets('a user bubble under the theme wears the session hue', (
+      tester,
+    ) async {
+      final tint = AssistantScreenSupport.sessionTheme(base, 200);
+      final entry = ChatEntry.user('Repo status', createdMs: 1);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: base,
+          home: Scaffold(
+            body: Theme(
+              data: tint,
+              child: SingleChildScrollView(
+                child: ChatBubble(
+                  entry: entry,
+                  maxWidthFrac: 0.86,
+                  source: () => _view(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<Card>(find.byType(Card)).color,
+        tint.colorScheme.primaryContainer,
+        reason: 'the chat window wears the session, not just the chip',
+      );
+    });
+
+    testWidgets('an assistant bubble re-inks too', (tester) async {
+      final tint = AssistantScreenSupport.sessionTheme(base, 320);
+      final entry = ChatEntry.assistant(createdMs: 1)
+        ..blocks.add('All settled.');
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: base,
+          home: Scaffold(
+            body: Theme(
+              data: tint,
+              child: SingleChildScrollView(
+                child: ChatBubble(
+                  entry: entry,
+                  maxWidthFrac: 0.86,
+                  source: () => _view(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<Card>(find.byType(Card)).color,
+        tint.colorScheme.secondaryContainer,
+      );
     });
   });
 }

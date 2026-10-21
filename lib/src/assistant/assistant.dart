@@ -904,9 +904,8 @@ class VoiceAssistant extends ChangeNotifier {
   /// chat window's spinner and the backgrounded-work line (+279.1:
   /// the seat's OWN row's age — session B never counts session A's
   /// sleep).
-  Duration get harnessElapsed => _bannerSince == null
-      ? Duration.zero
-      : _clock().difference(_bannerSince!);
+  Duration get harnessElapsed =>
+      _bannerSince == null ? Duration.zero : _clock().difference(_bannerSince!);
   bool get bridgeVoice => _bridgePrefs.voice;
   String get bridgeUrlText => _bridgePrefs.url;
   String get bridgeTokenText => _bridgePrefs.token;
@@ -998,7 +997,36 @@ class VoiceAssistant extends ChangeNotifier {
       _contextWindow = window;
       changed = true;
     }
-    if (changed) notifyListeners();
+    if (!changed) return;
+    // +280 (Tim): the number that just landed is the SEEDED tab's
+    // (the wire's barHome gate and the /health owner law both ensure
+    // that) — so the tab ledger remembers it. Every later swipe home
+    // paints this reading immediately instead of a 'measuring'
+    // placeholder, and the next arrival here simply updates it.
+    _stashContext(_tab);
+    unawaited(_saveBridgePrefs());
+    notifyListeners();
+  }
+
+  /// +280: file the bar's current numbers into [t]'s ledger. Zeros are
+  /// never filed — a blank reading is 'not yet known', not a size (the
+  /// same reason the merge ignores zeros).
+  void _stashContext(SessionTab? t) {
+    if (t == null) return;
+    if (_contextIn > 0) t.ctxIn = _contextIn;
+    if (_contextWindow > 0) t.ctxWindow = _contextWindow;
+  }
+
+  /// +280: the bar lands WEARING the landing tab's own remembered
+  /// reading (a fresh tab knows nothing, exactly as it should) — every
+  /// landing path calls this before the refresh: the swipe home
+  /// (switchSession), a creation (createSession), the cold start
+  /// (init). A fresher /health or context frame updates it on arrival;
+  /// a bridge that currently says zero leaves the remembered truth
+  /// standing, because the merge ignores zeros by law.
+  void _landBarOnTab(SessionTab t) {
+    _contextIn = t.ctxIn ?? 0;
+    _contextWindow = t.ctxWindow ?? 0;
   }
 
   // ── +230: session tabs ────────────────────────────────────────────────
@@ -1221,6 +1249,10 @@ class VoiceAssistant extends ChangeNotifier {
     );
     prefs.activeTab = prefs.tabs.length - 1;
     _sessionId = r['sessionId'] is String ? r['sessionId'] as String : null;
+    // +280: a creation is a landing too — and a brand-new tab knows
+    // nothing, so the bar it wears is blank, not the numbers the
+    // conversation you came from was showing a second ago.
+    _landBarOnTab(prefs.tabs.last);
     _noteFocusMoved(); // +253: a landing is a landing, fresh or not
     await _saveBridgePrefs();
     await _refreshSession();
@@ -1319,11 +1351,13 @@ class VoiceAssistant extends ChangeNotifier {
       // being left dies unheard (its mid was TAKEN at the take, so
       // the return's mail fetch files it silently and never re-
       // speaks it).
-      // The bar belongs to the conversation, like the row: blank it
-      // now; /health's owner gate keeps it honest until the seated
-      // conversation's own turn names a size (/mergeContext ignores
-      // zeros, so the manual zero is the law's hands — as with /new).
-      _contextIn = 0;
+      // The bar belongs to the conversation, like the row: it is
+      // blanked and re-seeded at the landing below (+280 moved what
+      // was the manual zero here into the uniform landing law);
+      // /health's owner gate keeps it honest until the seated
+      // conversation's own turn names a fresher size (/mergeContext
+      // ignores zeros, so the manual blank is the law's hands — as
+      // with /new).
     } else {
       // +255: no live work seen — no marker written. Say so on the
       // tape: a box lighting the destination after THIS line is a
@@ -1338,6 +1372,16 @@ class VoiceAssistant extends ChangeNotifier {
     if (sid is String && !tab.sessionIds.contains(sid)) {
       tab.sessionIds.add(sid);
     }
+    // +280 (Tim, with the control row below): the bar lands WEARING
+    // this conversation's own last reading, not a 'measuring'
+    // placeholder. The blank is uniform now (the old law zeroed only
+    // over live work, so an idle A's numbers could ride onto B); the
+    // destination's tab ledger carries what THIS conversation last
+    // said, and nothing else may paint on its face. A fresher /health
+    // or context frame updates the reading the moment it arrives —
+    // and a bridge that currently says zero leaves the remembered
+    // truth standing, because the merge ignores zeros by law.
+    _landBarOnTab(tab);
     // +253: the watermark lands with the focus — what this conversation
     // already owes is history the eyes get, not the ears.
     _noteFocusMoved();
@@ -1702,9 +1746,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// no live turn holds the slot — a fresh command owns the band).
   void _clearOwnedBand(String? sid, {String? settledLabel}) {
     if (sid == null) return;
-    final i = _bridgePrefs.tabs.indexWhere(
-      (t) => t.sessionIds.contains(sid),
-    );
+    final i = _bridgePrefs.tabs.indexWhere((t) => t.sessionIds.contains(sid));
     if (i >= 0) _bandByTab.remove(i);
     if (sid == _sessionId) {
       final act = _activity;
@@ -1716,8 +1758,8 @@ class VoiceAssistant extends ChangeNotifier {
       // Without a label to match, the conservative form remains:
       // only with no live work holding the band may the at-rest
       // line return.
-      final namesSettled = settledLabel != null &&
-          act.text(mode: _mode) == '$settledLabel…';
+      final namesSettled =
+          settledLabel != null && act.text(mode: _mode) == '$settledLabel…';
       if (namesSettled ||
           (!_bridgeBusy &&
               !_ticker.isOn &&
@@ -2915,8 +2957,14 @@ class VoiceAssistant extends ChangeNotifier {
           // answer in:0 (the bridge cleared its snapshot), and
           // _mergeContext ignores zeros, so the reset has to happen
           // here. The first message_start of the new conversation puts
-          // an honest number back on the bar.
+          // an honest number back on the bar. +280: the tab's CACHED
+          // reading goes blank with it — a conversation that was just
+          // erased has no yesterday's number to be woken by on the
+          // next swipe home.
           _contextIn = 0;
+          tab?.ctxIn = null;
+          tab?.ctxWindow = null;
+          unawaited(_saveBridgePrefs()); // the blanked cache, on disk
           _ticker.resetAll();
           notifyListeners();
           return Stream<BridgeEvent>.empty();
@@ -2943,6 +2991,10 @@ class VoiceAssistant extends ChangeNotifier {
       _prefs = await loadTtsPrefs(modelsDir);
       _asrPrefs = await loadAsrPrefs(modelsDir);
       _bridgePrefs = await loadBridgePrefs(modelsDir);
+      // +280: the cold start opens on the seated tab's OWN remembered
+      // reading — the bar has a number from the first frame, and the
+      // first /health glance updates it the moment truth arrives.
+      if (_bridgePrefs.tabs.isNotEmpty) _landBarOnTab(_tab!);
       // The mode tab the user last used — a habit, restored, not reset
       // to the factory default every cold start.
       _mode = _bridgePrefs.mode == 'pushToTalk'
