@@ -298,38 +298,55 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      _health == null
-                          ? 'No reply yet — press Save & check.'
-                          : _health!['harness'] == 'opencode'
-                          ? 'OpenCode'
-                          : _health!['harness'] == 'claude'
-                          ? 'Claude Code'
-                          : 'Claude Code (bridge too old to switch)',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
+                    // +294 (M3's SegmentedButton — the shape Material
+                    // gives an EITHER/OR choice): both harnesses
+                    // stand side by side and the live one wears the
+                    // fill. The swap-arrow told you a direction
+                    // existed; this shows the whole decision at a
+                    // glance, and the state layers are free. The old
+                    // laws ride unchanged: an unknown bridge or a
+                    // pre-switch one gets the plain caption (the
+                    // choice cannot be offered when the wire cannot
+                    // say the names), and a live turn or an
+                    // unconfigured bridge parks it — a null callback
+                    // renders the segments quiet while the selection
+                    // still tells the truth.
+                    child: switch (_health?['harness']) {
+                      'claude' || 'opencode' => SegmentedButton<String>(
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(
+                            value: 'claude',
+                            label: Text('Claude Code'),
+                            icon: Icon(Icons.chat_bubble),
+                            tooltip:
+                                'Claude Code — keeps its own conversation; '
+                                'flip back and it resumes where it stopped',
+                          ),
+                          ButtonSegment(
+                            value: 'opencode',
+                            label: Text('OpenCode'),
+                            icon: Icon(Icons.terminal),
+                            tooltip:
+                                'OpenCode — keeps its own conversation; '
+                                'flip back and it resumes where it stopped',
+                          ),
+                        ],
+                        selected: {_health!['harness'] as String},
+                        onSelectionChanged:
+                            a.bridgeConfigured && !a.bridgeBusy && !working
+                            ? (_) => _switchHarness()
+                            : null,
                       ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: switch (_health?['harness']) {
-                      'claude' =>
-                        'Switch to OpenCode — each harness keeps '
-                            'its own conversation',
-                      'opencode' =>
-                        'Switch to Claude Code — each harness '
-                            'keeps its own conversation',
-                      _ => 'This bridge is too old to switch harnesses',
+                      _ => Text(
+                        _health == null
+                            ? 'No reply yet — press Save & check.'
+                            : 'Claude Code (bridge too old to switch)',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
                     },
-                    onPressed:
-                        a.bridgeConfigured &&
-                            (_health?['harness'] == 'claude' ||
-                                _health?['harness'] == 'opencode') &&
-                            !a.bridgeBusy &&
-                            !working
-                        ? _switchHarness
-                        : null,
-                    icon: const Icon(Icons.swap_horiz),
                   ),
                 ],
               ),

@@ -373,10 +373,19 @@ class _AssistantScreenState extends State<AssistantScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // +294 (M3's icon pairing law): the ACTIVE tab
+                  // wears the filled glyph, the idle ones the
+                  // outlined twin — selection said by weight, the
+                  // way every M3 nav rail does it, not just by ink.
                   Icon(
-                    t.harness == 'opencode' ? Icons.terminal : Icons.chat,
+                    switch ((t.harness == 'opencode', active)) {
+                      (true, true) => Icons.terminal,
+                      (true, false) => Icons.terminal_outlined,
+                      (false, true) => Icons.chat_bubble,
+                      (false, false) => Icons.chat_bubble_outline,
+                    },
                     size: 14,
-                    color: scheme.onSurfaceVariant,
+                    color: active ? scheme.onSurface : scheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 5),
                   ConstrainedBox(

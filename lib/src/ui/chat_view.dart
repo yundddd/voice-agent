@@ -140,7 +140,29 @@ class ChatBubble extends StatelessWidget {
                                 color: scheme.tertiary.withValues(alpha: 0.6),
                               ),
                             )
-                          : null,
+                          // +294 (the M3 chat pattern): prose is a
+                          // SPEECH shape — round where it faces the
+                          // thread, extraSmall at the tail corner,
+                          // the point the line came from (bottom-
+                          // right for the user's, bottom-left for
+                          // the assistant's). The old Card default
+                          // (all-equal 12) identified no sender.
+                          : RoundedRectangleBorder(
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(AppRadii.large),
+                                topRight: const Radius.circular(AppRadii.large),
+                                bottomLeft: Radius.circular(
+                                  entry.fromUser
+                                      ? AppRadii.large
+                                      : AppRadii.extraSmall,
+                                ),
+                                bottomRight: Radius.circular(
+                                  entry.fromUser
+                                      ? AppRadii.extraSmall
+                                      : AppRadii.large,
+                                ),
+                              ),
+                            ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,

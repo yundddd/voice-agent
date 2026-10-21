@@ -1105,7 +1105,8 @@ void main() {
       expect(
         label.style!.fontSize ?? 14.0,
         14.0,
-        reason: 'the SIZE belongs to the table (and through it, to the '
+        reason:
+            'the SIZE belongs to the table (and through it, to the '
             'user’s text scale — a hand-set fontSize is deaf to it); '
             'the old label hand-set 15',
       );
@@ -1116,6 +1117,61 @@ void main() {
       );
       expect(label.style!.fontWeight, FontWeight.w800);
     });
+
+    testWidgets(
+      'prose grows a TAIL: user bottom-right, assistant bottom-left',
+      (tester) async {
+        // +294 (the M3 chat pattern): the roundness now says WHO
+        // speaks — the extraSmall corner sits at the edge the line
+        // came from, and the three large corners face the thread.
+        final user = ChatEntry.user('Repo status', createdMs: 1);
+        await tester.pumpWidget(
+          _host(
+            SingleChildScrollView(
+              child: ChatBubble(
+                entry: user,
+                maxWidthFrac: 0.86,
+                source: () => _view(),
+              ),
+            ),
+          ),
+        );
+        BorderRadius shapeOf(WidgetTester t) =>
+            ((t.widget<Card>(find.byType(Card)).shape as RoundedRectangleBorder)
+                    .borderRadius
+                as BorderRadius);
+        var rr = shapeOf(tester);
+        expect(
+          rr.bottomRight,
+          const Radius.circular(AppRadii.extraSmall),
+          reason: 'the user speaks from the right edge',
+        );
+        expect(rr.bottomLeft, const Radius.circular(AppRadii.large));
+        expect(rr.topLeft, const Radius.circular(AppRadii.large));
+        expect(rr.topRight, const Radius.circular(AppRadii.large));
+
+        final assistant = ChatEntry.assistant(createdMs: 1)
+          ..blocks.add('All settled.');
+        await tester.pumpWidget(
+          _host(
+            SingleChildScrollView(
+              child: ChatBubble(
+                entry: assistant,
+                maxWidthFrac: 0.86,
+                source: () => _view(),
+              ),
+            ),
+          ),
+        );
+        rr = shapeOf(tester);
+        expect(
+          rr.bottomLeft,
+          const Radius.circular(AppRadii.extraSmall),
+          reason: 'the answer answers from the left',
+        );
+        expect(rr.bottomRight, const Radius.circular(AppRadii.large));
+      },
+    );
 
     test('the theme ships the full M3 role table', () {
       final t = buildClaudeDarkTheme().textTheme;

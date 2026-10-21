@@ -165,9 +165,19 @@ void main() {
       };
       await openScreen(tester);
       expect(find.text('OpenCode'), findsOneWidget);
-      final swap = find.widgetWithIcon(IconButton, Icons.swap_horiz);
-      expect(tester.widget<IconButton>(swap).onPressed, isNotNull);
-      await tester.tap(swap);
+      // +294: the swap-arrow retired for Material's own shape of an
+      // either/or — a SegmentedButton showing BOTH choices, the live
+      // one filled. The tap law is the same verb: pick the other
+      // segment, POST /harness fires once.
+      final segs = find.byType(SegmentedButton<String>);
+      expect(
+        tester.widget<SegmentedButton<String>>(segs).onSelectionChanged,
+        isNotNull,
+      );
+      expect(tester.widget<SegmentedButton<String>>(segs).selected, {
+        'opencode',
+      }, reason: 'the fill wears the truth /health told');
+      await tester.tap(find.text('Claude Code'));
       expect(harness.harnessSwitches, ['claude']);
       // The row is /health's truth: had the bridge come back claude, so
       // would the label (the fake keeps opencode; refresh must not
@@ -189,9 +199,14 @@ void main() {
       expect(find.text('Claude Code'), findsOneWidget);
       // An open turn (any listener's — /health turnOpen is the seat's
       // truth) means a switch would murder live work: park the flip
-      // until the seat is free.
-      final swap = find.widgetWithIcon(IconButton, Icons.swap_horiz);
-      expect(tester.widget<IconButton>(swap).onPressed, isNull);
+      // until the seat is free. (+294: parked now reads as a null
+      // onSelectionChanged — the pair renders, quiet, the fill still
+      // naming what answers.)
+      final segs = find.byType(SegmentedButton<String>);
+      expect(
+        tester.widget<SegmentedButton<String>>(segs).onSelectionChanged,
+        isNull,
+      );
     });
 
     testWidgets('a pre-switch bridge shows a dead switch', (tester) async {
@@ -201,8 +216,9 @@ void main() {
       };
       await openScreen(tester);
       expect(find.textContaining('too old to switch'), findsOneWidget);
-      final swap = find.widgetWithIcon(IconButton, Icons.swap_horiz);
-      expect(tester.widget<IconButton>(swap).onPressed, isNull);
+      // +294: the choice is not even offered when the wire cannot
+      // say the names — no segments at all, just the caption.
+      expect(find.byType(SegmentedButton<String>), findsNothing);
     });
   });
 
