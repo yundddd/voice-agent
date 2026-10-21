@@ -26,6 +26,10 @@ class ChainProbe {
   final List<Activity> statuses = [];
   int retires = 0, idles = 0, repaints = 0;
 
+  /// +287: the conversation the chain's debt belongs to (null = the
+  /// pre-tab trust law).
+  String? owner;
+
   ReattachEnv get env => ReattachEnv(
     canProbe: () => canProbe,
     busy: () => busy,
@@ -45,6 +49,7 @@ class ChainProbe {
     setStatus: statuses.add,
     log: logs.add,
     repaint: () => repaints++,
+    ownerSid: () => owner,
   );
 
   /// Settle the microtasks the probes park on BEFORE moving the fake
@@ -178,6 +183,66 @@ void main() {
       await p.advance(Duration.zero);
       expect(p.logs.single, contains('→ ATTACH'));
       expect(p.reattachAsked, 1);
+    });
+
+    test(
+      '+287: a clean bill naming a STRANGER is no verdict on this debt',
+      () async {
+        // The tape, end to end: a press detached a live turn, the
+        // prompt seated ANOTHER conversation, the chain's first probe
+        // read that stranger's clean ledger and retired the spinner —
+        // the box was dead before the user ever swiped home (+276's
+        // law, unextended to the ladder).
+        p.owner = 'ses-mine';
+        p.health = () => {
+          'turnOpen': false,
+          'missed': 0,
+          'sessionId': 'ses-other',
+        };
+        chain.start(gen: 1, seq: 1, retire: true);
+        await p.advance(Duration.zero);
+        expect(p.logs.single, contains('no verdict'));
+        expect(
+          p.retires,
+          0,
+          reason: "a stranger's clean ledger proves nothing here",
+        );
+        expect(p.idles, 0);
+        // The ladder keeps its rungs...
+        await p.advance(const Duration(seconds: 2));
+        expect(p.logs.length, 2);
+        expect(p.retires, 0);
+        // ...and the debt's OWN conversation's clean bill retires,
+        // like any honest report.
+        p.health = () => {
+          'turnOpen': false,
+          'missed': 0,
+          'sessionId': 'ses-mine',
+        };
+        await p.advance(const Duration(seconds: 6));
+        expect(p.retires, 1);
+        expect(
+          p.logs.any(
+            (l) => l.contains('nothing open, nothing unheard: go idle'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('+287: an UNNAMED clean bill keeps the old global proof', () async {
+      // A bridge too old to stamp (or a nameless birth): the stranger
+      // gate has nothing to check, and the retirement proceeds as it
+      // always did.
+      p.owner = 'ses-mine';
+      p.health = () => {'turnOpen': false, 'missed': 0};
+      chain.start(gen: 1, seq: 1, retire: true);
+      await p.advance(Duration.zero);
+      expect(p.retires, 1);
+      expect(
+        p.logs.any((l) => l.contains('nothing open, nothing unheard: go idle')),
+        isTrue,
+      );
     });
   });
 

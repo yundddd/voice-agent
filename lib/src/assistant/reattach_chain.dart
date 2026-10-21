@@ -40,6 +40,7 @@ final class ReattachEnv {
     required this.setStatus,
     required this.log,
     required this.repaint,
+    this.ownerSid,
   });
 
   /// A gateway and a worker exist to reattach with.
@@ -67,6 +68,15 @@ final class ReattachEnv {
   /// Steal a fresh heard view of the turn ([health] carries the probe
   /// already in hand). True = heard again.
   final Future<bool> Function(Map<String, Object> health) reattach;
+
+  /// +287 (Tim, 'switch to a new session and switch back, the spinning
+  /// box is GONE'): the conversation THIS chain's debt belongs to (the
+  /// turn's claimed owner, else the signed home marker). A /health
+  /// report speaks only for the conversation it NAMES (+276's law) —
+  /// so a clean bill naming a STRANGER is no verdict on this debt and
+  /// must not retire the badge. null = no owner known (a pre-tab
+  /// bridge, a nameless birth): the old global-trust proof stands.
+  final String? Function()? ownerSid;
 
   /// Badge out, clock stopped, snapshot blanked.
   final void Function() retireWork;
@@ -147,9 +157,28 @@ final class ReattachChain {
     final probe = await env.probe();
     if (_epoch != myEpoch) return; // cancelled or re-armed while probing
     if (env.busy()) return; // a resume or a chip attached while we probed
-    final need = bridgeReattachNeeded(probe);
+    var need = bridgeReattachNeeded(probe);
+    // +287: 'nothing open, nothing unheard' is a report about the
+    // conversation the health NAMES. The 15:5x tape: a press detached
+    // a live turn, the prompt seated ANOTHER conversation, and the
+    // chain's first probe read that stranger's clean ledger, went
+    // 'go idle', and retired the spinner the work still owed — the
+    // box was dead before the user ever swiped home, and every
+    // landing net that keys on the badge (the +278 catch-up probe,
+    // the _bgWake heartbeat) stayed silent with it. A clean bill
+    // naming someone else is NO verdict on this debt: the ladder
+    // keeps its rung and asks again. (An unnamed probe — a bridge
+    // too old to stamp, a nameless birth — keeps the old global
+    // proof, exactly as +276 legislates for the banner.)
+    final owner = env.ownerSid?.call();
+    final named = probe?['sessionId'];
+    final stranger =
+        need == false && owner != null && named is String && named != owner;
+    if (stranger) need = null;
     final verdict = need == null
-        ? 'UNREACHABLE (network may still be waking), will retry'
+        ? stranger
+              ? 'health speaks for a stranger, not this debt — no verdict'
+              : 'UNREACHABLE (network may still be waking), will retry'
         : need
         ? 'ATTACH'
         : 'nothing open, nothing unheard: go idle';

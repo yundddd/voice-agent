@@ -271,6 +271,10 @@ class VoiceAssistant extends ChangeNotifier {
         setStatus: _setStatus,
         log: _logDebug,
         repaint: notifyListeners,
+        // +287: the chain retires only on its OWN conversation's clean
+        // bill — the turn's claimed owner first, the signed home
+        // marker behind it (the same pair +276's badge gate reads).
+        ownerSid: () => _turn.workOwner ?? _turnHomeSid,
       ),
     );
     // The three wire companions above belong to THE channel — one
