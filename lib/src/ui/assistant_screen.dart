@@ -17,6 +17,7 @@ import 'session_sheet.dart';
 import 'settings_screen.dart';
 import 'context_bar.dart';
 import 'latency_strip.dart';
+import 'cone_overlay.dart';
 import 'talk_surface.dart';
 
 class AssistantScreen extends StatefulWidget {
@@ -59,6 +60,13 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// thread the +192 law stands: the reader's scroll-away is sacred,
   /// the follow only re-pins a view already resting at the tail.)
   int _lastPaintedTab = -1;
+
+  /// +273: the PTT press point, GLOBAL, fixed at the DOWN edge — the
+  /// cone overlay's apex. Kept through the fade (a released hold
+  /// shows the cones shrinking back to where they opened, not to a
+  /// corner); replaced by the next press.
+  Offset? _conePressGlobal;
+  final GlobalKey _coneKey = GlobalKey();
 
   /// +230: swipe classification for the tab gestures. Tabs live on a
   /// horizontal strip in creation order; a fling LEFT walks NEWER, a
@@ -117,6 +125,18 @@ class _AssistantScreenState extends State<AssistantScreen>
   double _exitDir = 1; // committed exit side: +1 right (walked OLDER)
   bool _flipArmed = false; // awaiting the receipt beyond the edge
   Timer? _flipFuse; // a silent bridge behaves as a refusing one
+
+  /// The press point in the overlay's own coordinates (the overlay is
+  /// the body-sized Stack, so this is the global point minus the
+  /// body's screen offset). Null-safe by design: before the first
+  /// press ever lands there is no apex, and the overlay is invisible
+  /// anyway.
+  Offset _coneLocal() {
+    final g = _conePressGlobal;
+    final box = _coneKey.currentContext?.findRenderObject();
+    if (g == null || box is! RenderBox || !box.hasSize) return Offset.zero;
+    return box.globalToLocal(g);
+  }
 
   /// The thread eases home and the gesture is over: the ONLY way a
   /// swipe ends without a swap, and the way a refused one ends too.
@@ -1097,381 +1117,416 @@ class _AssistantScreenState extends State<AssistantScreen>
           ),
         ),
       ),
-      body: SafeArea(
-        child: Padding(
-          // Bottom ZERO: the talk panel sits flush with the screen's
-          // bottom edge (the inner bottom SafeArea still lifts it past
-          // the navigation-gesture strip, where a hold would die in
-          // the system's hands).
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: Column(
-            children: [
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) => Listener(
-                    // +190: the hand on the channel owns the
-                    // viewport while it's down; the follow resumes
-                    // at the next event once it lets go.
-                    onPointerDown: (_) => _userTouch = true,
-                    onPointerUp: (_) => _userTouch = false,
-                    onPointerCancel: (_) => _userTouch = false,
-                    // +230: a horizontal fling on the channel is the
-                    // TAB gesture (the scroll view only claims the
-                    // vertical half, so the horizontal drag comes
-                    // here free): left = the next tab, right = the
-                    // previous one. +268 retired the third answer:
-                    // past the oldest tab, a right-swipe USED to open
-                    // the creation sheet ("swipe right, be asked");
-                    // now past either end there is simply nothing —
-                    // the thread eases home, and NEW lives on the +
-                    // pill, where it was already one honest tap.
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.deferToChild,
-                      onHorizontalDragUpdate: _onTabDragUpdate,
-                      // A stolen gesture is still a release: the
-                      // thread springs home from where it stood
-                      // rather than snapping (+261).
-                      onHorizontalDragCancel: _onTabDragCancel,
-                      onHorizontalDragEnd: (d) =>
-                          _onTabSwipe(a, d.velocity.pixelsPerSecond.dx),
-                      child: SingleChildScrollView(
-                        controller: _scroll,
-                        // Long harness answers grew the reply card without
-                        // bounds until it smeared over the chips and metrics:
-                        // the text block now scrolls inside this region and
-                        // auto-follows the reply while it streams.
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: constraints.maxHeight,
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // +267: THE BANNER IS GONE. The
-                                // status line spent the whole +259/
-                                // +266 arc getting an owner, a cache
-                                // and a quieter entrance, and Tim's
-                                // verdict landed anyway: 'I want
-                                // that banner completely gone.' Fair
-                                // — every word it ever showed has a
-                                // better home now: the work says
-                                // itself in the working row (label,
-                                // meter, draft), the ear-state says
-                                // itself in the bottom hint, errors
-                                // own their red line below, and the
-                                // tape keeps the rest. The band
-                                // reserved two lines of height to
-                                // duplicate all three; the channel
-                                // just took them back. (The status
-                                // projection still exists — the
-                                // per-tab cache feeds the spinner's
-                                // label through it; it is simply no
-                                // longer PAINTED on this screen.)
-                                if (v.error.isNotEmpty) ...[
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    v.error,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: scheme.error),
-                                  ),
-                                ],
-                                const SizedBox(height: 16),
-                                // +230: the thread — +264: ONE
-                                // horizontal offset, one transform,
-                                // one animation. It rides the finger
-                                // out, swaps its conversation while
-                                // absent, and eases home; the tab's
-                                // own tint says WHERE you are, not a
-                                // glow, not a tilt, not a crossfade.
-                                AnimatedBuilder(
-                                  animation: _paintX,
-                                  // +269 (Tim on the fast swipe: 'is
-                                  // there computation on every
-                                  // swipe?'): the thread subtree is
-                                  // the CACHED child — a drag frame
-                                  // rebuilds the Transform wrapper
-                                  // and NOTHING else (the old shape
-                                  // setState'd the whole screen per
-                                  // pointer event, so a fast swipe
-                                  // starved its own frames). Legs
-                                  // animate the same notifier under
-                                  // a generation token: a second
-                                  // swipe retires the first's
-                                  // callbacks instead of interleaving
-                                  // them — the 'weirdness' of two
-                                  // animations steering one pixel.
-                                  builder: (context, child) =>
-                                      Transform.translate(
-                                        offset: Offset(_paintX.value, 0),
-                                        child: child,
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Padding(
+              // Bottom ZERO: the talk panel sits flush with the screen's
+              // bottom edge (the inner bottom SafeArea still lifts it past
+              // the navigation-gesture strip, where a hold would die in
+              // the system's hands).
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Listener(
+                        // +190: the hand on the channel owns the
+                        // viewport while it's down; the follow resumes
+                        // at the next event once it lets go.
+                        onPointerDown: (_) => _userTouch = true,
+                        onPointerUp: (_) => _userTouch = false,
+                        onPointerCancel: (_) => _userTouch = false,
+                        // +230: a horizontal fling on the channel is the
+                        // TAB gesture (the scroll view only claims the
+                        // vertical half, so the horizontal drag comes
+                        // here free): left = the next tab, right = the
+                        // previous one. +268 retired the third answer:
+                        // past the oldest tab, a right-swipe USED to open
+                        // the creation sheet ("swipe right, be asked");
+                        // now past either end there is simply nothing —
+                        // the thread eases home, and NEW lives on the +
+                        // pill, where it was already one honest tap.
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.deferToChild,
+                          onHorizontalDragUpdate: _onTabDragUpdate,
+                          // A stolen gesture is still a release: the
+                          // thread springs home from where it stood
+                          // rather than snapping (+261).
+                          onHorizontalDragCancel: _onTabDragCancel,
+                          onHorizontalDragEnd: (d) =>
+                              _onTabSwipe(a, d.velocity.pixelsPerSecond.dx),
+                          child: SingleChildScrollView(
+                            controller: _scroll,
+                            // Long harness answers grew the reply card without
+                            // bounds until it smeared over the chips and metrics:
+                            // the text block now scrolls inside this region and
+                            // auto-follows the reply while it streams.
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight,
+                              ),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // +267: THE BANNER IS GONE. The
+                                    // status line spent the whole +259/
+                                    // +266 arc getting an owner, a cache
+                                    // and a quieter entrance, and Tim's
+                                    // verdict landed anyway: 'I want
+                                    // that banner completely gone.' Fair
+                                    // — every word it ever showed has a
+                                    // better home now: the work says
+                                    // itself in the working row (label,
+                                    // meter, draft), the ear-state says
+                                    // itself in the bottom hint, errors
+                                    // own their red line below, and the
+                                    // tape keeps the rest. The band
+                                    // reserved two lines of height to
+                                    // duplicate all three; the channel
+                                    // just took them back. (The status
+                                    // projection still exists — the
+                                    // per-tab cache feeds the spinner's
+                                    // label through it; it is simply no
+                                    // longer PAINTED on this screen.)
+                                    if (v.error.isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        v.error,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(color: scheme.error),
                                       ),
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      borderRadius: const BorderRadius.all(
-                                        Radius.circular(18),
-                                      ),
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: _sessionTint(_hueOf(v)),
+                                    ],
+                                    const SizedBox(height: 16),
+                                    // +230: the thread — +264: ONE
+                                    // horizontal offset, one transform,
+                                    // one animation. It rides the finger
+                                    // out, swaps its conversation while
+                                    // absent, and eases home; the tab's
+                                    // own tint says WHERE you are, not a
+                                    // glow, not a tilt, not a crossfade.
+                                    AnimatedBuilder(
+                                      animation: _paintX,
+                                      // +269 (Tim on the fast swipe: 'is
+                                      // there computation on every
+                                      // swipe?'): the thread subtree is
+                                      // the CACHED child — a drag frame
+                                      // rebuilds the Transform wrapper
+                                      // and NOTHING else (the old shape
+                                      // setState'd the whole screen per
+                                      // pointer event, so a fast swipe
+                                      // starved its own frames). Legs
+                                      // animate the same notifier under
+                                      // a generation token: a second
+                                      // swipe retires the first's
+                                      // callbacks instead of interleaving
+                                      // them — the 'weirdness' of two
+                                      // animations steering one pixel.
+                                      builder: (context, child) =>
+                                          Transform.translate(
+                                            offset: Offset(_paintX.value, 0),
+                                            child: child,
+                                          ),
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          borderRadius: const BorderRadius.all(
+                                            Radius.circular(18),
+                                          ),
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: _sessionTint(_hueOf(v)),
+                                          ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 2,
+                                          ),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              for (final e in v.chat)
+                                                if (e.fromUser ||
+                                                    e.blocks.isNotEmpty ||
+                                                    // A file bubble has no text
+                                                    // blocks — the slip IS the
+                                                    // bubble.
+                                                    e.isFile)
+                                                  _bubbleFor(e, a, context),
+                                            ],
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          for (final e in v.chat)
-                                            if (e.fromUser ||
-                                                e.blocks.isNotEmpty ||
-                                                // A file bubble has no text
-                                                // blocks — the slip IS the
-                                                // bubble.
-                                                e.isFile)
-                                              _bubbleFor(e, a, context),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
 
-                                // The working row: spinner, one-line
-                                // activity, meter — permanently the
-                                // channel's last word while any bridge
-                                // turn runs, heard or unheard (+151).
-                                // +154: the slot is RESERVED always — a
-                                // fixed-height band every professional
-                                // chat footer owns; the row fades in and
-                                // out inside it, and no bubble ever
-                                // slides as the state changes.
-                                SizedBox(
-                                  height: WorkingRowCard.reservedHeight,
-                                  child: AnimatedOpacity(
-                                    duration: const Duration(milliseconds: 180),
-                                    opacity: v.showWorkingRow ? 1.0 : 0.0,
-                                    child: WorkingRowCard(source: () => a.view),
-                                  ),
-                                ),
+                                    // The working row: spinner, one-line
+                                    // activity, meter — permanently the
+                                    // channel's last word while any bridge
+                                    // turn runs, heard or unheard (+151).
+                                    // +154: the slot is RESERVED always — a
+                                    // fixed-height band every professional
+                                    // chat footer owns; the row fades in and
+                                    // out inside it, and no bubble ever
+                                    // slides as the state changes.
+                                    SizedBox(
+                                      height: WorkingRowCard.reservedHeight,
+                                      child: AnimatedOpacity(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        opacity: v.showWorkingRow ? 1.0 : 0.0,
+                                        child: WorkingRowCard(
+                                          source: () => a.view,
+                                        ),
+                                      ),
+                                    ),
 
-                                // A backgrounded tool call keeps a permanent
-                                // line at the channel's bottom while it works
-                                // unheard: the badge (detached turn) or a queue
-                                // pin naming the work is its proof-of-life, and
-                                // it dismisses itself the moment the turn is
-                                // heard again, stopped, or proven finished.
-                                if (v.showBackgroundedRow)
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 4,
-                                    ),
-                                    child: BackgroundedWorkCard(
-                                      source: () => a.view,
-                                    ),
-                                  ),
-                              ],
+                                    // A backgrounded tool call keeps a permanent
+                                    // line at the channel's bottom while it works
+                                    // unheard: the badge (detached turn) or a queue
+                                    // pin naming the work is its proof-of-life, and
+                                    // it dismisses itself the moment the turn is
+                                    // heard again, stopped, or proven finished.
+                                    if (v.showBackgroundedRow)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 4,
+                                        ),
+                                        child: BackgroundedWorkCard(
+                                          source: () => a.view,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              if (v.bridgeConfigured) ...[
-                // Session housekeeping: /new and /compact (see
-                // VoiceAssistant.bridgeControl for what they do on the
-                // wire). Taps deliberately interrupt any voice reply
-                // mid-flight (runQuickCommand supersedes), which is the
-                // right feel: a chip press means "do THIS now". /compact
-                // left the row at +154 because mid-turn it parked an
-                // ordinary stream and died wordless; +171's seatless
-                // fold made it chip-safe (the notice answers, the CLI
-                // relays a live 'tool compact' line, the re-stamped
-                // done closes the pump) — so +178 brought it back, BY
-                // DICTATE, between /new and Stop (the list order is the
-                // row order, and the Stop chip sits after them all).
-                // Stop itself is PERMANENT —
-                // greyed while the agent is idle, lit the moment any
-                // work is in flight, heard or backgrounded. A control
-                // that only exists when active teaches nothing; this
-                // one reads as the channel's brake at all times.
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      // (+244: the row's own leading SizedBox is gone —
-                      // the chips' left padding now IS the inset.)
-                      for (final chip in VoiceAssistant.controlChips)
-                        Padding(
-                          // +243: chips wear a compact skin; +244
-                          // tightens it again at Tim's read: four
-                          // verbs must fit the width, no sideways hunt.
-                          padding: const EdgeInsets.only(right: 2),
-                          child: _controlChip(
-                            avatar: Icon(_chipIcons[chip], size: 17),
-                            label: Text(chip),
-                            onPressed: v.bridgeBusy
-                                ? null
-                                // +242: the model chip pops the SAME
-                                // sheet the settings page uses — the
-                                // session's brain is a one-tap
-                                // decision on the talking screen now.
-                                : () => chip == '/model'
-                                      ? _pickModelTap(a)
-                                      : a.bridgeControl(chip),
+                  if (v.bridgeConfigured) ...[
+                    // Session housekeeping: /new and /compact (see
+                    // VoiceAssistant.bridgeControl for what they do on the
+                    // wire). Taps deliberately interrupt any voice reply
+                    // mid-flight (runQuickCommand supersedes), which is the
+                    // right feel: a chip press means "do THIS now". /compact
+                    // left the row at +154 because mid-turn it parked an
+                    // ordinary stream and died wordless; +171's seatless
+                    // fold made it chip-safe (the notice answers, the CLI
+                    // relays a live 'tool compact' line, the re-stamped
+                    // done closes the pump) — so +178 brought it back, BY
+                    // DICTATE, between /new and Stop (the list order is the
+                    // row order, and the Stop chip sits after them all).
+                    // Stop itself is PERMANENT —
+                    // greyed while the agent is idle, lit the moment any
+                    // work is in flight, heard or backgrounded. A control
+                    // that only exists when active teaches nothing; this
+                    // one reads as the channel's brake at all times.
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          // (+244: the row's own leading SizedBox is gone —
+                          // the chips' left padding now IS the inset.)
+                          for (final chip in VoiceAssistant.controlChips)
+                            Padding(
+                              // +243: chips wear a compact skin; +244
+                              // tightens it again at Tim's read: four
+                              // verbs must fit the width, no sideways hunt.
+                              padding: const EdgeInsets.only(right: 2),
+                              child: _controlChip(
+                                avatar: Icon(_chipIcons[chip], size: 17),
+                                label: Text(chip),
+                                onPressed: v.bridgeBusy
+                                    ? null
+                                    // +242: the model chip pops the SAME
+                                    // sheet the settings page uses — the
+                                    // session's brain is a one-tap
+                                    // decision on the talking screen now.
+                                    : () => chip == '/model'
+                                          ? _pickModelTap(a)
+                                          : a.bridgeControl(chip),
+                              ),
+                            ),
+                          _controlChip(
+                            avatar: Icon(
+                              Icons.stop_circle_outlined,
+                              size: 17,
+                              color: v.agentBusy ? null : scheme.outline,
+                            ),
+                            label: Text(
+                              'Stop',
+                              style: TextStyle(
+                                color: v.agentBusy ? null : scheme.outline,
+                              ),
+                            ),
+                            onPressed: v.agentBusy ? a.bridgeStop : null,
                           ),
-                        ),
-                      _controlChip(
-                        avatar: Icon(
-                          Icons.stop_circle_outlined,
-                          size: 17,
-                          color: v.agentBusy ? null : scheme.outline,
-                        ),
-                        label: Text(
-                          'Stop',
-                          style: TextStyle(
-                            color: v.agentBusy ? null : scheme.outline,
-                          ),
-                        ),
-                        onPressed: v.agentBusy ? a.bridgeStop : null,
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-              LatencyStrip(latency: v.latency),
-              if (a.debugUi && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Column(
-                    children: [
-                      if (a.asrAudioSeconds > 0)
-                        TextButton.icon(
-                          onPressed: a.playAsrAudio,
-                          icon: Icon(
-                            a.debugPlaying
-                                ? Icons.stop_circle_outlined
-                                : Icons.play_circle_outline,
-                            size: 22,
-                          ),
-                          label: Text(
-                            a.debugPlaying
-                                ? 'Stop replay'
-                                : 'Replay exactly what the ASR heard '
-                                      '(${a.asrAudioSeconds.toStringAsFixed(1)}s)',
-                          ),
-                        ),
-                      if (a.lastTtsSeconds > 0)
-                        TextButton.icon(
-                          onPressed: a.playTtsAudio,
-                          icon: Icon(
-                            a.debugPlaying
-                                ? Icons.stop_circle_outlined
-                                : Icons.record_voice_over_outlined,
-                            size: 22,
-                          ),
-                          label: Text(
-                            a.debugPlaying
-                                ? 'Stop replay'
-                                : 'Replay my last reply, raw TTS out '
-                                      '(${a.lastTtsSeconds.toStringAsFixed(1)}s)',
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              // Bottom-anchored block sits in a bottom SafeArea: with
-              // edge-to-edge Android (targetSdk 35) the system reserves
-              // the bottom edge for navigation gestures, and a HOLD
-              // starting in that strip is taken by the system (a bare
-              // tap is not) — which is why the old tap-to-latch button
-              // seemed fine right where hold-to-talk now sits idle.
-              SafeArea(
-                top: false,
-                bottom: true,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 24),
-                    // Claude Code-style context-usage readout, right
-                    // above the talk button where eyes already sit
-                    // mid-turn. Fed by live `context` events (and the
-                    // post-turn /health merge).
-                    if (v.bridgeConfigured &&
-                        (v.context.tokensIn > 0 || v.bridgeBusy))
-                      ContextBar(view: v.context, busy: v.bridgeBusy),
-                    // Conversation mode's label rides ABOVE the panel
-                    // (the field asked the button itself to sit at the
-                    // screen's bottom edge — a label under it would
-                    // lift it off again; the label is gone entirely in
-                    // PTT mode, the slide bands say it all).
-                    if (v.mode == InteractionMode.conversation) ...[
-                      Text(hint, style: Theme.of(context).textTheme.labelLarge),
-                      const SizedBox(height: 8),
-                    ],
-                    // The whole bottom panel IS the talk button (see
-                    // talk_surface.dart): press anywhere and the hold
-                    // records (same PttHold edges, same release
-                    // semantics), the touch seeds an expanding ripple,
-                    // mic amplitude storm-fires more waves, and the two
-                    // release slides appear as WIDE bands — top edge =
-                    // interrupt, right edge = discard. Conversation
-                    // mode: a tap anywhere toggles, exactly as the old
-                    // FAB, but without aiming. SHORTER (128 vs the old
-                    // 208): the chat owns more of the screen; the press
-                    // area and both edge bands stay wide enough to hit
-                    // with a thumb.
-                    TalkSurface(
-                      height: 128,
-                      source: () => a.view,
-                      icon: icon,
-                      color: color,
-                      onPointerDown: (p) => _assistant.pttDown(p),
-                      onPointerMove: (p) => _assistant.pttMove(p),
-                      onPointerUp: (p) => _assistant.pttUp(p),
-                      onPointerCancel: () => _assistant.pttCancel(),
-                      onTap: () {
-                        // Press/release edges own every hold over a
-                        // harness turn (tap-to-stop lives in the
-                        // release path); this tap remains for the
-                        // cases the hold could not open the mic —
-                        // where the classic hard stop / toggle apply.
-                        if (v.mode == InteractionMode.pushToTalk) {
-                          if (v.bridgeBusy) a.bridgeStop();
-                        } else {
-                          unawaited(a.toggle());
-                        }
-                      },
                     ),
-                    if (a.debugUi)
-                      Text(
-                        'hold edges: ${_assistant.pttEdgeCount}  '
-                        'pointers: ${_assistant.mode == InteractionMode.pushToTalk ? "ptt" : "conv"}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.labelSmall?.copyWith(color: scheme.outline),
-                      ),
-                    const SizedBox(height: 8),
-                    if (a.debugUi && a.debugLog.isNotEmpty)
-                      SelectableText(
-                        a.debugLog.reversed.take(14).join('\n'),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: scheme.outline,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                    // No trailing spacer: the panel is the last word at
-                    // the bottom edge.
+                    const SizedBox(height: 16),
                   ],
-                ),
+                  LatencyStrip(latency: v.latency),
+                  if (a.debugUi &&
+                      (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Column(
+                        children: [
+                          if (a.asrAudioSeconds > 0)
+                            TextButton.icon(
+                              onPressed: a.playAsrAudio,
+                              icon: Icon(
+                                a.debugPlaying
+                                    ? Icons.stop_circle_outlined
+                                    : Icons.play_circle_outline,
+                                size: 22,
+                              ),
+                              label: Text(
+                                a.debugPlaying
+                                    ? 'Stop replay'
+                                    : 'Replay exactly what the ASR heard '
+                                          '(${a.asrAudioSeconds.toStringAsFixed(1)}s)',
+                              ),
+                            ),
+                          if (a.lastTtsSeconds > 0)
+                            TextButton.icon(
+                              onPressed: a.playTtsAudio,
+                              icon: Icon(
+                                a.debugPlaying
+                                    ? Icons.stop_circle_outlined
+                                    : Icons.record_voice_over_outlined,
+                                size: 22,
+                              ),
+                              label: Text(
+                                a.debugPlaying
+                                    ? 'Stop replay'
+                                    : 'Replay my last reply, raw TTS out '
+                                          '(${a.lastTtsSeconds.toStringAsFixed(1)}s)',
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  // Bottom-anchored block sits in a bottom SafeArea: with
+                  // edge-to-edge Android (targetSdk 35) the system reserves
+                  // the bottom edge for navigation gestures, and a HOLD
+                  // starting in that strip is taken by the system (a bare
+                  // tap is not) — which is why the old tap-to-latch button
+                  // seemed fine right where hold-to-talk now sits idle.
+                  SafeArea(
+                    top: false,
+                    bottom: true,
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 24),
+                        // Claude Code-style context-usage readout, right
+                        // above the talk button where eyes already sit
+                        // mid-turn. Fed by live `context` events (and the
+                        // post-turn /health merge).
+                        if (v.bridgeConfigured &&
+                            (v.context.tokensIn > 0 || v.bridgeBusy))
+                          ContextBar(view: v.context, busy: v.bridgeBusy),
+                        // Conversation mode's label rides ABOVE the panel
+                        // (the field asked the button itself to sit at the
+                        // screen's bottom edge — a label under it would
+                        // lift it off again; the label is gone entirely in
+                        // PTT mode, the slide bands say it all).
+                        if (v.mode == InteractionMode.conversation) ...[
+                          Text(
+                            hint,
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        // The whole bottom panel IS the talk button (see
+                        // talk_surface.dart): press anywhere and the hold
+                        // records (same PttHold edges, same release
+                        // semantics), the touch seeds an expanding ripple,
+                        // mic amplitude storm-fires more waves, and the two
+                        // release slides appear as WIDE bands — top edge =
+                        // interrupt, right edge = discard. Conversation
+                        // mode: a tap anywhere toggles, exactly as the old
+                        // FAB, but without aiming. SHORTER (128 vs the old
+                        // 208): the chat owns more of the screen; the press
+                        // area and both edge bands stay wide enough to hit
+                        // with a thumb.
+                        TalkSurface(
+                          height: 128,
+                          source: () => a.view,
+                          icon: icon,
+                          color: color,
+                          onPointerDown: (p) {
+                            // +273: the cone overlay fixes its apex NOW,
+                            // at the press point — the compass rose is
+                            // anchored where the thumb landed, not where
+                            // it wanders.
+                            setState(() => _conePressGlobal = p);
+                            _assistant.pttDown(p);
+                          },
+                          onPointerMove: (p) => _assistant.pttMove(p),
+                          onPointerUp: (p) => _assistant.pttUp(p),
+                          onPointerCancel: () => _assistant.pttCancel(),
+                          onTap: () {
+                            // Press/release edges own every hold over a
+                            // harness turn (tap-to-stop lives in the
+                            // release path); this tap remains for the
+                            // cases the hold could not open the mic —
+                            // where the classic hard stop / toggle apply.
+                            if (v.mode == InteractionMode.pushToTalk) {
+                              if (v.bridgeBusy) a.bridgeStop();
+                            } else {
+                              unawaited(a.toggle());
+                            }
+                          },
+                        ),
+                        if (a.debugUi)
+                          Text(
+                            'hold edges: ${_assistant.pttEdgeCount}  '
+                            'pointers: ${_assistant.mode == InteractionMode.pushToTalk ? "ptt" : "conv"}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: scheme.outline),
+                          ),
+                        const SizedBox(height: 8),
+                        if (a.debugUi && a.debugLog.isNotEmpty)
+                          SelectableText(
+                            a.debugLog.reversed.take(14).join('\n'),
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: scheme.outline,
+                                  fontFamily: 'monospace',
+                                ),
+                          ),
+                        // No trailing spacer: the panel is the last word at
+                        // the bottom edge.
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+          // +273: the DECISION overlay — the gesture cones lifted to
+          // the whole screen (cone_overlay.dart). It eats nothing
+          // (IgnorePointer inside), so the hold keeps living in the
+          // talk panel below; it is painted above everything the
+          // body holds so the amber/red fans read across the entire
+          // channel, not across 128 px of panel.
+          Positioned.fill(
+            child: ConeOverlay(
+              key: _coneKey,
+              visible: v.ptt.holdActive && _conePressGlobal != null,
+              origin: _coneLocal(),
+              guide: v.ptt,
+              errorColor: scheme.error,
+              idleLabelColor: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }

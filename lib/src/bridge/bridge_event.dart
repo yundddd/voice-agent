@@ -19,6 +19,7 @@ class BridgeEvent {
     this.inputTokens = 0,
     this.contextWindow = 0,
     this.ctxSession,
+    this.session,
     this.outTokens = 0,
     this.toolKind = '',
     this.thought = '',
@@ -43,6 +44,7 @@ class BridgeEvent {
     this.inputTokens = 0,
     this.contextWindow = 0,
     this.ctxSession,
+    this.session,
     this.outTokens = 0,
     this.toolKind = '',
     this.thought = '',
@@ -77,6 +79,12 @@ class BridgeEvent {
   /// describe. Null = a bridge too old to say; the phone merges those
   /// on trust, exactly as before.
   final String? ctxSession;
+
+  /// +274: the conversation that OWNED any relayed frame at relay time
+  /// (the wire's `_sess`). Null = a bridge too old to stamp, or a
+  /// frame born before the session had a name — the phone falls back
+  /// on the +253 context-frame inference for those.
+  final String? session;
   final int contextWindow;
 
   /// For 'tool {name:tokens}' (the live spinner counter): output tokens
@@ -154,12 +162,17 @@ class BridgeEvent {
           : BridgeEvent._('error', text: dataJson, isError: true);
     }
     final data = decoded.cast<String, Object>();
+    final sess =
+        data['_sess'] is String && (data['_sess'] as String).isNotEmpty
+            ? data['_sess'] as String
+            : null;
     switch (event) {
       case 'say':
         return BridgeEvent._(
           'say',
           text: '${data['text'] ?? ''}',
           wireMs: _int(data['_ts']),
+          session: sess,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );
@@ -176,6 +189,7 @@ class BridgeEvent {
           thought: '${data['thought'] ?? ''}',
           draft: '${data['draft'] ?? ''}',
           wireMs: _int(data['_ts']),
+          session: sess,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
           taskId: '${data['id'] ?? ''}',
@@ -189,6 +203,7 @@ class BridgeEvent {
           ctxSession: data['session'] is String
               ? data['session'] as String
               : null,
+          session: sess,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );
@@ -199,6 +214,7 @@ class BridgeEvent {
           filePath: '${data['path'] ?? ''}',
           fileSize: _int(data['size']),
           wireMs: _int(data['_ts']),
+          session: sess,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );
@@ -218,6 +234,7 @@ class BridgeEvent {
           // `text` so the pump's error path and the journal share one
           // carrier.
           text: data['error'] is String ? data['error'] as String : '',
+          session: sess,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );

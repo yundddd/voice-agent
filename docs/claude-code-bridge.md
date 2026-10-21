@@ -304,6 +304,31 @@ Regression walk: `node --test tool/bridge_queue_test.mjs` — the stub
 knows `STUB_TOO_LONG` (re-enact the refusal) and `STUB_COMPACT` (play
 the compaction tape).
 
+## Every frame names its conversation (shipped +274)
+
+The poll ring is machine-global: one stream carries every conversation
+the bridge relays. Until +274 only `context` frames said WHO they
+belonged to, and the phone's focus laws (+253) inferred ownership of
+say/tool frames from whichever context frame crossed last — sound
+with one thread, a coin toss with two (field tape: two sessions
+streaming at once, the visible chat "mixed with responses from
+different sessions, a complete mess").
+
+`relay()` now stamps `_sess` — the owning conversation's sid at relay
+time — into EVERY frame (the ring copy, the backlog copy and the live
+view all share the data object, so replayed frames carry their birth
+owner). A nameless birth stays unstamped and falls through to the
++253 inference, exactly as before; an old bridge changes nothing on
+the phone.
+
+Phone law (`_onSay`/`_onTool`): a frame stamped for a conversation
+that is neither the seat's nor the view's is FOREIGN — no ack (the
+backlog copy remains the owner tab's debt, paid when its own drain
+runs), no filing here (it would squat on the wrong thread), and its
+tool band files to the OWNER's +266 away-cache, so the tab you come
+home to names what actually ran. Walks pin all of it, plus the
+parser's absence-of-stamp = trust clause.
+
 ## The fold's farewell waits for its answer (shipped +273)
 
 A polite (slide-right) queue folds into the RUNNING turn at the

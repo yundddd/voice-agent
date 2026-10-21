@@ -82,6 +82,9 @@ class EnvProbe {
   /// +257: every done-driven marker retirement the pump reported.
   final List<String> workHomed = [];
 
+  /// +274: every away-band filing — and WHOSE tab it was filed for.
+  final List<(String?, Object)> awayBands = [];
+
   BridgeTurnEnv get env => BridgeTurnEnv(
     mode: () => mode,
     backgrounded: () => backgrounded,
@@ -147,6 +150,7 @@ class EnvProbe {
     focusAtMs: () => focusMs,
     seatedSession: () => seatedNow,
     noteWorkHome: workHomed.add,
+    cacheAwayBand: (sid, act) => awayBands.add((sid, act)),
     log: (line, {bool toJournal = true}) {
       logs.add(line);
       journaled.add(toJournal);
@@ -558,6 +562,100 @@ void main() {
       await r;
       out.complete();
       await settle();
+    });
+
+    test('+274: a frame STAMPED for another conversation is neither '
+        'taken nor filed here', () async {
+      // Tim's two-session tape: the poll ring carries BOTH threads,
+      // the +253 context-frame learning ping-ponged, and the chat
+      // mixed. The stamp ends the guessing: a foreign say must not be
+      // ACKed (its backlog copy is the owner tab's debt) and must not
+      // squat on this thread.
+      probe.seatedNow = 'ses-Y'; // watching Y
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'answer born in the other thread.',
+          mid: 11,
+          session: 'ses-X', // X is neither the seat nor this view
+        ),
+      );
+      await settle();
+      expect(engine.synthesized, isEmpty);
+      expect(bubble.blocks, isEmpty,
+          reason: 'a foreign say does not contaminate this thread');
+      expect(probe.took, isNot(contains(11)),
+          reason: 'not taken — the owner tab has not heard it yet');
+      expect(
+        probe.logs.any(
+          (l) => l.contains('foreign conversation: say left unheard'),
+        ),
+        isTrue,
+      );
+      // The SAME conversation's frame, stamped honestly: normal law.
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'mine, at home.',
+          mid: 12,
+          session: 'ses-Y',
+        ),
+      );
+      await settle();
+      expect(engine.synthesized, ['mine, at home.']);
+      expect(probe.took, contains(12));
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
+    test('+274: a foreign tool band files to the OWNER\u2019s tab, '
+        'not the one on screen', () async {
+      probe.seatedNow = 'ses-Y';
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'flutter build apk',
+          session: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(probe.statuses.whereType<StepLine>(), isEmpty,
+          reason: 'the watching tab keeps its peace');
+      expect(probe.awayBands, hasLength(1));
+      expect(probe.awayBands.single.$1, 'ses-X',
+          reason: 'the band files for the thread that is working');
+      expect(turn.lastToolStep, isEmpty,
+          reason: 'this pump\u2019s ledgers stay its own conversation\u2019s');
+      expect(
+        probe.logs.any(
+          (l) => l.contains('foreign conversation: band kept'),
+        ),
+        isTrue,
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
+    test('+274: the parser reads the wire stamp, and absence is trust',
+        () async {
+      final ev = BridgeEvent.parse(
+          'say', '{"text":"x","_mid":9,"_sess":"ses-Z","_ts":1}');
+      expect(ev.session, 'ses-Z');
+      expect(ev.mid, 9);
+      final old = BridgeEvent.parse('say', '{"text":"x","_mid":10}');
+      expect(old.session, isNull,
+          reason: 'an old bridge keeps the +253 inference path');
     });
 
     test('+163: a steered pickup makes the turn heard and promises no '

@@ -912,6 +912,15 @@ let nextTurnId = Date.now();
 let curTurnId = 0; // 0 = outside any turn
 const relay = (ev, data) => {
   data._ts ??= Date.now();
+  // +274: WHOSE frame is this — answered on the frame itself. The
+  // shared ring (and any poll client) carries EVERY conversation;
+  // say/tool frames used to arrive naked, leaving the phone to infer
+  // ownership from whichever context frame crossed last (its own
+  // +253 law). Two concurrent conversations made that a coin toss and
+  // the chat mixed threads. The relay-time sid is the fact, not an
+  // inference; a nameless birth stays unstamped (the phone's context
+  // learning still covers it, exactly as before).
+  data._sess ??= sessionId || '';
   // ??=, never =: a re-relayed receipt (heldFinished rides two turns)
   // keeps the identity it was born with — one message, one id.
   data._mid ??= ++msgSeq;

@@ -566,6 +566,28 @@ class BridgeTurn {
       env.log('dup by id #${ev.mid} — skipped');
       return;
     }
+    // +274: THE STAMP DECIDES, not the inference. The poll ring is
+    // machine-global — one stream carries every conversation the
+    // bridge relays — and the +253 context-frame learning is only a
+    // coin toss when two threads stream at once (Tim's two-session
+    // tape: responses from both tabs interleaved into one, a
+    // 'complete mess'). A frame stamped for a conversation that is
+    // neither the seat's nor this view's is FOREIGN: do not take it
+    // (no ack — the heard ledger is the owner tab's debt to pay), do
+    // not file it here (it would squat on the wrong thread); the
+    // backlog keeps it, and the owner's own drain serves it the law
+    // it was written for.
+    final seatedNow = env.seatedSession?.call();
+    final foreign = ev.session != null &&
+        ev.session != seatedNow &&
+        ev.session != _viewSid;
+    if (foreign) {
+      env.log(
+        'foreign conversation: say left unheard for its own thread'
+        '${transport.wireTag(ev)}',
+      );
+      return;
+    }
     // TAKEN: the commit (and its ack) land NOW, before the speaker —
     // a barge-in from here drops the paragraph, it never re-owes it
     // (user dictum: 'for barge in just drop').
@@ -592,7 +614,6 @@ class BridgeTurn {
     // signs it, and the speaker never interrupts the tab you are
     // watching. (The 120 s rule below is the same honesty for a longer
     // absence; the watermark is the same honesty for this one.)
-    final seatedNow = env.seatedSession?.call();
     final viewHome =
         _viewSid == null || seatedNow == null || _viewSid == seatedNow;
     final focusAt = env.focusAtMs();
@@ -765,21 +786,33 @@ class BridgeTurn {
     // view's identity, learned from its context frames, decides; an
     // unnamed view (old bridge, fresh birth) merges on trust, as ever.
     final seatedForBand = env.seatedSession?.call();
-    final bandHome =
-        _viewSid == null || seatedForBand == null || _viewSid == seatedForBand;
+    // +274: the same outright verdict as the say gate — a frame whose
+    // stamp names a conversation that is neither the seat's nor this
+    // view's belongs to a thread this pump is only passing through.
+    // Its band files to the OWNER's cache (whose tab will show it on
+    // return), and none of this view's ledgers take a word of it:
+    // the step line, the backgrounded row's label, the journal — all
+    // belong to the drain that speaks it.
+    final foreign = ev.session != null &&
+        ev.session != seatedForBand &&
+        ev.session != _viewSid;
+    final bandHome = !foreign &&
+        (_viewSid == null ||
+            seatedForBand == null ||
+            _viewSid == seatedForBand);
     if (bandHome) {
       env.setStatus(act);
     } else {
       // +266: 'kept' is not 'lost' — the owner's cache learns the new
       // command, so the band you come home to names what is running
       // NOW, not what was running when you swiped away.
-      env.cacheAwayBand?.call(_viewSid, act);
+      env.cacheAwayBand?.call(foreign ? ev.session : _viewSid, act);
       env.log(
-        'unfocused conversation: band kept, $stepLine not painted'
-        '${transport.wireTag(ev)}',
+        '${foreign ? 'foreign conversation' : 'unfocused conversation'}: '
+        'band kept, $stepLine not painted${transport.wireTag(ev)}',
       );
     }
-    if (!queued) {
+    if (!queued && !foreign) {
       // The newest REAL step: what the bottom line names if this turn
       // leaves the ear now. Steps landing behind a queue pin — or
       // behind the badge, from the turn this prompt queued after —
@@ -789,7 +822,7 @@ class BridgeTurn {
       // the full line.
       turn.noteToolStep(stepLine);
     }
-    if (!isAttach) {
+    if (!isAttach && !foreign) {
       if (queued) {
         // +146: NO bubble. The queue verdict used to inject 'One
         // moment — …' as a system card between the pinned message and

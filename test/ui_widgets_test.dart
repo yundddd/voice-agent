@@ -12,6 +12,7 @@ import 'package:voice_agent/src/chat/chat_log.dart';
 import 'package:voice_agent/src/ui/chat_view.dart';
 import 'package:voice_agent/src/ui/context_bar.dart';
 import 'package:voice_agent/src/ui/latency_strip.dart';
+import 'package:voice_agent/src/ui/cone_overlay.dart';
 import 'package:voice_agent/src/ui/talk_surface.dart';
 
 AssistantView _view({
@@ -807,44 +808,57 @@ void main() {
       );
       await tester.pump(const Duration(seconds: 2));
     });
+  });
 
-    testWidgets('the gesture cones appear ONLY while a hold is down', (
+  group('ConeOverlay (+273)', () {
+    // The PTT decision, lifted to the whole screen: the words are
+    // REAL Text (findable, announced) riding real AnimatedOpacity —
+    // the same 'only exist mid-hold' law the panel bands answered,
+    // now probed on the overlay itself. (The painter's beams are
+    // geometry, not widgets: what they must never disagree about —
+    // armed vs release behaviour — is pinned by the PttHold slideOf
+    // predicate tests, and the labels' opacity is the seam.)
+    Widget overlay(bool visible) => _host(
+      SizedBox(
+        width: 400,
+        height: 800,
+        child: Stack(
+          children: [
+            ConeOverlay(
+              visible: visible,
+              origin: const Offset(200, 640),
+              guide: PttGuide(
+                holdActive: visible,
+                slide: visible ? PttSlide.up : PttSlide.none,
+                drag: visible ? const Offset(0, -72) : Offset.zero,
+                holdOverTurn: false,
+                micLevel: 0.5,
+              ),
+              errorColor: const Color(0xFFCC0000),
+              idleLabelColor: const Color(0xFF888888),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    testWidgets('at rest: invisible; on hold: both words at full light', (
       tester,
     ) async {
-      final edges = <String>[];
-      var holding = false;
-      await tester.pumpWidget(
-        surface(tester, edges: edges, holding: () => holding),
-      );
-      expect(
-        _bandOpacity(tester, 'INTERRUPT'),
-        0,
-        reason: 'the gestures only exist mid-hold',
-      );
+      await tester.pumpWidget(overlay(false));
+      expect(_bandOpacity(tester, 'INTERRUPT'), 0);
       expect(_bandOpacity(tester, 'DISCARD'), 0);
-
-      // Press FOR REAL first: the down edge is what wakes the surface
-      // ticker (in the app the hold truth arrives from the assistant;
-      // the fake source here flips with the finger).
-      final g = await tester.startGesture(
-        tester.getCenter(find.byType(TalkSurface)),
-      );
-      holding = true;
-      await tester.pump(); // start the fade
-      await tester.pump(const Duration(milliseconds: 200)); // complete it
+      await tester.pumpWidget(overlay(true));
+      await tester.pump(const Duration(milliseconds: 200));
       expect(
         _bandOpacity(tester, 'INTERRUPT'),
         1,
-        reason: 'UP = interrupt, the amber cone opens from the finger',
+        reason: 'the amber cone opens with the hold',
       );
-      expect(
-        _bandOpacity(tester, 'DISCARD'),
-        1,
-        reason: 'RIGHT = discard, full-height band on the right edge',
-      );
-      await g.up();
-      holding = false;
-      await tester.pump(const Duration(seconds: 2));
+      expect(_bandOpacity(tester, 'DISCARD'), 1);
+      await tester.pumpWidget(overlay(false));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(_bandOpacity(tester, 'INTERRUPT'), 0);
     });
   });
 }
