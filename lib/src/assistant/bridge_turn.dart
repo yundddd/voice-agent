@@ -962,6 +962,19 @@ class BridgeTurn {
   /// in [_onSay], so a redelivery dedups by id whichever way this block
   /// plays out.)
   Future<void> speak(String text) async {
+    // +289: THE FOCUS LAW COVERS EVERY VOICE, not just says. _onSay
+    // gates its paragraphs against the seat; the narration paths
+    // (the step line, the pulse, the ack) walked past that gate
+    // straight to the speaker — so a turn backgrounded by a swipe
+    // kept narrating its WORK onto the tab you switched to, long
+    // after the cut. Same verdict as the say gate, same words on the
+    // tape: the thread files the line and the mouth stays shut.
+    final seatedNow = env.seatedSession?.call();
+    if (!(_viewSid == null || seatedNow == null || _viewSid == seatedNow)) {
+      chat.addBlock(turnBubble, text);
+      env.log('unfocused conversation: logged silently, not spoken');
+      return;
+    }
     if (isLive) env.noteAudioActivity(); // audio just became active: hush
     env.noteReplyText(text);
     spoken.write('$text ');

@@ -1256,6 +1256,152 @@ void main() {
       harness.finishView();
     });
 
+    // +289 (Tim's field: 'swipe away from a session — the TTS should
+    // be paused or stopped IMMEDIATELY, but is still speaking'):
+    // three awaits stood between the fling and the cut — the /seat
+    // round trip, the prefs write, the refreshing /health — and the
+    // stale seat pointer left the door open one round trip LONGER:
+    // the left-behind conversation's freshest paragraph passed the
+    // focus gate (it still WAS the seat, as far as the phone knew),
+    // revived the cut pump, and spoke on the tab you switched to.
+    // The mouth now closes at the COMMIT, and the /seat answer wears
+    // its name the moment it lands. The laggy harness below makes
+    // those wire windows observable.
+    Future<void> seatedXWithLiveSpeech(_LaggyHarness lag) async {
+      lag.healthState = <String, Object?>{
+        'ok': true,
+        'claudeUp': true,
+        'harness': 'claude',
+        'dir': '/proj-a',
+        'seat': true,
+      };
+      a.dispose();
+      a = VoiceAssistant(
+        worker: engine,
+        micSource: FakeMic(),
+        audioOutput: out,
+        gatewayFactory: (_, _) => lag,
+        scheduler: time = FakeScheduler(DateTime(2026, 1, 1, 12)),
+        clock: () => DateTime(2026, 1, 1, 12),
+      );
+      await a.setBridge(url: 'http://harness.test', token: 'tok');
+      await settle();
+      harness = lag; // every emit below aims at the seated views
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      lag.emit(BridgeEvent.forTest('done'));
+      lag.finishView();
+      await settle();
+      lag.healthState = {...lag.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      // Same harness for Y: the mid-turn move BACKGROUNDS rather
+      // than resets (+246) — the swipeable shape the field lives in.
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
+      await settle();
+      lag.emit(BridgeEvent.forTest('done'));
+      lag.finishView();
+      await settle();
+      lag.healthState = {...lag.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      expect(await a.switchSession(0), isNull); // seat X
+      unawaited(a.runQuickCommand('talk in X', bubble: 'talk in X'));
+      await settle();
+      lag.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 10,
+          contextWindow: 20,
+          ctxSession: 'ses-X',
+        ),
+      );
+      lag.emit(
+        const BridgeEvent.forTest('say', text: 'on air when you go.', mid: 71),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50)); // the pump delivers
+      await settle();
+      expect(out.playing, isTrue, reason: 'audio ON AIR at the swipe');
+      lag.healthState = {...lag.healthState!, 'turnOpen': true};
+    }
+
+    test('+289: the cut is the COMMIT — /seat still in flight, the ear '
+        'has already let go', () async {
+      final lag = _LaggyHarness();
+      await seatedXWithLiveSpeech(lag);
+      lag.holdSeat = Completer<void>();
+      final stopsBefore = out.stopCount;
+      final fut = a.switchSession(1);
+      await settle();
+      expect(
+        lag.seatCalls.last['sessionId'],
+        'ses-Y',
+        reason: 'the verb IS on the wire — the response has not landed',
+      );
+      expect(
+        out.stopCount,
+        greaterThan(stopsBefore),
+        reason: '+289: the cut does not wait the round trip',
+      );
+      expect(out.playing, isFalse);
+      expect(
+        a.debugLog.any((l) => l.contains('ear let go')),
+        isTrue,
+        reason: 'and the drop names itself (the barge-in law)',
+      );
+      lag.holdSeat!.complete();
+      expect(await fut, isNull);
+      await settle();
+      lag.emit(BridgeEvent.forTest('done'));
+      lag.finishView();
+    });
+
+    test('+289: the seat answer WEARS ITS NAME at once — a say landing '
+        'while the refreshing /health is still in flight cannot re-open '
+        'the cut mouth', () async {
+      final lag = _LaggyHarness();
+      await seatedXWithLiveSpeech(lag);
+      // The rest-law /health passes; the REFRESHING one (the glance
+      // after the verb, the old code's only source for the pointer)
+      // parks. The old leak: during this park the pointer still
+      // named the conversation just left, its freshest paragraph
+      // sailed through viewHome, revived the pump, and talked on
+      // the destination tab.
+      lag.holdHealthAfter = lag.healthCalls;
+      lag.holdRefresh = Completer<void>();
+      final fut = a.switchSession(1);
+      await settle();
+      expect(out.playing, isFalse, reason: 'the commit cut first');
+      final playedBefore = out.played.length;
+      lag.emit(
+        const BridgeEvent.forTest('say', text: 'still talking?', mid: 72),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50));
+      await settle();
+      expect(
+        out.played,
+        hasLength(playedBefore),
+        reason:
+            'the left-behind conversation files mute even before '
+            '/health confirms the seat — the /seat answer moved the '
+            'pointer the moment it landed',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('unfocused conversation')),
+        isTrue,
+        reason: 'and the silence names its law',
+      );
+      lag.holdRefresh!.complete();
+      expect(await fut, isNull);
+      await settle();
+      lag.emit(BridgeEvent.forTest('done'));
+      lag.finishView();
+    });
+
     test(
       '+256: the unnamed destination is a reset — a mid-turn swipe '
       'onto a never-spoken tab REFUSES with words, not a silent kill',
@@ -1999,4 +2145,46 @@ void main() {
       expect(a.view.tabs, isEmpty);
     });
   });
+}
+
+/// +289: the scripted harness with observable wire windows. [seat]
+/// lets the verb land (a real bridge moves its state when the
+/// REQUEST arrives) and parks the RESPONSE on demand; [healthInfo]
+/// parks every /health after the [holdHealthAfter]+1st — leaving
+/// the rest-law glance through and stopping only the REFRESHING
+/// one, the glance the switch used to treat as the moment the seat
+/// gained its name. It isn't: the /seat answer is.
+class _LaggyHarness extends FakeHarness {
+  Completer<void>? holdSeat;
+  Completer<void>? holdRefresh;
+  int holdHealthAfter = 0;
+  int healthCalls = 0;
+
+  @override
+  Future<Map<String, Object>?> seat({
+    String? harness,
+    String? dir,
+    String? model,
+    String? sessionId,
+    bool fresh = false,
+  }) async {
+    final r = await super.seat(
+      harness: harness,
+      dir: dir,
+      model: model,
+      sessionId: sessionId,
+      fresh: fresh,
+    );
+    await holdSeat?.future;
+    return r;
+  }
+
+  @override
+  Future<Map<String, Object>?> healthInfo() async {
+    healthCalls++;
+    if (holdRefresh != null && healthCalls > holdHealthAfter + 1) {
+      await holdRefresh!.future;
+    }
+    return super.healthInfo();
+  }
 }

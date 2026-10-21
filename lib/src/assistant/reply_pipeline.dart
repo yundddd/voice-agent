@@ -368,6 +368,15 @@ class ReplyPipeline {
       onAudible?.call(); // the honest release→ear clock starts at the
       // player's hand-off, not the queue write
       await output.play(samples, rate);
+      if (!_playing) {
+        // +289 belt: the cut landed INSIDE the play hand-off. The
+        // output layer is the first net (a chunk that encoded
+        // through its own cut never starts); this is the second, for
+        // any backend whose player took the source past the stop.
+        // A chunk that started after the ear let go must not talk
+        // its full length over the tab the user switched to.
+        unawaited(output.stop());
+      }
     } catch (e) {
       _playing = false;
       _playedRecently = false;

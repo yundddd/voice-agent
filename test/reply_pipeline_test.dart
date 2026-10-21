@@ -118,6 +118,58 @@ void main() {
     },
   );
 
+  test('+289: a cut inside the play hand-off re-cuts the late start', () async {
+    // The race +289 closes: stopPlayback fires while a chunk sits
+    // INSIDE output.play (the encode, the plugin hand-off — real
+    // time on the real backend). A backend that takes the source
+    // past its own stop would talk that chunk's full length over
+    // the tab the user swiped to; the pump's belt catches it at
+    // the instant it started. The production net is one layer
+    // deeper (FilePlayerAudioOutput refuses to start past a cut);
+    // this is the second.
+    final out = _LateStartOutput();
+    final engine = FakeSpeechEngine();
+    final time = FakeScheduler(DateTime(2026, 1, 1, 12));
+    final reply = ReplyPipeline(
+      output: out,
+      worker: () => engine,
+      clock: () => time.now,
+      scheduler: time,
+      repaint: () {},
+      userSpeaking: () => false,
+      gatePin: (_) {},
+      resetVad: () {},
+      onNaturalEnd: () {},
+      onStopped: () {},
+    );
+    out.gate = Completer<void>();
+    reply.startStream();
+    unawaited(reply.runPump(isStale: () => false));
+    await settle();
+    final speak = reply.speakBlock(
+      'a tail that starts past its cut',
+      alive: () => true,
+      onAir: (_) {},
+    );
+    await settle();
+    // The pump is parked inside output.play — the chunk on the seam.
+    expect(out.played, isEmpty, reason: 'the gate holds the hand-off');
+    final stopsBefore = out.stopCount;
+    reply.stopPlayback(); // the cut lands INSIDE the hand-off
+    out.gate!.complete(); // and this backend starts anyway
+    await speak;
+    await settle();
+    expect(out.played, hasLength(1), reason: 'late, but it started');
+    expect(
+      out.stopCount,
+      greaterThan(stopsBefore + 1),
+      reason: 'stopPlayback cut once; the belt re-cut the late start',
+    );
+    expect(reply.playing, isFalse);
+    expect(reply.pumpAlive, isFalse);
+    reply.closeStream();
+  });
+
   test(
     '+270: an ABANDONED stream (closed before the stragglers) stays dead',
     () async {
@@ -139,4 +191,19 @@ void main() {
       expect(reply.pumpAlive, isFalse);
     },
   );
+}
+
+/// +289: a backend whose play() sits in flight (the real one encodes
+/// a WAV and crosses a platform channel — seconds can live in that
+/// await). While [gate] is pending, the chunk has NOT reached the
+/// player; completing it starts the late hand-off the belt catches.
+class _LateStartOutput extends FakeAudioOutput {
+  Completer<void>? gate;
+
+  @override
+  Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
+    final g = gate;
+    if (g != null) await g.future;
+    await super.play(samples, sampleRate, tag: tag);
+  }
 }

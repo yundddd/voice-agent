@@ -16,15 +16,44 @@ import 'package:path_provider/path_provider.dart';
 import '../audio/audio_io.dart';
 import 'audio_output.dart';
 
+/// +289: the slice of the platform player this adapter drives, kept
+/// as a seam so the cut races below are provable in a plain unit
+/// test (the real AudioPlayer wants a live binding the moment it is
+/// constructed; the fake wants nothing). One production
+/// implementation: [_AudioPlayerAdapter].
+abstract interface class FilePlayerPlatform {
+  Future<void> play(Source source);
+  Future<void> stop();
+  Stream<void> get onPlayerComplete;
+  Future<void> dispose();
+}
+
+class _AudioPlayerAdapter implements FilePlayerPlatform {
+  _AudioPlayerAdapter(this._player);
+  final AudioPlayer _player;
+
+  @override
+  Future<void> play(Source source) => _player.play(source);
+
+  @override
+  Future<void> stop() => _player.stop();
+
+  @override
+  Stream<void> get onPlayerComplete => _player.onPlayerComplete;
+
+  @override
+  Future<void> dispose() => _player.dispose();
+}
+
 class FilePlayerAudioOutput implements AudioOutput {
   FilePlayerAudioOutput({
-    AudioPlayer? player,
+    FilePlayerPlatform? player,
     Future<Directory> Function()? tempDir,
     this.note,
-  }) : _player = player ?? AudioPlayer(),
+  }) : _player = player ?? _AudioPlayerAdapter(AudioPlayer()),
        _tempDir = tempDir ?? getTemporaryDirectory;
 
-  final AudioPlayer _player;
+  final FilePlayerPlatform _player;
   final Future<Directory> Function() _tempDir;
 
   /// +209: the audio seam's own witness. The frame bill says every
@@ -38,6 +67,15 @@ class FilePlayerAudioOutput implements AudioOutput {
   final StreamController<void> _ended = StreamController<void>.broadcast();
   String? _file;
   bool _cutting = false;
+  // +289 (Tim: 'swipe away — the TTS should be stopped immediately,
+  // but is still speaking'): the cut's own clock. Every stop()
+  // counts, and a play() that crossed a number since it began is
+  // DEAD ON ARRIVAL — the speaker belongs to whoever speaks next,
+  // not to a chunk still encoding while its cut landed. The old code
+  // reset _cutting mid-flight and started the player anyway, so a
+  // chunk caught in the hand-off talked its full length (seconds;
+  // the +288 tape's were twelve) over the tab the user swiped to.
+  int _cuts = 0;
 
   @override
   Stream<void> get onNaturalEnd => _ended.stream;
@@ -51,7 +89,13 @@ class FilePlayerAudioOutput implements AudioOutput {
     // duck in this device's assistant lane. Dedup and ledger fixes
     // stay; the route question gets re-earned with data, not guesses.
     final seam = Stopwatch()..start();
+    final cuts0 = _cuts; // +289: this chunk's cut epoch at birth
     final dir = await _tempDir();
+    if (_cuts != cuts0) {
+      // +289: a cut landed while the temp dir was still a promise —
+      // the chunk never even became a file.
+      return;
+    }
     final file = File(
       p.join(
         dir.path,
@@ -91,9 +135,22 @@ class FilePlayerAudioOutput implements AudioOutput {
     final minAge = Duration(
       milliseconds: ((samples.length / sampleRate) * 1000 - 120).round(),
     );
+    if (_cuts != cuts0) {
+      // +289: the cut landed across the encode (an isolate round
+      // trip is real time) — the file exists, the player must never
+      // see it. discardCurrent takes it down.
+      discardCurrent();
+      return;
+    }
     _listenOnce(minAge);
     _cutting = false;
     await _player.play(DeviceFileSource(file.path));
+    if (_cuts != cuts0) {
+      // +289: the cut crossed the play round trip itself — some
+      // platforms start the source past their own stop. Re-cut; the
+      // completion event lands suppressed (_cutting).
+      await stop();
+    }
     // The round trip returned — anything past the async handoffs is
     // time the platform's main thread spent ON the player's behalf,
     // and that thread is the one the channel draws on.
@@ -126,6 +183,8 @@ class FilePlayerAudioOutput implements AudioOutput {
 
   @override
   Future<void> stop() async {
+    _cuts++; // +289: the clock ticks before anything else — a play
+    // in flight reads the new number at its next await and dies.
     _cutting = true;
     try {
       await _player.stop();

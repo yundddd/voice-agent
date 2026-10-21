@@ -1294,6 +1294,15 @@ class VoiceAssistant extends ChangeNotifier {
     // reattached to mail it never asked to stop reading.
     final rest = _seatRest(h, resets: tab.currentId == null);
     if (rest != null) return rest;
+    // +289 (Tim's field: 'swipe away from a session — the TTS should
+    // be paused or stopped IMMEDIATELY, but is still speaking'): the
+    // cut rides the COMMIT, not the landing. Every await below is a
+    // round trip (/seat, prefs, the refreshing /health) — a speaker
+    // that waits them out keeps talking where the thread used to be.
+    // A refusal that can still come from /seat itself pays one cut
+    // it did not need; the 'ear let go' line names that drop, which
+    // is the barge-in law's whole price.
+    _cutEarOnSwitch();
     final r = await g.seat(
       harness: tab.harness,
       dir: tab.dir,
@@ -1376,6 +1385,18 @@ class VoiceAssistant extends ChangeNotifier {
     if (sid is String && !tab.sessionIds.contains(sid)) {
       tab.sessionIds.add(sid);
     }
+    // +289: THE SEAT ANSWERED WITH A NAME — WEAR IT NOW. The say
+    // gate asks whether the view's conversation IS the seat; until
+    // this line the pointer still named the conversation just left,
+    // so its freshest paragraph sailed through viewHome, revived the
+    // cut pump (the +270 rule) and spoke on the tab you switched TO
+    // — for as long as the refreshing /health took to say otherwise.
+    // The /seat response already named the destination (+256);
+    // createSession has always worn its own. A fresh seat names
+    // nobody yet — the pointer goes null exactly as the refreshing
+    // /health would report it (nameless birth keeps the old global
+    // proof until its first frame speaks a name).
+    _sessionId = sid is String ? sid : null;
     // +280 (Tim, with the control row below): the bar lands WEARING
     // this conversation's own last reading, not a 'measuring'
     // placeholder. The blank is uniform now (the old law zeroed only
@@ -1408,29 +1429,38 @@ class VoiceAssistant extends ChangeNotifier {
   /// SessionChannel.focusAtMs and BridgeTurn._onSay).
   void _noteFocusMoved() {
     _chan.focusAtMs = _clock().millisecondsSinceEpoch - _transport.skewMs;
-    // +259 (Tim's field round): LEAVING IS DROPPING — for EVERY mouth,
-    // not only the mouth with lit busy flags. +257 hung the cut on the
-    // live-work capture, and the tape caught the half that walked
-    // past it: the speak tail of a turn whose flags had already fallen
-    // kept talking over the new tab ('it's just speaking in the
-    // background'). The landing itself is now the cut — same doctrine
-    // as the press's 'for barge in just drop', and just as traceable:
-    // an in-audio cut with no journal line is the one thing the
-    // barge-in spec forbids.
-    if (_reply.playing || _reply.queuedCount > 0) {
-      _logDebug(
-        'switch: ear let go — ${_reply.queuedCount} queued '
-        'block(s) dropped unheard',
-      );
-      // +270: the paragraph actually on air joins the drop ledger
-      // (the hide cut's own door) — its synth tail may not resurrect
-      // as a mid-sentence resume when the respawned pump finds the
-      // NEXT paragraph; and the flush now happens even landing
-      // between chunks, which is where the old early return hid the
-      // readerless queue that made the return 'completely silent'.
-      _hide.markAudibleCut();
-      _reply.stopPlayback();
-    }
+    // +289: the cut split from the watermark — switchSession fires it
+    // at the COMMIT, and the landing fires it again: a paragraph the
+    // /seat round trip managed to revive (the seat pointer has only
+    // just moved) dies here too. Same doctrine as the press's
+    // 'for barge in just drop', and just as traceable: an in-audio
+    // cut with no journal line is the one thing the barge-in spec
+    // forbids.
+    _cutEarOnSwitch();
+  }
+
+  /// +259 (Tim's field round): LEAVING IS DROPPING — for EVERY mouth,
+  /// not only the mouth with lit busy flags. +257 hung the cut on the
+  /// live-work capture, and the tape caught the half that walked past
+  /// it: the speak tail of a turn whose flags had already fallen kept
+  /// talking over the new tab ('it's just speaking in the
+  /// background'). +289 moved the switch's first strike to the commit
+  /// — the moment the verb is sent — because the landing turned out
+  /// to be two round trips late.
+  void _cutEarOnSwitch() {
+    if (!(_reply.playing || _reply.queuedCount > 0)) return;
+    _logDebug(
+      'switch: ear let go — ${_reply.queuedCount} queued '
+      'block(s) dropped unheard',
+    );
+    // +270: the paragraph actually on air joins the drop ledger
+    // (the hide cut's own door) — its synth tail may not resurrect
+    // as a mid-sentence resume when the respawned pump finds the
+    // NEXT paragraph; and the flush now happens even landing
+    // between chunks, which is where the old early return hid the
+    // readerless queue that made the return 'completely silent'.
+    _hide.markAudibleCut();
+    _reply.stopPlayback();
   }
 
   /// +266: the band's sweep moved HERE out of the landing itself
