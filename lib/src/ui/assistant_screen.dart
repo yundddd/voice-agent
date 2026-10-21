@@ -43,7 +43,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// True when the screen built its own machine (only then does
   /// dispose() own its death; an injected assistant is its test's).
   bool get _ownsAssistant => widget.assistant == null;
-  bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
 
   /// +230: the creation sheet's one-flight guard — build re-runs on
@@ -797,12 +796,6 @@ class _AssistantScreenState extends State<AssistantScreen>
               child: const Icon(Icons.settings_outlined),
             ),
           ),
-          IconButton(
-            tooltip: 'Debug tools',
-            isSelected: _debugMode,
-            onPressed: () => setState(() => _debugMode = !_debugMode),
-            icon: const Icon(Icons.bug_report_outlined),
-          ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(64),
@@ -1153,7 +1146,7 @@ if (v.bridgeConfigured) ...[
                 const SizedBox(height: 16),
               ],
               LatencyStrip(latency: v.latency),
-              if (_debugMode && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
+              if (a.debugUi && (a.asrAudioSeconds > 0 || a.lastTtsSeconds > 0))
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Column(
@@ -1255,7 +1248,7 @@ if (v.bridgeConfigured) ...[
                         }
                       },
                     ),
-                    if (_debugMode)
+                    if (a.debugUi)
                       Text(
                         'hold edges: ${_assistant.pttEdgeCount}  '
                         'pointers: ${_assistant.mode == InteractionMode.pushToTalk ? "ptt" : "conv"}',
@@ -1264,7 +1257,7 @@ if (v.bridgeConfigured) ...[
                         ).textTheme.labelSmall?.copyWith(color: scheme.outline),
                       ),
                     const SizedBox(height: 8),
-                    if (_debugMode && a.debugLog.isNotEmpty)
+                    if (a.debugUi && a.debugLog.isNotEmpty)
                       SelectableText(
                         a.debugLog.reversed.take(14).join('\n'),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(

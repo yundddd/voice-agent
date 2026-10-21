@@ -436,6 +436,19 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   'is needed.',
                 ),
               ),
+              // +230: the bug icon on the main bar became this switch —
+              // same verb, but the choice now lives in prefs like every
+              // other habit instead of resetting each launch.
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: a.debugUi,
+                onChanged: (v) => a.setDebugUi(v),
+                title: const Text('Debug tools'),
+                subtitle: const Text(
+                  'On: the main screen shows audio replay buttons, hold '
+                  'counters and the event log.',
+                ),
+              ),
             ],
           );
         },

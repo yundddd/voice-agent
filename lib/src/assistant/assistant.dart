@@ -1499,6 +1499,16 @@ class VoiceAssistant extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// +230: 'Debug tools' — the bug icon on the main bar retired into a
+  /// setting (see BridgePrefs.debug). On, the main screen shows the
+  /// replay buttons, the hold-edge counter and the event log.
+  bool get debugUi => _bridgePrefs.debug;
+  Future<void> setDebugUi(bool on) async {
+    _bridgePrefs.debug = on;
+    await _saveBridgePrefs();
+    notifyListeners();
+  }
+
   /// 'Narrate progress' switch: on, every `tool` event of a harness turn
   /// is spoken as it arrives and long silent steps repeat their line as
   /// a heartbeat (see BridgePrefs.narrate — the turn loop reads the pref

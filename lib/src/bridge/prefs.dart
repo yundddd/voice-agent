@@ -80,6 +80,7 @@ class BridgePrefs {
     this.voice = true,
     this.narrate = false,
     this.tts = true,
+    this.debug = false,
     this.mode = 'conversation',
     this.eraBackfilled = false,
     this.sessionBackfilled = false,
@@ -158,6 +159,12 @@ class BridgePrefs {
   /// by one block of speech at the end.
   /// The turn loop reads this live (no wire involvement).
   bool narrate;
+
+  /// +230: 'Debug tools' — the bug icon on the main bar retired into a
+  /// setting, so its choice survives restarts like every other habit.
+  /// On, the main screen shows the replay buttons, the hold-edge
+  /// counter and the event log under the talk surface.
+  bool debug;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
 
   Map<String, Object> toJson() => {
@@ -166,6 +173,7 @@ class BridgePrefs {
     'voice': voice,
     'narrate': narrate,
     'tts': tts,
+    'debug': debug,
     'mode': mode,
     'eraBackfilled': eraBackfilled,
     'sessionBackfilled': sessionBackfilled,
@@ -179,6 +187,7 @@ class BridgePrefs {
     voice: j['voice'] as bool? ?? true,
     narrate: j['narrate'] as bool? ?? false,
     tts: j['tts'] as bool? ?? true,
+    debug: j['debug'] as bool? ?? false,
     // Only the two real tabs; anything else (an enum rename, a hand
     // edit) falls back to the factory default.
     mode: j['mode'] == 'pushToTalk' ? 'pushToTalk' : 'conversation',
