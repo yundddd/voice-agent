@@ -2,7 +2,7 @@
 // Every test here names a field report it exists to keep fixed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relaySentences, settleOwed, fmtTok, MIN_SENT_CHARS, MIN_CLAUSE_CHARS, MIN_CLAUSE_BACKLOG } from './sentence_relay.mjs';
+import { relaySentences, settleOwed, fmtTok, MIN_SENT_CHARS, MAX_SENT_CHARS } from './sentence_relay.mjs';
 
 const run = (buf, opts = {}) => {
   const blk = { buf, spoken: 0 };
@@ -31,52 +31,55 @@ test('micro-segment floor: "OK." never carves its own frame', () => {
   assert.ok(out[0].endsWith('going.'));
 });
 
-test('ramble cuts at the FIRST breath the prose marked, not an arbitrary space '
-    + '(+222: the LAST-mark rule died when clause cuts stood on their own)', () => {
+test('ramble past the cap cuts at the LAST clause mark inside it, not an '
+    + 'arbitrary space (+232: with clause cuts retired, the cap branch is '
+    + 'the only mid-sentence cut left, and it still breathes where the '
+    + 'prose says)', () => {
   const head = 'word '.repeat(30).trim(); // 149 chars, no punctuation
-  const commaAt = `${head} and the comma lands right here, second half of the clause continues for a while yet past the cap so only the comma can save this seam from a mid-phrase cut`;
+  const commaAt = `${head} and the first comma lands here, then the clause ` +
+    'runs on and a second comma comes later, well inside the cap but past ' +
+    'the halfway mark of the window the cutter sees';
   const { out } = run(commaAt);
   assert.ok(out.length >= 1);
-  assert.ok(out[0].endsWith('here,'), 'frame must end at the comma');
+  assert.ok(out[0].endsWith('later,'), 'frame must end at the LAST legal comma');
 });
 
-test('+228: a short reply stays fused even when its comma clears the breath floor', () => {
+test('+232: a short reply stays fused — commas are the app\'s problem now', () => {
   const t = 'If you want space back, the practical moves are pruning the ' +
     'ComfyUI folder and running a containerd garbage collection.';
   const { out } = run(t, { force: true });
-  // The +222 shape this comma used to carve at: a 23-char head and its
-  // own tail. +228: the advice fits under the backlog gate, so it ships
-  // as the ONE breath the prose always was.
-  assert.equal(out.length, 1, 'sub-backlog commas never carve');
+  assert.equal(out.length, 1, 'one frame for one sentence');
   assert.equal(out[0], t);
 });
 
-test('+228: past the backlog the same comma cuts at its breath floor', () => {
+test('+232: a long comma-spliced sentence still rides the wire as ONE frame '
+    + '(the field report: "very short chunks" — the clause cut retired so '
+    + 'the phone can split evenly where the prose is widest)', () => {
   const t = 'If you want space back, the practical moves are pruning the ' +
     'ComfyUI folder and running a containerd garbage collection, plus ' +
     'unloading models you no longer route to and closing the tabs that ' +
     'leak a gigabyte each until the whole machine finally feels light.';
   assert.ok(t.length > 160);
   const { out } = run(t, { force: true });
-  assert.equal(out[0], 'If you want space back,',
-    'the valve opens at the backlog and the first breath still wins');
+  assert.equal(out.length, 1, 'no comma carves a sentence under the cap');
+  assert.equal(out[0], t, 'the whole sentence ships; splitForTts owns its seams');
 });
 
-test('+222: commas under the breath floor never carve', () => {
+test('commas under the sentence floor never carve', () => {
   const { out } = run('Yes, we could do that but the early comma must not ' +
     'cut.', { force: true });
   assert.equal(out.length, 1,
     'a 5-char first clause stays fused — the micro-segment lesson holds');
 });
 
-test('+228: path labels and versions do not fake a breath', () => {
+test('path labels and versions do not fake a boundary', () => {
   const { out } = run('Open main.dart:801 first, then read the log line ' +
     'that follows it and note the retry counter before the run finally ' +
     'reports its verdict and writes the summary you will read tomorrow.',
     { force: true });
-  assert.ok(out[0].endsWith('first,'),
-    'past the backlog the real comma cuts — and the colon inside ' +
-    'main.dart:801, having no trailing space, never did');
+  assert.equal(out.length, 1,
+    'the sentence ships whole — and the colon inside main.dart:801, ' +
+    'having no trailing space, never pretended to be one');
 });
 
 test('truly unpunctuated ramble still cuts at a word gap under the cap', () => {
@@ -141,8 +144,8 @@ test('token counts read with two decimals at every magnitude', () => {
   assert.equal(fmtTok(1250000), '1.25M');
 });
 
-test('MIN floors are the documented 40 / 20 / 160 characters', () => {
+test('floors are the documented 40 / 300 characters (+232: the clause '
+    + 'floors retired with the clause cut — the app owns mid-sentence seams)', () => {
   assert.equal(MIN_SENT_CHARS, 40);
-  assert.equal(MIN_CLAUSE_CHARS, 20);
-  assert.equal(MIN_CLAUSE_BACKLOG, 160);
+  assert.equal(MAX_SENT_CHARS, 300);
 });

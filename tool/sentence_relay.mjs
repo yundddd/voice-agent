@@ -5,35 +5,21 @@
 // missing forced flush that silently swallowed every reply's final
 // sentence). Pure: it mutates blk.spoken and calls emit(text) per
 // sentence; no I/O, no ring, no socket — node --test can guard it.
+//
+// +232 — the wire speaks in sentences, full stops. Tim's tape on the
+// +228 relay: 'very short chunks'; the logs agreed, three or four
+// comma-spliced shreds per answer, every one its own say frame, its
+// own synthesis, its own seam and gap. The clause cut (the +222 breath
+// rule, gated behind the +228 backlog valve) was a LATENCY measure
+// paying with prosody, and the field says the price came due. So the
+// cut moves downstream: the bridge relays a sentence when it has one
+// (plus the ramble cap's escape for unpunctuated runs and the forced
+// flush a block close always owed), and the PHONE splits a sentence
+// that is too long for one breath — evenly, at the clause mark nearest
+// its middle (lib/src/speech/tts_split.dart). Fewer frames, whole
+// sentences on the wire, and the seam lands where the prose is widest,
+// not where its first comma happens to sit.
 export const MIN_SENT_CHARS = 40; // never carve micro-segments ("OK.")
-// +222: a comma is where the prose itself would breathe — but a MID-
-// SENTENCE chunk costs more than a whole short one: each relay gets
-// its own synthesis, its own final intonation, its own seam. So a
-// sentence END may not carve below MIN_SENT_CHARS (an "OK." frame is
-// chop noise), while a CLAUSE boundary may cut once the chunk is a
-// breath's length (24) — enough words for the voice to hold a line,
-// short enough that "If you want space back," — 23 chars, the field's
-// own advice, and the reason the floor is 20 and not 24 — ships NOW
-// instead of two seconds later fused to its own tail. The field
-// shape that asked for this: the period's flush arriving as a final
-// two-word bubble ("garbage collection.") one and a half seconds
-// after its head, because the sentence's only comma sat under the 40
-// floor and the ramble cap (300) never came. (+228 gates this cut
-// behind MIN_CLAUSE_BACKLOG below: the funeral it prevents only
-// matters when the reply is long enough to mind the wait.)
-export const MIN_CLAUSE_CHARS = 20;
-// +228: the clause cut is a LATENCY valve, not a rhythm rule — it earns
-// its seam only when the reply has grown long enough that waiting for a
-// sentence end would stall the voice. Below this backlog of un-spoken
-// text, commas stay fused and the reply rides its sentence ends: Tim's
-// field report on +222's cuts was 'chunking too aggressively, very very
-// small chunks' — every comma-spliced answer arrived in breath-sized
-// shreds, each its own synthesis with its own seam and its own gap.
-// 160 chars (~30 words) is past any plausible short answer, so a reply
-// that WAS a single breath never gets carved, while a ramble still
-// meets the first comma well before the 300 cap. The clause FLOOR
-// above still prices each individual cut; this gate prices the wait.
-export const MIN_CLAUSE_BACKLOG = 160;
 export const MAX_SENT_CHARS = 300; // bound first-audio latency unpunctuated
 
 // blk: {buf: string, spoken: number}. Advances blk.spoken past every
@@ -44,10 +30,7 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
   for (;;) {
     const from = blk.spoken;
     const win = blk.buf.slice(from, from + MAX_SENT_CHARS * 3);
-    // The micro-segment floor protects mid-stream carving only; on
-    // block close there is no 'next sentence' to merge into, and the
-    // leftovers — however short — are the end of the answer.
-    if (win.length < MIN_CLAUSE_CHARS && !force) return;
+    if (win.length < MIN_SENT_CHARS && !force) return;
     // A sentence end = a punctuation run (with trailing quotes/brackets)
     // preceded by a word char and followed by whitespace; the word-char
     // anchor keeps 'main.dart:801' and '3.5' from faking periods.
@@ -63,26 +46,14 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
         break;
       }
     }
-    if (cut < 0 && blk.buf.length - from >= MIN_CLAUSE_BACKLOG) {
-      // +222, gated by +228: no legal sentence end yet AND the block has
-      // grown long enough that the wait itself is the problem — take the
-      // FIRST breath the prose marked for itself once the chunk is a
-      // breath's length. The same word-char anchor and whitespace
-      // lookahead the ramble path uses keep 'main.dart:801' and 'v1,2'
-      // from faking one.
-      const re2 = /[^\s][,;:—–]["')\]]*(?=[ \n])/g;
-      for (let m; (m = re2.exec(win)) !== null;) {
-        if (m.index + m[0].length >= MIN_CLAUSE_CHARS) {
-          cut = m.index + m[0].length;
-          break;
-        }
-      }
-    }
     if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
       // Long ramble, no sentence end yet: prefer the LAST clause mark
       // (comma, semicolon, colon, dash) inside the cap — a place the
       // prose itself would breathe. A word gap remains only for truly
       // unpunctuated runs, and the micro-segment floor applies too.
+      // This is now the cutter's ONLY mid-sentence cut, and it exists
+      // for latency, not rhythm: a sentence whose period hasn't shown
+      // itself by 300 chars gets heard NOW and continued shortly.
       const clause = /[^\s][,;:—–]["')\]]*[ \n]/g;
       let cw = -1;
       for (let m; (m = clause.exec(win.slice(0, MAX_SENT_CHARS))) !== null;) {
