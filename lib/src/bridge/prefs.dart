@@ -6,6 +6,61 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+/// +230: one session tab — a seat the user asked for and the app
+/// remembers: which harness answers, which model, which working
+/// folder, and every conversation id that has lived under the tab
+/// (a replace-by-/new retires the list's tail, so history leaves with
+/// the session it belongs to and the NEW id lands on return). The id
+/// list, not a single id, is what the channel filters on: a tab that
+/// has not spoken yet owns no id (its bubbles wear the pending
+/// sentinel until the harness names the birth turn), and a tab whose
+/// conversation outlives a bridge restart keeps wearing the same one.
+class SessionTab {
+  SessionTab({
+    required this.harness,
+    required this.dir,
+    this.model,
+    List<String>? sessionIds,
+    this.createdMs = 0,
+  }) : sessionIds = sessionIds ?? [];
+
+  String harness; // 'claude' | 'opencode'
+  String dir; // the working folder the seat was created with
+  String? model; // a pick made AT creation (null = harness default)
+  List<String> sessionIds;
+  int createdMs;
+
+  /// The conversation this tab is CURRENTLY (the newest id it ever
+  /// wore); null while the birth turn has not been named yet.
+  String? get currentId => sessionIds.isEmpty ? null : sessionIds.last;
+
+  /// The basename of the working folder — what the pill wears.
+  String get label {
+    final clean = dir.replaceAll(RegExp(r'[/\\]+$'), '');
+    final i = clean.lastIndexOf(RegExp(r'[/\\]'));
+    return i < 0 ? clean : clean.substring(i + 1);
+  }
+
+  Map<String, Object> toJson() => {
+    'harness': harness,
+    'dir': dir,
+    if (model != null && model!.isNotEmpty) 'model': model!,
+    'sessionIds': sessionIds,
+    'createdMs': createdMs,
+  };
+  static SessionTab fromJson(Map<String, Object?> j) => SessionTab(
+    harness: j['harness'] == 'opencode' ? 'opencode' : 'claude',
+    dir: j['dir'] as String? ?? '',
+    model: j['model'] is String ? j['model'] as String : null,
+    sessionIds: [
+      for (final s in (j['sessionIds'] as List? ?? const []))
+        if (s is String && s.isNotEmpty) s,
+    ],
+    createdMs: (j['createdMs'] as num?)?.toInt() ?? 0,
+  );
+}
+
+
 /// The field defaults ship pointing at the dev machine's always-on demo
 /// bridge (tailscale IP, port 8732, --token testtok): a fresh install
 /// gets working command chips with zero typing — the Tailscale app on
@@ -29,9 +84,32 @@ class BridgePrefs {
     this.eraBackfilled = false,
     this.sessionBackfilled = false,
     Map<String, String>? lastModels,
-  }) : lastModels = lastModels ?? {};
+    List<SessionTab>? tabs,
+    this.activeTab = 0,
+    this.installed = false,
+  }) : lastModels = lastModels ?? {},
+       tabs = tabs ?? [];
   String url, token;
   bool voice;
+
+  /// +230: the session TABS — the seats the user created (see
+  /// [SessionTab]). Empty on a fresh install, which is exactly when
+  /// the app asks harness/model/folder before the first session is
+  /// born; an upgraded app seeds one tab from the bridge's live seat
+  /// instead of interrupting anyone.
+  List<SessionTab> tabs;
+
+  /// Index into [tabs] — the tab whose thread the channel paints and
+  /// the seat /talk speaks into. Clamped on load, repaired on every
+  /// tab mutation (a deleted tab must not strand the index past the
+  /// end).
+  int activeTab;
+
+  /// True whenever the prefs FILE parsed — i.e. this is not the first
+  /// launch. The onboarding question rides on it: a fresh install is
+  /// asked, an upgrade is not (its prefs predate the tab law, which
+  /// the seed-from-/health path handles without a dialog).
+  final bool installed;
 
   /// +218: the model EACH harness last answered with, as the app
   /// remembers it ('claude' → 'opus', 'opencode' →
@@ -92,10 +170,12 @@ class BridgePrefs {
     'eraBackfilled': eraBackfilled,
     'sessionBackfilled': sessionBackfilled,
     'lastModels': {for (final e in lastModels.entries) e.key: e.value},
+    'tabs': [for (final t in tabs) t.toJson()],
+    'activeTab': activeTab,
   };
   static BridgePrefs fromJson(Map<String, Object?> j) => BridgePrefs(
     url: (j['url'] as String? ?? BridgePrefs.defaultUrl).trim(),
-    token: j['token'] as String? ?? BridgePrefs.defaultToken,
+    token: (j['token'] as String? ?? BridgePrefs.defaultToken),
     voice: j['voice'] as bool? ?? true,
     narrate: j['narrate'] as bool? ?? false,
     tts: j['tts'] as bool? ?? true,
@@ -109,6 +189,12 @@ class BridgePrefs {
         if (e.key is String && e.value is String)
           e.key as String: e.value as String,
     },
+    tabs: [
+      for (final t in (j['tabs'] as List? ?? const []))
+        if (t is Map<String, Object?>) SessionTab.fromJson(t),
+    ],
+    activeTab: (j['activeTab'] as num?)?.toInt() ?? 0,
+    installed: true, // the file parsed — this is not the first launch
   );
 }
 

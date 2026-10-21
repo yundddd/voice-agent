@@ -426,6 +426,20 @@ class ChatStore {
     touch();
   }
 
+  /// +230: /new UNDER A TAB — drop exactly the named sessions' bubbles
+  /// (the caller's set also holds the pending sentinel when it wants
+  /// this tab's nameless birth turn and /new tombstone gone: a
+  /// tab-replacing wipe that left them would show history whose
+  /// session is already deleted). Every other tab's thread and the
+  /// shared prologue stand untouched — clearAll stays the no-tabs
+  /// fallback. Returns how many bubbles left; 0 files no touch.
+  int removeSessions(Set<String> ids) {
+    final before = _entries.length;
+    _entries.removeWhere((e) => ids.contains(e.session));
+    if (_entries.length != before) touch();
+    return before - _entries.length;
+  }
+
   /// Seed from disk at boot. Tolerant: [decodeChatLog] returns a fresh
   /// log for anything broken, and a missing file is just the first run.
   void load(String raw) {

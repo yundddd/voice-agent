@@ -278,11 +278,19 @@ class BridgeClient extends HarnessGateway {
 
   /// The model picker's menu (GET /models): both harnesses answer the
   /// same shape; null = unreachable or a bridge without the endpoint.
+  /// +230: [harness]/[dir] ask a seat the bridge is not on (the
+  /// session sheet browsing the other harness's menu before it moves
+  /// anything); an old bridge simply answers for the live seat.
   @override
-  Future<Map<String, Object>?> models() async {
+  Future<Map<String, Object>?> models({String? harness, String? dir}) async {
     try {
       final res = await HttpClient()
-          .getUrl(_u('/models'))
+          .getUrl(
+            _u('/models', {
+              'harness': ?harness,
+              'dir': ?dir,
+            }),
+          )
           .then((r) => r.close())
           .timeout(const Duration(seconds: 6));
       final text = await res.transform(utf8.decoder).join();
@@ -291,6 +299,51 @@ class BridgeClient extends HarnessGateway {
       return j is Map ? j.cast<String, Object>() : null;
     } on Object {
       return null;
+    }
+  }
+
+  /// +230: seat the bridge on this tab's (harness, folder,
+  /// conversation) — POST /seat, one request per tab switch. A 400
+  /// comes back as a seat-shaped {ok:false, error} for the caller's
+  /// one-line reason; a 404 (no such route) is the pre-seat bridge and
+  /// answers null like the unsupported default.
+  @override
+  Future<Map<String, Object>?> seat({
+    String? harness,
+    String? dir,
+    String? model,
+    String? sessionId,
+    bool fresh = false,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final req = await client.postUrl(_u('/seat'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({
+        'harness': ?harness,
+        'dir': ?dir,
+        'model': ?model,
+        // fresh and 'read the pointer' stay distinct on the wire:
+        // only a named id sends sessionId, only a blank start sends
+        // fresh — a JSON null would mean fresh to the bridge.
+        if (fresh) 'fresh': true,
+        if (!fresh && sessionId != null) 'sessionId': sessionId,
+      })));
+      final res = await req.close();
+      final text = (await res.transform(utf8.decoder).join()).trim();
+      if (res.statusCode == 404) return null; // pre-seat bridge
+      final j = BridgeEvent.tryJson(text);
+      if (j is! Map) {
+        return {'ok': false, 'error': text.isEmpty ? 'HTTP ${res.statusCode}' : text};
+      }
+      if (res.statusCode == 200 && j['ok'] == true) {
+        return j.cast<String, Object>();
+      }
+      return {'ok': false, ...j.cast<String, Object>()};
+    } on Object catch (e) {
+      return {'ok': false, 'error': '$e'};
+    } finally {
+      client.close(force: true);
     }
   }
 

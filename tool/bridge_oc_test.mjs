@@ -517,3 +517,121 @@ test('a tool round-trip inside a turn does not blink the spinner off', async () 
       'more than one settled verdict in one turn');
   } finally { w.stop(); }
 });
+
+// ── +230: /seat — the session tabs' one atomic verb ────────────────
+test('/seat moves harness, folder and conversation in one request', async () => {
+  const w = await world();
+  try {
+    // Fresh and alone: the whole question set is ONE body.
+    const r = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST',
+      body: '{"harness":"opencode","fresh":true}',
+    });
+    assert.equal(r.status, 200);
+    const j = JSON.parse(r.text);
+    assert.equal(j.ok, true);
+    assert.equal(j.sessionId, null, 'fresh must answer no conversation');
+    assert.equal(j.harness, 'opencode');
+    assert.equal((await health(w.port)).sessionId, null);
+    // A turn names the session (the stub is always soc-1)…
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'first words' });
+    await until('done', async () => a.text.includes('event: done'));
+    assert.equal((await health(w.port)).sessionId, 'soc-1');
+    // …and an explicit RESUME by name re-seats and REWRITES the
+    // pointer, so a bridge restart wakes on the tab seated last —
+    // the +223 pointer law, now callable with a chosen thread.
+    const r2 = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"sessionId":"ses-HOME"}',
+    });
+    assert.equal(JSON.parse(r2.text).sessionId, 'ses-HOME');
+    assert.equal((await health(w.port)).sessionId, 'ses-HOME');
+    assert.equal(
+      readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').trim(),
+      'ses-HOME', 'the pointer did not follow the named seat');
+    // Harness in the SAME verb: the era timeline grows, and with no
+    // sessionId named the claude side reads ITS pointer (none yet →
+    // fresh on the next word).
+    const r3 = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"harness":"claude"}',
+    });
+    const j3 = JSON.parse(r3.text);
+    assert.equal(j3.harness, 'claude');
+    assert.equal(j3.sessionId, null);
+    const hist = (await health(w.port)).harnessHistory;
+    assert.deepEqual(hist.map((x) => x.harness), ['opencode', 'claude']);
+  } finally { w.stop(); }
+});
+
+test('/seat refuses what it cannot honour, and says why', async () => {
+  const w = await world();
+  try {
+    const bad = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"harness":"pi"}',
+    });
+    assert.equal(bad.status, 400);
+    assert.match(JSON.parse(bad.text).error, /claude or opencode/);
+    const out = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"dir":"/etc"}',
+    });
+    assert.equal(out.status, 400);
+    assert.match(JSON.parse(out.text).error, /dir-root/);
+    const sill = await full(w.port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"sessionId":"ses;rm -rf"}',
+    });
+    assert.equal(sill.status, 400);
+    // Nothing moved through any of them.
+    assert.equal((await health(w.port)).harness, 'opencode');
+  } finally { w.stop(); }
+});
+
+test('/models?harness= answers for a seat the bridge is not on', async () => {
+  const w = await world(); // seated opencode, stub catalog acme/*
+  try {
+    const r = JSON.parse((await full(
+      w.port, `/models?token=${TOKEN}&harness=claude`)).text);
+    assert.equal(r.harness, 'claude');
+    assert.deepEqual(r.models.map((m) => m.id),
+      ['default', 'sonnet', 'opus', 'haiku']); // the claude menu
+    // …and the seat never moved: the sheet previews without touching.
+    // The other seat's remembered pick answers too (claude defaults
+    // to 'default'); the opencode side proves its model only when a
+    // step names it — nothing moved here to make it lie.
+    assert.equal(r.current, 'default');
+    const h = await health(w.port);
+    assert.equal(h.harness, 'opencode');
+    assert.equal(h.model, null);
+  } finally { w.stop(); }
+});
+
+test('+230 the claude seat resumes a NAMED conversation on respawn', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'oc-dir-'));
+  writeFileSync(join(home, 'stub.log'), '');
+  const argsLog = join(home, 'args.log');
+  const port = PORT + 95;
+  const bridge = spawn(process.execPath,
+    [join(HERE, 'claude_bridge.mjs'), '--token', TOKEN,
+      '--port', String(port), '--dir', dir,
+      '--claude', join(HERE, 'bridge_stub_claude.mjs')],
+    { env: { ...process.env, HOME: home, STUB_LOG: join(home, 'stub.log'),
+      STUB_ARGS_LOG: argsLog, STUB_RESULT_MS: '200' } });
+  bridge.stderr.resume();
+  try {
+    await until('bridge up', async () => {
+      try { return (await health(port)).ok; } catch { return false; }
+    });
+    const r = await full(port, `/seat?token=${TOKEN}`, {
+      method: 'POST', body: '{"sessionId":"ses-TAB"}',
+    });
+    assert.equal(JSON.parse(r.text).sessionId, 'ses-TAB');
+    const t = await call(port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'resumed thread' });
+    await until('done', async () => t.text.includes('event: done'));
+    // The lazy respawn carried --resume with the NAMED id, not a
+    // pointer's guess: that name IS the tab's conversation.
+    await until('the resume carries the named session', async () =>
+      existsSync(argsLog) &&
+      readFileSync(argsLog, 'utf8').includes('--resume ses-TAB'));
+  } finally { bridge.kill(); }
+});

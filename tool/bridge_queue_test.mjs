@@ -960,11 +960,15 @@ test('GET /dirs lists only folders inside --dir-root, /dir moves the agent there
     assert.equal((await health(PORT13)).dir, resolve(join(root, 'alpha')),
       'a refused move still moved the agent');
 
-    // The move: an honest /new at beta — child dead, dir changed, and
-    // the next utterance spawns INSIDE beta (cwd.log line 2).
+    // The move: an honest thread switch to beta — child dead, dir
+    // changed, and the next utterance spawns INSIDE beta (cwd.log
+    // line 2). The answer names the destination's remembered thread
+    // (+223): beta was never visited, so its pointer is blank and
+    // the conversation starts fresh on the next word.
     const mv = await call(PORT13, `/dir?token=${TOKEN}`,
       { body: JSON.stringify({ path: 'beta' }), method: 'POST' });
-    assert.deepEqual(JSON.parse(mv.text), { ok: true, dir: resolve(join(root, 'beta')) });
+    assert.deepEqual(JSON.parse(mv.text),
+      { ok: true, dir: resolve(join(root, 'beta')), sessionId: null });
     await until('the move lands in health', async () => {
       const h = await health(PORT13);
       return h.dir === resolve(join(root, 'beta')) && h.claudeUp === false;

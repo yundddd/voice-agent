@@ -154,6 +154,25 @@ final class PttGuide {
   final double micLevel;
 }
 
+/// +230: one session tab as the channel paints it — the immutable
+/// shadow of the prefs' SessionTab (the view never hands out the
+/// mutable store). The pill wears [label]; the tap on it names the
+/// [index] back to VoiceAssistant.switchSession.
+final class SessionTabInfo {
+  const SessionTabInfo({
+    required this.index,
+    required this.harness,
+    required this.label,
+    required this.dir,
+    this.currentId,
+  });
+  final int index;
+  final String harness;
+  final String label;
+  final String dir;
+  final String? currentId;
+}
+
 /// One consistent snapshot of everything the conversation screens
 /// render. Built by VoiceAssistant.view; widgets take this, not the
 /// machine.
@@ -180,6 +199,10 @@ final class AssistantView {
     required this.ptt,
     required this.sessionId,
     this.harnessElapsed = Duration.zero,
+    this.tabs = const [],
+    this.tabIndex = 0,
+    this.needsSetup = false,
+    this.canSeat = false,
   });
 
   final AssistantPhase phase;
@@ -201,6 +224,26 @@ final class AssistantView {
   final LatencyView latency;
   final PttGuide ptt;
   final String? sessionId;
+
+  /// +230: the session tabs (see [SessionTabInfo]), in creation order
+  /// — the newest sits at [tabs] last, and that edge is what a
+  /// right-swipe answers with the creation sheet. Empty while the
+  /// first-launch questions are still owed.
+  final List<SessionTabInfo> tabs;
+
+  /// Index of the tab the channel paints (= BridgePrefs.activeTab,
+  /// clamped).
+  final int tabIndex;
+
+  /// The first-launch gate: the bridge is configured, no tab exists,
+  /// and no seed has run yet — the screen owes the harness/model/
+  /// folder questions before any session is born.
+  final bool needsSetup;
+
+  /// /health said `seat: true` — /seat answers on this bridge, so the
+  /// tab verbs (create, switch, replace) may fire. False on an older
+  /// bridge: the pills go inert and /new keeps its whole-log wipe.
+  final bool canSeat;
 
   /// How long the in-flight (or badge-kept) bridge turn has been
   /// working — zero when idle; the spinner's and background row's clock.

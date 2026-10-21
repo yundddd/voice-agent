@@ -279,6 +279,36 @@ One port caveat to know before judging a recording: the k2-fsa ONNX
   k2-fsa fix the export, these workarounds retire one function at a time;
   the official renders under `ref6_*.wav` make the A/B audition trivial.
 
+### Session tabs (first launch, swipes, and the seat)
+
+The bridge seats ONE conversation at a time; the app keeps a LEDGER of
+seats — tabs — and moves the seat between them. On FIRST launch (fresh
+install, configured bridge) the app asks, before any session exists,
+three questions in a big-button sheet: which harness answers (Claude
+Code / Opencode), which model (the harness's real menu — `GET
+/models?harness=&dir=` reads the menu of a seat the bridge is not on,
+"Default" when you would not choose), and which working folder (`GET
+/dirs`, drilled one level at a time, "Here" files it). One `POST /seat`
+then creates the session and the tab it lives in.
+Navigation is horizontal: a **left-swipe** on the channel jumps to the
+NEWER tab, a **right-swipe** to the OLDER one, and when the first tab
+is all you have — the state first-launch leaves you in — the
+right-swipe IS the creation sheet (the `+` pill opens the same sheet
+from anywhere). The tab pills (tap to jump, `+` to ask) sit
+above the control chips for the same job. Each tab is `(harness,
+folder, model, sessions…)` in `bridge_prefs.json`; switching calls
+`POST /seat {"sessionId":…}` which resumes that exact conversation
+(and rewrites the project's pointer, so a bridge restart wakes on the
+tab that was seated last). The switch RESTS while a turn is open —
+like the harness row — and the refusal says so. The `/new` chip now
+REPLACES THE CURRENT TAB: same harness, model and folder (unless the
+Bridge rows steered them meanwhile — those rows update the tab too),
+a blank conversation, and only that tab's bubbles leave the log;
+every other tab keeps its thread. Upgrades are not asked: the first
+`/health` silently seeds the live seat as tab 1.
+Bridges without `/seat` (no `seat: true` in `/health`) keep the
+pre-tab single-thread behavior; the pills go inert there.
+
 ### Round-trip latency bench (voice screen)
 
 The bottom card on the voice screen is a measurement rig for the model

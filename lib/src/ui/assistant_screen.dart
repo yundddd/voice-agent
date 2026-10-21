@@ -13,13 +13,19 @@ import 'package:flutter/scheduler.dart';
 import '../assistant/assistant.dart';
 import 'bridge_screen.dart';
 import 'chat_view.dart';
+import 'session_sheet.dart';
 import 'context_bar.dart';
 import 'latency_strip.dart';
 import 'talk_surface.dart';
 import 'voice_screen.dart';
 
 class AssistantScreen extends StatefulWidget {
-  const AssistantScreen({super.key});
+  const AssistantScreen({super.key, this.assistant});
+
+  /// The machine to paint; tests inject a scripted one, production
+  /// lets the screen own its own (+152's widget-test seam pattern,
+  /// same as BridgeScreen's assistant parameter).
+  final VoiceAssistant? assistant;
 
   @override
   State<AssistantScreen> createState() => _AssistantScreenState();
@@ -32,9 +38,66 @@ class _AssistantScreenState extends State<AssistantScreen>
     '/compact': Icons.compress,
   };
 
-  final VoiceAssistant _assistant = VoiceAssistant();
+  late final VoiceAssistant _assistant =
+      widget.assistant ?? VoiceAssistant();
+
+  /// True when the screen built its own machine (only then does
+  /// dispose() own its death; an injected assistant is its test's).
+  bool get _ownsAssistant => widget.assistant == null;
   bool _debugMode = false;
   final ScrollController _scroll = ScrollController();
+
+  /// +230: the creation sheet's one-flight guard — build re-runs on
+  /// every notify, and an unanswered first-launch question must not
+  /// stack copies of itself; set when the sheet opens, cleared when
+  /// it leaves.
+  bool _sheetUp = false;
+
+  /// +230: swipe classification for the tab gestures. Tabs live on a
+  /// horizontal strip in creation order; a fling LEFT walks NEWER, a
+  /// fling RIGHT walks OLDER — and the slot to the LEFT of the first
+  /// tab is the creation popup, which is why the gesture that meets a
+  /// fresh install (one tab, so any right-swipe is "past the first")
+  /// IS the question "new session?". The `+` pill opens the same
+  /// sheet from anywhere; past the newest tab, left is nothing.
+  void _onTabSwipe(VoiceAssistant a, double vx) {
+    if (vx.abs() < 450) return; // a drift, not a fling
+    final v = a.view;
+    if (v.tabs.isEmpty) {
+      if (vx > 0) _newSessionTap(a); // the first-launch gesture
+      return;
+    }
+    if (vx < 0) {
+      if (v.tabIndex < v.tabs.length - 1) _tabTap(a, v.tabIndex + 1);
+    } else if (v.tabIndex > 0) {
+      _tabTap(a, v.tabIndex - 1);
+    } else {
+      _newSessionTap(a); // past the first tab sits the NEW slot
+    }
+  }
+
+  /// A pill tap: jump the seat to that tab. A refusal (mid-turn, a
+  /// bridge too old, the wire down) surfaces as a one-line snackbar —
+  /// the channel simply stayed where it was, which IS the truth.
+  void _tabTap(VoiceAssistant a, int index) {
+    unawaited(() async {
+      final err = await a.switchSession(index);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      }
+    }());
+  }
+
+  /// The creation popup — the first-launch gate's own face: harness,
+  /// model, folder, big buttons, and one POST that seats and files
+  /// the tab (the sheet submits its own answer; the refusal reason
+  /// lands inside it, next to the Start button).
+  Future<void> _newSessionTap(VoiceAssistant a) async {
+    if (_sheetUp) return;
+    _sheetUp = true;
+    await showSessionSheet(context, a: a);
+    _sheetUp = false;
+  }
 
   /// +190: a finger DOWN on the channel outranks the follow — tracked
   /// by pointer, not by activity: DrivenScrollActivity (what animateTo
@@ -425,9 +488,13 @@ class _AssistantScreenState extends State<AssistantScreen>
     // +192: the sticky-bottom follow — one loop for the life of the
     // screen, re-pinning frames, not events.
     WidgetsBinding.instance.addPostFrameCallback((_) => _followTick());
-    _assistant
-      ..addListener(() => setState(() {}))
-      ..init();
+    _assistant.addListener(() => setState(() {}));
+    // +230 seam: an injected assistant is its owner's business — the
+    // test that scripted it has already booted it; only a machine
+    // this screen built itself is this screen's to boot and bury.
+    if (_ownsAssistant) {
+      unawaited(_assistant.init());
+    }
   }
 
   @override
@@ -436,7 +503,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     _framesAlive = false; // +206: persistent callbacks are forever; disarm
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _scroll.dispose();
-    _assistant.dispose();
+    if (_ownsAssistant) _assistant.dispose();
     super.dispose();
   }
 
@@ -480,6 +547,18 @@ class _AssistantScreenState extends State<AssistantScreen>
     final v = a.view;
     _pruneBubbleCache(v.chat); // +202: evicted entries leave no tombstones
     final scheme = Theme.of(context).colorScheme;
+    // +230: the first-launch gate. Fresh install, configured bridge,
+    // no tab yet — the question is asked BEFORE any session is
+    // created, once per visit to that state (the sheet files its own
+    // answer; walking away unanswered just means it asks again the
+    // next time the screen wakes).
+    if (v.needsSetup && !_sheetUp) {
+      _sheetUp = true; // claimed BEFORE the frame, so no second build stacks a copy
+      SchedulerBinding.instance.addPostFrameCallback((_) async {
+        await showSessionSheet(context, a: a);
+        if (mounted) _sheetUp = false;
+      });
+    }
 
     // +192: the auto-follow is no longer an event hook at all — the
     // sticky-bottom loop (_followTick, started in initState) answers
@@ -616,7 +695,22 @@ class _AssistantScreenState extends State<AssistantScreen>
                     onPointerDown: (_) => _userTouch = true,
                     onPointerUp: (_) => _userTouch = false,
                     onPointerCancel: (_) => _userTouch = false,
-                    child: SingleChildScrollView(
+                    // +230: a horizontal fling on the channel is the
+                    // TAB gesture (the scroll view only claims the
+                    // vertical half, so the horizontal drag comes
+                    // here free): left = the next tab, right = the
+                    // previous one — and the first tab answered with
+                    // the same swipe right IS the creation popup
+                    // ("swipe right, be asked"). Past the newest tab
+                    // the older direction is nothing; past the
+                    // oldest, the question.
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.deferToChild,
+                      onHorizontalDragEnd: (d) => _onTabSwipe(
+                        a,
+                        d.velocity.pixelsPerSecond.dx,
+                      ),
+                      child: SingleChildScrollView(
                       controller: _scroll,
                       // Long harness answers grew the reply card without
                       // bounds until it smeared over the chips and metrics:
@@ -711,9 +805,50 @@ class _AssistantScreenState extends State<AssistantScreen>
                         ),
                       ),
                     ),
+                    ),
                   ),
                 ),
               ),
+              // +230: the tab strip — one pill per session, creation
+              // order, the live one lit; tap jumps, the trailing +
+              // asks the creation questions (same sheet the first
+              // swipe-right brings). It rides the row the chips own,
+              // above the fold, because tabs ARE housekeeping.
+              if (v.tabs.isNotEmpty)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 4),
+                      for (final t in v.tabs)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            avatar: Icon(
+                              t.harness == 'opencode'
+                                  ? Icons.terminal
+                                  : Icons.chat,
+                              size: 16,
+                            ),
+                            label: Text(
+                              '${t.index + 1} · ${t.label}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            backgroundColor: t.index == v.tabIndex
+                                ? scheme.secondaryContainer
+                                : null,
+                            onPressed: () => _tabTap(a, t.index),
+                          ),
+                        ),
+                      ActionChip(
+                        avatar: const Icon(Icons.add, size: 18),
+                        label: const Text('New session'),
+                        onPressed: () => _newSessionTap(a),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                  ),
+                ),
               if (v.bridgeConfigured) ...[
                 // Session housekeeping: /new and /compact (see
                 // VoiceAssistant.bridgeControl for what they do on the

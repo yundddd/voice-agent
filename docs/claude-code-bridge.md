@@ -165,7 +165,35 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   request from this CLI — see the latency bullet).
 - `POST /new` — forget the conversation (also clears a background turn,
   a queued prompt, AND the replay backlog — a later attach must not
-  resurrect a discarded conversation's tail).
+  resurrect a discarded conversation's tail). +230: under the app's
+  session tabs this REPLACES THE CURRENT TAB — the phone keeps the
+  tab's (harness, folder) and wipes only that tab's bubbles; the
+  endpoint itself is unchanged.
+- `POST /seat` (+230, feature-flagged as `"seat": true` in `/health`)
+  — the session tabs' one atomic verb: move the bridge's single seat
+  to a named `(harness, dir, conversation)`. Body fields are all
+  optional and every part reuses existing law: `harness` flips like
+  `/harness` (harnessFile + era note), `dir` moves like `/dir`
+  (`--dir-root` policed), `model` applies like `/model`, and the
+  conversation: `"fresh": true` starts a blank one and drops the
+  pointer (the `/new` law at a chosen destination), a `"sessionId"`
+  RESUMES that id and WRITES the project's pointer (so a restart
+  wakes on the tab seated last — the +223 pointer law with a caller-
+  chosen thread), and neither reads the pointer (the `/dir` arrival).
+  One `resetConversation` regardless of how many fields move.
+  Answers `{"ok":true,"harness":…,"dir":…,"sessionId":…,"model":…}` —
+  the settled seat, from the same fields `/health` will report; `400
+  {"ok":false,"error":…}` names the refusal (bad harness name, folder
+  outside the root, malformed id — ids must match `[A-Za-z0-9]`
+  followed by `[A-Za-z0-9_.:-]{0,127}`). A model failure keeps the
+  seat MOVED and the reason in the error (the caller re-reads
+  `/health` for the truth; the model can be re-picked via `/model`).
+- `GET /models` +230 also takes `?harness=` and `?dir=`: the sheet
+  previews the OTHER harness's menu (and a different folder's, where
+  opencode resolves its catalog per directory) before any of them
+  moves the seat. `harness` in the answer names which menu you got;
+  `current` answers the seat's live harness or the other one's
+  remembered pick (+218's memory law, server-side).
 - `POST /dir` — body `{"path": …}`: move the working folder the agent
   runs in (the project `/talk` answers come from). +223 turned the
   move from "an honest /new at the destination" into "a thread switch":

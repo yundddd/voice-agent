@@ -98,13 +98,33 @@ abstract class HarnessGateway {
   /// +216: the model picker's menu, one shape for both harnesses:
   /// {harness, current, models: [{id, label}]}. Null when unreachable
   /// or a bridge too old for /models (the row then reads dead).
-  Future<Map<String, Object>?> models() async => null;
+  /// +230: [harness]/[dir] ask the menu of a seat the bridge is NOT
+  /// on (the session-creation sheet previews before it moves); absent
+  /// answers for the live seat.
+  Future<Map<String, Object>?> models({String? harness, String? dir}) async =>
+      null;
 
   /// Apply a menu entry (POST /model): claude over the CLI's
   /// set_model control frame, opencode over the session-model API —
   /// the bridge translates; the phone never learns which dialect ran.
   /// Returns the failure reason, null on success/unsupported.
   Future<String?> setModel(String id) async => null;
+
+  /// +230: move the bridge's single seat to this tab's
+  /// (harness, folder, conversation) in ONE atomic request
+  /// (POST /seat). [sessionId] null-with-[fresh] starts the tab's
+  /// first conversation; a named id resumes it and rewrites the
+  /// project's pointer, so a bridge restart wakes on this tab.
+  /// Answers the bridge's settled seat
+  /// {ok, harness, dir, sessionId, model}; null = unreachable or a
+  /// bridge without the endpoint (the flags ride /health's `seat`).
+  Future<Map<String, Object>?> seat({
+    String? harness,
+    String? dir,
+    String? model,
+    String? sessionId,
+    bool fresh = false,
+  }) async => null;
 
   /// Switch WHICH harness the bridge speaks (POST /harness {"to":…}).
   /// The switch is an honest /new at the seam, but each harness keeps

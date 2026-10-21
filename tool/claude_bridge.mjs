@@ -392,16 +392,24 @@ const modelAcks = new Map(); // control_request id -> the model it set
 function currentModel() {
   return harness === 'opencode' ? oc.model : claudeModel;
 }
-function modelList() { // [{id,label}] — the picker's whole menu
-  if (harness === 'opencode') {
+function modelList(h, d) { // [{id,label}] — the picker's whole menu
+  // +230: the menu can be ASKED about a harness/dir the seat is not
+  // yet on (the session-creation sheet previews the other harness's
+  // catalog before flipping anything); default args keep the seat's
+  // own answer for every existing caller.
+  h = h ?? harness; d = d ?? dir;
+  if (h === 'opencode') {
     return ocReq('/api/model?location%5Bdirectory%5D=' +
-      encodeURIComponent(dir))
+      encodeURIComponent(d))
       .then((r) => ((r && r.data) ?? []).map((m) => ({
         id: `${m.providerID}/${m.id}`,
         label: m.name ?? `${m.providerID}/${m.id}`,
       })));
   }
   return Promise.resolve(modelMenu.map((id) => ({id, label: id})));
+}
+function rememberedModel(h) { // +230: each harness's current, seat or not
+  return h === 'opencode' ? oc.model : claudeModel;
 }
 function applyModel(id) { // resolves with the new current, or throws
   if (harness === 'claude') {
@@ -2726,6 +2734,10 @@ const server = http.createServer((req, res) => {
       // v2 handshake: ids are law. An app that sees anything else
       // shows one honest error banner instead of guessing.
       proto: 2, turn: curTurnId,
+      // +230: feature flag for session tabs — /seat answers here. An
+      // older bridge (proto 2, no flag) gets no seat calls: the app
+      // keeps its single-thread behavior instead of guessing.
+      seat: true,
       backgrounded: turnOpen && !curRes,
       // Open tool_use ids an interrupt (or a cuttool queue) parked
       // out-of-earshot, plus the agent's own run_in_background shells
@@ -2855,10 +2867,23 @@ const server = http.createServer((req, res) => {
   // service what it resolves for this directory. One payload shape;
   // the phone never learns which harness answered.
   if (req.method === 'GET' && url.pathname === '/models') {
-    modelList().then((models) => {
+    // +230: ?harness= and ?dir= answer the menu of a seat the bridge
+    // is NOT on — the session sheet composes its questions (which
+    // harness? which model? which folder?) before any of them moves
+    // the seat. Absent params keep answering for the live seat.
+    const askedH = ['claude', 'opencode'].includes(url.searchParams.get('harness'))
+      ? url.searchParams.get('harness') : harness;
+    const askedD = url.searchParams.get('dir') || dir;
+    const asked = askedH !== harness || askedD !== dir;
+    modelList(askedH, askedD).then((models) => {
       res.writeHead(200, {'content-type': 'application/json'})
         .end(JSON.stringify({
-          ok: true, harness, current: currentModel(), models,
+          ok: true, harness: askedH,
+          // The SEAT's current for its own harness; the other one's
+          // remembered pick answers too (the +218 memory law: the
+          // app knows what the server forgot — for both).
+          current: askedH === harness ? currentModel() : rememberedModel(askedH),
+          models,
         }));
     }).catch((e) => {
       res.writeHead(502).end('model list failed: ' + e + '\n');
@@ -2990,6 +3015,84 @@ const server = http.createServer((req, res) => {
       try { rmSync(sidFile()); } catch {}
       resetConversation();
       res.writeHead(200).end('ok\n');
+    } else if (url.pathname === '/seat') {
+      // +230: move the bridge's ONE seat to a named (harness, folder,
+      // conversation) — the session tabs' single atomic verb. Every
+      // part of it is law already carried by /harness and /dir (the
+      // era note, the harnessFile persist, the resetConversation, the
+      // pointer inside the project); /seat's only novelty is that the
+      // conversation id comes from the CALLER, not from the pointer —
+      // and it WRITES the pointer, so a bridge restart wakes on the
+      // tab that was seated last, exactly as +223 made a folder a
+      // thread. fresh:true means: sit here, but the conversation
+      // starts blank (the /new law at a chosen destination); an
+      // explicit sessionId means: sit here and RESUME (or adopt) this
+      // conversation even where a pointer says otherwise. Missing
+      // fields mean: keep the current harness/dir, read the pointer.
+      let j = null;
+      try { j = JSON.parse(body); } catch {}
+      const seatErr = (code, msg) =>
+        res.writeHead(code, {'content-type': 'application/json'})
+          .end(JSON.stringify({ok: false, error: msg}) + '\n');
+      const to = j?.harness === undefined ? harness
+        : (j.harness === 'claude' || j.harness === 'opencode')
+          ? j.harness : null;
+      const model = j?.model === undefined || j?.model === null ||
+        j.model === '' ? null : j.model;
+      const fresh = j?.fresh === true || j?.sessionId === null;
+      const wantSid = j?.sessionId === undefined ? undefined
+        : (typeof j.sessionId === 'string' &&
+            /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(j.sessionId))
+          ? j.sessionId : null;
+      let target = dir;
+      if (typeof j?.dir === 'string' && j.dir && resolve(j.dir) !== dir) {
+        const q = resolveInRoot(j.dir);
+        target = q && isDir(q) ? q : null;
+      }
+      if (to === null || (j?.harness !== undefined &&
+          j.harness !== 'claude' && j.harness !== 'opencode')) {
+        seatErr(400, 'harness must be claude or opencode');
+      } else if (j?.dir !== undefined && j?.dir !== null &&
+          j?.dir !== '' && target === null) {
+        seatErr(400, 'not a folder inside the bridge\'s --dir-root');
+      } else if (j?.sessionId !== undefined && !fresh && wantSid === null) {
+        seatErr(400, 'sessionId must be a plain id or null');
+      } else if (typeof model !== 'string' && model !== null) {
+        seatErr(400, 'model must be a string');
+      } else {
+        resetConversation(); // whatever rode the old seat ends here
+        if (to !== harness) {
+          harness = to;
+          try { writeFileSync(harnessFile, to); } catch {}
+          noteHarnessEra(to);
+        }
+        if (target !== dir) dir = target;
+        if (fresh) {
+          try { rmSync(sidFile()); } catch {}
+          sessionId = null;
+        } else if (wantSid !== undefined) {
+          sessionId = wantSid;
+          try { writeFileSync(sidFile(), sessionId); } catch {}
+        } else {
+          try { sessionId = readFileSync(sidFile(), 'utf8').trim() || null; }
+          catch { sessionId = null; }
+        }
+        const settle = () => {
+          console.error('  [seat] ' + harness + ' @ ' + dir +
+            ' (session ' + (sessionId ?? 'starts fresh on the next word') +
+            (model ? ', model ' + model : '') + ')');
+          res.writeHead(200, {'content-type': 'application/json'})
+            .end(JSON.stringify({
+              ok: true, harness, dir, sessionId, model: currentModel(),
+            }));
+        };
+        if (model) applyModel(model).then(settle).catch((e) => {
+          // The seat MOVED (the caller can re-read /health and see
+          // it); only the model pick failed, and its reason rides.
+          seatErr(400, 'could not set the model: ' + (e?.message ?? e));
+        });
+        else settle();
+      }
     } else if (url.pathname === '/dir') {
       // Move the working folder. +223 changed the promise: it USED to
       // be an honest /new at the destination; now the destination's

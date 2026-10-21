@@ -390,6 +390,49 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   // ── The projected screen (see view.dart) ───────────────────────────────
+  /// +230: the thread law, tab edition. With a tab ledger the channel
+  /// is the ACTIVE TAB's sessions — every id the tab ever wore (a
+  /// resumed thread's whole past, a replaced one's history gone with
+  /// its id), its still-nameless birth turn while it has none, the
+  /// era it belongs to, and the shared prologue (un-owned bubbles:
+  /// pre-law history and the offline demo, everyone's). No ledger
+  /// (first launch, no bridge) and the pre-tab law stands verbatim:
+  /// the live session, its sentinel while nameless, the prologue.
+  /// The FILTER REMAINS RENDER-SIDE ONLY — see the +213/223 comment.
+  bool _entryVisible(ChatEntry e) {
+    if (e.harness != null && e.harness != _bridgeHarness) return false;
+    if (e.session == null) return true; // shared prologue, every tab's
+    final tab = _tab;
+    if (tab == null) {
+      return (e.session == ChatStore.pendingSession && _sessionId == null) ||
+          e.session == _sessionId;
+    }
+    if (tab.sessionIds.contains(e.session)) return true;
+    // The tab's own birth turn (sentinel) and a first id still in
+    // flight (e.session == _sessionId while the ledger has no ids):
+    // both belong to a tab that has not been NAMED yet, not to every
+    // tab — a nameless one only.
+    return tab.sessionIds.isEmpty &&
+        (_sessionId == null
+            ? e.session == ChatStore.pendingSession
+            : e.session == _sessionId);
+  }
+
+  /// The pills' row data: one entry per tab, in creation order.
+  List<SessionTabInfo> get _tabInfos {
+    final t = _bridgePrefs.tabs;
+    return [
+      for (var i = 0; i < t.length; i++)
+        SessionTabInfo(
+          index: i,
+          harness: t[i].harness,
+          label: t[i].label.isEmpty ? t[i].dir : t[i].label,
+          dir: t[i].dir,
+          currentId: t[i].currentId,
+        ),
+    ];
+  }
+
   /// The conversation screen as ONE immutable snapshot: what to paint,
   /// computed from the machine's truth in exactly one place. Widgets
   /// read this (or re-read it on their own tick through a [ViewSource]);
@@ -409,13 +452,7 @@ class VoiceAssistant extends ChangeNotifier {
     // one's replay arrives. Switch project or harness and the window
     // follows the conversation — cleared of one thread, restored to
     // the other's, nothing deleted.
-    chat: _chat.entries
-        .where((e) =>
-            (e.harness == null || e.harness == _bridgeHarness) &&
-            (e.session == null ||
-                (e.session == ChatStore.pendingSession && _sessionId == null) ||
-                e.session == _sessionId))
-        .toList(growable: false),
+    chat: _chat.entries.where(_entryVisible).toList(growable: false),
     chatVersion: _chat.version,
     queued: queuedBubble == null
         ? null
@@ -466,6 +503,17 @@ class VoiceAssistant extends ChangeNotifier {
     ),
     sessionId: _sessionId,
     harnessElapsed: harnessElapsed,
+    // +230: the tab ledger, projected. needsSetup is the first-launch
+    // gate (fresh install, configured bridge, empty ledger); canSeat
+    // is /health's word that /seat answers here.
+    tabs: _tabInfos,
+    tabIndex: _bridgePrefs.tabs.isEmpty
+        ? 0
+        : _bridgePrefs.activeTab.clamp(0, _bridgePrefs.tabs.length - 1),
+    needsSetup: !_bridgePrefs.installed &&
+        bridgeConfigured &&
+        _bridgePrefs.tabs.isEmpty,
+    canSeat: _seatCap,
   );
 
   // ── Latency strip moments (see HopTracker) ─────────────────────────────
@@ -546,6 +594,15 @@ class VoiceAssistant extends ChangeNotifier {
 
   // ── Claude Code bridge (src/bridge/, docs/claude-code-bridge.md) ───────
   BridgePrefs _bridgePrefs = BridgePrefs();
+
+  /// +230: test seam — assistant-level walks inject the on-disk-shaped
+  /// prefs (the boot path loads them inside init(), behind the pack
+  /// downloads); the tab law is walked from here.
+  @visibleForTesting
+  set bridgePrefsForTest(BridgePrefs p) {
+    _bridgePrefs = p;
+    notifyListeners();
+  }
   HarnessGateway? _gateway;
   // ── Bridge-turn truth (owned by TurnCoordinator — see turn_session.dart) ──
   // This class only READS the truth (below) and fires the coordinator's
@@ -790,6 +847,22 @@ class VoiceAssistant extends ChangeNotifier {
   String? _bridgeHarness;
   String? get bridgeHarness => _bridgeHarness;
 
+  /// +230: the session-tab ledger's live flags. `_seatCap` is /health's
+  /// word on whether THIS bridge answers /seat (feature flag — an
+  /// older one keeps the app's single-thread behavior rather than
+  /// guessing from a 404); `_seatReconciled` marks this boot's one
+  /// seat-vs-ledger reconciliation as spent, so a later out-of-band
+  /// flip (a curl, the Bridge row) is the tracker's business, not a
+  /// re-seat fight.
+  bool _seatCap = false;
+  bool _seatReconciled = false;
+
+  /// The freshest /health payload seen (null = none yet / unreachable)
+  /// — the sheet's 'use what it already has', the folder row, and the
+  /// tab guard read this instead of firing their own glances.
+  Map<String, Object>? get bridgeHealthCache => _lastHealth;
+  Map<String, Object>? _lastHealth;
+
   // Context consumption for the bar above the talk button: fed by
   // `context` events mid-turn/at turn end and by every /health read
   // (_refreshSession runs at startup, after setBridge, and in
@@ -817,6 +890,210 @@ class VoiceAssistant extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
+  // ── +230: session tabs ────────────────────────────────────────────────
+
+  /// The tab whose thread the channel paints and whose seat /talk
+  /// speaks into; null while the ledger is empty (first launch, or an
+  /// app pointed at no bridge). Clamps the stored index on the way
+  /// past it, so a deleted tab can never strand the pointer.
+  SessionTab? get _tab {
+    final t = _bridgePrefs.tabs;
+    if (t.isEmpty) return null;
+    final i = _bridgePrefs.activeTab.clamp(0, t.length - 1);
+    _bridgePrefs.activeTab = i;
+    return t[i];
+  }
+
+  /// The one-time upgrade seed + the boot reconcile + the id
+  /// recording — everything the tab ledger learns from a /health
+  /// glance, run at the TOP of _refreshSession so the era/session
+  /// bookkeeping below sees a ledger that already knows the truth.
+  void _tabsOnHealth(Map<String, Object>? h, String? eraNow, String? sid) {
+    _seatCap = h?['seat'] == true;
+    if (h == null) return;
+    // The seed: an UPGRADE (its prefs predate the tab law) with no
+    // tabs, meeting a bridge that names a live seat, converts that
+    // seat into tab 1 without a dialog — the thread the user already
+    // lives in becomes the first tab. A FRESH install is NOT seeded:
+    // the first-launch sheet owns that question.
+    if (_bridgePrefs.installed && _bridgePrefs.tabs.isEmpty &&
+        eraNow != null && h['dir'] is String) {
+      final d = h['dir'] as String;
+      _bridgePrefs.tabs.add(SessionTab(
+        harness: eraNow,
+        dir: d,
+        model: h['model'] is String ? h['model'] as String : null,
+        sessionIds: sid == null ? [] : [sid],
+        createdMs: DateTime.now().millisecondsSinceEpoch,
+      ));
+      unawaited(_saveBridgePrefs());
+      notifyListeners();
+      return;
+    }
+    final tab = _tab;
+    if (tab == null) return;
+    // The boot reconcile: /health holds a DIFFERENT seat than the
+    // active tab describes (a bridge restart landed on a pointer, a
+    // sibling app flipped the seat, the phone moved while away) —
+    // and nothing is mid-turn to be killed by the move — put the
+    // seat back on the user's tab, once, silently.
+    if (!_seatReconciled) {
+      if (h['turnOpen'] == true || h['queued'] == true) return;
+      final mismatch = eraNow != tab.harness ||
+          h['dir'] != tab.dir ||
+          (tab.currentId != null && sid != tab.currentId);
+      if (mismatch && _seatCap) {
+        unawaited(_gateway
+            ?.seat(
+              harness: tab.harness,
+              dir: tab.dir,
+              model: tab.model,
+              sessionId: tab.currentId,
+              fresh: tab.currentId == null,
+            )
+            .then((r) {
+              if (r == null || r['ok'] != true) {
+                _logDebug('tab re-seat failed: ${r?['error'] ?? 'no /seat'}');
+                return;
+              }
+              _logDebug('tab re-seat: back on '
+                  '${tab.harness} @ ${tab.dir} (${tab.currentId ?? 'fresh'})');
+              unawaited(_refreshSession());
+            }));
+      }
+      _seatReconciled = true;
+      return;
+    }
+    // Id recording: a conversation this tab spoke gets filed under
+    // it — but only while the SEAT matches the tab (era and dir),
+    // or the tab is still nameless (its own birth turn: the id
+    // arrives before any switch could have moved the seat). An id
+    // seen while riding someone else's seat belongs to THAT rider.
+    if (sid != null &&
+        !tab.sessionIds.contains(sid) &&
+        (eraNow == tab.harness && h['dir'] == tab.dir ||
+            tab.sessionIds.isEmpty)) {
+      tab.sessionIds.add(sid);
+      unawaited(_saveBridgePrefs());
+    }
+  }
+
+  /// Create a session — the first-launch answer and the swipe-right
+  /// popup's alike: seat the bridge on (harness, model, folder) with
+  /// a BLANK conversation and append the tab it lives in. Returns the
+  /// failure reason, null on success.
+  Future<String?> createSession({
+    required String harness,
+    String? model,
+    required String dir,
+  }) async {
+    final g = _gateway;
+    if (g == null) return 'bridge not configured — set url and token';
+    final r = await g.seat(
+        harness: harness, dir: dir, model: model, fresh: true);
+    if (r == null) {
+      return 'this bridge has no /seat — session tabs need the new claude_bridge.mjs';
+    }
+    if (r['ok'] != true) return '${r['error'] ?? 'the bridge refused the seat'}';
+    final prefs = _bridgePrefs;
+    prefs.tabs.add(SessionTab(
+      harness: '${r['harness'] ?? harness}',
+      dir: '${r['dir'] ?? dir}',
+      model: r['model'] is String ? r['model'] as String : model,
+      sessionIds: r['sessionId'] is String ? [r['sessionId'] as String] : [],
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+    ));
+    prefs.activeTab = prefs.tabs.length - 1;
+    _sessionId = r['sessionId'] is String ? r['sessionId'] as String : null;
+    await _saveBridgePrefs();
+    await _refreshSession();
+    notifyListeners();
+    return null;
+  }
+
+  /// Jump the channel (and the bridge's seat) to tab [index]. A
+  /// mid-turn switch would resetConversation over a live answer, so
+  /// the law matches the harness row's: the switch RESTS while a
+  /// turn (or a queued prompt) is open. Returns the refusal reason.
+  Future<String?> switchSession(int index) async {
+    final g = _gateway;
+    final prefs = _bridgePrefs;
+    if (g == null) return 'bridge not configured';
+    if (index < 0 || index >= prefs.tabs.length) return 'no such session tab';
+    if (index == prefs.activeTab.clamp(0, prefs.tabs.length - 1)) return null;
+    if (!_seatCap) return 'the bridge is too old to switch sessions';
+    final h = await bridgeHealth(); // the FRESH glance, not the cached era
+    if (h != null && (h['turnOpen'] == true || h['queued'] == true)) {
+      return 'the harness is mid-turn — stop it before switching sessions';
+    }
+    final tab = prefs.tabs[index];
+    final r = await g.seat(
+      harness: tab.harness,
+      dir: tab.dir,
+      model: tab.model,
+      sessionId: tab.currentId,
+      fresh: tab.currentId == null,
+    );
+    if (r == null) return 'this bridge has no /seat';
+    if (r['ok'] != true) return '${r['error'] ?? 'the bridge refused the seat'}';
+    prefs.activeTab = index;
+    final sid = r['sessionId'];
+    if (sid is String && !tab.sessionIds.contains(sid)) {
+      tab.sessionIds.add(sid);
+    }
+    await _saveBridgePrefs();
+    await _refreshSession();
+    notifyListeners();
+    return null;
+  }
+
+  /// The first-launch sheet's no-wire escape: adopt the bridge's
+  /// CURRENT seat as tab 1 exactly as the upgrade seed does — for a
+  /// fresh install that just wants what it already has. Refuses
+  /// without a bridge to copy.
+  String? useCurrentSeat() {
+    final h = _lastHealth;
+    final era = h?['harness'], d = h?['dir'];
+    if (h == null || (era != 'claude' && era != 'opencode') ||
+        d is! String || d.isEmpty) {
+      return 'the bridge has not named a seat to adopt';
+    }
+    final sid = h['sessionId'];
+    _bridgePrefs.tabs.add(SessionTab(
+      harness: era as String,
+      dir: d,
+      model: h['model'] is String ? h['model'] as String : null,
+      sessionIds: sid is String && sid.isNotEmpty ? [sid] : [],
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+    ));
+    _bridgePrefs.activeTab = _bridgePrefs.tabs.length - 1;
+    unawaited(_saveBridgePrefs());
+    notifyListeners();
+    return null;
+  }
+
+  /// The Bridge screen's rows moved the seat the manual way — the
+  /// active tab's description must follow or the next swipe would
+  /// drag the old seat back (+230 keeps tab and seat one story).
+  void _syncTabFromSeat({String? harness, String? dir, String? model}) {
+    final tab = _tab;
+    if (tab == null) return;
+    var moved = false;
+    if (harness != null && tab.harness != harness) {
+      tab.harness = harness;
+      moved = true;
+    }
+    if (dir != null && tab.dir != dir) {
+      tab.dir = dir;
+      moved = true;
+    }
+    if (model != null && tab.model != model) {
+      tab.model = model;
+      moved = true;
+    }
+    if (moved) unawaited(_saveBridgePrefs());
+  }
+
   Future<void> _refreshSession() async {
     final h = await _gateway?.healthInfo();
     // wire v2 housekeeping on every bridge glance: re-ack whatever the
@@ -830,6 +1107,14 @@ class VoiceAssistant extends ChangeNotifier {
     }
     final sid = h?['sessionId'];
     final s = (sid is String && sid.isNotEmpty) ? sid : null;
+    final hm = h?['harness'];
+    final eraNow = hm == 'claude' || hm == 'opencode' ? hm as String : null;
+    _lastHealth = h;
+    // +230: the tab ledger reads every glance BEFORE the single-thread
+    // bookkeeping below — an upgrade's seed creates tab 1 here, the
+    // boot reconcile may re-home the seat (and asks for its own
+    // re-read), and every id the active tab spoke gets filed.
+    _tabsOnHealth(h, eraNow, s);
     if (s != _sessionId) {
       _sessionId = s;
       if (s != null) {
@@ -850,9 +1135,8 @@ class VoiceAssistant extends ChangeNotifier {
     // +213: the era tracker. The harness may flip while this screen is
     // open (the Bridge row's switch, a curl, a restart's persisted
     // choice) — any /health glance re-arms the thread, and the notify
-    // repaints the channel onto the new one.
-    final hm = h?['harness'];
-    final eraNow = hm == 'claude' || hm == 'opencode' ? hm as String : null;
+    // repaints the channel onto the new one. (eraNow was parsed above,
+    // where the tab ledger needed it.)
     if (eraNow != _bridgeHarness) {
       _bridgeHarness = eraNow;
       notifyListeners();
@@ -1227,6 +1511,8 @@ class VoiceAssistant extends ChangeNotifier {
       ..token = token.trim();
     _rebuildGateway();
     _sessionId = null; // the old bridge's pointer is not this bridge's
+    _lastHealth = null;
+    _seatReconciled = false; // +230: a new bridge gets its own glance
     unawaited(_refreshSession());
     await _saveBridgePrefs();
     notifyListeners();
@@ -1270,6 +1556,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (g == null) return 'bridge not configured';
     final err = await g.setDir(path);
     if (err == null) {
+      _syncTabFromSeat(dir: path); // +230: the tab follows its seat
       unawaited(_refreshSession()); // the dir row re-reads /health
     }
     return err;
@@ -1284,6 +1571,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (g == null) return 'bridge not configured';
     final err = await g.setHarness(to);
     if (err == null) {
+      _syncTabFromSeat(harness: to); // +230: the tab follows its seat
       // AWAITED: the era tracker (and with it the chat thread and the
       // Bridge row) must move BEFORE this call returns — the switch's
       // own reply is that the screen it left is gone. No channel note
@@ -1296,9 +1584,15 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   /// The model picker's menu (GET /models) for whichever harness is
-  /// live. Null = unreachable, or a bridge with no picker.
-  Future<Map<String, Object>?> bridgeModels() async =>
-      await _gateway?.models();
+  /// live. Null = unreachable, or a bridge with no picker. +230:
+  /// [harness]/[dir] ask the menu of a seat the bridge is NOT on —
+  /// the session sheet previews the other harness's catalog (and a
+  /// different folder's, where opencode resolves per-directory)
+  /// before any of it moves.
+  Future<Map<String, Object>?> bridgeModels({
+    String? harness,
+    String? dir,
+  }) async => await _gateway?.models(harness: harness, dir: dir);
 
   /// Apply a model pick (POST /model) and AWAIT the /health re-read:
   /// the row's current-model label is the truth the moment this call
@@ -1310,6 +1604,7 @@ class VoiceAssistant extends ChangeNotifier {
     if (g == null) return 'bridge not configured';
     final err = await g.setModel(id);
     if (err == null) {
+      _syncTabFromSeat(model: id); // +230: the tab follows its seat
       final era = _bridgeHarness;
       if (era != null) {
         _bridgePrefs.lastModels = {..._bridgePrefs.lastModels, era: id};
@@ -1912,7 +2207,22 @@ class VoiceAssistant extends ChangeNotifier {
           // so the screen goes blank exactly when the harness drops its
           // session — both bubbles this chip just added included; a
           // /new that leaves its own tombstone on screen is not blank.
-          _chat.clearAll();
+          // +230: UNDER A TAB the wipe is the TAB's, not the log's —
+          // this tab's sessions and its nameless sentinel leave, every
+          // other tab's thread and the shared prologue stand. (The
+          // bridge's /new still resets the CURRENT seat, which is this
+          // tab's seat by the sync law below — replace-in-place.)
+          final tab = _tab;
+          if (tab == null) {
+            _chat.clearAll();
+          } else {
+            _chat.removeSessions({
+              ...tab.sessionIds,
+              ChatStore.pendingSession,
+            });
+            tab.sessionIds.clear();
+            unawaited(_saveBridgePrefs());
+          }
           // And the meter goes blank with the chat, not into a
           // monotonic decline from last week's number: /health will now
           // answer in:0 (the bridge cleared its snapshot), and

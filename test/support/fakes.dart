@@ -208,7 +208,15 @@ class FakeHarness implements HarnessGateway {
   Future<void> stop() async => stops++;
 
   @override
-  Future<void> reset() async => resets++;
+  /// +230: /new FORGETS — the real resetConversation nulls the
+  /// session, so /health stops naming one until the next turn births
+  /// it. The fake drops the scripted id the same way (resetCount
+  /// still records the call).
+  Future<void> reset() async {
+    resets++;
+    final h = healthState;
+    if (h != null) healthState = {...h}..remove('sessionId');
+  }
 
   @override
   Future<String?> health() async => healthState == null ? 'unreachable' : null;
@@ -272,8 +280,56 @@ class FakeHarness implements HarnessGateway {
   bool modelSetsHealth = true;
 
   @override
-  Future<Map<String, Object>?> models() async =>
+  Future<Map<String, Object>?> models({String? harness, String? dir}) async =>
       modelsMenu?.cast<String, Object>();
+
+  /// +230: seat() behaviour for the tab tests: every call is recorded
+  /// (the whole argument set, so assertions can read the exact verb),
+  /// and the fake behaves like a bridge whose /health follows the
+  /// seat: harness, dir and sessionId move to whatever was asked
+  /// (fresh answers a null session; a bare call keeps the pointer
+  /// semantics the scripted healthState already carries).
+  /// seatRefused answers {ok:false} like a 400; seatUnsupported
+  /// answers null like a bridge without the route.
+  final List<Map<String, Object?>> seatCalls = [];
+  String? seatRefused;
+  bool seatUnsupported = false;
+
+  @override
+  Future<Map<String, Object>?> seat({
+    String? harness,
+    String? dir,
+    String? model,
+    String? sessionId,
+    bool fresh = false,
+  }) async {
+    seatCalls.add({
+      'harness': harness,
+      'dir': dir,
+      'model': model,
+      'sessionId': sessionId,
+      'fresh': fresh,
+    });
+    if (seatUnsupported) return null;
+    if (seatRefused != null) {
+      return {'ok': false, 'error': seatRefused!};
+    }
+    if (healthState != null) {
+      healthState = {
+        ...healthState!,
+        'harness': ?harness,
+        'dir': ?dir,
+        'sessionId': fresh ? null : sessionId,
+      };
+    }
+    return <String, Object?>{
+      'ok': true,
+      'harness': harness ?? healthState?['harness'],
+      'dir': dir ?? healthState?['dir'],
+      'sessionId': fresh ? null : sessionId,
+      'model': model,
+    }.cast<String, Object>();
+  }
 
   @override
   Future<String?> setModel(String id) async {
