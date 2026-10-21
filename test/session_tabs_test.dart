@@ -555,6 +555,68 @@ void main() {
       harness.finishView();
     });
 
+    test('+255: a turn backgrounded in X must not rent the working '
+        'row on Y — even when Y fetches its mail', () async {
+      // The xray field tape: swipe away mid-turn, land on a tab that
+      // owes unheard frames, and the phone reattaches to drain them.
+      // The bridge's global turnOpen says TRUE — for the BACKGROUNDed
+      // claude turn — and the +168 law reads that as 'generating
+      // work, real spin'. The row already knows the work is not
+      // Y's (+249's marker); the attach's claim must not launder a
+      // stranger's turn into this tab's thinking box.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // X seats, works, keeps working (no done).
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+      await settle();
+      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      expect(a.view.showWorkingRow, isTrue);
+      // SWIPE to Y, which owes unheard mail.
+      harness.healthState = {...harness.healthState!, 'missed': 2};
+      expect(await a.switchSession(1), isNull);
+      await settle();
+      expect(
+        a.view.turnHomeHere,
+        isFalse,
+        reason: 'the work stayed with ses-X',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason: 'the stranger\'s turn may not light this tab\'s box',
+      );
+      // The stranded-backlog drain runs while X still owns the
+      // machine: reading mail stays mail — the box must not re-light
+      // just because /health says SOME turn is open.
+      await a.reattachBackgroundTurn();
+      await settle();
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason:
+            'the attach claimed the OPEN (foreign) turn — the row '
+            'belongs to the conversation, not to whoever holds the busy slot',
+      );
+      harness.finishView();
+    });
+
     test(
       'unheard messages rest the seat — a tab verb may not eat the backlog',
       () async {

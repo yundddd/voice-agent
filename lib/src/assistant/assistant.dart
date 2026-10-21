@@ -1203,11 +1203,29 @@ class VoiceAssistant extends ChangeNotifier {
       if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
         _turnHomeSid = _sessionId;
       }
+      // +255: the capture's whole input set, journalled (the +247
+      // doctrine: the next 'the box still shows' reads a clause, not
+      // a guess — busy/badge/ticker say whether work was seen here,
+      // marker/seat say what the row will be gated on at the
+      // destination).
+      _logDebug(
+        'work home: busy=$_bridgeBusy detached=${_turn.backgrounded} '
+        'ticker=${_ticker.isOn} -> marker=${_turnHomeSid ?? '-'} '
+        'seat=${_sessionId ?? 'unnamed'}',
+      );
       // The bar belongs to the conversation, like the row: blank it
       // now; /health's owner gate keeps it honest until the seated
       // conversation's own turn names a size (/mergeContext ignores
       // zeros, so the manual zero is the law's hands — as with /new).
       _contextIn = 0;
+    } else {
+      // +255: no live work seen — no marker written. Say so on the
+      // tape: a box lighting the destination after THIS line is a
+      // different animal than one after the line above.
+      _logDebug(
+        'work home: no live work at the seat -> marker='
+        '${_turnHomeSid ?? '-'} seat=${_sessionId ?? 'unnamed'}',
+      );
     }
     prefs.activeTab = index;
     final sid = r['sessionId'];
@@ -3327,6 +3345,16 @@ class VoiceAssistant extends ChangeNotifier {
     _drainReading = probe!['turnOpen'] != true; // probe is non-null
     // here: an unreachable snapshot answers need=null and the guard
     // above returned.
+    // +255: say WHOSE turn the probe says is open — a TRUE here may
+    // be a BACKGROUNDED conversation's work, not the seated tab's,
+    // and the box gate (turnHomeHere) is what stands between that
+    // stranger and this tab's face. The row's journal names the pair
+    // so a field tape answers 'whose spin was this' without a guess.
+    _logDebug(
+      'attach claim: turnOpen=${probe['turnOpen'] == true} '
+      'drainReading=$_drainReading marker=${_turnHomeSid ?? '-'} '
+      'seat=${_sessionId ?? 'unnamed'}',
+    );
     _error = '';
     _ticker.resetForTurn();
     _phase = AssistantPhase.transcribing;
