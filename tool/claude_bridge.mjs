@@ -388,9 +388,22 @@ noteHarnessEra(harness); // the era the boot found (or was pinned to)
 const modelMenu = String(arg('models', 'default,sonnet,opus,haiku'))
   .split(',').map((s) => s.trim()).filter(Boolean);
 let claudeModel = arg('model', 'default');
+// +282 (Tim): 'default' is a PROMISE, not a name. The CLI speaks the
+// model it ACTUALLY runs — system/init names it on every user message,
+// result repeats it in modelUsage — and that word, not the --models
+// placeholder, is what /health.model and the picker's current report
+// once any turn has run. The seat's own word rides the global; resting
+// records keep what THEY last ran (rec.claudeRan), so /health's
+// sessions map resolves each conversation's default by its own tape.
+let claudeRan = null;
 const modelAcks = new Map(); // control_request id -> the model it set
+function claudeCurrent(modelFlag, ran) {
+  const m = modelFlag === undefined ? claudeModel : modelFlag;
+  if (m !== 'default') return m;
+  return ran ?? focus?.claudeRan ?? claudeRan ?? 'default';
+}
 function currentModel() {
-  return harness === 'opencode' ? oc.model : claudeModel;
+  return harness === 'opencode' ? oc.model : claudeCurrent();
 }
 function modelList(h, d) { // [{id,label}] — the picker's whole menu
   // +230: the menu can be ASKED about a harness/dir the seat is not
@@ -409,7 +422,10 @@ function modelList(h, d) { // [{id,label}] — the picker's whole menu
   return Promise.resolve(modelMenu.map((id) => ({id, label: id})));
 }
 function rememberedModel(h) { // +230: each harness's current, seat or not
-  return h === 'opencode' ? oc.model : claudeModel;
+  // (+282: claude's 'remembered' word resolves through the same tape —
+  // the model the harness last RAN for this bridge, never the word
+  // 'default' once any turn has spoken.)
+  return h === 'opencode' ? oc.model : claudeCurrent();
 }
 function applyModel(id) { // resolves with the new current, or throws
   if (harness === 'claude') {
@@ -796,7 +812,10 @@ function convRow(r) {
     sid: live ? sessionId : r.sid,
     harness: live ? harness : r.harness,
     dir: live ? dir : r.dir,
-    model: live ? currentModel() : (r.claudeModel ?? null),
+    // +282: a resting record's 'default' resolves by ITS OWN tape (what
+    // this conversation last ran), not the seat's habit.
+    model: live ? currentModel() : claudeCurrent(r.claudeModel ?? null,
+                                                r.claudeRan),
     ctx: live ? { in: lastCtx.in, window: ctxWindow }
               : { in: r.lastCtx?.in ?? 0, window: r.ctxWindow ?? 0 },
     missed: live ? backlog.length : (r.backlog?.length ?? 0),
@@ -1630,6 +1649,24 @@ function handleEvent(line) {
       }
     }
     return;
+  }
+  // +282: the harness names the model it RUNS. The init frame is the
+  // earliest word (it precedes the first message_start of a fresh
+  // seat); the result's modelUsage is the authoritative afterword.
+  // Either settles the operator's 'default' into a name the phone can
+  // print; the focused record feeds the seat's /health through the
+  // global, and every record keeps ITS own last run for the sessions
+  // map. (A rolled-back pick lands back on 'default' and re-resolves
+  // to the real run — the same law either way.)
+  if (m.type === 'system' && m.subtype === 'init' ||
+      m.type === 'result') {
+    const ran = m.type === 'result'
+      ? Object.keys(m.modelUsage ?? {}).slice(-1)[0]
+      : (typeof m.model === 'string' ? m.model : null);
+    if (ran) {
+      claudeRan = ran;
+      if (focus) focus.claudeRan = ran;
+    }
   }
   if (m.type !== 'stream_event') { // deltas are a firehose: keep the log legible
     console.error(`EVT ${m.type}/${m.subtype ?? '-'} len=${line.length}` +
