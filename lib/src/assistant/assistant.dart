@@ -529,7 +529,7 @@ class VoiceAssistant extends ChangeNotifier {
         // manual zero at the switch and /health's owner gate blank
         // them together.)
         busy: _bridgeBusy && turnHome,
-        model: bridgeLastModel, // +241: the name rides the bar it fills
+        model: _barModel, // +241: the name rides the bar it fills
       ),
       latency: LatencyView(
         recordSeconds: _recordSeconds,
@@ -2284,6 +2284,20 @@ class VoiceAssistant extends ChangeNotifier {
   /// badge and the row's fallback label both defer to the bridge's
   /// CURRENT whenever /health has one.
   String? get bridgeLastModel => _bridgePrefs.lastModels[_bridgeHarness ?? ''];
+
+  /// +281: the name the bar wears. The +241 bar read ONLY the app's
+  /// pick-memory — so a seat answering with its created or default
+  /// model (never pressed through the picker) showed no name at all,
+  /// which is the silence the field just caught. The bridge's own
+  /// word wins: the model the seated conversation's /health named is
+  /// the same truth the bridge row prints; the remembered pick is
+  /// the fallback for a bridge with no current (a restart, opencode
+  /// before its first step).
+  String? get _barModel {
+    final m = _lastHealth?['model'];
+    if (m is String && m.isNotEmpty) return m;
+    return bridgeLastModel;
+  }
 
   /// The grey queue bubble's tap: cut the in-flight turn so the parked
   /// prompt starts NOW. Just a /stop — NOT the Stop chip's full

@@ -104,6 +104,10 @@ final class ContextBarView {
   /// harness's own model.selected event, +219; null before the first
   /// verdict or on a default-model harness). The bar is the one line
   /// the eye checks for context; the model belongs on the same line.
+  /// +281: the projection prefers the model the seated conversation's
+  /// /health NAMED (a seat answering on its created or default model
+  /// was no verdict the old pick-memory ever saw — the bar showed no
+  /// name), falling back to the app's remembered pick.
   final String? model;
 
   double get frac => window > 0 ? (tokensIn / window).clamp(0.0, 1.0) : 0;

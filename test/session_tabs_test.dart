@@ -1655,6 +1655,32 @@ void main() {
         expect(a.view.context.tokensIn, 500);
       },
     );
+
+    test(
+      '+281: the bar names the model the bridge NAMED, not only one pressed',
+      () async {
+        // The +241 name rode the app's PICK memory alone — a seat
+        // answering on its created or default model was no verdict the
+        // memory ever saw, so the bar wore no name at all.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        harness.healthState = {...harness.healthState!, 'model': 'opus'};
+        await a.setBridgeDir('/proj-x'); // the awaited refresh path
+        await settle();
+        expect(
+          a.view.context.model,
+          'opus',
+          reason: 'the seated conversation\'s own /health word',
+        );
+        expect(a.view.context.label, startsWith('opus'));
+        // A bridge with NO current: the remembered pick still wears the
+        // line (+218's memory outlives a restart).
+        harness.modelSetsHealth = false; // accept the pick, keep no current
+        harness.healthState = {...harness.healthState!}..remove('model');
+        expect(await a.setBridgeModel('sonnet'), isNull);
+        await settle();
+        expect(a.view.context.model, 'sonnet', reason: 'the fallback stands');
+      },
+    );
   });
 
   group('fling law (assistant-side)', () {
