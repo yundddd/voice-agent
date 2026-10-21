@@ -1,0 +1,110 @@
+# Session channels: the seat becomes a speaker focus
+
+Status: design (+251 era). Supersedes the seat-marker line of fixes
+(+246 backgrounding, +247 refusal journal, +248 cross-harness switches,
++249 row/context ownership, +251 return-trip recapture). Those laws are
+each correct and each is a patch over ONE missing concept: the phone and
+the bridge both keep a single global conversation state, then re-home
+pieces of it whenever the user moves. The model this doc proposes:
+
+> Each session is a completely separate thing. The bridge routes each
+> session's frames to that session. Each session behaves exactly
+> normally — except that a session the user is NOT looking at receives
+> its messages without speaking them.
+
+## The objects
+
+### Bridge: a turn registry, not a turn
+
+Today: one child, one `turnOpen`, one ring, one `missed`, one backlog,
+and `ctxOwner` bolted on to say whose number the bar shows. Replace with
+a map keyed by session id:
+
+    sessions: { [sid]: { child, frames ring, missed, ctx, phase, queued } }
+
+- Every frame the bridge relays carries its `sid` (already true
+  session-stamped from +246; the registry makes it structural instead
+  of a label on a global stream).
+- `/talk` gains the session it addresses: `{sid, text, interrupt…}`.
+  Interrupt/queue semantics scope to THAT session's turn — which they
+  already are in fact (+248: "the running child is bound to nothing but
+  its own spawn"); the globality was only ever the API's shape.
+- `/heard` acks are per mid and stay as-is (delivery law, wire v2).
+- `/attach?sid=` replays that session's ring only. `missed` becomes
+  per-session; the +168 mail-fetch reads the map.
+- `/health` answers with the map plus `focus` (below). The
+  `turnOpen/queued/missed` trio and the `ctxOwner` gate (+249) are just
+  the map's fields; the owner-gate patch retires.
+- `/seat` shrinks to `POST /focus {sid}`: it decides which session's
+  frames the SPEAKER serves, and nothing else. No reset, no
+  backgrounding law, no rest refusals (+246/+247/+248 all become
+  theorems: nothing resets because nothing is shared to reset).
+- Harness/dirs/models stay per-session entries in the map (the tab
+  already carries harness/dir/model — it becomes the map's row).
+
+### Phone: a SessionChannel per tab
+
+One object per tab holding what VoiceAssistant holds globally today:
+
+    class SessionChannel {
+      ChatThread thread;          // store rows filtered by era+sid (exists)
+      TurnState turn;             // busy, backgrounded, ticker, drain
+      ContextBar ctx;             // its own sizes — no ownership gate needed
+      WorkingRow working;         // spinner/thought/draft, owned outright
+      StreamSub sub;              // its /talk or /attach view, alive or idle
+      int missed;                 // its own mail
+    }
+
+`VoiceAssistant` becomes the coordinator: the tab ledger (already
+there), the focus pointer, and the audio pipeline. The view projects
+the FOCUSED channel; the tab strip reads the others.
+
+- `turnHomeSid`, `ctxOwner`, the manual context zero, and
+  `showWorkingRow`'s `turnHomeHere` clause all delete: the working row
+  is a field of the channel that owns it, so "which tab shows the
+  thinking box" is structural, not legislated.
+- Any session's turn streams any time: its channel's subscription is
+  live while its turn is open, regardless of focus. Frames → thread →
+  store → ack (`/heard`) exactly as normal.
+- **TTS gate:** the reply pipeline (sentence relay → synth → player)
+  subscribes only to the FOCUSED channel. A backgrounded session's
+  `say` frames are filed as text bubbles and acked (the thread is
+  complete when you open it — the +168 honesty: opening a tab is
+  reading mail, not missing a call). No audible replay on foreground;
+  the unread count and the gear badge (+230) are the sign that work
+  happened out of earshot.
+- Barge-in, the drain (+124/+164), the heard ledger and the +250
+  context-full verdict all become PER CHANNEL: a barge interrupts the
+  focused channel's turn; a parked drain belongs to the channel that
+  owed it. The cross-session law the phone kept learning (+250: the
+  verdict "rides as text" to every transport) is just each channel
+  minding its own state.
+
+## Migration order (tests green at every step)
+
+1. Phone first: extract `SessionChannel` from `VoiceAssistant`'s
+   globals with exactly ONE channel instance and the focus trivially
+   on it. All 250 eras of walks keep passing — the extraction is the
+   proof the state was one channel's anyway.
+2. Bridge: wrap the single turn into the map + `focus`; `/health`
+   answers both old globals and the map for one era; the phone reads
+   the map.
+3. Phone: N channels, live subscriptions per busy channel, the TTS
+   gate at the reply pipeline. New walks: (a) background session
+   receives, files, acks, says nothing; (b) foreground shows the whole
+   thread silent + unread badge; (c) focused session speaks; (d) a
+   barge interrupts only the focused turn.
+4. Delete the marker laws: `turnHomeSid`, `ctxOwner` gate,
+   `turnHomeHere`, the rest/refusal journal. The +246…+251 walks
+   retarget to the structural equivalents.
+
+## Why the ack-on-receive (not replay-on-foreground)
+
+A phone that only speaks what you're watching behaves like every
+notification you already trust: the message landed, the thread knows,
+the badge tells you. Replaying a backgrounded session's answer at full
+volume the moment you glance at it is the exact behavior +168's
+mail-fetch law exists to forbid — history the ear already owns must
+not speak. Tim's rule, verbatim: an inactive session "shouldn't process
+the TTS, but we should still receive messages from the bridge" —
+received means acked; an ack that could be re-sent is not received.
