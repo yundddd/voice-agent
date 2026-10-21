@@ -219,6 +219,40 @@ void main() {
     });
   });
 
+  group('the fling settles on one spring, never a snapback (+261)', () {
+    // Tim's feel report on the swipe: 'after I swipe, the spring
+    // re-animates itself'. The two-beat motion was a state-zero snap
+    // plus a switcher slide starting from scratch; the law now is ONE
+    // continuous gesture — position AND velocity ride a spring, and
+    // the swap inherits the travel already paid. Layout needs the
+    // device; the LAW is pinned at the source, same as the band's.
+    final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
+    test('the release hands velocity to a spring simulation', () {
+      expect(ui, contains('SpringSimulation('));
+      expect(ui, contains('.animateWith('));
+    });
+    test('no snap-to-zero of the drag offset anywhere', () {
+      expect(
+        RegExp(r'_dragDx\s*=\s*0').hasMatch(ui),
+        isFalse,
+        reason:
+            'the offset is a spring value now; the old field snapping '
+            'to zero WAS the re-animation Tim saw',
+      );
+    });
+    test('the swap inherits the travelled distance', () {
+      // The enterer's slide is the old travel minus what the finger
+      // already paid — the clause that makes a deep fling crossfade
+      // in place instead of starting a second journey.
+      expect(ui, contains('(1 - _draggedFraction)'));
+      expect(
+        ui,
+        contains('final dragDx = _settle.value'),
+        reason: 'one ticking value for glow, tilt and translate',
+      );
+    });
+  });
+
   group('the bubble key rides the Column child (+197)', () {
     // The chat list pairs its children POSITIONALLY (a plain Column):
     // with the 80-entry cap live, every arrival evicts the oldest and

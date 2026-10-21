@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart'; // +261: the settle's spring
 import 'package:flutter/scheduler.dart';
 
 import '../assistant/assistant.dart';
@@ -32,7 +33,7 @@ class AssistantScreen extends StatefulWidget {
 }
 
 class _AssistantScreenState extends State<AssistantScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const _chipIcons = {
     '/model': Icons.auto_awesome, // pops the picker; never a prompt
     '/new': Icons.restart_alt, // same glyph as the settings-page reset
@@ -68,14 +69,62 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// IS the question "new session?". The `+` pill opens the same
   /// sheet from anywhere; past the newest tab, left is nothing.
   ///
-  /// The drag itself is not invisible: _dragDx tracks the finger and
-  /// the thread rides it (Transform below, 1:1), so the gesture shows
-  /// the seam BEFORE the commit; on release the thread either springs
-  /// back or hands the baton to the AnimatedSwitcher — the swap
-  /// slides in the swipe's direction and the session's own gradient
-  /// tint crossfades with it, so "which session am I entering" is
-  /// legible as motion, not guessed after a layout change.
-  double _dragDx = 0;
+  /// The drag itself is not invisible: [_settle]'s value tracks the
+  /// finger and the thread rides it (Transform below, 1:1), so the
+  /// gesture shows the seam BEFORE the commit.
+  ///
+  /// +261 (Tim's read of the feel): on release the thread NEVER snaps
+  /// to rest and the swap NEVER re-animates from its own beginning.
+  /// The finger's position AND velocity are handed to one critically
+  /// damped spring, and the AnimatedSwitcher joins whatever motion
+  /// that spring is already making — the entering thread starts from
+  /// the seam the drag opened (its travel scaled down by the distance
+  /// already travelled) rather than from a fixed 0.35 of screen, so a
+  /// fling that went deep barely moves and a shallow one still
+  /// crosses. One continuous gesture: drag, release, settle, swap.
+  /// The offset's ONE source is [_settle]'s value — during the drag it
+  /// is assigned (the finger is the clock), on release it is animated.
+  late final AnimationController _settle;
+
+  /// How far the commit-time drag had parted the thread, as a
+  /// fraction (160 px = full) of the switcher's own slide. Set on
+  /// every release; read by the transition builder; 0 for pill taps,
+  /// which have no finger motion to inherit (their swap keeps the
+  /// full directional slide — there is nothing to continue).
+  double _draggedFraction = 0;
+
+  /// Slide direction for the swap animation: -1 exits left (walked
+  /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
+  /// gesture and the pill tap alike, read by the transition builder.
+  int _slideDir = -1;
+
+  static final _swapSpring = SpringDescription.withDampingRatio(
+    mass: 1,
+    stiffness: 300,
+    ratio: 1.0, // critical: momentum without a second bounce
+  );
+
+  /// Commit a thread slide in the given exit direction (the fling's,
+  /// or the pill jump's sign against the current index). The settle
+  /// has already been launched by the release (or is a no-op for a
+  /// tap — the value is home); this only decides the swap's face.
+  void _slideTo(VoiceAssistant a, int index, {bool fromDrag = false}) {
+    setState(() {
+      _slideDir = index >= a.view.tabIndex ? -1 : 1;
+      if (!fromDrag) _draggedFraction = 0;
+    });
+    _tabTap(a, index);
+  }
+
+  /// The release, flung or not: hands position AND velocity to the
+  /// spring — the thread glides home from wherever the finger left
+  /// it. The old shape zeroed the offset in one frame and let the
+  /// swap animation start from scratch: a snapback followed by a
+  /// re-animation, exactly the 'the spring re-animates itself' the
+  /// field read.
+  void _settleHome(double vx) {
+    _settle.animateWith(SpringSimulation(_swapSpring, _settle.value, 0, vx));
+  }
 
   /// +230: the session's own wash — see [AssistantScreenSupport].
   static List<Color> _sessionTint(int tab) => [
@@ -83,39 +132,33 @@ class _AssistantScreenState extends State<AssistantScreen>
     AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.02),
   ];
 
-  /// Slide direction for the swap animation: -1 exits left (walked
-  /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
-  /// gesture and the pill tap alike, read by the transition builder.
-  int _slideDir = -1;
-
-  /// Commit a thread slide in the given exit direction (the fling's,
-  /// or the pill jump's sign against the current index).
-  void _slideTo(VoiceAssistant a, int index) {
-    setState(() {
-      _slideDir = index >= a.view.tabIndex ? -1 : 1;
-      _dragDx = 0; // the switcher takes over the motion
-    });
-    _tabTap(a, index);
+  void _onTabDragUpdate(DragUpdateDetails d) {
+    // The finger owns the value outright: stop any settle still
+    // running (the re-grab of a half-flung thread) and ride 1:1.
+    _settle
+      ..stop()
+      ..value = _settle.value + d.delta.dx;
   }
 
-  void _onTabDragUpdate(DragUpdateDetails d) =>
-      setState(() => _dragDx += d.delta.dx);
-
   void _onTabSwipe(VoiceAssistant a, double vx) {
-    final was = _dragDx;
-    setState(
-      () => _dragDx = 0,
-    ); // spring/commit from wherever the finger landed
+    final was = _settle.value;
+    _settleHome(vx); // commit OR drift: the spring continues the
+    // finger's journey from the frame it was released in
     if (vx.abs() < 450 && was.abs() < 120) return; // a drift, not a fling
+    setState(
+      () => _draggedFraction = (was.abs() / 160).clamp(0.0, 1.0),
+    ); // the swap inherits the travel already paid
     final v = a.view;
     if (v.tabs.isEmpty) {
       if (vx > 0) _newSessionTap(a); // the first-launch gesture
       return;
     }
     if (vx < 0 || was < -120) {
-      if (v.tabIndex < v.tabs.length - 1) _slideTo(a, v.tabIndex + 1);
+      if (v.tabIndex < v.tabs.length - 1) {
+        _slideTo(a, v.tabIndex + 1, fromDrag: true);
+      }
     } else if (v.tabIndex > 0) {
-      _slideTo(a, v.tabIndex - 1);
+      _slideTo(a, v.tabIndex - 1, fromDrag: true);
     } else {
       _newSessionTap(a); // past the first tab sits the NEW slot
     }
@@ -669,6 +712,17 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void initState() {
     super.initState();
+    // +261: the settle owns the thread's X from the moment the finger
+    // lifts. unbounded range (positions are pixels), a finite clock
+    // window (the spring is critically damped: 380 ms and the residual
+    // is sub-pixel), and a landing that snaps the last hair to zero so
+    // the glow's `part` can never freeze a pixel off true rest.
+    _settle = AnimationController.unbounded(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    )..addStatusListener((s) {
+      if (s == AnimationStatus.completed) _settle.value = 0;
+    });
     WidgetsBinding.instance.addObserver(this);
     // +203: the frame-cost witness (see _logChaseCost).
     SchedulerBinding.instance
@@ -691,6 +745,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     WidgetsBinding.instance.removeObserver(this);
     _framesAlive = false; // +206: persistent callbacks are forever; disarm
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
+    _settle.dispose();
     _scroll.dispose();
     if (_ownsAssistant) _assistant.dispose();
     super.dispose();
@@ -912,7 +967,10 @@ class _AssistantScreenState extends State<AssistantScreen>
                     child: GestureDetector(
                       behavior: HitTestBehavior.deferToChild,
                       onHorizontalDragUpdate: _onTabDragUpdate,
-                      onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+                      // A stolen gesture is still a release: the
+                      // thread springs home from where it stood
+                      // rather than snapping (+261).
+                      onHorizontalDragCancel: () => _settleHome(0),
                       onHorizontalDragEnd: (d) =>
                           _onTabSwipe(a, d.velocity.pixelsPerSecond.dx),
                       child: SingleChildScrollView(
@@ -999,13 +1057,24 @@ class _AssistantScreenState extends State<AssistantScreen>
                                 // edge glows the creation slot's primary
                                 // and a + fades in: that gesture means
                                 // NEW, and it looks like it.
-                                Builder(
-                                  builder: (context) {
-                                    final part = (_dragDx.abs() / 160).clamp(
+                                AnimatedBuilder(
+                                  animation: _settle,
+                                  builder: (context, _) {
+                                    // One source for the offset: the
+                                    // finger assigned it during the
+                                    // drag, the spring animates it
+                                    // after the release — and the
+                                    // glow, tilt and translate all
+                                    // ride the SAME ticking value,
+                                    // so the seam, its edge light
+                                    // and the card fade together on
+                                    // the way home.
+                                    final dragDx = _settle.value;
+                                    final part = (dragDx.abs() / 160).clamp(
                                       0.0,
                                       1.0,
                                     );
-                                    final toOlder = _dragDx > 0;
+                                    final toOlder = dragDx > 0;
                                     final atFirst = v.tabIndex == 0;
                                     final edgeTint = toOlder && atFirst
                                         ? scheme.primary
@@ -1071,7 +1140,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                             ),
                                           ),
                                         Transform.translate(
-                                          offset: Offset(_dragDx, 0),
+                                          offset: Offset(dragDx, 0),
                                           child: Transform.scale(
                                             scale: 1 - 0.03 * part,
                                             child: AnimatedSwitcher(
@@ -1089,11 +1158,29 @@ class _AssistantScreenState extends State<AssistantScreen>
                                                     (child.key as ValueKey<int>)
                                                             .value ==
                                                         v.tabIndex;
+                                                // +261: the swap
+                                                // inherits the drag.
+                                                // The travel already
+                                                // paid (_draggedFraction,
+                                                // 160 px = full) is
+                                                // subtracted from the
+                                                // slide the switcher
+                                                // performs, so a deep
+                                                // fling crossfades
+                                                // almost in place and
+                                                // the settle spring
+                                                // alone finishes the
+                                                // ride — no snapback,
+                                                // no second act. A
+                                                // pill tap pays the
+                                                // full slide (nothing
+                                                // to continue).
                                                 final from =
                                                     (incoming
                                                         ? -_slideDir
                                                         : _slideDir) *
-                                                    0.35;
+                                                    0.35 *
+                                                    (1 - _draggedFraction);
                                                 return FadeTransition(
                                                   opacity: anim,
                                                   child: SlideTransition(
