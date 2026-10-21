@@ -98,6 +98,18 @@ the FOCUSED channel; the tab strip reads the others.
    `turnHomeHere`, the rest/refusal journal. The +246…+251 walks
    retarget to the structural equivalents.
 
+### The focus switch is a watermark (Tim's +251 clarification)
+
+Swiping onto a session that OWES unheard frames does not speak them:
+the pending backlog is drained silently (filed, acked, visible). TTS
+adopts only the NEW messages of that session — frames that arrive
+after the focus landed. A turn still generating at the moment of the
+swipe splits on the same line: its sentences already streamed while
+backgrounded file silently, its next sentence speaks, because the
+relay cuts at sentence boundaries anyway. The rule generalizes the
++168 mail-fetch honesty to tabs: reading mail never speaks, whatever
+is written AFTER you sit down at the desk does.
+
 ## Why the ack-on-receive (not replay-on-foreground)
 
 A phone that only speaks what you're watching behaves like every

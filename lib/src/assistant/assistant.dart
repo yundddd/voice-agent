@@ -58,6 +58,7 @@ import './narration_gate.dart';
 import './ptt_hold.dart';
 import './reattach_chain.dart';
 import './reply_pipeline.dart';
+import './session_channel.dart';
 import './state.dart';
 import './token_ticker.dart';
 import './turn_session.dart';
@@ -158,7 +159,7 @@ class VoiceAssistant extends ChangeNotifier {
       scheduler: _scheduler,
       repaint: notifyListeners,
     );
-    _ticker = TokenTicker(clock: _clock, repaint: notifyListeners);
+    final ticker = TokenTicker(clock: _clock, repaint: notifyListeners);
     _narr = NarrationGate(clock: _clock);
     _ptt = PttHold(clock: _clock);
     _transport = BridgeTransport(
@@ -232,7 +233,7 @@ class VoiceAssistant extends ChangeNotifier {
     // The machine parts a transition orchestrates arrive as callbacks —
     // the coordinator owns the truth and the ORDER, this class owns the
     // reattach chain and the reply player those callbacks pull.
-    _turn = TurnCoordinator(
+    final turn = TurnCoordinator(
       clock: _clock,
       log: _logDebug,
       hardStop: () async {
@@ -245,7 +246,7 @@ class VoiceAssistant extends ChangeNotifier {
     // The retry ladder for views that died mid-turn. Its env is all
     // tear-offs into this class: the chain decides WHEN, this class owns
     // the gateway, badge and mic it acts on.
-    _chain = ReattachChain(
+    final chain = ReattachChain(
       scheduler: _scheduler,
       env: ReattachEnv(
         canProbe: () => _gateway != null && _worker != null,
@@ -256,13 +257,18 @@ class VoiceAssistant extends ChangeNotifier {
         probe: () => _gateway?.healthInfo() ?? Future.value(null),
         noteHealth: _transport.noteHealth,
         reattach: (health) => reattachBackgroundTurn(health: health),
-        retireWork: _turn.retireBadgeAndWork,
+        retireWork: turn.retireBadgeAndWork,
         idleReady: _idleReady,
         setStatus: _setStatus,
         log: _logDebug,
         repaint: notifyListeners,
       ),
     );
+    // The three wire companions above belong to THE channel — one
+    // conversation's complete private life (session_channel.dart).
+    // This era has exactly one; the getter forwards make the storage
+    // move without touching a call site.
+    _chan = SessionChannel(turn: turn, ticker: ticker, chain: chain);
   }
 
   // Silence duration that ends an utterance in conversation mode.
@@ -271,12 +277,10 @@ class VoiceAssistant extends ChangeNotifier {
   late final Clock _clock;
   late final Scheduler _scheduler;
   late final HarnessGateway Function(String url, String token)? _gatewayFactory;
-  late final ReattachChain _chain;
   SpeechEngine? _worker;
   late final MicPipeline _mic;
   late final ReplyPipeline _reply;
   late final HopTracker _hops;
-  late final TokenTicker _ticker;
   late final NarrationGate _narr;
   late final ChatStore _chat;
   late final BridgeTransport _transport;
@@ -615,7 +619,18 @@ class VoiceAssistant extends ChangeNotifier {
   // This class only READS the truth (below) and fires the coordinator's
   // named transitions; the old raw fields' meaning now lives on those
   // methods' docs. What each getter answers:
-  late final TurnCoordinator _turn;
+  //
+  // +251 step 1: the turn, its ticker and its retry ladder live on the
+  // SESSION CHANNEL (session_channel.dart) — one conversation's
+  // complete private life. This era holds exactly one channel and the
+  // speaker focus is trivially on it; the forwarding getters below
+  // keep every +250-era name (and every walk that pins it) intact
+  // while the storage is no longer global. Step 3 replaces this field
+  // with the per-session map and deletes the markers.
+  late final SessionChannel _chan;
+  TurnCoordinator get _turn => _chan.turn;
+  TokenTicker get _ticker => _chan.ticker;
+  ReattachChain get _chain => _chan.chain;
 
   /// A bridge turn is in flight (chips disabled).
   bool get _bridgeBusy => _turn.busy;
@@ -841,7 +856,10 @@ class VoiceAssistant extends ChangeNotifier {
   /// so the app can never see the file before the server wrote it). The
   /// id only moves when /new drops it or a death-resume forks it — an
   /// id that never moves across dozens of talks IS the continuity proof.
-  String? _sessionId;
+  // +251: the id is CHANNEL state — the delegating pair keeps every
+  // call site (and every walk) reading the conversation it focuses.
+  String? get _sessionId => _chan.sessionId;
+  set _sessionId(String? v) => _chan.sessionId = v;
   String? get sessionId => _sessionId;
 
   /// +213: which harness /health last said holds the pen ('claude' |
@@ -875,7 +893,10 @@ class VoiceAssistant extends ChangeNotifier {
   // (_refreshSession runs at startup, after setBridge, and in
   // runQuickCommand's finally — so the bar survives app restarts and
   // detached turns alike). Window 0 = no `result` has named one yet.
-  int _contextIn = 0;
+  // +251: the sizes are CHANNEL state — every conversation owns its
+  // own bar; the pair forwards the focused one's numbers.
+  int get _contextIn => _chan.contextIn;
+  set _contextIn(int v) => _chan.contextIn = v;
 
   /// +249: the conversation the LIVE work belongs to, when a mid-turn
   /// switch backgrounded it (captured at switchSession from the id the
@@ -884,8 +905,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// the thought box nor the context bar ever shows one thread's
   /// business on another's face. Cleared whenever the seat itself
   /// starts a turn (runQuickCommand).
-  String? _turnHomeSid;
-  int _contextWindow = 0;
+  // The marker is CHANNEL state too (its step-3 deletion is planned):
+  // it can only ever name an away-work belonging to the channel you
+  // are looking through.
+  String? get _turnHomeSid => _chan.turnHomeSid;
+  set _turnHomeSid(String? v) => _chan.turnHomeSid = v;
+  int get _contextWindow => _chan.contextWindow;
+  set _contextWindow(int v) => _chan.contextWindow = v;
   int get contextIn => _contextIn;
   int get contextWindow => _contextWindow;
 
@@ -2178,7 +2204,8 @@ class VoiceAssistant extends ChangeNotifier {
   /// Keeps the working box dark while the busy slot and the Stop chip
   /// stay honest (the replay is real and cuttable). Set at the reattach
   /// claim, cleared by any /talk (real work by definition).
-  bool _drainReading = false;
+  bool get _drainReading => _chan.drainReading;
+  set _drainReading(bool v) => _chan.drainReading = v;
 
   /// +152: a queue verdict may not bump a running tool's line. The
   /// spinner's fallback label (tally kind 'calling X') reads the
@@ -2348,7 +2375,10 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// A drain verdict the teardown parked behind on-air audio (+124);
   /// consumed by [_handleNaturalEnd], superseded by any newer verdict.
-  ({int gen, int mySeq})? _drainAfterSpeech;
+  /// +251: CHANNEL state — one conversation never parks another's drain.
+  ({int gen, int mySeq})? get _drainAfterSpeech => _chan.drainAfterSpeech;
+  set _drainAfterSpeech(({int gen, int mySeq})? v) =>
+      _chan.drainAfterSpeech = v;
 
   void _startPump(int gen) =>
       unawaited(_reply.runPump(isStale: () => gen != _generation));
