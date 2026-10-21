@@ -18,6 +18,7 @@ import 'dart:typed_data';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 import '../models/model_paths.dart';
+import 'asr_chunk.dart';
 import 'lexicon_pronouncer.dart';
 import 'speech_engine.dart';
 import 'titl_engine.dart';
@@ -87,6 +88,12 @@ class RealBackends extends WorkerBackends {
           ),
         ),
       ),
+      // Long-clip chunking rides the SAME silero file the endpointer
+      // already ships with; empty path (or a 16k mismatch at the call)
+      // degrades to today's whole-clip decode, minus nothing.
+      // maxSpeechDuration mirrors the live endpointer's 20 s: a clip
+      // of unbroken talk still cuts inside Whisper's 30 s window.
+      chunkVadModel: p.vadModel,
     );
   }
 
@@ -211,10 +218,60 @@ class FakeBackends extends WorkerBackends {
 
 class SherpaAsr implements AsrBackend {
   final sherpa_onnx.OfflineRecognizer _rec;
-  SherpaAsr(this._rec);
+
+  /// Lazily built (the model loads once per worker life, not once per
+  /// ASR build): chunks clips longer than [_windowSeconds] of audio so
+  /// Whisper's 30-second window never amputates a long hold. Empty
+  /// model path disables chunking outright.
+  final String chunkVadModel;
+  SherpaVad? _chunker;
+
+  SherpaAsr(this._rec, {this.chunkVadModel = ''});
+
+  /// Decode whole below this much audio: Whisper's window minus a
+  /// 4-second belt (feature padding, endpoint pad slop, clock drift).
+  static const double _windowSeconds = 26.0;
 
   @override
   String transcribe(Float32List samples, int sampleRate) {
+    if (chunkVadModel.isEmpty ||
+        sampleRate != 16000 ||
+        samples.length <= (_windowSeconds * sampleRate).round()) {
+      return _decode(samples, sampleRate);
+    }
+    final vad = _chunker ??= SherpaVad(sherpa_onnx.VoiceActivityDetector(
+      config: sherpa_onnx.VadModelConfig(
+        sileroVad: sherpa_onnx.SileroVadModelConfig(
+          model: chunkVadModel,
+          // Same opening posture as the live endpointer: raise early,
+          // let the word attack survive; this clip already passed the
+          // SNR gate on the way in.
+          threshold: 0.35,
+          minSilenceDuration: 0.3,
+          minSpeechDuration: 0.25,
+          maxSpeechDuration: 20.0,
+          windowSize: 512,
+        ),
+        sampleRate: 16000,
+        numThreads: 1,
+        debug: false,
+        provider: 'cpu',
+      ),
+        bufferSizeInSeconds: 60,
+      ),
+    );
+    final parts = chunkForWhisper(vad, samples, sampleRate)
+        .map((seg) => _decode(seg, sampleRate).trim())
+        .where((t) => t.isNotEmpty)
+        .join(' ')
+        .trim();
+    // A clip this long with no detectable speech is noise; decode it
+    // whole anyway — that's exactly what today's path does with it,
+    // truncated by the window, and silence beats a wrong word.
+    return parts.isEmpty ? _decode(samples, sampleRate) : parts;
+  }
+
+  String _decode(Float32List samples, int sampleRate) {
     final stream = _rec.createStream();
     stream.acceptWaveform(samples: samples, sampleRate: sampleRate);
     _rec.decode(stream);
@@ -224,7 +281,10 @@ class SherpaAsr implements AsrBackend {
   }
 
   @override
-  void free() => _rec.free();
+  void free() {
+    _chunker?.free();
+    _rec.free();
+  }
 }
 
 class SherpaVad implements VadBackend {
