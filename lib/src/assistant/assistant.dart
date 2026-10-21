@@ -3829,6 +3829,22 @@ class VoiceAssistant extends ChangeNotifier {
     // backlog both qualify; an unreachable bridge is "cannot tell", and
     // the chain keeps probing (a waking phone wakes its network late).
     final probe = health ?? await gateway.healthInfo();
+    // +290 (Tim's field: 'background the app, foreground it — no
+    // response until I set a hello'): the probe ALREADY carries the
+    // conversation's name, and the old code printed its flags and
+    // threw the name away. The tape: the answer's paragraphs came
+    // back on the replay stamped for their own conversation, but the
+    // pointer still named nobody ('seat=unnamed'), so the +274 stamp
+    // verdict could only read the phone's OWN answer as foreign —
+    // not taken, not filed, nothing in the thread. Wear the name the
+    // /health law already wears everywhere else; the claim line
+    // below then answers 'whose backlog are we draining' with the
+    // truth, and the drain files the answer where it lives.
+    final probeSid = probe?['sessionId'];
+    if (probeSid is String && probeSid != _sessionId) {
+      _sessionId = probeSid;
+      notifyListeners();
+    }
     if (bridgeReattachNeeded(probe) != true) return false;
     _logDebug(
       'REATTACH start: ${_transport.noteHealth(probe)} — replaying backlog',

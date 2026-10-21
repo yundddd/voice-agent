@@ -191,6 +191,46 @@ void main() {
       expect(reply.pumpAlive, isFalse);
     },
   );
+
+  test('+290: every handed chunk signs a receipt — natural end and cut, '
+      'both doors', () async {
+    // The witness Tim asked for: the play line proves the hand-off,
+    // and only the player's own event proves the audio. A chunk
+    // that never received its end (the silent start the ear called
+    // out) now shows on the tape as a play line with no receipt
+    // under it, whichever door it died at.
+    final (out, _, reply) = rig();
+    final lines = <String>[];
+    reply.log = lines.add;
+    reply.startStream();
+    unawaited(reply.runPump(isStale: () => false));
+    await settle();
+    await reply.speakBlock(
+      'a paragraph with a real end',
+      alive: () => true,
+      onAir: (_) {},
+    );
+    await settle();
+    out.complete(); // the player reports its audio ran out
+    await settle();
+    expect(
+      lines.any((l) => l.startsWith('chunk ended naturally: ran')),
+      isTrue,
+      reason:
+          'the receipt answers the play line: seconds ran, '
+          'seconds handed',
+    );
+    await reply.speakBlock(
+      'a paragraph that gets cut',
+      alive: () => true,
+      onAir: (_) {},
+    );
+    await settle();
+    reply.stopPlayback(); // the cut door signs too
+    await settle();
+    expect(lines.any((l) => l.startsWith('chunk ended cut: ran')), isTrue);
+    reply.closeStream();
+  });
 }
 
 /// +289: a backend whose play() sits in flight (the real one encodes

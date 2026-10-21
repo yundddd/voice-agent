@@ -626,6 +626,54 @@ void main() {
       await settle();
     });
 
+    test('+290: a named say reaches a nameless phone \u2014 no home to '
+        'contradict, no foreign verdict', () async {
+      // The hide/foreground tape, gate-sized: the resume drain was
+      // born while the phone's seat pointer named nobody, and every
+      // paragraph of the phone's OWN answer \u2014 honestly stamped for
+      // the conversation it was born in \u2014 read as FOREIGN: not
+      // taken, not filed, nothing in the thread ('no response until
+      // I set a hello'). The stamp verdict needs a positive home to
+      // contradict; with neither seat nor view named, the watermark
+      // and the age laws judge the frame on its merits.
+      probe.seatedNow = null; // the phone cannot name its seat\u2026
+      mkTurn(
+        origin: BridgeTurnOrigin.attach,
+      ); // \u2026so this view is born nameless
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'the answer that was only lost, not foreign.',
+          mid: 13,
+          session: 'ses-answered', // an honest stamp, an unknown home
+        ),
+      );
+      await settle();
+      expect(
+        probe.logs.any(
+          (l) => l.contains('foreign conversation: say left unheard'),
+        ),
+        isFalse,
+        reason: "the phone's amnesia is not the frame's foreignness",
+      );
+      expect(
+        probe.took,
+        contains(13),
+        reason: 'taken \u2014 this drain pays it',
+      );
+      expect(
+        engine.synthesized,
+        contains('the answer that was only lost, not foreign.'),
+        reason: 'and the law proceeds: fresh unstamped frames speak',
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
     test('+274: a foreign tool band files to the OWNER\u2019s tab, '
         'not the one on screen', () async {
       probe.seatedNow = 'ses-Y';

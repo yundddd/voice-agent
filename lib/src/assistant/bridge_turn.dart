@@ -508,10 +508,15 @@ class BridgeTurn {
       // not taken (no ack — the backlog keeps the debt), not filed
       // here; the owner's own drain serves it its own thread.
       final seatedForFile = env.seatedSession?.call();
+      // +290: the same homeUnproven clause as the say gate — a file
+      // stamped for the phone's own (unnamed) conversation must not
+      // be read as foreign because the phone forgot its seat; that
+      // amnesia is the reader's, not the frame's.
       final fileForeign =
           ev.session != null &&
           ev.session != seatedForFile &&
-          ev.session != _viewSid;
+          ev.session != _viewSid &&
+          !(seatedForFile == null && _viewSid == null);
       if (fileForeign) {
         env.log(
           'foreign conversation: file left unheard for its own thread'
@@ -631,8 +636,21 @@ class BridgeTurn {
     // backlog keeps it, and the owner's own drain serves it the law
     // it was written for.
     final seatedNow = env.seatedSession?.call();
+    // +290: the stamp verdict needs a POSITIVE home to contradict.
+    // With neither the seat nor this view named — the fresh resume
+    // probe whose /health name the phone has not worn yet, the
+    // nameless birth — there is no stranger to point at, and the
+    // frame's own stamp is the only truth on the table (+286/+287's
+    // 'a nameless probe keeps the old global proof', stated for the
+    // gates that read it every day). Not immunity: the watermark and
+    // the age law below still file archaeology mute, which is what a
+    // hidden app's answer honestly is by the time it surfaces.
+    final homeUnproven = seatedNow == null && _viewSid == null;
     final foreign =
-        ev.session != null && ev.session != seatedNow && ev.session != _viewSid;
+        ev.session != null &&
+        ev.session != seatedNow &&
+        ev.session != _viewSid &&
+        !homeUnproven;
     if (foreign) {
       env.log(
         'foreign conversation: say left unheard for its own thread'

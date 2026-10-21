@@ -489,6 +489,38 @@ void main() {
       );
     });
 
+    test('+290: the probe names its conversation and the phone wears '
+        'it — the claim reads its own backlog as home, not foreign', () async {
+      // The field tape (hide → foreground, 'no response until I set a
+      // hello'): the resume probe read a /health that NAMED the
+      // conversation and printed only its flags, throwing the name
+      // away; the attach view was born nameless, the answer's stamped
+      // paragraphs failed the +274 verdict as foreign, and the thread
+      // stayed empty. The probe's name now lands on the pointer
+      // before the claim — the same law _refreshSession applies on
+      // every other glance.
+      await withBridge();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'missed': 4,
+        'sessionId': 'ses-drained',
+      };
+      expect(await a.reattachBackgroundTurn(), isTrue);
+      await settle();
+      expect(
+        a.debugLog.any(
+          (l) => l.contains('attach claim') && l.contains('seat=ses-drained'),
+        ),
+        isTrue,
+        reason:
+            "the tape answers 'whose backlog is this' with the name, "
+            'not seat=unnamed',
+      );
+      expect(a.sessionId, 'ses-drained');
+    });
+
     test('+168: rejoining a GENERATING turn spins the box — the mail '
         'badge does not leak onto real work', () async {
       await withBridge();

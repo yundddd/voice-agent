@@ -389,10 +389,33 @@ class ReplyPipeline {
   bool _playedRecently = false; // chunk-to-chunk carry-over (see above)
 
   void _chunkLog(Float32List samples, int rate) {
+    // +290: stamp the receipt's inputs at the hand-off — the seconds
+    // this chunk owes the air, and the instant it asked for them.
+    _handoffAt = clock();
+    _handedSeconds = samples.length / rate;
     _log?.call(
       'chunk play ${(samples.length / rate).toStringAsFixed(1)}s'
       '${_queue.isEmpty ? ' (last)' : ' +${_queue.length}'}',
     );
+  }
+
+  // +290 (the chunk-end witness): every chunk HANDED to the player
+  // owes a receipt at whichever door resolves it — the player's own
+  // end event ('chunk ended naturally') or a stop ('chunk ended
+  // cut'). Bookkeeping until now stopped at the hand-off, and the
+  // platform's door is where a silent start can hide: a play line
+  // with no receipt under it while later lines flow is exactly that
+  // animal, visible on the tape instead of argued from ears.
+  DateTime? _handoffAt;
+  double _handedSeconds = 0;
+
+  String _receipt() {
+    final st = _handoffAt;
+    final ran = st == null
+        ? 0.0
+        : clock().difference(st).inMilliseconds / 1000.0;
+    return 'ran ${ran.toStringAsFixed(1)}s of '
+        '${_handedSeconds.toStringAsFixed(1)}s handed';
   }
 
   /// Journal hook for chunk seams (screenshot-able forensics).
@@ -408,6 +431,13 @@ class ReplyPipeline {
   void _onEnd() {
     final seam = _chunkDone;
     if (seam != null && !seam.isCompleted) {
+      // +290 (the chunk-end witness): a chunk HANDED is not a chunk
+      // HEARD — the play line and the seam note are bookkeeping about
+      // the hand-off, and the ear's complaint lived exactly there
+      // ('that chunk didn't go through TTS for sure'). The player's
+      // own end event is the only receipt the platform signs; this
+      // line is where it lands on the tape.
+      _log?.call('chunk ended naturally: ${_receipt()}');
       seam.complete(); // streamed mode: runPump decides on end
       return;
     }
@@ -455,7 +485,14 @@ class ReplyPipeline {
     _queue.clear(); // streamed reply: drop everything not yet audible
     final cd = _chunkDone;
     _chunkDone = null;
-    if (cd != null && !cd.isCompleted) cd.complete(); // unblock the loop
+    if (cd != null && !cd.isCompleted) {
+      // +290: the other receipt door. A chunk whose seconds were cut
+      // short says so — and a hand-off with NEITHER receipt line
+      // under it, while later lines flow, is the silent start named
+      // by its silence.
+      _log?.call('chunk ended cut: ${_receipt()}');
+      cd.complete(); // unblock the loop
+    }
     unawaited(output.stop());
     final p = _previewDone;
     if (p != null && !p.isCompleted) p.complete();
