@@ -49,7 +49,8 @@ class EnvProbe {
   int seq = 1;
   bool busy = true, badge = false, errored = false;
   String? errorWhy;
-  String? errorSession; // +275: who the verdict was filed for // +219: the reason the wire carried must arrive
+  String?
+  errorSession; // +275: who the verdict was filed for // +219: the reason the wire carried must arrive
 
   final List<Activity> statuses = [];
   final List<AssistantPhase> phases = [];
@@ -132,19 +133,17 @@ class EnvProbe {
         )),
     drainBacklog: (gen, seq) async => drains.add((gen, seq)),
     ttsOff: () => ttsOff,
-    retireBgWork: (d,
-        {bool cancelled = false,
-        String taskId = '',
-        String? session}) {
-      receiptSession = session; // +279: the receipt names its speaker
-      lastReceiptId = taskId; // +186: the frame's task id rides the seam
-      retiredBg.add((d, cancelled));
-      // The assistant's law (see _retireBgWork): the promise is paid,
-      // the OWING row settles (+279.1), and a lit badge goes with it.
-      coord?.clearBgWork();
-      coord?.payAgentDebt(d, sid: session);
-      if (badge) coord?.retireBadgeAndWork();
-    },
+    retireBgWork:
+        (d, {bool cancelled = false, String taskId = '', String? session}) {
+          receiptSession = session; // +279: the receipt names its speaker
+          lastReceiptId = taskId; // +186: the frame's task id rides the seam
+          retiredBg.add((d, cancelled));
+          // The assistant's law (see _retireBgWork): the promise is paid,
+          // the OWING row settles (+279.1), and a lit badge goes with it.
+          coord?.clearBgWork();
+          coord?.payAgentDebt(d, sid: session);
+          if (badge) coord?.retireBadgeAndWork();
+        },
     parkCutTrace: (e) => parked = e,
     cutTrace: () => parked,
     promptBumps: () => promptBumps,
@@ -593,10 +592,16 @@ void main() {
       );
       await settle();
       expect(engine.synthesized, isEmpty);
-      expect(bubble.blocks, isEmpty,
-          reason: 'a foreign say does not contaminate this thread');
-      expect(probe.took, isNot(contains(11)),
-          reason: 'not taken — the owner tab has not heard it yet');
+      expect(
+        bubble.blocks,
+        isEmpty,
+        reason: 'a foreign say does not contaminate this thread',
+      );
+      expect(
+        probe.took,
+        isNot(contains(11)),
+        reason: 'not taken — the owner tab has not heard it yet',
+      );
       expect(
         probe.logs.any(
           (l) => l.contains('foreign conversation: say left unheard'),
@@ -636,17 +641,24 @@ void main() {
         ),
       );
       await settle();
-      expect(probe.statuses.whereType<StepLine>(), isEmpty,
-          reason: 'the watching tab keeps its peace');
-      expect(probe.awayBands, hasLength(1));
-      expect(probe.awayBands.single.$1, 'ses-X',
-          reason: 'the band files for the thread that is working');
-      expect(turn.lastToolStep, isEmpty,
-          reason: 'this pump\u2019s ledgers stay its own conversation\u2019s');
       expect(
-        probe.logs.any(
-          (l) => l.contains('foreign conversation: band kept'),
-        ),
+        probe.statuses.whereType<StepLine>(),
+        isEmpty,
+        reason: 'the watching tab keeps its peace',
+      );
+      expect(probe.awayBands, hasLength(1));
+      expect(
+        probe.awayBands.single.$1,
+        'ses-X',
+        reason: 'the band files for the thread that is working',
+      );
+      expect(
+        turn.lastToolStep,
+        isEmpty,
+        reason: 'this pump\u2019s ledgers stay its own conversation\u2019s',
+      );
+      expect(
+        probe.logs.any((l) => l.contains('foreign conversation: band kept')),
         isTrue,
       );
       wire.add(BridgeEvent.forTest('done'));
@@ -694,8 +706,7 @@ void main() {
     });
 
     test('+279: a pump that opens while a debt is owed SPEAKS the '
-        'debt\u2019s report (fresh) instead of filing it silently',
-        () async {
+        'debt\u2019s report (fresh) instead of filing it silently', () async {
       // The tape: the sleep finished while the user was away, the
       // landing\u2019s catch-up attach drained the report, and the
       // focus watermark filed the news in silence \u2014 'the response
@@ -735,25 +746,33 @@ void main() {
       await settle();
     });
 
-    test('+275: pins are per conversation — B\u2019s pickup leaves A\u2019s park alone',
-        () async {
-      final owner = ['ses-A'];
-      final store = ChatStore(
-        persist: (_) async {},
-        repaint: () {},
-        session: () => owner.first,
-      );
-      store.addUser('parked in A', queued: true);
-      owner[0] = 'ses-B';
-      store.addUser('parked in B', queued: true);
-      expect(store.queuedFor('ses-A')?.blocks.single, 'parked in A',
-          reason: 'A keeps its pin while B parks too — isolation');
-      expect(store.queuedFor('ses-B')?.blocks.single, 'parked in B');
-      store.unpinQueued(session: 'ses-B');
-      expect(store.queuedFor('ses-B'), isNull, reason: 'B was taken');
-      expect(store.queuedFor('ses-A'), isNotNull,
-          reason: 'A was never taken — its spinner box persists');
-    });
+    test(
+      '+275: pins are per conversation — B\u2019s pickup leaves A\u2019s park alone',
+      () async {
+        final owner = ['ses-A'];
+        final store = ChatStore(
+          persist: (_) async {},
+          repaint: () {},
+          session: () => owner.first,
+        );
+        store.addUser('parked in A', queued: true);
+        owner[0] = 'ses-B';
+        store.addUser('parked in B', queued: true);
+        expect(
+          store.queuedFor('ses-A')?.blocks.single,
+          'parked in A',
+          reason: 'A keeps its pin while B parks too — isolation',
+        );
+        expect(store.queuedFor('ses-B')?.blocks.single, 'parked in B');
+        store.unpinQueued(session: 'ses-B');
+        expect(store.queuedFor('ses-B'), isNull, reason: 'B was taken');
+        expect(
+          store.queuedFor('ses-A'),
+          isNotNull,
+          reason: 'A was never taken — its spinner box persists',
+        );
+      },
+    );
 
     test('+275: the error verdict stamps for the conversation that '
         'heard it, not for the seat the user swiped to', () async {
@@ -785,8 +804,11 @@ void main() {
       await r;
       out.complete();
       await settle();
-      expect(probe.errorSession, 'ses-X',
-          reason: 'the verdict belongs to the thread that heard it');
+      expect(
+        probe.errorSession,
+        'ses-X',
+        reason: 'the verdict belongs to the thread that heard it',
+      );
     });
 
     test('+275: a nameless birth self-names from its OWN stream, and '
@@ -806,24 +828,34 @@ void main() {
       // assistant bubble keeps its sentinel until ITS wire names it.
       expect(store.adoptPending('ses-A', userOnly: true), 1);
       expect(store.entries.first.session, 'ses-A');
-      expect(stranger.session, ChatStore.pendingSession,
-          reason: '+275: no more cross-birth adoption theft');
+      expect(
+        stranger.session,
+        ChatStore.pendingSession,
+        reason: '+275: no more cross-birth adoption theft',
+      );
       // And A's own pump, meeting its ctx frame, self-names its
       // bubble — identity flows from the stream that spoke.
       store.namePendingOf([stranger], 'ses-A');
       expect(stranger.session, 'ses-A');
     });
 
-    test('+274: the parser reads the wire stamp, and absence is trust',
-        () async {
-      final ev = BridgeEvent.parse(
-          'say', '{"text":"x","_mid":9,"_sess":"ses-Z","_ts":1}');
-      expect(ev.session, 'ses-Z');
-      expect(ev.mid, 9);
-      final old = BridgeEvent.parse('say', '{"text":"x","_mid":10}');
-      expect(old.session, isNull,
-          reason: 'an old bridge keeps the +253 inference path');
-    });
+    test(
+      '+274: the parser reads the wire stamp, and absence is trust',
+      () async {
+        final ev = BridgeEvent.parse(
+          'say',
+          '{"text":"x","_mid":9,"_sess":"ses-Z","_ts":1}',
+        );
+        expect(ev.session, 'ses-Z');
+        expect(ev.mid, 9);
+        final old = BridgeEvent.parse('say', '{"text":"x","_mid":10}');
+        expect(
+          old.session,
+          isNull,
+          reason: 'an old bridge keeps the +253 inference path',
+        );
+      },
+    );
 
     test('+163: a steered pickup makes the turn heard and promises no '
         'banner — the fold law on the phone side', () async {
@@ -1455,6 +1487,46 @@ void main() {
         reason: 'the ledger says this phone has the bubble — no second card',
       );
       expect(probe.logs.any((l) => l.contains('file dup by id #77')), isTrue);
+    });
+
+    test('+286: a foreign-stamped file stays the owner\'s debt', () async {
+      // The tape ('the APK bubble showed up in a different session'):
+      // a file born under one conversation was COMMITTED and filed
+      // during another tab's backlog replay — the delivery answered
+      // to whoever ate it, not to its birth stamp. The say law
+      // (+274) now covers deliveries too.
+      probe.seatedNow = 'ses-host';
+      mkTurn(); // this view belongs to the host conversation
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        BridgeEvent.forTest(
+          'file',
+          fileName: 'app-release.apk',
+          filePath: 'dist/app-release.apk',
+          fileSize: 12345,
+          mid: 79,
+          session: 'ses-stranger', // born elsewhere
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      await settle();
+      expect(
+        chat.entries.any((e) => e.isFile),
+        isFalse,
+        reason: 'no bubble squatting on a stranger\'s thread',
+      );
+      expect(
+        probe.took,
+        isNot(contains(79)),
+        reason: 'un-acked: the backlog keeps it for the owner\'s drain',
+      );
+      expect(
+        probe.logs.any((l) => l.contains('foreign conversation: file')),
+        isTrue,
+        reason: 'the refusal is journalled, like the say law',
+      );
     });
   });
 }

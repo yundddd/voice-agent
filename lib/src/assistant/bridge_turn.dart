@@ -496,6 +496,29 @@ class BridgeTurn {
     // own farewell, and the thinking box flashes on a 10 s cadence
     // while the banner can never retire (0.1.0+159 field report).
     if (ev.kind == 'file') {
+      // +286 (Tim, 'the APK bubble showed up in a DIFFERENT session'):
+      // a file is a DELIVERY, and +274 stamps every relay with the
+      // conversation it was born under (POST /send speaks under the
+      // then-seated id) — so the bubble belongs to that thread, not
+      // to whichever tab's drain happens to replay the frame. The
+      // branch used to commit and file BEFORE any owner gate could
+      // speak, and the tape caught it: a file born in the voice-agent
+      // conversation filed its bubble during a stranger tab's ATTACH
+      // replay. The say law now applies verbatim: foreign-stamped,
+      // not taken (no ack — the backlog keeps the debt), not filed
+      // here; the owner's own drain serves it its own thread.
+      final seatedForFile = env.seatedSession?.call();
+      final fileForeign =
+          ev.session != null &&
+          ev.session != seatedForFile &&
+          ev.session != _viewSid;
+      if (fileForeign) {
+        env.log(
+          'foreign conversation: file left unheard for its own thread'
+          '${transport.wireTag(ev)}',
+        );
+        return;
+      }
       // A file frame is a delivery, like a say — so it gets the same
       // ledger FIRST: news unless this phone already took its id (a
       // drain replay would otherwise file the same APK bubble every
@@ -551,10 +574,7 @@ class BridgeTurn {
         // stream that spoke the words, never from whoever the seat
         // happens to watch.
         if (nameless) {
-          chat.namePendingOf(
-            [turnBubble, ?pinnedEntry],
-            ev.ctxSession!,
-          );
+          chat.namePendingOf([turnBubble, ?pinnedEntry], ev.ctxSession!);
         }
       }
       // +249: the bar belongs to the conversation it is seated on. A
@@ -573,10 +593,7 @@ class BridgeTurn {
         // +219: the wire's reason, not a generic one — the status line
         // says WHAT the harness said ('Access to model denied…'), the
         // fallback only when an old bridge sent the flag alone.
-        env.noteHarnessError(
-          ev.text.isEmpty ? null : ev.text,
-          _viewSid,
-        );
+        env.noteHarnessError(ev.text.isEmpty ? null : ev.text, _viewSid);
       }
     } else if (ev.kind == 'error') {
       // a relayed bridge error IS the turn's end
@@ -614,9 +631,8 @@ class BridgeTurn {
     // backlog keeps it, and the owner's own drain serves it the law
     // it was written for.
     final seatedNow = env.seatedSession?.call();
-    final foreign = ev.session != null &&
-        ev.session != seatedNow &&
-        ev.session != _viewSid;
+    final foreign =
+        ev.session != null && ev.session != seatedNow && ev.session != _viewSid;
     if (foreign) {
       env.log(
         'foreign conversation: say left unheard for its own thread'
@@ -854,10 +870,12 @@ class BridgeTurn {
     // return), and none of this view's ledgers take a word of it:
     // the step line, the backgrounded row's label, the journal — all
     // belong to the drain that speaks it.
-    final foreign = ev.session != null &&
+    final foreign =
+        ev.session != null &&
         ev.session != seatedForBand &&
         ev.session != _viewSid;
-    final bandHome = !foreign &&
+    final bandHome =
+        !foreign &&
         (_viewSid == null ||
             seatedForBand == null ||
             _viewSid == seatedForBand);
