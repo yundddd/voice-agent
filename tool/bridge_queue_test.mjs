@@ -1332,66 +1332,70 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
     }
   });
 
-// +252 step 2: THE SESSION REGISTRY. /health carries one row per
-// conversation the bridge has seated this life: turn birth lights it,
-// turn death rests it with the last context size it earned, and a seat
-// move keeps the first conversation's row standing beside the
-// second's. The ledger, not yet the router: exactly one turn is open
-// at a time and turnSid says whose machine it is.
+// +257 THE CONVERSATION REGISTRY, live: /health carries one row per
+// conversation the bridge holds, and — the router's whole point — a
+// second conversation STARTS its turn while the first one's answer is
+// still streaming backgrounded. No queueing behind a stranger, no
+// crossed tallies, both rows honest in /health.
 const PORT20 = PORT1 + 60;
-test('the registry reports every conversation the bridge has seated (+252)',
+test('two conversations work at once, each with its own row (+257)',
   async () => {
     const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
       'stub.log');
     const proc = startBridge(stubLog, PORT20);
     try {
       await up(PORT20);
-      // Conversation A: an unnamed birth turn, heard start to finish.
+      // Conversation A: an unnamed birth turn, mid-answer.
       const a = await call(PORT20, `/talk?token=${TOKEN}`,
         { body: 'registry first', method: 'POST' });
-      await until('A open', async () => {
+      // Wait for the NAME, not just the flag: the stub answers under
+      // 'stub-session' when not resumed, adoption is a frame deep, and
+      // a row still wearing the boot placeholder is not yet a row.
+      await until('A open and named', async () => {
         const h = await health(PORT20);
-        return h.turnOpen === true &&
-          h.sessions?.some((r) => r.turnOpen === true);
+        return h.turnOpen === true && h.turnSid === 'stub-session';
       });
-      await until('A done', async () =>
-        sseEvents(a.text).some((e) => e.ev === 'done'));
-      await until('A rested', async () => {
-        const rows = (await health(PORT20)).sessions;
-        return rows.length === 1 && rows[0].turnOpen === false;
-      });
-      const hA = await health(PORT20);
-      const rowA = hA.sessions[0];
-      assert.ok(rowA.sid, 'the birth turn got its row when the harness named it');
-      assert.ok(rowA.ctx.in > 0, 'the closed turn left its size on the row');
-      assert.equal(hA.turnSid, null, 'a rested conversation holds no machine');
+      const hMidA = await health(PORT20);
+      assert.equal(hMidA.sessions.length, 1, 'one conversation: one row');
 
-      // The seat moves to a named conversation; its turn lights a
-      // SECOND row while the first stands untouched beside it.
+      // The seat moves while A still generates: A backgrounds (its
+      // row keeps turnOpen true), and a named conversation B takes
+      // the seat.
       const seat = await call(PORT20, `/seat?token=${TOKEN}`,
         { body: JSON.stringify({ sessionId: 'ses-registry-b' }),
           method: 'POST' });
       assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
+      const bg = await health(PORT20);
+      const rowA = bg.sessions.find((r) => r.sid === 'stub-session');
+      assert.ok(rowA?.turnOpen, 'A\'s turn lives on, backgrounded');
+
+      // B speaks: it must START (no queue notice — B has no turn of
+      // its own, and a stranger\'s open turn is no one\'s floor now).
       const b = await call(PORT20, `/talk?token=${TOKEN}`,
         { body: 'registry second', method: 'POST' });
-      await until('B open', async () => {
-        const h = await health(PORT20);
-        return h.turnSid === 'ses-registry-b' &&
-          h.sessions.some((r) => r.turnOpen === true);
+      await until('B running immediately', async () => {
+        const t = (await health(PORT20)).turnSid;
+        return t === 'ses-registry-b';
       });
-      await until('B done', async () =>
+      assert.ok(!b.text.includes('"name":"queued"'),
+        'a prompt to an idle conversation queued behind a stranger');
+
+      // Both answers land, each on its own stream, in any order.
+      await until('both done', async () =>
+        sseEvents(a.text).some((e) => e.ev === 'done') &&
         sseEvents(b.text).some((e) => e.ev === 'done'));
       await until('both rest', async () => {
         const rows = (await health(PORT20)).sessions;
         return rows.length === 2 && rows.every((r) => r.turnOpen === false);
       });
       const rows = (await health(PORT20)).sessions;
-      assert.ok(rows.find((r) => r.sid === rowA.sid && !r.turnOpen),
-        'A rests beside B, its history intact');
-      assert.ok(rows.find((r) => r.sid === 'ses-registry-b'),
-        'B is known by the name the seat gave it');
+      const rA = rows.find((r) => r.sid === 'stub-session');
+      const rB = rows.find((r) => r.sid === 'ses-registry-b');
+      assert.ok(rA && !rA.turnOpen, 'A rests at home with its history');
+      assert.ok(rB && !rB.turnOpen, 'B rests under the name it was seated with');
+      assert.ok(rA.ctx.in > 0 && rB.ctx.in > 0, 'each row kept its OWN sizes');
       assert.deepEqual(seen(stubLog), ['registry first', 'registry second'],
-        'both conversations spoke to the harness under their own seats');
+        'both prompts reached the harness under their own children');
     } finally {
       await stopBridge(proc);
     }

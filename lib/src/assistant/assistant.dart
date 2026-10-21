@@ -237,7 +237,11 @@ class VoiceAssistant extends ChangeNotifier {
       clock: _clock,
       log: _logDebug,
       hardStop: () async {
-        await _gateway?.stop();
+        // +257: cut the conversation the MACHINE holds (its context
+        // frames named it), not whichever tab is seated — since the
+        // router era every conversation has its own floor, and the
+        // Stop chip cuts the one this phone is listening to.
+        await _gateway?.stop(sid: _turn.workOwner ?? _sessionId);
       },
       beforeDetach: _chainCancel,
       afterDetach: _reply.clearAndClose,
@@ -2523,7 +2527,11 @@ class VoiceAssistant extends ChangeNotifier {
         // the task and its termination receipt pays the banner like
         // any finished frame. Silence-on-press is the +166 law either
         // way.
-        unawaited(_gateway?.stop());
+        // +257: the out-of-earshot debts have an owner too — cut the
+        // conversation that owes them, not whoever is seated.
+        unawaited(
+          _gateway?.stop(sid: _turn.workOwner ?? _sessionId),
+        );
         _reply.stopPlayback();
         if (owed) _idleReady();
       }

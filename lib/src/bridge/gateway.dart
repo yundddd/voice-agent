@@ -66,8 +66,12 @@ abstract class HarnessGateway {
   Stream<BridgeEvent> attach({void Function()? onActivity});
 
   /// Cut the harness's in-flight WORK short (in-band interrupt; the
-  /// conversation itself survives).
-  Future<void> stop();
+  /// conversation itself survives). +257: [sid] names the
+  /// CONVERSATION whose turn to cut — the Stop chip rides a view that
+  /// may belong to a backgrounded thread, and since the router era
+  /// every conversation has its own floor to cut. Null cuts the
+  /// seated one.
+  Future<void> stop({String? sid});
 
   /// Forget the conversation (fresh session on the next utterance).
   Future<void> reset();

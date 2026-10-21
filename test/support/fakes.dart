@@ -205,7 +205,12 @@ class FakeHarness implements HarnessGateway {
   }
 
   @override
-  Future<void> stop() async => stops++;
+  Future<void> stop({String? sid}) async {
+    stops++;
+    lastStopSid = sid;
+  }
+
+  String? lastStopSid; // +257: who the cut was addressed to
 
   @override
   /// +230: /new FORGETS — the real resetConversation nulls the

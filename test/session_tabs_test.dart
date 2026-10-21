@@ -777,6 +777,41 @@ void main() {
       );
     });
 
+    test('+257: the Stop chip cuts the conversation it is listening '
+        'to, by name', () async {
+      // The router's side of the law: every conversation owns a floor,
+      // so the cut must say WHICH. The phone addresses the stop to
+      // the turn's stated owner (the ctx frame's session), not to
+      // whatever tab happens to be seated.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('working', bubble: 'working'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 100,
+          contextWindow: 200,
+          ctxSession: 'ses-stop-target',
+        ),
+      );
+      await settle();
+      a.bridgeStop(); // the chip
+      await settle();
+      expect(
+        harness.lastStopSid,
+        'ses-stop-target',
+        reason: 'the cut is addressed to the conversation that owns the turn',
+      );
+      expect(
+        a.debugLog.any(
+          (l) => l.contains('hardStop=true') && l.contains('stopChip'),
+        ),
+        isTrue,
+        reason: 'the funnel that was, with its verdict on the tape',
+      );
+      harness.finishView();
+    });
+
     test('+256: the unnamed destination is a reset — a mid-turn swipe '
         'onto a never-spoken tab REFUSES with words, not a silent kill',
     () async {

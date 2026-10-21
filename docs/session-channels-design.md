@@ -126,6 +126,29 @@ actual concurrent-inactive-receive — are the map's next increment.
 2. ✅ (+253) Bridge: wrap the single turn into the map + `focus`;
    `/health` answers both old globals and the map for one era; the
    phone reads the map.
+Step 2.5 (+257, bridge): the LEDGER BECAME THE ROUTER. The
+`Conv` record is real per-conversation state — child, turn, queue
+slot, parse tally, context sizes, tool receipts, unheard backlog —
+and the module globals are its FOCUSED bundle: every handler reads
+the names it always read, and `withConv` is the only door between
+bundles. Children bind their stdout and exit to the record that
+spawned them, keep-pingers carry their record, /seat is a save-and-
+load swap, /heard trims every backlog (mids are globally unique),
+/stop takes `?sid=`, and the phone's Stop chip now addresses the
+conversation whose context frames it watched. The law this buys is
+the one Tim's tape could not get from any marker: a prompt to a
+conversation with no turn of its own STARTS, while another
+conversation's answer streams in the background — the queue is no
+one else's floor (walk: 'two conversations work at once, each with
+its own row'). Known era limits, honest: the opencode backend is
+still a single session object (one oc conversation at a time — the
+bus filter speaks for it); the ring and the /health `missed` scalar
+stay transport-global (a phone with N ears reads rows for per-
+conversation mail); and the phone still keeps ONE SessionChannel —
+the away conversation's thread is fed by its still-alive view, mute
+by the +253 identity gate, and the marker family retires when the
+phone's map lands.
+
 3. ◐ (+254) Phone: the TTS gate (identity + watermark) at
    `_onSay` — walks (a), (b-silent), (c) and the return-arc are
    green. Still owed for this step to close: N channel instances

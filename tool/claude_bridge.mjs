@@ -468,16 +468,17 @@ let sessionId = null;   // for --resume after a bridge restart
 // session, and POST /dir moving the agent moves the pointer with it.
 // Each harness remembers its own conversation: a runtime switch never
 // destroys the other harness's resume pointer.
-const sidFile = () => join(dir, harness === 'opencode'
+const sidFilePath = (h, d) => join(d, h === 'opencode'
   ? '.opencode_bridge_session' : '.claude_bridge_session');
+const sidFile = () => sidFilePath(harness, dir);
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let proactiveTurn = false; // +133: this turn is the harness speaking
 // UNPROMPTED — the completion report of a shell it backgrounded itself
 // (Bash run_in_background). Nobody pressed anything; its `result` closes
 // it like any other, and while it runs a fresh /talk queues politely.
-const bgTools = new Map();    // tool_use ids launched run_in_background
-const agentTasks = new Map(); // background task id -> {label, outPath}
+let bgTools = new Map();    // tool_use ids launched run_in_background
+let agentTasks = new Map(); // background task id -> {label, outPath}
 let pending = null;     // { res, text, keep } — prompt queued behind a background turn
 // +250: 'Prompt is too long' is not a retryable failure — it is the
 // conversation itself being unreadable to the model. Re-asking costs a
@@ -506,7 +507,7 @@ let foldedTurnId = 0;
 // relay a `tool finished` frame — the banner's retirement word — and
 // /health counts these as `detached` so the phone knows a promise is
 // still owed (and finds it honestly cleared when the process dies).
-const detached = new Map();
+let detached = new Map();
 // A cut tool's receipt, held until the flush explains the cut: while a
 // prompt waits in `pending`, the killed tool's late tool_result lands
 // BEFORE the turn's `result` (and with it flushPending's queued/started
@@ -517,7 +518,7 @@ const detached = new Map();
 // at once). Held frames go out at the flush, AFTER the disposition,
 // with the honest verb: an error tool_result (Claude's own interrupt
 // reply) pays as 'cancelled', never 'finished'.
-const heldFinished = [];
+let heldFinished = [];
 // +106: the open turn was cut by interruptTurn to let a waiting prompt
 // through — its `result` is then the phone's own doing, and the `done`
 // relay skips it (see the result branch).
@@ -527,7 +528,7 @@ let cutForPrompt = false;
 // dropped socket): the turn then runs unheard to its result, and without
 // this buffer its entire output was dropped on the floor — the phone came
 // back to nothing. An attaching client (GET /attach) replays these first.
-const backlog = [];
+let backlog = []; // +257: per-record (saved/loaded)
 const BACKLOG_CAP = 200;
 let turnStartAt = 0;    // when the open turn began (survives a detach: the
                         // replay-timestamp guards read this, not curRes)
@@ -540,7 +541,7 @@ let turnBeganAt = 0;    // true begin (no replay-slack): the 'finished'
 // only thinking — an in-band interrupt cuts that (the process survives),
 // my prompt starts in a heartbeat". Each id maps to its step label —
 // the banner line an interrupt leaves in its wake (see `detached`).
-const openTools = new Map();
+let openTools = new Map();
 // ── Live token tally (the TUI's "thinking · N tokens" progress) ──
 // With --include-partial-messages the CLI streams `stream_event`
 // wrapper messages: message_start carries this call's input tokens
@@ -644,52 +645,149 @@ let lastCtx = {'in': 0, 'window': 0}; // {in, window} snapshot for /health
 // the vacationer's luggage (the field report: the bar showed the old
 // session's context until the new session's first turn).
 let ctxOwner = null;
-// ── +252 step 2: THE SESSION REGISTRY (docs/session-channels-design.md) ──
-// One row per conversation this bridge has seated while alive. The LIVE
-// turn is still parsed by the globals above — one turn machine, the
-// 250-era laws — and this map is where every conversation's numbers
-// REST when its turn closes or the seat moves on. Rows update at the
-// same sites the globals do: a turn's birth (talk/proactive), its death
-// (result/exit/reset), and the authoritative context snapshot. /health
-// answers them under `sessions` for one era of dual shape: when the
-// phone starts reading the map, the +249 owner-gate becomes a row
-// lookup, and /seat can shrink toward a speaker-focus pointer. This era
-// the map is a LEDGER, not yet a router: one turn is live at a time
-// (the queue is a single slot), and the rows say so honestly.
-const sessions = new Map(); // sid -> {sid,harness,dir,model,ctx,turnOpen,queued,updatedAt}
+// ── +257 THE CONVERSATION REGISTRY — the router era ─────────────────────
+// (docs/session-channels-design.md; the ledger at +253 was the dress
+// rehearsal — this is the play.) Every conversation the bridge seats
+// gets a RECORD: its child, its turn, its queue slot, its parse tally,
+// its context sizes, its tool receipts — everything that was ONE set
+// of module globals while the bridge could hold one turn. The globals
+// still exist: they are the FOCUSED record's loaded bundle, so every
+// handler in this file reads and writes exactly the names it always
+// read and wrote, and withConv() is the only door between bundles.
+// The payoff is the law Tim's field tape demanded: a prompt to the
+// seated conversation that has no turn of its own STARTS, whatever
+// another conversation is mid-thinking about — the queue slot is per
+// conversation now, and two children can stream at once because every
+// line is parsed under the bundle of the record that spawned it.
+const sessions = new Map(); // key -> record (key: sid once named)
 const SESSIONS_CAP = 32;
-function sessionRow(sid, patch = {}) {
-  if (!sid) return null;
-  let r = sessions.get(sid);
-  if (!r) {
-    // Evict the oldest resting row (never a live turn, never the seat).
-    if (sessions.size >= SESSIONS_CAP) {
-      for (const [k, v] of sessions) {
-        if (!v.turnOpen && k !== sessionId) { sessions.delete(k); break; }
-      }
-    }
-    r = { sid, harness, dir, model: null, ctx: { in: 0, window: 0 },
-          turnOpen: false, queued: false, updatedAt: Date.now() };
-    sessions.set(sid, r);
+const placeholderKey = (h, d) => '\u0000' + h + ' ' + d;
+function newConv(seed) {
+  return {
+    sid: null, key: null,
+    harness: seed?.harness ?? harness, dir: seed?.dir ?? dir,
+    claudeModel: seed?.model ?? claudeModel,
+    child: null, childDead: true, turnOpen: false, curRes: null,
+    proactiveTurn: false, pending: null, contextFull: false,
+    lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
+    turnStartAt: 0, turnBeganAt: 0,
+    tokIn: 0, tokOutExact: 0, tokMsgBase: 0, tokLastMsgOut: 0,
+    tokChars: 0, tokKind: '', thinkBuf: '', curMsg: null,
+    lastTextBlk: null, lastTextOpen: false, tokSentAt: 0,
+    census: newCensus(), ctxWindow: 0,
+    lastCtx: { in: 0, window: 0 }, ctxOwner: null,
+    estIn: 0, estSentIn: 0,
+    openTools: new Map(), detached: new Map(), bgTools: new Map(),
+    agentTasks: new Map(), spokenTools: new Set(), spokenTexts: new Set(),
+    heldFinished: [], backlog: [], updatedAt: Date.now(),
+  };
+}
+// The record whose numbers the module globals currently carry.
+let focus = null;
+function bundleSave(r) {
+  r.child = child; r.childDead = childDead; r.sessionId_ = sessionId;
+  r.turnOpen = turnOpen; r.curRes = curRes; r.proactiveTurn = proactiveTurn;
+  r.pending = pending; r.contextFull = contextFull;
+  r.lastCompactingRelay = lastCompactingRelay; r.foldedTurnId = foldedTurnId;
+  r.cutForPrompt = cutForPrompt; r.turnStartAt = turnStartAt;
+  r.turnBeganAt = turnBeganAt;
+  r.tokIn = tokIn; r.tokOutExact = tokOutExact; r.tokMsgBase = tokMsgBase;
+  r.tokLastMsgOut = tokLastMsgOut; r.tokChars = tokChars; r.tokKind = tokKind;
+  r.thinkBuf = thinkBuf; r.curMsg = curMsg; r.lastTextBlk = lastTextBlk;
+  r.lastTextOpen = lastTextOpen; r.tokSentAt = tokSentAt; r.census = census;
+  r.ctxWindow = ctxWindow; r.lastCtx = lastCtx; r.ctxOwner = ctxOwner;
+  r.estIn = estIn; r.estSentIn = estSentIn;
+  r.harness = harness; r.dir = dir; r.claudeModel = claudeModel;
+  r.openTools = openTools; r.detached = detached; r.bgTools = bgTools;
+  r.agentTasks = agentTasks; r.spokenTools = spokenTools;
+  r.spokenTexts = spokenTexts; r.heldFinished = heldFinished;
+  r.backlog = backlog;
+  r.updatedAt = Date.now();
+}
+function bundleLoad(r) {
+  sessionId = r.sessionId_ ?? null;
+  child = r.child; childDead = r.childDead; turnOpen = r.turnOpen;
+  curRes = r.curRes; proactiveTurn = r.proactiveTurn; pending = r.pending;
+  contextFull = r.contextFull; lastCompactingRelay = r.lastCompactingRelay;
+  foldedTurnId = r.foldedTurnId; cutForPrompt = r.cutForPrompt;
+  turnStartAt = r.turnStartAt; turnBeganAt = r.turnBeganAt;
+  tokIn = r.tokIn; tokOutExact = r.tokOutExact; tokMsgBase = r.tokMsgBase;
+  tokLastMsgOut = r.tokLastMsgOut; tokChars = r.tokChars; tokKind = r.tokKind;
+  thinkBuf = r.thinkBuf; curMsg = r.curMsg; lastTextBlk = r.lastTextBlk;
+  lastTextOpen = r.lastTextOpen; tokSentAt = r.tokSentAt; census = r.census;
+  ctxWindow = r.ctxWindow; lastCtx = r.lastCtx; ctxOwner = r.ctxOwner;
+  estIn = r.estIn; estSentIn = r.estSentIn;
+  harness = r.harness; dir = r.dir; claudeModel = r.claudeModel;
+  openTools = r.openTools; detached = r.detached; bgTools = r.bgTools;
+  agentTasks = r.agentTasks; spokenTools = r.spokenTools;
+  spokenTexts = r.spokenTexts; heldFinished = r.heldFinished;
+  backlog = r.backlog;
+}
+// The door. Run fn under rec's bundle, restore the previous focus
+// after — synchronously. Timers and stream handlers that outlive the
+// tick that armed them call withConv themselves when they fire; the
+// async variant re-saves whatever got loaded while the await ran, so
+// the invariant 'globals == focus bundle' survives an interleaved
+// /seat the same way a database cursor survives a page swap.
+function withConv(rec, fn) {
+  if (!rec || rec === focus) return fn();
+  const prev = focus;
+  if (prev) bundleSave(prev);
+  bundleLoad(rec); focus = rec;
+  try { return fn(); } finally {
+    if (focus) bundleSave(focus);
+    if (prev) { bundleLoad(prev); focus = prev; }
   }
-  Object.assign(r, patch, { updatedAt: Date.now() });
-  return r;
 }
-// The conversation the global turn state currently describes (survives
-// a seat move: a backgrounded turn still owns the machine until its
-// result lands — the same truth ctxOwner names for the context bar).
-let turnSid = null;
-function noteTurnOpen() {
-  turnSid = sessionId;
-  sessionRow(sessionId, { turnOpen: true, queued: false,
-                          harness, dir, model: currentModel() });
+async function withConvA(rec, fn) {
+  if (!rec || rec === focus) return await fn();
+  const prev = focus;
+  if (prev) bundleSave(prev);
+  bundleLoad(rec); focus = rec;
+  try { return await fn(); } finally {
+    if (focus) bundleSave(focus);
+    if (prev) { bundleLoad(prev); focus = prev; }
+  }
 }
-function noteTurnClosed() {
-  if (!turnSid) return;
-  sessionRow(turnSid, { turnOpen: false, queued: false,
-                        ctx: { in: lastCtx.in, window: lastCtx.window } });
-  turnSid = null;
+// Seat the given record: save the current focus back, load the new.
+function swapFocus(rec) {
+  if (focus === rec) return;
+  if (focus) bundleSave(focus);
+  bundleLoad(rec); focus = rec;
 }
+function parkConv(rec) { // ensure the record is (re)keyed and filed
+  const key = rec.sid ?? placeholderKey(rec.harness, rec.dir);
+  if (rec.key && rec.key !== key) sessions.delete(rec.key);
+  // Cap: evict the oldest resting record — never the focus, never one
+  // with a live turn or a queued prompt.
+  if (!sessions.has(key) && sessions.size >= SESSIONS_CAP) {
+    for (const [k, v] of sessions) {
+      if (v !== focus && !v.turnOpen && !v.pending) { sessions.delete(k); break; }
+    }
+  }
+  rec.key = key;
+  sessions.set(key, rec);
+  return rec;
+}
+// A public row for /health's `sessions` map. The FOCUSED record is
+// reported live off the globals (fresher than any snapshot could be);
+// resting records report their saved numbers.
+function convRow(r) {
+  const live = r === focus;
+  return {
+    sid: live ? sessionId : r.sid,
+    harness: live ? harness : r.harness,
+    dir: live ? dir : r.dir,
+    model: live ? currentModel() : (r.claudeModel ?? null),
+    ctx: live ? { in: lastCtx.in, window: ctxWindow }
+              : { in: r.lastCtx?.in ?? 0, window: r.ctxWindow ?? 0 },
+    missed: live ? backlog.length : (r.backlog?.length ?? 0),
+    turnOpen: live ? turnOpen : r.turnOpen,
+    queued: live ? !!pending : !!r.pending,
+    updatedAt: Date.now(),
+  };
+}
+function convPublic() { return [...sessions.values()].map(convRow); }
 // ── In-token PREVIEW (why the phone was dead air over a big read) ──
 // The API only reports a call's input tokens in its `message_start` —
 // which arrives AFTER the server has taken the whole prompt in (tens of
@@ -1001,7 +1099,13 @@ function spawnClaude(resume) {
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
   } });
   childDead = false;
-  attachJsonLines(child);
+  // +257: the child is BOUND to the record that spawned it. Every
+  // line it prints — and its exit verdict — is parsed under that
+  // record's bundle, whoever happens to be seated when the bytes
+  // land. This one binding is what lets two conversations work at
+  // once without ghosting each other's tallies.
+  const rec = focus;
+  attachJsonLines(child, rec);
   child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
   // A replaced child's late exit must not speak: /new SIGTERMs the old
   // one and the FIRST TALK respawns before the old exit lands, and the
@@ -1010,17 +1114,19 @@ function spawnClaude(resume) {
   // fell to the backlog unheard, field-proven by +216's wire test).
   // `this !== child` means a NEW child owns the seat (or none does).
   child.on('exit', function (code, sig) {
-    if (child !== this) {
-      console.error('  [claude] exit from a replaced child — ignored');
-      return;
-    }
-    onChildExit(code, sig);
+    withConv(rec, () => {
+      if (child !== this) {
+        console.error('  [claude] exit from a replaced child — ignored');
+        return;
+      }
+      onChildExit(code, sig);
+    });
   });
 }
 // stdout is JSON-lines on both harnesses (the opencode backend pushes
 // translated stream-json into an EventEmitter with the same contract),
 // so the parser is one function, not two copies.
-function attachJsonLines(stream) {
+function attachJsonLines(stream, rec) {
   let lineBuf = '';
   stream.stdout.on('data', (b) => {
     lineBuf += b;
@@ -1028,7 +1134,8 @@ function attachJsonLines(stream) {
     while ((i = lineBuf.indexOf('\n')) >= 0) {
       const line = lineBuf.slice(0, i).trim();
       lineBuf = lineBuf.slice(i + 1);
-      if (line.startsWith('{')) handleEvent(line);
+      // +257: parsed under the SPAWNER's bundle, not the seat's.
+      if (line.startsWith('{')) withConv(rec, () => handleEvent(line));
     }
   });
 }
@@ -1048,7 +1155,6 @@ function onChildExit(code, sig) {
       (turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
                 : 'while idle (expected: /new kill or between-turns exit)'));
     turnOpen = false;
-    noteTurnClosed(); // +252: a death mid-turn is journalled on the row too
     openTools.clear();
     detached.clear(); // a dead process retires no tool: no tool_result
                       // will ever land to say 'finished' — the receipts
@@ -1458,15 +1564,23 @@ function spawnOpenCode(resume) {
   oc.disposed = false;
   child = oc;
   childDead = false;
-  attachJsonLines(child);
+  // +257: same binding as the claude side — the backend's translated
+  // lines are parsed under the record that raised it. (One opencode
+  // conversation at a time this era: the oc object is singular, so a
+  // second opencode record shares its session identity — documented
+  // limitation, the bus filter speaks for it.)
+  const rec = focus;
+  attachJsonLines(child, rec);
   // Same law as the claude side: only the backend that HOLDS the seat
   // may announce a death (a replaced backend's exit is bookkeeping).
   oc.ev.on('exit', (code, sig) => {
-    if (child !== oc) {
-      console.error('  [oc] exit from a replaced backend — ignored');
-      return;
-    }
-    onChildExit(code, sig);
+    withConv(rec, () => {
+      if (child !== oc) {
+        console.error('  [oc] exit from a replaced backend — ignored');
+        return;
+      }
+      onChildExit(code, sig);
+    });
   }); // (the fake child's events live on its emitter)
   ocListen(oc.gen);
 }
@@ -1496,14 +1610,14 @@ function handleEvent(line) {
       (m.type === 'system' && m.subtype === 'status'
         ? ' body=' + JSON.stringify(m).slice(0, 400) : ''));
   }
-  if (m.session_id) {
-    // +252: the registry follows the NAME. A birth turn is minted its
-    // row the moment the harness first speaks an id (the sentinel was
-    // honest until then), and a refused resume — the CLI mints fresh
-    // where --resume asked — moves the open turn's row to the truth.
-    if (m.session_id !== sessionId && turnSid && turnOpen) noteTurnClosed();
+  if (m.session_id && m.session_id !== sessionId) {
+    // +257: a record is KEYED by its conversation's name. The birth
+    // turn is rekeyed the moment the harness first speaks an id (the
+    // placeholder held its place until then), and a refused resume —
+    // the CLI mints fresh where --resume asked — moves the WHOLE
+    // record, live turn included, to the truth the CLI minted.
     sessionId = m.session_id;
-    if (m.session_id !== turnSid && turnOpen) noteTurnOpen();
+    if (focus) { focus.sid = sessionId; parkConv(focus); }
   }
   if (m.type === 'stream_event') {
     const e = m.event ?? {};
@@ -1839,7 +1953,6 @@ function handleEvent(line) {
     if (lastCtx.in) {
       relay('context', { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
-    noteTurnClosed(); // +252: the row keeps the size the globals just earned
     // Per-turn verdict on what the upstream actually delivered (see
     // census): the answer to "the app showed no progress" that is
     // written by the wire, not by hope.
@@ -1971,7 +2084,6 @@ function handleEvent(line) {
   // a stray tool_result is bookkeeping, not a mouth.
   if (!turnOpen && m.type === 'assistant') {
     turnOpen = true;
-    noteTurnOpen(); // +252: an unprompted turn still belongs to someone
     proactiveTurn = true;
     turnBeganAt = Date.now();
     console.error('  [proactive] the harness speaks unprompted ' +
@@ -2138,8 +2250,12 @@ function endKeep(t) {
 // wondering. A turn whose upstream streams deltas never hits the
 // silence threshold while generating, so this frame is strictly the
 // no-progress signal — never a stutter over the live ticker.
-function startKeep(res) {
+function startKeep(res, rec) {
   return setInterval(() => {
+    // +257: the heartbeat reads the turn machine (curRes, openTools,
+    // the tally clock) — it fires on its record's bundle, not on
+    // whatever happens to be seated when the interval comes due.
+    withConv(rec, () => {
     try {
       if (HEARTBEAT_MS > 0 && curRes && curRes.res === res && turnOpen &&
           !openTools.size && Date.now() - tokSentAt >= HEARTBEAT_MS) {
@@ -2154,6 +2270,7 @@ function startKeep(res) {
       // insufficient, so the ping is now BOTH frequent AND fat.
       res.write(': ' + 'p'.repeat(1300) + '\n\n');
     } catch {}
+    });
   // While a turn is OPEN the pinger runs every 150 ms (~8.7 KB/s): the
   // cellular radio's dormancy timer and the TUN batcher both feed on
   // quiet gaps, and a tool run is exactly a multi-second gap waiting to
@@ -2271,7 +2388,6 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   backlog.length = 0; // a new turn: the old one's buffered frames are stale
   cutForPrompt = false; // a fresh turn closes with its own done (+106)
   turnOpen = true;
-  noteTurnOpen(); // +252: the registry remembers who owns the machine
   spokenTools.clear(); // every message lives inside one turn
   spokenTexts.clear();
   census = newCensus(); // one wire-shape census per turn
@@ -2374,7 +2490,6 @@ function flushPending() {
   if (!pending) return;
   const p = pending;
   pending = null;
-  sessionRow(turnSid, { queued: false }); // +252: the queue emptied
   // The disposition notice and everything after it belong to the
   // RESERVED turn, not the one whose `done` just fired (the result
   // handler relays that farewell BEFORE flushing — it stays stamped
@@ -2487,7 +2602,11 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
   // (NAT, tailscale, Dart clients — including the app's 24 s quiet-wire
   // watchdog) should not get creative with a stream that is merely
   // thinking.
-  const keep = startKeep(res);
+  const keep = startKeep(res, focus);
+  // +257: the record this request belongs to — its res-close handler
+  // and every later move of this prompt's queue slot are worked under
+  // THIS bundle, whoever is seated when the socket dies.
+  const rec = focus;
   // v2: the turn this prompt will own is decided HERE, before the
   // branch — immediate or queued, the answer is the same number, and
   // the POST echoes it so the phone can name its own turn forever
@@ -2497,7 +2616,7 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
   // 'close' fires the instant its body is read, which would end the
   // stream before claude ever answers. res 'close' = client hung up or
   // response finished.
-  res.on('close', () => {
+  res.on('close', () => withConv(rec, () => {
     if (curRes && curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
     else if (pending && pending.res === res && !pending.poll) {
       // A POLL prompt closes its response AT QUEUE TIME by design (the
@@ -2513,7 +2632,7 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
       // run it on the ring.
       pending.poll = true;
     }
-  });
+  }));
   if (curRes || turnOpen) {
     // Something is in flight — still HEARD (curRes: the phone never let
     // go, e.g. a second client, or the detach's 'close' hasn't landed
@@ -2550,7 +2669,6 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // +252: the queue belongs to the conversation holding the floor
     // (the +246 reading: a mid-turn flush rides with ITS turn, not
     // with whatever tab is looking).
-    sessionRow(turnSid, { queued: true });
     const note = {
       name: 'queued',
       // +98: the notice names the OUTCOME the interrupt gesture caused
@@ -2637,13 +2755,13 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
 // call and stable across snapshots of the same message). Cleared at
 // beginTurn: a turn is the natural lifecycle here and it keeps the set
 // from growing forever.
-const spokenTools = new Set();
+let spokenTools = new Set();
 // Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 // v2 note: this dedups the CLI's snapshot re-emissions AT THE SOURCE —
 // it is not the phone's dedup (that is _mid + /heard, and the phone
 // never guesses from text again).
-const spokenTexts = new Set();
+let spokenTexts = new Set();
 
 // ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
 // The app keeps a seq-numbered event journal of its OWN lifecycle story
@@ -2771,7 +2889,14 @@ setInterval(pumpAppLog, appLogEveryMs || 3600000).unref(); // cheap when off
 function resetConversation() {
   sessionId = null;
   turnOpen = false;
-  noteTurnClosed(); // +252: rest in peace — the row keeps the last size
+  if (focus) {
+    // +257: the dead conversation releases its KEY (a reset wiped it
+    // back to nameless; the record lives on as the focus bundle under
+    // its placeholder — its last sizes are history the map no longer
+    // vouches for, and a re-seat must not resurrect them).
+    focus.sid = null;
+    parkConv(focus);
+  }
   openTools.clear();
   agentTasks.clear();
   bgTools.clear();
@@ -2927,15 +3052,15 @@ const server = http.createServer((req, res) => {
       // conversation holds the pen.
       context: { in: ctxOwner === sessionId ? lastCtx.in : 0,
                  window: ctxWindow },
-      // +252 step 2: the session registry — one row per conversation
-      // this bridge has seated while alive. A LEDGER, not yet a
-      // router: exactly one turn can be open (the single queue slot
-      // says so), and the rows report whose it was and what it knew.
-      // `turnSid` names the conversation the global turn state
-      // describes — the seat id when they differ is the honest sign
-      // of a backgrounded turn still holding the machine (+246).
-      sessions: [...sessions.values()],
-      turnSid,
+      // +257: the conversation registry, live. One row per
+      // conversation this bridge holds — backgrounded turns included,
+      // each with ITS OWN queue slot and open-turn flag (the rows
+      // report truth because the router makes them truth: two
+      // conversations can be working at once, and a prompt addressed
+      // to a resting record STARTS there instead of queueing behind
+      // a stranger). The focused row is read off the live globals.
+      sessions: convPublic(),
+      turnSid: sessionId, // the conversation the globals describe
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
@@ -3080,7 +3205,8 @@ const server = http.createServer((req, res) => {
     // "thinking" move. The curRes identity gate makes the heartbeat lie
     // dormant until this view actually owns the turn (or it never does,
     // if the turn ended and the replayed tail just closes us out).
-    const keep = startKeep(res);
+    const rec = focus; // +257: this ear belongs to THAT record
+    const keep = startKeep(res, rec);
     // v2: replay does NOT clear the backlog — /heard does. What the
     // attacher takes gets acked and trimmed within the same second;
     // what it never reaches (a death mid-replay) legitimately waits
@@ -3109,9 +3235,9 @@ const server = http.createServer((req, res) => {
       sse(res, 'context',
         { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
-    res.on('close', () => {
+    res.on('close', () => withConv(rec, () => {
       if (curRes && curRes.res === res) endTurn(); // detach → background it
-    });
+    }));
     return;
   }
   if (req.method !== 'POST') { res.writeHead(405).end(); return; }
@@ -3180,7 +3306,12 @@ const server = http.createServer((req, res) => {
       // survives, the PROCESS survives (no kill → no --resume → no cold
       // prefill), and a queued prompt flushes on the resulting `result`
       // event. Only fires while a turn is OPEN.
-      if (turnOpen) interruptTurn();
+      // +257: ?sid= names the conversation whose turn to cut — the
+      // phone's Stop chip rides a view that may belong to a
+      // BACKGROUNDED conversation; without the param, the seated one.
+      const stopRec = url.searchParams.get('sid')
+        ? sessions.get(url.searchParams.get('sid')) : focus;
+      withConv(stopRec ?? focus, () => { if (turnOpen) interruptTurn(); });
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
       try { rmSync(sidFile()); } catch {}
@@ -3246,23 +3377,43 @@ const server = http.createServer((req, res) => {
         // all), so nothing about backgrounding changes shape when
         // tabs differ. fresh:true still means 'end this
         // conversation' — that verb's whole word is the reset.
+        // +257: /seat is a RECORD SWAP, not a mutation of one shared
+        // conversation. The conversation being left keeps exactly what
+        // the verb says it keeps (backgroundable turns live ON IN
+        // THEIR RECORD, own child and queue slot intact) and the
+        // destination's record — found by name, by its own pointer
+        // file, or minted blank for fresh — is LOADED: the globals
+        // then describe the destination's own life, which is what
+        // makes a mid-swipe answer survive the swipe.
+        const leaving = focus;
         const backgroundable = turnOpen && !fresh;
-        if (!backgroundable) resetConversation(); // whatever rode the old seat ends here
-        if (to !== harness) {
-          harness = to;
-          try { writeFileSync(harnessFile, to); } catch {}
-          noteHarnessEra(to);
-        }
-        if (target !== dir) dir = target;
+        if (!backgroundable) resetConversation(); // ends the conversation being left
+        const eraFlip = to !== harness;
+        if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat
+        bundleSave(leaving); // whatever the reset left, the record remembers
+        const pPath = sidFilePath(to, target);
+        let destKey = null;
+        if (fresh) { try { rmSync(pPath); } catch {} }
+        else if (wantSid !== undefined) {
+          destKey = wantSid;
+          try { writeFileSync(pPath, wantSid); } catch {}
+        } else { try { destKey = readFileSync(pPath, 'utf8').trim() || null; }
+          catch { destKey = null; } }
+        let rec = fresh ? null
+          : (destKey ? sessions.get(destKey) : null)
+            ?? sessions.get(placeholderKey(to, target));
+        if (!rec) rec = newConv({ harness: to, dir: target,
+          model: model ?? 'default' });
+        rec.harness = to; rec.dir = target; // the seat's words are the row's truth
+        if (destKey) rec.sid = destKey;
+        bundleLoad(rec); focus = rec; parkConv(rec);
+        if (eraFlip) { try { writeFileSync(harnessFile, to); } catch {} }
         if (fresh) {
           try { rmSync(sidFile()); } catch {}
           sessionId = null;
         } else if (wantSid !== undefined) {
           sessionId = wantSid;
           try { writeFileSync(sidFile(), sessionId); } catch {}
-        } else {
-          try { sessionId = readFileSync(sidFile(), 'utf8').trim() || null; }
-          catch { sessionId = null; }
         }
         const settle = () => {
           console.error('  [seat] ' + harness + ' @ ' + dir +
@@ -3340,12 +3491,21 @@ const server = http.createServer((req, res) => {
       try { j = JSON.parse(body); } catch {}
       const mids = new Set((Array.isArray(j?.mids) ? j.mids : [])
         .map(Number).filter(Number.isFinite));
-      for (let i = backlog.length - 1; i >= 0; i--) {
-        if (mids.has(backlog[i].data?._mid)) backlog.splice(i, 1);
+      // +257: every record's backlog trims — the mids are globally
+      // unique, and a phone that heard a backgrounded conversation's
+      // paragraph owes it an ack in whomever's buffer it sits.
+      const buffers = new Set([backlog,
+        ...[...sessions.values()].map((r) => r.backlog).filter(Boolean)]);
+      let missedAll = 0;
+      for (const bl of buffers) {
+        for (let i = bl.length - 1; i >= 0; i--) {
+          if (mids.has(bl[i].data?._mid)) bl.splice(i, 1);
+        }
+        missedAll += bl.length;
       }
-      console.error(`  [heard] ack=${mids.size} backlog=${backlog.length}`);
+      console.error(`  [heard] ack=${mids.size} backlog=${missedAll}`);
       res.writeHead(200, {'content-type': 'application/json'})
-        .end(JSON.stringify({ok: true, missed: backlog.length}));
+        .end(JSON.stringify({ok: true, missed: missedAll}));
     } else if (url.pathname === '/applog') {
       // PUSHED journal envelope (see ingestAppEnvelope): the transport for
       // phones nothing can dial back into. Body is the exact envelope
@@ -3363,5 +3523,15 @@ const server = http.createServer((req, res) => {
 if (harness === 'claude' && !existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
 if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
 try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
+// +257: the first record — the seat the flags describe, unnamed
+// until a harness frame says whose it is (then parkConv rekeys it).
+// BEFORE the boot child spawns: the spawn binds its stdout/exit to
+// whatever record is focused, so the record must be the first thing
+// this file focuses.
+{
+  const bootRec = newConv({ harness, dir, model: claudeModel });
+  bootRec.sid = sessionId;
+  bundleLoad(bootRec); focus = bootRec; parkConv(bootRec);
+}
 spawnClaude(sessionId || undefined);
 server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} harness=${harness} dir=${dir} sid=${sessionId ?? 'new'}`));

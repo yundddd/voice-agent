@@ -172,7 +172,8 @@ class BridgeClient extends HarnessGateway {
   }
 
   @override
-  Future<void> stop() => _post('/stop');
+  Future<void> stop({String? sid}) =>
+      _post(sid == null ? '/stop' : '/stop?sid=${Uri.encodeComponent(sid)}');
 
   @override
   Future<void> reset() => _post('/new');
