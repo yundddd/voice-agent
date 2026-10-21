@@ -11,13 +11,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../assistant/assistant.dart';
-import 'bridge_screen.dart';
 import 'chat_view.dart';
 import 'session_sheet.dart';
+import 'settings_screen.dart';
 import 'context_bar.dart';
 import 'latency_strip.dart';
 import 'talk_surface.dart';
-import 'voice_screen.dart';
 
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({super.key, this.assistant});
@@ -784,26 +783,19 @@ class _AssistantScreenState extends State<AssistantScreen>
           ],
         ),
         actions: [
+          // +230: ONE gear for both doors — voice and bridge are one
+          // settings page now. The busy badge (heard turn / unheard
+          // background work) moved onto it: the gear is where the
+          // sign of invisible work lives.
           IconButton(
-            tooltip: 'Claude Code bridge',
+            tooltip: 'Settings',
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => BridgeScreen(assistant: a)),
+              MaterialPageRoute(builder: (_) => SettingsScreen(assistant: a)),
             ),
             icon: Badge(
-              // Lit while a turn is heard (spinner covers it) *and* while
-              // a detached turn keeps working unheard: the badge is the
-              // only sign of invisible background work (plus the hint
-              // text under the button).
               isLabelVisible: v.bridgeBusy || v.harnessBackgrounded,
-              child: const Icon(Icons.terminal),
+              child: const Icon(Icons.settings_outlined),
             ),
-          ),
-          IconButton(
-            tooltip: 'Assistant voice',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => VoiceScreen(assistant: a)),
-            ),
-            icon: const Icon(Icons.record_voice_over_outlined),
           ),
           IconButton(
             tooltip: 'Debug tools',

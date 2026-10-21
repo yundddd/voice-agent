@@ -81,10 +81,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Hold the button and speak; on release the app transcribes '
-              'your words and speaks them straight back with the voice '
-              'above — no Claude turn, so every millisecond measured is '
-              'the models you picked. Switch voices and re-run to compare.',
+              'Say something and the model will say the same thing back '
+              'in its voice.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
@@ -227,12 +225,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Assistant voice')),
-      body: AnimatedBuilder(
+    // +230: a SECTION of the merged Settings screen (see bridge_screen).
+    return Material(
+      color: Colors.transparent,
+      child: AnimatedBuilder(
         animation: a,
         builder: (context, _) {
           return ListView(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
               if (a.voiceStatus.isNotEmpty)
@@ -257,8 +258,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     ],
                   ),
                 ),
-              Text('VOICE', style: Theme.of(context).textTheme.labelSmall),
-              const SizedBox(height: 4),
+              // (the merged page owns the section header — this is the
+              // voice list proper)
               for (final v in a.voices) _voiceTile(v),
               if (a.ttsNumSpeakers > 1)
                 _styleCard()
@@ -271,25 +272,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               const SizedBox(height: 20),
               Text(
-                'SPEECH RECOGNITION',
+                'UNDERSTANDING (SPEECH RECOGNITION)',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
               const SizedBox(height: 4),
               for (final m in a.asrOptions) _asrTile(m),
               const SizedBox(height: 20),
               Text(
-                'ROUND-TRIP BENCH',
+                'ROUND TRIP TEST',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
               const SizedBox(height: 4),
               _benchCard(),
-              const SizedBox(height: 16),
-              Text(
-                'A model pack downloads only when you pick it and can be '
-                'deleted again with the trash icon; re-picking a deleted '
-                'pack downloads it fresh.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
             ],
           );
         },
@@ -312,8 +306,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
         installed
             ? active
                   ? '${v.note} · ${v.sizeLabel} · in use'
-                  : '${v.note} · ${v.sizeLabel} · downloaded'
-            : '${v.note} · ${v.sizeLabel} · downloads when selected',
+                  : '${v.note} · ${v.sizeLabel} · downloaded — trash to remove'
+            : '${v.note} · ${v.sizeLabel} · downloads when picked',
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,

@@ -122,23 +122,11 @@ class _BridgeScreenState extends State<BridgeScreen> {
   Widget build(BuildContext context) {
     final a = widget.assistant;
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Claude Code bridge'),
-        actions: [
-          IconButton(
-            tooltip: 'Start a fresh conversation (drop history)',
-            onPressed: () => a
-                .bridgeControl('/new')
-                .whenComplete(
-                  _refreshHealth, // the pointer goes blank with the history
-                ),
-            icon: const Icon(Icons.restart_alt),
-          ),
-        ],
-      ),
-      // Rebuild on every assistant change (busy state, toggle persistence):
-      body: AnimatedBuilder(
+    // +230: a SECTION of the merged Settings screen — no Scaffold, no
+    // appbar of its own; shrink-wrapped so one page scrolls.
+    return Material(
+      color: Colors.transparent,
+      child: AnimatedBuilder(
         animation: a,
         builder: (context, _) {
           // A turn just ended: the pointer can move during one (the id
@@ -157,10 +145,12 @@ class _BridgeScreenState extends State<BridgeScreen> {
           final up = _health?['claudeUp'] == true;
           final working = _health?['turnOpen'] == true;
           return ListView(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.all(16),
             children: [
               Text(
-                'Point the app at the bridge process started on your desktop:\n'
+                'Run the bridge on your computer, then enter its address:\n'
                 'node tool/claude_bridge.mjs --dir <project> --token <token>',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
@@ -169,12 +159,10 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 controller: _url,
                 decoration: const InputDecoration(
                   labelText: 'Bridge URL',
-                  hintText:
-                      'http://135.180.96.71:8732  (or tailscale http://100.99.240.112:8732)',
+                  hintText: 'http://100.99.240.112:8732',
                   border: OutlineInputBorder(),
                   helperText:
-                      'Plain http works on your LAN/tailnet — the bridge '
-                      'is LAN-only by convention and carries a shared token.',
+                      'The bridge address on your network (LAN or tailscale).',
                 ),
                 keyboardType: TextInputType.url,
                 autocorrect: false,
@@ -185,7 +173,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Token',
                   border: OutlineInputBorder(),
-                  helperText: 'must match the bridge\'s --token',
+                  helperText: 'The same --token the bridge runs with.',
                 ),
                 obscureText: true,
                 autocorrect: false,
@@ -242,7 +230,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   Expanded(
                     child: SelectableText(
                       _health == null
-                          ? 'no /health reply — Save & check, or the bridge is down'
+                          ? 'No reply yet — press Save & check.'
                           : sid is! String || sid.isEmpty
                           ? 'fresh — the first utterance starts it'
                           : sid,
@@ -277,7 +265,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   Expanded(
                     child: SelectableText(
                       _health == null
-                          ? 'no /health reply — Save & check first'
+                          ? 'No reply yet — press Save & check.'
                           : _health?['dir'] is String && _health!['dir'] != ''
                           ? _health!['dir'] as String
                           : 'unknown (bridge too old for /dir)',
@@ -312,7 +300,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   Expanded(
                     child: Text(
                       _health == null
-                          ? 'no /health reply — Save & check first'
+                          ? 'No reply yet — press Save & check.'
                           : _health!['harness'] == 'opencode'
                           ? 'OpenCode'
                           : _health!['harness'] == 'claude'
@@ -419,15 +407,13 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 contentPadding: EdgeInsets.zero,
                 value: a.bridgeVoice,
                 onChanged: (v) => a.setBridgeVoice(v),
-                title: const Text('Speak to Claude Code'),
+                title: const Text('Speak to the assistant'),
                 subtitle: Text(
                   a.bridgeConfigured
-                      ? 'On (factory): whatever you say in push-to-talk or '
-                            'conversation mode goes to the harness, and its '
-                            'answer comes back spoken. Off: the app repeats '
-                            'your words back like the offline demo.'
-                      : 'Set a bridge url and token above first — with no '
-                            'bridge reachable, voice stays offline.',
+                      ? 'On: your words go to the AI and the answer comes '
+                            'back spoken. Off: the app just repeats your '
+                            'words back.'
+                      : 'Enter the bridge URL and token first.',
                 ),
               ),
               SwitchListTile(
@@ -435,17 +421,9 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 value: a.bridgeNarrate,
                 onChanged: (v) => a.setBridgeNarrate(v),
                 title: const Text('Narrate progress while working'),
-                subtitle: Text(
-                  'Off (factory): only the answer speaks — tool steps show '
-                  'as silent text lines, the usual turn. On: you hear the '
-                  'harness work AS it happens — every tool step earns a '
-                  'short spoken line the moment it starts, a long silent '
-                  'step repeats that line about every 45 s, and a message '
-                  'queuing behind running work is acknowledged out loud, '
-                  'so a turn is a stream of progress instead of dead air '
-                  'then one block of speech. Reply audio always outranks '
-                  'the chatter. (Also narrates the /new chip, which is a '
-                  'harness turn even in parrot mode.)',
+                subtitle: const Text(
+                  'On: you hear what it is doing as it does it. Off: only '
+                  'the answer is spoken.',
                 ),
               ),
               SwitchListTile(
@@ -454,90 +432,8 @@ class _BridgeScreenState extends State<BridgeScreen> {
                 onChanged: (v) => a.setBridgeTts(v),
                 title: const Text('Speak replies (TTS)'),
                 subtitle: const Text(
-                  'On (factory): harness answers are spoken back. Off: '
-                  'replies land as chat text only — nothing synthesises '
-                  'or plays, the voice pack is not even required at '
-                  'boot, and typed sends work while models are still '
-                  'loading. This switch is the mute: the composer\u2019s '
-                  'volume icon retired with the bar (+153).',
-                ),
-              ),
-              Text(
-                'Session controls on the main screen',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              for (final (label, blurb) in const [
-                (
-                  '/new',
-                  'Forget the conversation on both sides and start over — '
-                      'the past no longer fills the context window, and the '
-                      'app\'s chat bubbles clear to a blank screen.',
-                ),
-              ])
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(label),
-                  subtitle: Text(
-                    blurb,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.play_arrow),
-                    tooltip: 'Run this control now',
-                    onPressed: a.bridgeBusy || !a.bridgeConfigured
-                        ? null
-                        : () {
-                            Navigator.of(
-                              context,
-                            ).pop(); // talk over on the main screen
-                            a.bridgeControl(label);
-                          },
-                  ),
-                ),
-              const Divider(height: 32),
-              Text(
-                'Say anything',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _free,
-                decoration: const InputDecoration(
-                  labelText: 'Custom command for the harness',
-                  border: OutlineInputBorder(),
-                  helperText:
-                      'sent verbatim as one utterance; the answer is '
-                      'spoken with your assistant voice. A line starting '
-                      'with / runs as a real Claude Code command (e.g. '
-                      '/context to hear how full the window is)',
-                ),
-                onSubmitted: (v) {
-                  if (v.trim().isEmpty) return;
-                  Navigator.of(context).pop();
-                  a.runQuickCommand(v.trim(), bubble: v.trim());
-                },
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed:
-                      a.bridgeBusy ||
-                          !a.bridgeConfigured ||
-                          _free.text.trim().isEmpty
-                      ? null
-                      : () {
-                          final v = _free.text.trim();
-                          _free.clear();
-                          Navigator.of(context).pop();
-                          a.runQuickCommand(v, bubble: v);
-                        },
-                  icon: const Icon(Icons.send),
-                  label: const Text('Send'),
+                  'Off: answers arrive as text only. No voice download '
+                  'is needed.',
                 ),
               ),
             ],
