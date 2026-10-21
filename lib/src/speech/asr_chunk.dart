@@ -67,3 +67,48 @@ List<Float32List> chunkForWhisper(
   }
   return segments;
 }
+
+/// Greedily re-pack VAD segments into decode blobs of at most
+/// [packSamples] samples.
+///
+/// Why this exists (the count-to-thirty tape): a speaker who pauses
+/// between words hands the VAD dozens of one-word segments, and every
+/// segment boundary is a place a word can die — each tiny Whisper call
+/// hears an isolated utterance without its neighbors and drops it
+/// (twenty-eight and twenty-nine, gone between two periods). Whisper
+/// happily decodes twenty seconds of speech with silences inside it,
+/// so the segments are stitched back together and we cut only where
+/// the 30-second window FORCES a cut, not wherever a breath happened
+/// to land. Segment gaps (the silence between them) are dropped by the
+/// stitching; ASR does not miss a pause it can infer.
+List<Float32List> packSegments(List<Float32List> segments, int packSamples) {
+  final blobs = <Float32List>[];
+  var run = <Float32List>[];
+  var runLength = 0;
+  void flush() {
+    if (run.isEmpty) return;
+    final blob = Float32List(runLength);
+    var at = 0;
+    for (final r in run) {
+      blob.setRange(at, at + r.length, r);
+      at += r.length;
+    }
+    blobs.add(blob);
+    run = [];
+    runLength = 0;
+  }
+
+  for (final seg in segments) {
+    // A segment that alone busts the pack (a forced 20 s cut) rides as
+    // its own blob; the caller's belt keeps it inside the window.
+    if (seg.length >= packSamples && run.isEmpty) {
+      blobs.add(seg);
+      continue;
+    }
+    if (runLength + seg.length > packSamples) flush();
+    run.add(seg);
+    runLength += seg.length;
+  }
+  flush();
+  return blobs;
+}

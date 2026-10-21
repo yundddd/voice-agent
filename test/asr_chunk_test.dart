@@ -55,6 +55,32 @@ void main() {
       expect(segs[0].length, greaterThan(3 * 512));
     });
 
+    test('packSegments stitches word-sized cuts back into window-sized '
+        'blobs — the cut belongs to the window, not the breath', () {
+      // 30 one-word-ish segments of 1000 samples, pack 12000:
+      // twelve fit a blob, the thirteenth triggers the flush.
+      final segs = List.generate(
+        30,
+        (_) => Float32List.fromList(List.filled(1000, 0.25)),
+      );
+      final blobs = packSegments(segs, 12000);
+      expect(blobs.map((b) => b.length), [12000, 12000, 6000]);
+      expect(
+        blobs.expand((b) => b).toList(),
+        segs.expand((s) => s).toList(),
+        reason: 'lossless and in order — only the gaps are dropped',
+      );
+    });
+
+    test('a segment that alone busts the pack rides as its own blob', () {
+      // The forced maxSpeechDuration cut: bigger than the pack target,
+      // still inside the caller's 26 s belt.
+      final big = Float32List.fromList(List.filled(15000, 0.5));
+      final small = Float32List.fromList(List.filled(1000, 0.5));
+      final blobs = packSegments([small, big, small], 12000);
+      expect(blobs.map((b) => b.length), [1000, 15000, 1000]);
+    });
+
     test('the VAD is reset first — a reused chunker keeps no state', () {
       final vad = FakeVad(startsAt: 1, endsAt: 3);
       chunkForWhisper(vad, _clip(40), 16000);

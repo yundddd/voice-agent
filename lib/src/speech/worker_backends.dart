@@ -283,11 +283,18 @@ class SherpaAsr implements AsrBackend {
         bufferSizeInSeconds: 60,
       ),
     );
-    // Each finished segment lifts the cumulative text to the caller —
-    // the decode appears as it lands, not all at the end.
+    // Cut where the window forces it, not where a breath landed: the
+    // VAD segments are re-packed into ~18 s decode blobs (an
+    // over-sized single segment — the 20 s forced cut — still rides
+    // alone, inside the 26 s belt). Each finished blob lifts the
+    // cumulative text to the caller as it lands.
     final soFar = <String>[];
-    for (final seg in chunkForWhisper(vad, samples, sampleRate)) {
-      final t = _decode(seg, sampleRate).trim();
+    final blobs = packSegments(
+      chunkForWhisper(vad, samples, sampleRate),
+      (18 * sampleRate).round(),
+    );
+    for (final blob in blobs) {
+      final t = _decode(blob, sampleRate).trim();
       if (t.isEmpty) continue;
       soFar.add(t);
       onPartial?.call(soFar.join(' '));
