@@ -87,15 +87,15 @@ class _BridgeScreenState extends State<BridgeScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => _ModelPicker(assistant: widget.assistant),
+      builder: (_) => ModelPickerSheet(assistant: widget.assistant),
     );
     if (chosen == null) return;
     final err = await widget.assistant.setBridgeModel(chosen);
     await _refreshHealth();
     if (err != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not set the model: $err')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not set the model: $err')));
     }
   }
 
@@ -313,17 +313,20 @@ class _BridgeScreenState extends State<BridgeScreen> {
                   ),
                   IconButton(
                     tooltip: switch (_health?['harness']) {
-                      'claude' => 'Switch to OpenCode — each harness keeps '
-                          'its own conversation',
-                      'opencode' => 'Switch to Claude Code — each harness '
-                          'keeps its own conversation',
+                      'claude' =>
+                        'Switch to OpenCode — each harness keeps '
+                            'its own conversation',
+                      'opencode' =>
+                        'Switch to Claude Code — each harness '
+                            'keeps its own conversation',
                       _ => 'This bridge is too old to switch harnesses',
                     },
-                    onPressed: a.bridgeConfigured &&
-                        (_health?['harness'] == 'claude' ||
-                            _health?['harness'] == 'opencode') &&
-                        !a.bridgeBusy &&
-                        !working
+                    onPressed:
+                        a.bridgeConfigured &&
+                            (_health?['harness'] == 'claude' ||
+                                _health?['harness'] == 'opencode') &&
+                            !a.bridgeBusy &&
+                            !working
                         ? _switchHarness
                         : null,
                     icon: const Icon(Icons.swap_horiz),
@@ -337,10 +340,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
               // label re-reads /health the moment a pick lands.
               Row(
                 children: [
-                  Text(
-                    'Model',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
+                  Text('Model', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(width: 10),
                   Expanded(
                     child: SelectableText(
@@ -349,17 +349,17 @@ class _BridgeScreenState extends State<BridgeScreen> {
                           : !_health!.containsKey('model')
                           ? 'unknown (bridge too old for /model)'
                           : _health!['model'] is String &&
-                                    _health!['model'] != ''
-                                ? _health!['model'] as String
-                                : a.bridgeLastModel != null
-                                // +218: the bridge has no current YET
-                                // (a restart, or opencode before its
-                                // first step names itself) — the app's
-                                // own memory of this harness's last
-                                // pick wears the row, honestly labelled.
-                                ? '${a.bridgeLastModel} (last used)'
-                                : 'the default (no step has named one '
-                                      'yet)',
+                                _health!['model'] != ''
+                          ? _health!['model'] as String
+                          : a.bridgeLastModel != null
+                          // +218: the bridge has no current YET
+                          // (a restart, or opencode before its
+                          // first step names itself) — the app's
+                          // own memory of this harness's last
+                          // pick wears the row, honestly labelled.
+                          ? '${a.bridgeLastModel} (last used)'
+                          : 'the default (no step has named one '
+                                'yet)',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontFamily: 'monospace',
                         color: scheme.onSurfaceVariant,
@@ -370,10 +370,11 @@ class _BridgeScreenState extends State<BridgeScreen> {
                     tooltip: _health?.containsKey('model') ?? false
                         ? 'Choose the model'
                         : 'This bridge is too old to pick models',
-                    onPressed: a.bridgeConfigured &&
-                                _health?.containsKey('model') == true
-                            ? _pickModel
-                            : null,
+                    onPressed:
+                        a.bridgeConfigured &&
+                            _health?.containsKey('model') == true
+                        ? _pickModel
+                        : null,
                     icon: const Icon(Icons.tune),
                   ),
                 ],
@@ -581,15 +582,15 @@ class _FolderBrowserState extends State<_FolderBrowser> {
 /// it (claude's --models config, opencode's service catalog). A pick
 /// pops its id back to BridgeScreen, which POSTs /model; the sheet
 /// never writes, so an abandoned browse changes nothing.
-class _ModelPicker extends StatefulWidget {
-  const _ModelPicker({required this.assistant});
+class ModelPickerSheet extends StatefulWidget {
+  const ModelPickerSheet({super.key, required this.assistant});
   final VoiceAssistant assistant;
 
   @override
-  State<_ModelPicker> createState() => _ModelPickerState();
+  State<ModelPickerSheet> createState() => _ModelPickerState();
 }
 
-class _ModelPickerState extends State<_ModelPicker> {
+class _ModelPickerState extends State<ModelPickerSheet> {
   Map<String, Object>? _menu;
   bool _busy = true;
   String? _why;
@@ -627,9 +628,7 @@ class _ModelPickerState extends State<_ModelPicker> {
     for (final m in _models) {
       final id = '${m['id']}';
       final slash = id.indexOf('/');
-      out
-          .putIfAbsent(slash < 0 ? '' : id.substring(0, slash), () => [])
-          .add(m);
+      out.putIfAbsent(slash < 0 ? '' : id.substring(0, slash), () => []).add(m);
     }
     return out;
   }
@@ -680,10 +679,7 @@ class _ModelPickerState extends State<_ModelPicker> {
                     icon: const Icon(Icons.arrow_back),
                   )
                 else
-                  Text(
-                    'Model',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                  Text('Model', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(width: 10),
                 if (_busy)
                   const SizedBox(
@@ -726,11 +722,13 @@ class _ModelPickerState extends State<_ModelPicker> {
                   itemBuilder: (context, i) {
                     final p = providers[i];
                     final models = _byProvider[p]!;
-                    final holdsCurrent = hasCurrent &&
+                    final holdsCurrent =
+                        hasCurrent &&
                         (p.isEmpty
                             ? !current.contains('/')
                             : current.startsWith('$p/'));
-                    final holdsLast = !holdsCurrent &&
+                    final holdsLast =
+                        !holdsCurrent &&
                         last != null &&
                         last.isNotEmpty &&
                         (p.isEmpty
@@ -780,11 +778,11 @@ class _ModelPickerState extends State<_ModelPicker> {
                       title: Text(label),
                       subtitle: label == id
                           ? null
-                          : Text(id,
-                              style:
-                                  Theme.of(context).textTheme.bodySmall?.copyWith(
-                                fontFamily: 'monospace',
-                              )),
+                          : Text(
+                              id,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(fontFamily: 'monospace'),
+                            ),
                       trailing: id == current
                           ? const Icon(Icons.check)
                           : id == last

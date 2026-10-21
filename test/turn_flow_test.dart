@@ -454,10 +454,13 @@ void main() {
       // names the two before Stop, in that order.
       expect(
         VoiceAssistant.controlChips,
-        ['/new', '/compact'],
+        // +242: /model joins at the head — the session's brain is the
+        // row's first question now.
+        ['/model', '/new', '/compact'],
         reason:
-            'dictate +178. Stop is not in the list — it is the '
-            "row's permanent tail (+154), never a controlChips member.",
+            'dictate +178 (order) and +242 (head). Stop is not in the '
+            "list — it is the row's permanent tail (+154), never a "
+            'controlChips member.',
       );
       expect(
         VoiceAssistant.controlChips.every((c) => c.startsWith('/')),
@@ -1986,9 +1989,7 @@ void main() {
       await settle();
       harness.emit(const BridgeEvent.forTest('say', text: 'On the air now.'));
       await settle();
-      harness.emit(
-        const BridgeEvent.forTest('say', text: 'Queued behind it.'),
-      );
+      harness.emit(const BridgeEvent.forTest('say', text: 'Queued behind it.'));
       await settle();
       expect(out.playing, isTrue, reason: 'one chunk audible, one in flight');
       harness.healthState = {

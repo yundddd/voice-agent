@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../assistant/assistant.dart';
+import 'bridge_screen.dart' show ModelPickerSheet;
 import 'chat_view.dart';
 import 'session_sheet.dart';
 import 'settings_screen.dart';
@@ -33,12 +34,12 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen>
     with WidgetsBindingObserver {
   static const _chipIcons = {
+    '/model': Icons.auto_awesome, // pops the picker; never a prompt
     '/new': Icons.restart_alt, // same glyph as the settings-page reset
     '/compact': Icons.compress,
   };
 
-  late final VoiceAssistant _assistant =
-      widget.assistant ?? VoiceAssistant();
+  late final VoiceAssistant _assistant = widget.assistant ?? VoiceAssistant();
 
   /// True when the screen built its own machine (only then does
   /// dispose() own its death; an injected assistant is its test's).
@@ -78,9 +79,9 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   /// +230: the session's own wash — see [AssistantScreenSupport].
   static List<Color> _sessionTint(int tab) => [
-        AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.10),
-        AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.02),
-      ];
+    AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.10),
+    AssistantScreenSupport.sessionTint(tab).withValues(alpha: 0.02),
+  ];
 
   /// Slide direction for the swap animation: -1 exits left (walked
   /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
@@ -102,7 +103,9 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   void _onTabSwipe(VoiceAssistant a, double vx) {
     final was = _dragDx;
-    setState(() => _dragDx = 0); // spring/commit from wherever the finger landed
+    setState(
+      () => _dragDx = 0,
+    ); // spring/commit from wherever the finger landed
     if (vx.abs() < 450 && was.abs() < 120) return; // a drift, not a fling
     final v = a.view;
     if (v.tabs.isEmpty) {
@@ -127,15 +130,20 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// the conversation's fingerprint as its tooltip — the title line
   /// the strip replaced still has a home. The active tab wears the
   /// container colour; a tap jumps (slides) there.
-  Widget _sessionPill(BuildContext context, VoiceAssistant a,
-      dynamic v, SessionTabInfo t) {
+  Widget _sessionPill(
+    BuildContext context,
+    VoiceAssistant a,
+    dynamic v,
+    SessionTabInfo t,
+  ) {
     final scheme = Theme.of(context).colorScheme;
     final active = t.index == v.tabIndex;
     final tint = AssistantScreenSupport.sessionTint(t.index);
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: Tooltip(
-        message: '${t.harness} · ${t.dir}'
+        message:
+            '${t.harness} · ${t.dir}'
             '${t.currentId == null ? '' : '\n${t.currentId}'}',
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
@@ -144,7 +152,8 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ? scheme.secondaryContainer
                 : tint.withValues(alpha: 0.10),
             border: Border.all(
-                color: active ? scheme.primary : scheme.outlineVariant),
+              color: active ? scheme.primary : scheme.outlineVariant,
+            ),
             borderRadius: const BorderRadius.all(Radius.circular(16)),
           ),
           child: InkWell(
@@ -156,9 +165,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    t.harness == 'opencode'
-                        ? Icons.terminal
-                        : Icons.chat,
+                    t.harness == 'opencode' ? Icons.terminal : Icons.chat,
                     size: 14,
                     color: scheme.onSurfaceVariant,
                   ),
@@ -169,10 +176,10 @@ class _AssistantScreenState extends State<AssistantScreen>
                       t.label,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: active
-                                ? scheme.onSurface
-                                : scheme.onSurfaceVariant,
-                          ),
+                        color: active
+                            ? scheme.onSurface
+                            : scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -185,8 +192,11 @@ class _AssistantScreenState extends State<AssistantScreen>
                     onTap: () => _tabRemove(a, t.index),
                     child: Padding(
                       padding: const EdgeInsets.all(2),
-                      child: Icon(Icons.close,
-                          size: 15, color: scheme.onSurfaceVariant),
+                      child: Icon(
+                        Icons.close,
+                        size: 15,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ],
@@ -205,7 +215,9 @@ class _AssistantScreenState extends State<AssistantScreen>
       setState(() => _slideDir = 1);
       final err = await a.removeSessionTab(index);
       if (err != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(err)));
       }
     }());
   }
@@ -214,7 +226,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     unawaited(() async {
       final err = await a.switchSession(index);
       if (err != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(err)));
       }
     }());
   }
@@ -223,6 +237,27 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// model, folder, big buttons, and one POST that seats and files
   /// the tab (the sheet submits its own answer; the refusal reason
   /// lands inside it, next to the Start button).
+  /// +242: the '/model' chip's verb — the settings sheet's own picker
+  /// (GET /models, current checked) over the talking screen; the pick
+  /// lands through setBridgeModel (POST /model + remembered per harness
+  /// + the /health re-read), so the context bar's model name and the
+  /// settings row update from the same receipt.
+  Future<void> _pickModelTap(VoiceAssistant a) async {
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => ModelPickerSheet(assistant: a),
+    );
+    if (chosen == null) return;
+    final err = await a.setBridgeModel(chosen);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not set the model: $err')));
+    }
+  }
+
   Future<void> _newSessionTap(VoiceAssistant a) async {
     if (_sheetUp) return;
     _sheetUp = true;
@@ -684,7 +719,8 @@ class _AssistantScreenState extends State<AssistantScreen>
     // answer; walking away unanswered just means it asks again the
     // next time the screen wakes).
     if (v.needsSetup && !_sheetUp) {
-      _sheetUp = true; // claimed BEFORE the frame, so no second build stacks a copy
+      _sheetUp =
+          true; // claimed BEFORE the frame, so no second build stacks a copy
       SchedulerBinding.instance.addPostFrameCallback((_) async {
         await showSessionSheet(context, a: a);
         if (mounted) _sheetUp = false;
@@ -767,7 +803,8 @@ class _AssistantScreenState extends State<AssistantScreen>
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
-                          for (final t in v.tabs) _sessionPill(context, a, v, t),
+                          for (final t in v.tabs)
+                            _sessionPill(context, a, v, t),
                         ],
                       ),
                     ),
@@ -852,247 +889,283 @@ class _AssistantScreenState extends State<AssistantScreen>
                     child: GestureDetector(
                       behavior: HitTestBehavior.deferToChild,
                       onHorizontalDragUpdate: _onTabDragUpdate,
-                      onHorizontalDragCancel: () =>
-                          setState(() => _dragDx = 0),
-                      onHorizontalDragEnd: (d) => _onTabSwipe(
-                        a,
-                        d.velocity.pixelsPerSecond.dx,
-                      ),
+                      onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+                      onHorizontalDragEnd: (d) =>
+                          _onTabSwipe(a, d.velocity.pixelsPerSecond.dx),
                       child: SingleChildScrollView(
-                      controller: _scroll,
-                      // Long harness answers grew the reply card without
-                      // bounds until it smeared over the chips and metrics:
-                      // the text block now scrolls inside this region and
-                      // auto-follows the reply while it streams.
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // The status line rides a STATIC two-line
-                              // band. The wording changes HEIGHT as it
-                              // changes — the idle two-liner, a bare
-                              // 'Thinking…', a long 'Bash …' command
-                              // (StepLine's promise of being "ellipsized
-                              // by the widget", finally kept) — and under
-                              // this centered column every reflow walked
-                              // the whole conversation up and down: the
-                              // jitter the static band kills. Two lines
-                              // reserved at any font scale; more is
-                              // ellipsized, never reflowed.
-                              SizedBox(
-                                height: _statusBand(context),
-                                child: Center(
-                                  child: Text(
-                                    v.status,
-                                    textAlign: TextAlign.center,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
+                        controller: _scroll,
+                        // Long harness answers grew the reply card without
+                        // bounds until it smeared over the chips and metrics:
+                        // the text block now scrolls inside this region and
+                        // auto-follows the reply while it streams.
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // The status line rides a STATIC two-line
+                                // band. The wording changes HEIGHT as it
+                                // changes — the idle two-liner, a bare
+                                // 'Thinking…', a long 'Bash …' command
+                                // (StepLine's promise of being "ellipsized
+                                // by the widget", finally kept) — and under
+                                // this centered column every reflow walked
+                                // the whole conversation up and down: the
+                                // jitter the static band kills. Two lines
+                                // reserved at any font scale; more is
+                                // ellipsized, never reflowed.
+                                SizedBox(
+                                  height: _statusBand(context),
+                                  child: Center(
+                                    child: Text(
+                                      v.status,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              if (v.error.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                Text(
-                                  v.error,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: scheme.error),
-                                ),
-                              ],
-                              const SizedBox(height: 16),
-                              // +230: the thread — one ANIMATED
-                              // swap per tab. The finger's own dx
-                              // rides the thread while the drag is
-                              // down (Transform.translate), and on
-                              // commit the outgoing thread slides
-                              // out against the swipe while the
-                              // incoming one slides in from the
-                              // other side, crossfading the tab's
-                              // own gradient tint — a different
-                              // session is visibly a different
-                              // place, in motion, not after a
-                              // layout change. Refused switches
-                              // (mid-turn, unheard owed) spring the
-                              // thread back with no swap at all:
-                              // the key did not change.
-                              // +230: the drag IN MOTION: the thread
-                              // lifts like a grabbed card (a hair of
-                              // scale and tilt per pixel parted) and
-                              // the NEXT session's own hue glows in
-                              // from the edge being pulled open —
-                              // the swipe announces itself while the
-                              // finger is still down, not only at the
-                              // commit. Past the first tab the parted
-                              // edge glows the creation slot's primary
-                              // and a + fades in: that gesture means
-                              // NEW, and it looks like it.
-                              Builder(builder: (context) {
-                                final part =
-                                    (_dragDx.abs() / 160).clamp(0.0, 1.0);
-                                final toOlder = _dragDx > 0;
-                                final atFirst = v.tabIndex == 0;
-                                final edgeTint = toOlder && atFirst
-                                    ? scheme.primary
-                                    : AssistantScreenSupport.sessionTint(
-                                        (v.tabIndex + (toOlder ? -1 : 1))
-                                            .clamp(0, v.tabs.isEmpty ? 0 : v.tabs.length - 1));
-                                return Stack(
-                                  children: [
-                                    // The glow pad UNDER the card, on the
-                                    // parted edge.
-                                    if (part > 0)
-                                      Positioned(
-                                        left: toOlder ? 0 : null,
-                                        right: toOlder ? null : 0,
-                                        top: 0,
-                                        bottom: 0,
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            width: 64,
-                                            decoration: BoxDecoration(
-                                              gradient: LinearGradient(
-                                                begin: toOlder
-                                                    ? Alignment.centerLeft
-                                                    : Alignment.centerRight,
-                                                end: toOlder
-                                                    ? Alignment.centerRight
-                                                    : Alignment.centerLeft,
-                                                colors: [
-                                                  edgeTint.withValues(
-                                                      alpha: 0.35 * part),
-                                                  edgeTint.withValues(alpha: 0),
-                                                ],
+                                if (v.error.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    v.error,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: scheme.error),
+                                  ),
+                                ],
+                                const SizedBox(height: 16),
+                                // +230: the thread — one ANIMATED
+                                // swap per tab. The finger's own dx
+                                // rides the thread while the drag is
+                                // down (Transform.translate), and on
+                                // commit the outgoing thread slides
+                                // out against the swipe while the
+                                // incoming one slides in from the
+                                // other side, crossfading the tab's
+                                // own gradient tint — a different
+                                // session is visibly a different
+                                // place, in motion, not after a
+                                // layout change. Refused switches
+                                // (mid-turn, unheard owed) spring the
+                                // thread back with no swap at all:
+                                // the key did not change.
+                                // +230: the drag IN MOTION: the thread
+                                // lifts like a grabbed card (a hair of
+                                // scale and tilt per pixel parted) and
+                                // the NEXT session's own hue glows in
+                                // from the edge being pulled open —
+                                // the swipe announces itself while the
+                                // finger is still down, not only at the
+                                // commit. Past the first tab the parted
+                                // edge glows the creation slot's primary
+                                // and a + fades in: that gesture means
+                                // NEW, and it looks like it.
+                                Builder(
+                                  builder: (context) {
+                                    final part = (_dragDx.abs() / 160).clamp(
+                                      0.0,
+                                      1.0,
+                                    );
+                                    final toOlder = _dragDx > 0;
+                                    final atFirst = v.tabIndex == 0;
+                                    final edgeTint = toOlder && atFirst
+                                        ? scheme.primary
+                                        : AssistantScreenSupport.sessionTint(
+                                            (v.tabIndex + (toOlder ? -1 : 1))
+                                                .clamp(
+                                                  0,
+                                                  v.tabs.isEmpty
+                                                      ? 0
+                                                      : v.tabs.length - 1,
+                                                ),
+                                          );
+                                    return Stack(
+                                      children: [
+                                        // The glow pad UNDER the card, on the
+                                        // parted edge.
+                                        if (part > 0)
+                                          Positioned(
+                                            left: toOlder ? 0 : null,
+                                            right: toOlder ? null : 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            child: IgnorePointer(
+                                              child: Container(
+                                                width: 64,
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    begin: toOlder
+                                                        ? Alignment.centerLeft
+                                                        : Alignment.centerRight,
+                                                    end: toOlder
+                                                        ? Alignment.centerRight
+                                                        : Alignment.centerLeft,
+                                                    colors: [
+                                                      edgeTint.withValues(
+                                                        alpha: 0.35 * part,
+                                                      ),
+                                                      edgeTint.withValues(
+                                                        alpha: 0,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        // The + slot past the FIRST tab
+                                        // (right-drag home of the new
+                                        // session).
+                                        if (toOlder && atFirst && part > 0)
+                                          Positioned(
+                                            left: 6,
+                                            top: 0,
+                                            bottom: 0,
+                                            child: Opacity(
+                                              opacity: part,
+                                              child: Center(
+                                                child: Icon(
+                                                  Icons.add_circle_outline,
+                                                  color: scheme.primary,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        Transform.translate(
+                                          offset: Offset(_dragDx, 0),
+                                          child: Transform.scale(
+                                            scale: 1 - 0.03 * part,
+                                            child: AnimatedSwitcher(
+                                              duration: const Duration(
+                                                milliseconds: 260,
+                                              ),
+                                              switchInCurve:
+                                                  Curves.easeOutCubic,
+                                              switchOutCurve:
+                                                  Curves.easeInCubic,
+                                              transitionBuilder: (child, anim) {
+                                                final incoming =
+                                                    child.key
+                                                        is ValueKey<int> &&
+                                                    (child.key as ValueKey<int>)
+                                                            .value ==
+                                                        v.tabIndex;
+                                                final from =
+                                                    (incoming
+                                                        ? -_slideDir
+                                                        : _slideDir) *
+                                                    0.35;
+                                                return FadeTransition(
+                                                  opacity: anim,
+                                                  child: SlideTransition(
+                                                    position: Tween<Offset>(
+                                                      begin: Offset(from, 0.01),
+                                                      end: Offset.zero,
+                                                    ).animate(anim),
+                                                    child: child,
+                                                  ),
+                                                );
+                                              },
+                                              child: DecoratedBox(
+                                                key: ValueKey(v.tabIndex),
+                                                decoration: BoxDecoration(
+                                                  borderRadius:
+                                                      const BorderRadius.all(
+                                                        Radius.circular(18),
+                                                      ),
+                                                  gradient: LinearGradient(
+                                                    begin: Alignment.topLeft,
+                                                    end: Alignment.bottomRight,
+                                                    colors: _sessionTint(
+                                                      v.tabIndex,
+                                                    ),
+                                                  ),
+                                                ),
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                  child: Column(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      for (final e in v.chat)
+                                                        if (e.fromUser ||
+                                                            e
+                                                                .blocks
+                                                                .isNotEmpty ||
+                                                            // A file bubble has no text
+                                                            // blocks — the slip IS the
+                                                            // bubble.
+                                                            e.isFile)
+                                                          _bubbleFor(
+                                                            e,
+                                                            a,
+                                                            context,
+                                                          ),
+                                                    ],
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    // The + slot past the FIRST tab
-                                    // (right-drag home of the new
-                                    // session).
-                                    if (toOlder && atFirst && part > 0)
-                                      Positioned(
-                                        left: 6,
-                                        top: 0,
-                                        bottom: 0,
-                                        child: Opacity(
-                                          opacity: part,
-                                          child: Center(
-                                            child: Icon(Icons.add_circle_outline,
-                                                color: scheme.primary),
-                                          ),
-                                        ),
-                                      ),
-                                    Transform.translate(
-                                      offset: Offset(_dragDx, 0),
-                                      child: Transform.scale(
-                                        scale: 1 - 0.03 * part,
-                                        child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 260),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeInCubic,
-                                  transitionBuilder: (child, anim) {
-                                    final incoming = child.key is ValueKey<int> &&
-                                        (child.key as ValueKey<int>).value ==
-                                            v.tabIndex;
-                                    final from = (incoming ? -_slideDir : _slideDir) * 0.35;
-                                    return FadeTransition(
-                                      opacity: anim,
-                                      child: SlideTransition(
-                                        position: Tween<Offset>(
-                                          begin: Offset(from, 0.01),
-                                          end: Offset.zero,
-                                        ).animate(anim),
-                                        child: child,
-                                      ),
+                                      ],
                                     );
                                   },
-                                  child: DecoratedBox(
-                                    key: ValueKey(v.tabIndex),
-                                    decoration: BoxDecoration(
-                                      borderRadius:
-                                          const BorderRadius.all(
-                                              Radius.circular(18)),
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: _sessionTint(v.tabIndex),
-                                      ),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          for (final e in v.chat)
-                                            if (e.fromUser ||
-                                                e.blocks.isNotEmpty ||
-                                                // A file bubble has no text
-                                                // blocks — the slip IS the
-                                                // bubble.
-                                                e.isFile)
-                                              _bubbleFor(e, a, context),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                    ),
-                                  ),
-                                  ),
-                                  ],
-                                );
-                              }),
-
-                              // The working row: spinner, one-line
-                              // activity, meter — permanently the
-                              // channel's last word while any bridge
-                              // turn runs, heard or unheard (+151).
-                              // +154: the slot is RESERVED always — a
-                              // fixed-height band every professional
-                              // chat footer owns; the row fades in and
-                              // out inside it, and no bubble ever
-                              // slides as the state changes.
-                              SizedBox(
-                                height: WorkingRowCard.reservedHeight,
-                                child: AnimatedOpacity(
-                                  duration: const Duration(milliseconds: 180),
-                                  opacity: v.showWorkingRow ? 1.0 : 0.0,
-                                  child: WorkingRowCard(source: () => a.view),
                                 ),
-                              ),
 
-                              // A backgrounded tool call keeps a permanent
-                              // line at the channel's bottom while it works
-                              // unheard: the badge (detached turn) or a queue
-                              // pin naming the work is its proof-of-life, and
-                              // it dismisses itself the moment the turn is
-                              // heard again, stopped, or proven finished.
-                              if (v.showBackgroundedRow)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  child: BackgroundedWorkCard(
-                                    source: () => a.view,
+                                // The working row: spinner, one-line
+                                // activity, meter — permanently the
+                                // channel's last word while any bridge
+                                // turn runs, heard or unheard (+151).
+                                // +154: the slot is RESERVED always — a
+                                // fixed-height band every professional
+                                // chat footer owns; the row fades in and
+                                // out inside it, and no bubble ever
+                                // slides as the state changes.
+                                SizedBox(
+                                  height: WorkingRowCard.reservedHeight,
+                                  child: AnimatedOpacity(
+                                    duration: const Duration(milliseconds: 180),
+                                    opacity: v.showWorkingRow ? 1.0 : 0.0,
+                                    child: WorkingRowCard(source: () => a.view),
                                   ),
                                 ),
-                            ],
+
+                                // A backgrounded tool call keeps a permanent
+                                // line at the channel's bottom while it works
+                                // unheard: the badge (detached turn) or a queue
+                                // pin naming the work is its proof-of-life, and
+                                // it dismisses itself the moment the turn is
+                                // heard again, stopped, or proven finished.
+                                if (v.showBackgroundedRow)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    child: BackgroundedWorkCard(
+                                      source: () => a.view,
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                    ),
                   ),
                 ),
               ),
-if (v.bridgeConfigured) ...[
+              if (v.bridgeConfigured) ...[
                 // Session housekeeping: /new and /compact (see
                 // VoiceAssistant.bridgeControl for what they do on the
                 // wire). Taps deliberately interrupt any voice reply
@@ -1123,7 +1196,13 @@ if (v.bridgeConfigured) ...[
                             label: Text(chip),
                             onPressed: v.bridgeBusy
                                 ? null
-                                : () => a.bridgeControl(chip),
+                                // +242: the model chip pops the SAME
+                                // sheet the settings page uses — the
+                                // session's brain is a one-tap
+                                // decision on the talking screen now.
+                                : () => chip == '/model'
+                                      ? _pickModelTap(a)
+                                      : a.bridgeControl(chip),
                           ),
                         ),
                       ActionChip(

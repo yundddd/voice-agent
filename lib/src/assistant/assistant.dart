@@ -1632,7 +1632,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// +171 seatless fold (the notice IS the answer) and the typed
   /// slash's ack made it chip-worthy again — and the fold it rides is
   /// the very machinery the field deadlock proved.
-  static const controlChips = <String>['/new', '/compact'];
+  static const controlChips = <String>['/model', '/new', '/compact'];
 
   /// Saves bridge settings (empty url disables the feature entirely).
   Future<void> setBridge({required String url, required String token}) async {
@@ -2341,6 +2341,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// system/compact_boundary event with zero say narration, hence the
   /// locally-spoken ack.
   Future<void> bridgeControl(String chip) {
+    // '/model' is a chip but never a bridgeControl verb: the main-screen
+    // row intercepts it and pops the picker sheet (assistant_screen,
+    // +242) — no prompt crosses the wire to change a model. If it ever
+    // arrives here (typed '/model'), it rides the ordinary quick-command
+    // path and the harness answers the slash itself.
     if (chip == '/new') {
       return runQuickCommand(
         chip,
