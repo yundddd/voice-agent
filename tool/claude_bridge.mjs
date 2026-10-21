@@ -622,6 +622,13 @@ function newCensus() {
 // /health can answer even for turns the phone never attached to.
 let ctxWindow = 0; // model context window (0 until a result names it)
 let lastCtx = {'in': 0, 'window': 0}; // {in, window} snapshot for /health
+// +249: WHOSE conversation that snapshot describes. The seat's context
+// bar belongs to the conversation it is seated on — a backgrounded
+// turn keeps updating the numbers for ITS thread, and until the seated
+// conversation's own turn names a size the bar reads measuring, not
+// the vacationer's luggage (the field report: the bar showed the old
+// session's context until the new session's first turn).
+let ctxOwner = null;
 // ── In-token PREVIEW (why the phone was dead air over a big read) ──
 // The API only reports a call's input tokens in its `message_start` —
 // which arrives AFTER the server has taken the whole prompt in (tens of
@@ -660,7 +667,8 @@ const estTokens = (content) => {
 // Relay the preview (when attached and it moved the needle) — one
 // `context` frame per growth step, not per byte.
 const ctxPreviewFrame = () =>
-  sse(curRes.res, 'context', { in: estIn, window: ctxWindow, preview: true });
+  sse(curRes.res, 'context',
+      { in: estIn, window: ctxWindow, preview: true, session: ctxOwner });
 const relayEst = (dir) => {
   estIn = Math.max(0, estIn + dir);
   if (curRes && estIn > 0 && Math.abs(estIn - estSentIn) >= 300) {
@@ -1445,7 +1453,8 @@ function handleEvent(line) {
       // shows tokens with no fill). The exact number also ends any
       // preview run: the estimate grows from here on, not from there.
       estIn = tokIn; estSentIn = tokIn;
-      relay('context', { in: tokIn, window: ctxWindow });
+      ctxOwner = sessionId;
+      relay('context', { in: tokIn, window: ctxWindow, session: ctxOwner });
     } else if (e.type === 'content_block_start') {
       const b = e.content_block ?? {};
       // A fresh thinking block starts the rolling window over: the
@@ -1752,9 +1761,9 @@ function handleEvent(line) {
     const win = Object.values(m.modelUsage ?? {})
         .reduce((a, x) => Math.max(a, x?.contextWindow ?? 0), 0);
     if (win) ctxWindow = win;
-    if (used) lastCtx = { in: used, window: ctxWindow };
+    if (used) { lastCtx = { in: used, window: ctxWindow }; ctxOwner = sessionId; }
     if (lastCtx.in) {
-      relay('context', { in: lastCtx.in, window: ctxWindow });
+      relay('context', { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
     // Per-turn verdict on what the upstream actually delivered (see
     // census): the answer to "the app showed no progress" that is
@@ -2640,6 +2649,7 @@ function resetConversation() {
   // instead of wearing old numbers. /health reports in:0 from now
   // on until the new session's first message_start proves itself.
   lastCtx = { in: 0, window: ctxWindow };
+  ctxOwner = null; // +249: a fresh conversation inherits no size record
   estIn = estSentIn = 0;
   if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
   endTurn();
@@ -2773,7 +2783,11 @@ const server = http.createServer((req, res) => {
       // Last known context consumption and the model's window (0s until
       // the first result names them): lets a phone that missed the live
       // events still fill its context bar.
-      context: lastCtx,
+      // +249 owner gate: the seated conversation's size, or honest
+      // zero (the phone reads 0 → 'measuring…') while a foreign
+      // conversation holds the pen.
+      context: { in: ctxOwner === sessionId ? lastCtx.in : 0,
+                 window: ctxWindow },
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
@@ -2938,6 +2952,15 @@ const server = http.createServer((req, res) => {
       try { old.res.end(); } catch {}
     }
     curRes = { res, keep, turnStart: turnStartAt };
+    // +249: a context frame is never backlogged (a stale number would
+    // only lie), so the returning ear gets the live conversation's
+    // size RE-PRESENTED the moment it takes the view — the foreground
+    // law for the bar: come back and the numbers are where you left
+    // them, without waiting for the next message_start.
+    if (ctxOwner === sessionId && lastCtx.in) {
+      sse(res, 'context',
+        { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
+    }
     res.on('close', () => {
       if (curRes && curRes.res === res) endTurn(); // detach → background it
     });

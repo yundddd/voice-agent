@@ -18,6 +18,7 @@ class BridgeEvent {
     this.isError = false,
     this.inputTokens = 0,
     this.contextWindow = 0,
+    this.ctxSession,
     this.outTokens = 0,
     this.toolKind = '',
     this.thought = '',
@@ -41,6 +42,7 @@ class BridgeEvent {
     this.isError = false,
     this.inputTokens = 0,
     this.contextWindow = 0,
+    this.ctxSession,
     this.outTokens = 0,
     this.toolKind = '',
     this.thought = '',
@@ -70,6 +72,11 @@ class BridgeEvent {
   /// start and every fresh tool_result — which the next exact frame
   /// overrules.
   final int inputTokens;
+
+  /// +249: for 'context' frames — the conversation these numbers
+  /// describe. Null = a bridge too old to say; the phone merges those
+  /// on trust, exactly as before.
+  final String? ctxSession;
   final int contextWindow;
 
   /// For 'tool {name:tokens}' (the live spinner counter): output tokens
@@ -179,6 +186,9 @@ class BridgeEvent {
           'context',
           inputTokens: n is num ? n.toInt() : 0,
           contextWindow: w is num ? w.toInt() : 0,
+          ctxSession: data['session'] is String
+              ? data['session'] as String
+              : null,
           mid: _int(data['_mid']),
           turn: _int(data['_turn']),
         );

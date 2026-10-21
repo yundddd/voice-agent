@@ -187,6 +187,7 @@ final class SessionTabInfo {
 /// machine.
 final class AssistantView {
   const AssistantView({
+    this.turnHomeHere = true,
     required this.phase,
     required this.mode,
     required this.activity,
@@ -360,7 +361,19 @@ final class AssistantView {
   /// the banner row names that work. A turn's own bubble appears in
   /// the flow the moment it has something to say.
   bool get showWorkingRow =>
-      agentWorking && spinnerVisible && (!token.settled || harnessBackgrounded);
+      turnHomeHere &&
+      agentWorking &&
+      spinnerVisible &&
+      (!token.settled || harnessBackgrounded);
+
+  /// +249: the row (spinner, thought, draft) belongs to the conversation
+  /// it thinks for. After a mid-turn tab switch the work is backgrounded
+  /// and its row travels with its thread — the seated tab shows nothing
+  /// until IT has work in flight; the gear badge stays the cross-session
+  /// sign of invisible labor (+230), so nothing becomes hidden-unknown,
+  /// merely hidden-here. Default true: every pre-tab world, and every
+  /// test that does not exercise the switch, sees the unfiltered law.
+  final bool turnHomeHere;
 
   /// The backgrounded-work row's visibility (see [BgWork]): THE
   /// PROJECTED LAW — the badge, a queue pin, the cut-tool promise, or

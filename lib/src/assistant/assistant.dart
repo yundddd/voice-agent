@@ -465,6 +465,10 @@ class VoiceAssistant extends ChangeNotifier {
     ),
     bridgeBusy: _bridgeBusy,
     harnessBackgrounded: _harnessBackgrounded,
+    turnHomeHere:
+        _turnHomeSid == null ||
+        _turnHomeSid == _sessionId ||
+        _sessionId == null,
     drainOwed: _drainAfterSpeech != null,
     drainReading: _drainReading,
     bridgeConfigured: bridgeConfigured,
@@ -872,6 +876,15 @@ class VoiceAssistant extends ChangeNotifier {
   // runQuickCommand's finally — so the bar survives app restarts and
   // detached turns alike). Window 0 = no `result` has named one yet.
   int _contextIn = 0;
+
+  /// +249: the conversation the LIVE work belongs to, when a mid-turn
+  /// switch backgrounded it (captured at switchSession from the id the
+  /// seat held); null = the work, if any, is the seat's own. Gates the
+  /// working row (view.turnHomeHere) and the context merge, so neither
+  /// the thought box nor the context bar ever shows one thread's
+  /// business on another's face. Cleared whenever the seat itself
+  /// starts a turn (runQuickCommand).
+  String? _turnHomeSid;
   int _contextWindow = 0;
   int get contextIn => _contextIn;
   int get contextWindow => _contextWindow;
@@ -1144,6 +1157,20 @@ class VoiceAssistant extends ChangeNotifier {
     if (r == null) return 'this bridge has no /seat';
     if (r['ok'] != true) {
       return '${r['error'] ?? 'the bridge refused the seat'}';
+    }
+    // +249: if live work rides along, remember WHERE it lives — the
+    // id the seat held a moment ago (the /seat response just named the
+    // destination; the outgoing conversation keeps its own pointer).
+    if (_bridgeBusy ||
+        _turn.backgrounded ||
+        _harnessBackgrounded ||
+        _ticker.isOn) {
+      _turnHomeSid = _sessionId;
+      // The bar belongs to the conversation, like the row: blank it
+      // now; /health's owner gate keeps it honest until the seated
+      // conversation's own turn names a size (/mergeContext ignores
+      // zeros, so the manual zero is the law's hands — as with /new).
+      _contextIn = 0;
     }
     prefs.activeTab = index;
     final sid = r['sessionId'];
@@ -1903,6 +1930,8 @@ class VoiceAssistant extends ChangeNotifier {
     bool parkBehind = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
+    // +249: a turn the SEAT starts is by definition at home here.
+    _turnHomeSid = null;
     final gateway = _gateway;
     if (gateway == null) {
       _fail('No bridge — open the terminal icon and set url + token.');
@@ -2075,6 +2104,7 @@ class VoiceAssistant extends ChangeNotifier {
     badgeLit: () => _harnessBackgrounded,
     hasError: () => _error.isNotEmpty,
     mergeContext: _mergeContext,
+    seatedSession: () => _sessionId,
     setStatus: _setStatus,
     setPhase: (ph) => _phase = ph,
     markSpeaking: () => _phase = AssistantPhase.speaking,

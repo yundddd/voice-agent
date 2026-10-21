@@ -80,6 +80,10 @@ final class BridgeTurnEnv {
     required this.badgeLit,
     required this.hasError,
     required this.mergeContext,
+
+    /// +249: the conversation the seat currently holds — the context
+    /// frame's owner check.
+    this.seatedSession,
     required this.setStatus,
     required this.setPhase,
     required this.markSpeaking,
@@ -117,6 +121,7 @@ final class BridgeTurnEnv {
   final int Function() generation, turnSeq;
   final bool Function() busy, badgeLit, hasError;
   final void Function(int tokens, int window) mergeContext;
+  final String? Function()? seatedSession;
   final void Function(Activity a) setStatus;
   final void Function(AssistantPhase p) setPhase;
 
@@ -475,7 +480,15 @@ class BridgeTurn {
         env.repaint();
       }
       env.log('bridge context ${ev.inputTokens}/${ev.contextWindow}');
-      env.mergeContext(ev.inputTokens, ev.contextWindow);
+      // +249: the bar belongs to the conversation it is seated on. A
+      // context frame from a backgrounded thread updates the METER
+      // (that turn's own ledger keeps its truth) but not the BAR of a
+      // different tab; sessionless frames (old bridges) merge on
+      // trust, exactly as before.
+      final seated = env.seatedSession?.call();
+      final barHome =
+          ev.ctxSession == null || seated == null || ev.ctxSession == seated;
+      if (barHome) env.mergeContext(ev.inputTokens, ev.contextWindow);
     } else if (ev.kind == 'tool') {
       await _onTool(ev);
     } else if (ev.isDone) {
