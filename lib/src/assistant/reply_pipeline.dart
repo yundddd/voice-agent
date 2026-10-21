@@ -251,10 +251,19 @@ class ReplyPipeline {
   /// and a naive `_chunkDone!` re-reads then null-threw the pump stone
   /// dead — which is how a survived bridge turn ended up streaming
   /// text-only forever.
+  /// Arm the single end-of-audio router. EVERY waiter — the streamed
+  /// pump, the one-shot preview, the debug replay — must hold this
+  /// subscription before it awaits its end: onNaturalEnd is a
+  /// broadcast stream, and an event with no listener is not queued,
+  /// it is gone. A preview started before the first streamed reply
+  /// used to hit exactly that: the audible end vanished, and the
+  /// spinner rode the 120 s timeout out of pure politeness.
+  void _armEnd() => _endSub ??= output.onNaturalEnd.listen((_) => _onEnd());
+
   Future<void> runPump({required bool Function() isStale}) async {
     var firstChunk = true;
     _pumpAlive = true;
-    _endSub ??= output.onNaturalEnd.listen((_) => _onEnd());
+    _armEnd();
     try {
       while (true) {
         while (_queue.isEmpty && !_streamDone) {
@@ -410,6 +419,7 @@ class ReplyPipeline {
     _playing = true; // treat it like a reply for stop/barge-in bookkeeping
     _startedAt = clock();
     gatePin(true);
+    _armEnd(); // the end event needs a listener BEFORE it can fire
     try {
       await output.play(audio, sampleRate, tag: 'voice_preview');
       await _previewDone!.future.timeout(timeout, onTimeout: () {});
@@ -441,6 +451,7 @@ class ReplyPipeline {
     _debugPlaying = true;
     stopPlayback(); // a live reply would fight the replay for the speaker
     final done = _debugDone = Completer<void>();
+    _armEnd(); // same law as the preview: listen before it can end
     try {
       await output.play(samples, rate, tag: tag);
       final guard = scheduler.after(timeout, () {
