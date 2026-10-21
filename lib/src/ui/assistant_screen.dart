@@ -32,7 +32,7 @@ class AssistantScreen extends StatefulWidget {
 }
 
 class _AssistantScreenState extends State<AssistantScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const _chipIcons = {
     '/model': Icons.auto_awesome, // pops the picker; never a prompt
     '/new': Icons.restart_alt, // same glyph as the settings-page reset
@@ -96,8 +96,25 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// entering thread appears already resting at its newest word.
   double _dragDx = 0; // the finger's 1:1 offset while it owns the stick
   bool _dragLive = false;
-  double _offsetTarget = 0; // THE painted value — one source, one axis
-  Duration _offsetDur = Duration.zero;
+
+  // +269 (Tim on the fast swipe: 'is there computation happening on
+  // every swipe? super fast, I notice weirdness'): the painted X is
+  // a VALUE NOTIFIER, not rebuild-state. The +264 shape rebuilt the
+  // ENTIRE screen — every bubble, every chip, the metrics strip —
+  // on every pointer event (setState), so a fast swipe starved its
+  // own frames (the tape's 140 ms ui spikes were partly this), and
+  // the leg animations were postFrame-scheduled rebuild deltas that
+  // a second, faster swipe could interleave: old legs stomping a
+  // new drag's offset, the entering-pin releasing mid-fling of the
+  // NEXT swap. Now the finger writes the notifier (one AnimatedBuilder
+  // repaints a lone Transform over a CACHED thread subtree — the
+  // screen's build never runs during a drag), and every leg is a
+  // _beginLeg under a GENERATION TOKEN: a new gesture retires the
+  // old token, so a stale leg can only ever die quietly, never steer.
+  final ValueNotifier<double> _paintX = ValueNotifier<double>(0);
+  late final AnimationController _leg; // the leg clock (one ticker)
+  Animation<double>? _legAnim; // the in-flight leg, if any
+  int _legGen = 0; // bumped by every _beginLeg / re-grab
   double _exitDir = 1; // committed exit side: +1 right (walked OLDER)
   bool _flipArmed = false; // awaiting the receipt beyond the edge
   Timer? _flipFuse; // a silent bridge behaves as a refusing one
@@ -107,12 +124,39 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _slideHome() {
     _flipFuse?.cancel();
     if (_dragLive) return; // the finger owns the stick; it decides
-    setState(() {
-      _flipArmed = false;
-      _dragDx = 0;
-      _offsetTarget = 0;
-      _offsetDur = const Duration(milliseconds: 240);
+    setState(() => _flipArmed = false);
+    _beginLeg(0, const Duration(milliseconds: 240));
+  }
+
+  /// Start (or replace) the painted slide: from WHEREVER it stands
+  /// now — finger position, mid-leg, off-screen edge — to [to], over
+  /// [d] (zero = land it this frame). The generation token dies with
+  /// the next begin or re-grab: a leg that loses its token stops
+  /// writing, mid-frame, without touching the value — which is what
+  /// makes a double-fast swipe behave like one gesture at a time.
+  void _beginLeg(double to, Duration d) {
+    _legGen++;
+    final gen = _legGen;
+    _leg.stop();
+    _legAnim = null;
+    if (d == Duration.zero) {
+      _paintX.value = to;
+      _dragDx = to;
+      return;
+    }
+    final anim = Tween<double>(
+      begin: _paintX.value,
+      end: to,
+    ).animate(CurvedAnimation(parent: _leg, curve: Curves.easeOutCubic));
+    anim.addListener(() {
+      if (gen != _legGen) return; // superseded: die quietly
+      _paintX.value = anim.value;
+      _dragDx = anim.value;
     });
+    _legAnim = anim;
+    _leg
+      ..duration = d
+      ..forward(from: 0);
   }
 
   /// Commit: keep sliding the way the finger was going. The receipt
@@ -123,9 +167,11 @@ class _AssistantScreenState extends State<AssistantScreen>
       _dragLive = false;
       _exitDir = index >= a.view.tabIndex ? -1 : 1;
       _flipArmed = true;
-      _offsetTarget = _exitDir * MediaQuery.sizeOf(context).width;
-      _offsetDur = const Duration(milliseconds: 160);
     });
+    _beginLeg(
+      _exitDir * MediaQuery.sizeOf(context).width,
+      const Duration(milliseconds: 160),
+    );
     _flipFuse?.cancel();
     // An away-network /seat; silence behaves as a refusal — the
     // thread glides home and the seam of the swap is simply never
@@ -142,13 +188,22 @@ class _AssistantScreenState extends State<AssistantScreen>
   ];
 
   void _onTabDragUpdate(DragUpdateDetails d) {
-    setState(() {
-      _dragLive = true;
-      _dragDx += d.delta.dx;
-      _offsetTarget = _dragDx; // re-grab mid-slide: the value simply
-      _offsetDur = Duration.zero; // answers to the finger again
-    });
-  }
+    if (!_dragLive) {
+      // Re-grab (a leg in flight, or an entering thread still off-
+      // screen): one rebuild to claim the stick, and the CURRENT
+      // painted value is the finger's starting point — no jump.
+      setState(() {
+        _dragLive = true;
+        _enteringPending = false; // the thumb cancels the reveal
+      });
+      _legGen++; // whatever leg was running is dead
+      _leg.stop();
+      _legAnim = null;
+      _dragDx = _paintX.value;
+    }
+    _dragDx += d.delta.dx;
+    _paintX.value = _dragDx; // the ONLY cost of a frame: one
+  } // notifier write, one Transform
 
   /// +264 (the field's second read of the new slide: 'it scrolls
   /// from top to bottom when I swipe'): the tail correction (+230)
@@ -170,17 +225,15 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// A stolen gesture (the vertical scroll claimed the pointer) is
   /// not a commit: the thread was never away from home.
   void _onTabDragCancel() {
-    setState(() {
-      _dragLive = false;
-      _dragDx = 0;
-      _offsetTarget = 0;
-      _offsetDur = Duration.zero;
-    });
+    setState(() => _dragLive = false);
+    _dragDx = 0;
+    _beginLeg(0, Duration.zero);
   }
 
   void _onTabSwipe(VoiceAssistant a, double vx) {
     final was = _dragDx;
-    setState(() => _dragLive = false);
+    _dragLive = false; // the leg (if any) carries the paint now —
+    // no rebuild owed: the notifier owns every pixel of this.
     // No separate fling threshold, no velocity law: past half a
     // screen of PARTED thread the neighbour is the answer the finger
     // gave; a hard flick counts as the same answer early (the
@@ -620,11 +673,8 @@ class _AssistantScreenState extends State<AssistantScreen>
         }
         _enteringPinned = ext;
         if (_enteringSettled >= 2 || _enteringWaits > 12) {
-          setState(() {
-            _enteringPending = false;
-            _offsetTarget = 0;
-            _offsetDur = const Duration(milliseconds: 240);
-          });
+          setState(() => _enteringPending = false);
+          _beginLeg(0, const Duration(milliseconds: 240));
         }
       } else if (!_userTouch && _stick) {
         final delta = pos.maxScrollExtent - pos.pixels;
@@ -786,6 +836,10 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void initState() {
     super.initState();
+    // +269: the leg clock — bounded 0..1 progress, duration set per
+    // leg, and its animation writes the paint notifier under a
+    // generation token (see _beginLeg).
+    _leg = AnimationController(vsync: this);
     WidgetsBinding.instance.addObserver(this);
     // +203: the frame-cost witness (see _logChaseCost).
     SchedulerBinding.instance
@@ -806,6 +860,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     _flipFuse?.cancel();
+    _leg.dispose();
+    _paintX.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _framesAlive = false; // +206: persistent callbacks are forever; disarm
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
@@ -882,15 +938,22 @@ class _AssistantScreenState extends State<AssistantScreen>
         _enteringPinned = -1;
         _enteringSettled = 0;
         _enteringWaits = 0;
-        _offsetTarget = _exitDir * MediaQuery.sizeOf(context).width;
-        _offsetDur = const Duration(milliseconds: 80);
+        // Finish whatever the exit leg has left of it (a receipt
+        // that beats the slide gets 60 ms to land at the edge), THEN
+        // hop to the far side — both through the leg, so a re-grab
+        // between the frames kills the sequence by token, not by
+        // luck of callback ordering.
+        _beginLeg(
+          _exitDir * MediaQuery.sizeOf(context).width,
+          const Duration(milliseconds: 60),
+        );
+        final gen = _legGen;
         SchedulerBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            setState(() {
-              _offsetTarget = -_exitDir * MediaQuery.sizeOf(context).width;
-              _offsetDur = Duration.zero;
-            });
-          }
+          if (!mounted || gen != _legGen) return; // superseded
+          _beginLeg(
+            -_exitDir * MediaQuery.sizeOf(context).width,
+            Duration.zero,
+          );
         });
       }
       // +266: the band rides the thread — and it rides the CACHE:
@@ -1113,41 +1176,56 @@ class _AssistantScreenState extends State<AssistantScreen>
                                 // absent, and eases home; the tab's
                                 // own tint says WHERE you are, not a
                                 // glow, not a tilt, not a crossfade.
-                                TweenAnimationBuilder<double>(
-                                  tween: Tween<double>(end: _offsetTarget),
-                                  duration: _offsetDur,
-                                  curve: Curves.easeOutCubic,
-                                  builder: (context, dx, _) => Transform.translate(
-                                    offset: Offset(dx, 0),
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: const BorderRadius.all(
-                                          Radius.circular(18),
-                                        ),
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: _sessionTint(v.tabIndex),
-                                        ),
+                                AnimatedBuilder(
+                                  animation: _paintX,
+                                  // +269 (Tim on the fast swipe: 'is
+                                  // there computation on every
+                                  // swipe?'): the thread subtree is
+                                  // the CACHED child — a drag frame
+                                  // rebuilds the Transform wrapper
+                                  // and NOTHING else (the old shape
+                                  // setState'd the whole screen per
+                                  // pointer event, so a fast swipe
+                                  // starved its own frames). Legs
+                                  // animate the same notifier under
+                                  // a generation token: a second
+                                  // swipe retires the first's
+                                  // callbacks instead of interleaving
+                                  // them — the 'weirdness' of two
+                                  // animations steering one pixel.
+                                  builder: (context, child) =>
+                                      Transform.translate(
+                                        offset: Offset(_paintX.value, 0),
+                                        child: child,
                                       ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            for (final e in v.chat)
-                                              if (e.fromUser ||
-                                                  e.blocks.isNotEmpty ||
-                                                  // A file bubble has no text
-                                                  // blocks — the slip IS the
-                                                  // bubble.
-                                                  e.isFile)
-                                                _bubbleFor(e, a, context),
-                                          ],
-                                        ),
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      borderRadius: const BorderRadius.all(
+                                        Radius.circular(18),
+                                      ),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: _sessionTint(v.tabIndex),
+                                      ),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          for (final e in v.chat)
+                                            if (e.fromUser ||
+                                                e.blocks.isNotEmpty ||
+                                                // A file bubble has no text
+                                                // blocks — the slip IS the
+                                                // bubble.
+                                                e.isFile)
+                                              _bubbleFor(e, a, context),
+                                        ],
                                       ),
                                     ),
                                   ),

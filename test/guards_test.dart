@@ -213,24 +213,56 @@ void main() {
     // source — layout needs the device, the shape of the machinery
     // does not.
     final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
-    test('one painted offset, one animation, one axis', () {
-      expect(ui, contains('Tween<double>(end: _offsetTarget)'));
+    test('one painted value, one listener, one axis (+269)', () {
+      // The +269 perf pass moved the painted X from rebuild-state to
+      // a VALUE NOTIFIER (the whole screen no longer rebuilds per
+      // pointer event — a fast swipe starved its own frames), and
+      // put every leg behind a GENERATION TOKEN (two quick swipes
+      // used to interleave their callbacks — old legs steering a new
+      // gesture's pixel). The law the +264 volley wrote is
+      // unchanged; only the machinery earning it is pinned now.
+      expect(ui, contains('final ValueNotifier<double> _paintX'));
+      expect(ui, contains('AnimatedBuilder('));
       expect(
-        RegExp(
-          r'AnimatedSwitcher|SpringSimulation|TweenAnimationBuilder',
-        ).allMatches(ui).where((m) => m.group(0) == 'AnimatedSwitcher').length,
+        ui,
+        isNot(contains('TweenAnimationBuilder')),
+        reason: "the rebuild-driven tween is retired — the notifier "
+            "does the same job at a fraction of a fast swipe's cost",
+      );
+      expect(
+        RegExp(r'AnimatedSwitcher|SpringSimulation')
+            .allMatches(ui)
+            .where((m) => m.group(0) == 'AnimatedSwitcher')
+            .length,
         0,
-        reason:
-            'the crossfade switcher is retired — it was the '
+        reason: 'the crossfade switcher is retired — it was the '
             'second act every tape blamed',
       );
     });
+    test('legs die by token, not by callback luck', () {
+      final leg = ui.substring(
+        ui.indexOf('void _beginLeg('),
+        ui.indexOf('void _beginLeg(') + 900,
+      );
+      expect(leg, contains('_legGen++'));
+      expect(leg, contains('gen != _legGen')); // the stale leg bails
+      // The hop's postFrame carries a token too: a second swipe
+      // retires the first hand-off's callback instead of letting it
+      // stomp the new gesture.
+      final hook = ui.substring(
+        ui.indexOf('+264 HAND-OFF'),
+        ui.indexOf('+264 HAND-OFF') + 2200,
+      );
+      expect(hook, contains('gen != _legGen'));
+    });
     test('the content swap hides off-screen, never mid-slide', () {
-      // The hand-off: finish the exit, hop at the off-screen edge
-      // (zero duration), ease home. The receipt can land whenever
-      // the network likes — there is nothing painted to stutter.
-      expect(ui, contains('_offsetDur = Duration.zero')); // the hop
-      expect(ui, contains('milliseconds: 80')); // the exit's last leg
+      // The hand-off: finish the exit (60 ms — from anywhere, the
+      // token decides), hop at the off-screen edge (a zero-duration
+      // leg), and let _followTick release the reveal only after the
+      // fresh thread has been pinned to its tail for two settled
+      // frames. There is nothing painted to stutter.
+      expect(ui, contains('Duration.zero')); // the hop
+      expect(ui, contains('milliseconds: 60')); // the exit's last leg
       expect(ui, contains('milliseconds: 240')); // the way home
       expect(ui, contains('_flipArmed = false'));
     });
