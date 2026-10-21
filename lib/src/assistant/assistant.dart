@@ -1012,15 +1012,31 @@ class VoiceAssistant extends ChangeNotifier {
   /// Null = free to move; a string is the reason, in words.
   String? _seatRest(Map<String, Object>? h, {bool backgroundable = false}) {
     if (h == null) return null; // unreachable: the verb's own error speaks
+    String? rest(String? why) {
+      // +247: every seat decision — free or refused — hits the journal
+      // with its inputs, so 'I still see the refusal' reads the exact
+      // clause that spoke instead of guessing which field lied.
+      _logDebug(
+        'seat rest: turnOpen=${h['turnOpen']} queued=${h['queued']} '
+        'missed=${h['missed']} harness=${h['harness']} '
+        'backgroundable=$backgroundable -> ${why ?? 'free to move'}',
+      );
+      return why;
+    }
+
     if (h['queued'] == true) {
-      return 'the harness is mid-turn — stop it before switching sessions';
+      return rest(
+        'the harness is mid-turn — stop it before switching sessions',
+      );
     }
     // +246: mid-turn no longer rests a switch when the destination
     // shares the harness — /seat backgrounds the live turn (the law
     // the app background already taught), so the move costs nothing
     // the switch-back cannot get back. A harness flip still rests.
     if (h['turnOpen'] == true && !backgroundable) {
-      return 'the harness is mid-turn — stop it before switching sessions';
+      return rest(
+        'the harness is mid-turn — stop it before switching sessions',
+      );
     }
     // +246: under the backgrounding law the backlog SURVIVES the move
     // (no reset ran), so unheard frames are not at risk and the swipe
@@ -1038,9 +1054,9 @@ class VoiceAssistant extends ChangeNotifier {
           firstProbe: Duration.zero,
         );
       }
-      return 'the bridge owes unheard messages — they land first';
+      return rest('the bridge owes unheard messages — they land first');
     }
-    return null;
+    return rest(null);
   }
 
   /// The first-launch / swipe-right creation...
