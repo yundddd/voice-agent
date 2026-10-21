@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/speech/titl_engine.dart';
+import 'package:voice_agent/src/speech/worker_backends.dart';
 
 void main() {
   final vocab = <String, int>{
@@ -40,6 +41,17 @@ void main() {
     test('unknown characters never become ids', () {
       final runs = TitlEngine.idsFromPhonemes('\u{2044}a\u{2044}b', vocab);
       expect(runs.single, [0, vocab['a'], vocab['b'], 0]);
+    });
+
+    test('warm swallows a broken pack; first speech stays the messenger', () {
+      // No lexicon, no model files, no native runtime in the host test:
+      // every step fails and every failure is contained — buildTts's
+      // await must not sink the worker over a pack it can re-fetch.
+      TitlTts(
+        models: const ['nope.onnx'],
+        vocabs: const ['nope.json'],
+        lexiconPaths: '',
+      ).warm(0);
     });
 
     test('overflow splits at word boundaries inside T<=512', () {

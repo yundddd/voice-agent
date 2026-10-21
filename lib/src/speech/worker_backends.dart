@@ -125,11 +125,21 @@ class RealBackends extends WorkerBackends {
   @override
   Future<TtsBackend> buildTts(TtsSpec s) async {
     if (s.engine == 'titl') {
-      return TitlTts(
+      final t = TitlTts(
         models: s.titlModels.split(','),
         vocabs: s.titlVocabs.split(','),
         lexiconPaths: s.lexiconPaths,
       );
+      // First speech used to pay for everything lazily — the ~300 ms
+      // dictionary parse, the ORT session build (graph optimization
+      // over the int8 graph), and the first Run's kernel + arena
+      // setup — so the voice picked a second ago went silent for a
+      // beat. warm() moves all three into THIS await, which the
+      // boot/useTts busy state already covers; a failure here stays
+      // non-fatal (the first utterance repeats the attempt and gets
+      // to report it loudly, as before).
+      t.warm(s.sid);
+      return t;
     }
     return SherpaTts(
       sherpa_onnx.OfflineTts(
@@ -278,6 +288,25 @@ class TitlTts implements TtsBackend {
 
   @override
   int get numSpeakers => models.length;
+
+  /// Pre-pay the first-utterance costs: parse the dictionary, build
+  /// the picked sid's ORT session, and run one padded no-op sentence
+  /// so the kernels and arenas wake before any listener is waiting.
+  /// Never throws — warm is a courtesy; the first real synth is the
+  /// messenger for a broken pack.
+  void warm(int sid) {
+    try {
+      _pronouncer();
+      final at = sid % models.length;
+      final engine = _engines.putIfAbsent(
+        at,
+        () => TitlEngine.load(modelPath: models[at], vocabPath: vocabs[at]),
+      );
+      engine.synth('.'); // '.' is a vocab stop: one id, one tiny run
+    } catch (_) {
+      // Loud at first speech, not at warm.
+    }
+  }
 
   /// The lexicon is parsed on first use (one dictionary load,
   /// mirroring the graphs' lazy one). A missing pack is a loud error,
