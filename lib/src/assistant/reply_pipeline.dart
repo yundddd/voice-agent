@@ -153,6 +153,7 @@ class ReplyPipeline {
   /// A new streamed reply begins: drop any leftovers, reopen the pump's
   /// attention.
   void startStream() {
+    _noteQueueDeath('a new reply begins');
     _queue.clear();
     _streamDone = false;
     _playedRecently = false; // a new utterance re-arms the first-chunk
@@ -170,8 +171,24 @@ class ReplyPipeline {
   /// and close the seam (the abandoned loop can't clobber a successor's
   /// fresh [startStream] set after this call).
   void clearAndClose() {
+    _noteQueueDeath('turn abandoned (clearAndClose)');
     _queue.clear();
     closeStream();
+  }
+
+  /// +288 (Tim, 'your previous response is missing the last segment
+  /// going through TTS'): the tape of a dropped tail must NAME its
+  /// killer. A chunk dying unheard is permitted — the barge-in spec
+  /// says the press owns the air — but the +234 count line belongs to
+  /// the press path only; the other doors that empty the queue (a new
+  /// stream, an abandoned turn, the pump's stale guard, a bare stop)
+  /// each now speak at the cut itself.
+  void _noteQueueDeath(String cause) {
+    if (_queue.isNotEmpty) {
+      _log?.call(
+        'reply tail dropped: ${_queue.length} unplayed chunk(s) — $cause',
+      );
+    }
   }
 
   void enqueue(
@@ -293,6 +310,7 @@ class ReplyPipeline {
           await (_wake ??= Completer<void>()).future;
         }
         if (isStale()) {
+          _noteQueueDeath('pump superseded between chunks');
           _queue.clear();
           return;
         }
@@ -423,6 +441,8 @@ class ReplyPipeline {
     _playing = false;
     _playedRecently = false;
     gatePin(false);
+    _noteQueueDeath('stopPlayback'); // +288: the press path counts its
+    // drop at the decision (+234); this names it at the cut.
     _queue.clear(); // streamed reply: drop everything not yet audible
     final cd = _chunkDone;
     _chunkDone = null;
