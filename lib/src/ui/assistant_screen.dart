@@ -944,7 +944,17 @@ class _AssistantScreenState extends State<AssistantScreen>
                                   height: _statusBand(context),
                                   child: Center(
                                     child: Text(
-                                      v.status,
+                                      // +259 (Tim's read): the band at
+                                      // the very top has no business
+                                      // naming a tool call — the working
+                                      // row already says that line,
+                                      // beside its meter and draft. One
+                                      // statement, one place: while the
+                                      // row is lit on a step, the band
+                                      // speaks the ear's own line.
+                                      v.showWorkingRow && v.activity is StepLine
+                                          ? hint
+                                          : v.status,
                                       textAlign: TextAlign.center,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,

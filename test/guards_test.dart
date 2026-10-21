@@ -193,12 +193,20 @@ void main() {
       // forward a short window — the two-line promise must be INSIDE
       // the banded Text itself, not merely somewhere in the file. (The
       // ellipsis is the promise StepLine always made of "the widget".)
+      // +259 widened the window and adds its own clause: the band may
+      // still render v.status, but a tool command may not squat there
+      // while the working row is lit and naming the same step.
       final at = ui.indexOf('height: _statusBand(context)');
       expect(at, greaterThan(-1));
-      final site = ui.substring(at, at + 600);
+      final site = ui.substring(at, at + 1200);
       expect(site, contains('v.status'));
       expect(site, contains('maxLines: 2'));
       expect(site, contains('TextOverflow.ellipsis'));
+      expect(
+        site,
+        contains('v.showWorkingRow && v.activity is StepLine'),
+        reason: '+259: one statement of a tool call, in the working row',
+      );
     });
     test('the screen renders the status in exactly one place', () {
       // The old bare wrapping Text(v.status) must not return beside

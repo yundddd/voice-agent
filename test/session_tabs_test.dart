@@ -482,9 +482,152 @@ void main() {
       );
     });
 
+    test(
+      '+259: a command that works in X never paints the band on Y',
+      () async {
+        // The leak the field tape shows: while the tab you LEFT churned a
+        // build, its 'Bash …' rode the top line of the tab you swiped
+        // onto. The band now has an owner — the same law the meter (+249)
+        // and the busy shimmer (+256) already obey — and the away work
+        // keeps feeding only its own ledgers.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x');
+        await settle();
+        await a.createSession(harness: 'opencode', dir: '/proj-y');
+        unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
+        await settle();
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+        await a.setBridgeDir('/proj-y');
+        await settle();
+        // Seat X and leave a turn WORKING there, mid-command.
+        expect(await a.switchSession(0), isNull);
+        unawaited(a.runQuickCommand('build in X', bubble: 'build in X'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'context',
+            inputTokens: 10,
+            contextWindow: 20,
+            ctxSession: 'ses-X',
+          ),
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'flutter test',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.status,
+          'Bash flutter test…',
+          reason: 'at home the band names the command, as it always did',
+        );
+        harness.healthState = {...harness.healthState!, 'turnOpen': true};
+        // SWIPE to Y mid-turn: the turn backgrounds (+246) — and the
+        // borrowed command must be gone at the landing, not merely
+        // unpainted until the next frame.
+        expect(await a.switchSession(1), isNull);
+        expect(
+          a.view.status,
+          isNot(contains('Bash')),
+          reason: 'the destination opens on ITS OWN rest line',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('band reset')),
+          isTrue,
+          reason: 'the sweep is named on the tape, not just felt',
+        );
+        // X keeps chewing. Its NEXT command must stay out of earshot —
+        // the leak's live shape, one frame after the landing.
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'dart analyze',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.status,
+          isNot(contains('dart')),
+          reason: 'the away thread works silently, like its says already do',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('band kept')),
+          isTrue,
+          reason: 'and the refusal to paint is itself auditable',
+        );
+        // COMING HOME: the seated conversation gets its line back.
+        expect(await a.switchSession(0), isNull);
+        expect(
+          a.view.turnHomeHere,
+          isTrue,
+          reason: 'the marker still points at X — the band changed nothing',
+        );
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'git log',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.status,
+          'Bash git log…',
+          reason: 'the conversation on screen always owns the band',
+        );
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+      },
+    );
+
+    test(
+      "+259: a creation that WOULD inherit a command refuses instead",
+      () async {
+        // The other half of the field report: opening a new session while
+        // the old one chews must not print the old work line on the new
+        // tab. Creation RESTS the seat (+248), so mid-command it refuses
+        // with words — the inheritance shape never lands.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        unawaited(a.runQuickCommand('build in X', bubble: 'build in X'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'flutter analyze',
+          ),
+        );
+        await settle();
+        expect(a.view.status, 'Bash flutter analyze…');
+        final err = await a.createSession(harness: 'opencode', dir: '/proj-y');
+        expect(
+          err,
+          contains('mid-turn'),
+          reason: 'the refusal IS the guard: no fresh tab wears it',
+        );
+        expect(a.view.status, 'Bash flutter analyze…');
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        await settle();
+      },
+    );
+
     test('+253: swipe away mid-turn — the answer lands in its thread '
-        'mute; after the return, the next paragraph gets a voice',
-    () async {
+        'mute; after the return, the next paragraph gets a voice', () async {
       // The full field arc over the real assistant: a turn working in
       // X speaks while X is on screen; the swipe to Y files X's answer
       // silently (the new tab keeps its peace); swiping back is the
@@ -546,10 +689,7 @@ void main() {
       await settle();
       expect(
         engine.synthesized,
-        containsAll([
-          'heard before the swipe.',
-          'back home, speaking.',
-        ]),
+        containsAll(['heard before the swipe.', 'back home, speaking.']),
         reason: 'live work at home keeps its voice',
       );
       expect(
@@ -636,9 +776,8 @@ void main() {
       // unnamed seat no longer counts as home by default. Drop the
       // seat's name from the health line (a reset conversation is
       // exactly this shape): the away marker must still gate.
-      harness.healthState = Map.of({
-        ...harness.healthState!,
-      })..remove('sessionId');
+      harness.healthState = Map.of({...harness.healthState!})
+        ..remove('sessionId');
       await a.setBridgeModel('default'); // any awaited refresh path
       await settle();
       expect(a.view.bridgeBusy, isTrue, reason: 'the foreign turn is open');
@@ -777,6 +916,73 @@ void main() {
       );
     });
 
+    test('+259: the cut is the landing, not the capture — a speak tail '
+        'with fallen flags dies at the swipe too', () async {
+      // Tim's round-four tape: 'switching should kill the TTS
+      // immediately — currently it is just speaking in the background.'
+      // The +257 cut hung on the live-work capture inside
+      // switchSession; the shape that walked past it is the speak tail
+      // that OUTLIVES the wire — no busy flags, no badge, just audio.
+      // The cut now rides every landing (the same door the watermark
+      // and the band sweep use).
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('last word in X', bubble: 'last word in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'still on air', mid: 41),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50)); // the pump delivers
+      await settle();
+      expect(out.playing, isTrue, reason: 'audio on air');
+      // The turn CLOSES — every flag falls — while the chunk plays on.
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      expect(
+        a.view.bridgeBusy,
+        isFalse,
+        reason: 'no live-work capture for the old cut to lean on',
+      );
+      expect(
+        out.playing,
+        isTrue,
+        reason: 'the tail outlives the wire — the exact field shape',
+      );
+      final stopsBefore = out.stopCount;
+      expect(await a.switchSession(1), isNull);
+      await settle();
+      expect(
+        out.stopCount,
+        greaterThan(stopsBefore),
+        reason: 'the tail is cut too: no voice follows you between tabs',
+      );
+      expect(out.playing, isFalse);
+      expect(
+        a.debugLog.any((l) => l.contains('ear let go')),
+        isTrue,
+        reason: 'and the drop stays traceable (the barge-in law)',
+      );
+    });
+
     test('+257: the Stop chip cuts the conversation it is listening '
         'to, by name', () async {
       // The router's side of the law: every conversation owns a floor,
@@ -812,44 +1018,49 @@ void main() {
       harness.finishView();
     });
 
-    test('+256: the unnamed destination is a reset — a mid-turn swipe '
-        'onto a never-spoken tab REFUSES with words, not a silent kill',
-    () async {
-      // The xray tape's opening act: the first swipe reset the
-      // bridge's conversation under a 'free to move' verdict and
-      // SIGTERM'd the answering turn. A tab that never spoke has no
-      // id; seating it sends fresh:true; fresh ALWAYS resets; so the
-      // rest law reads the reset law. Idle moves stay free — the
-      // refusal is exactly the shape +248 already wrote for fresh.
-      await a.createSession(harness: 'opencode', dir: '/proj-x');
-      await a.createSession(harness: 'opencode', dir: '/proj-z'); // never speaks
-      await a.switchSession(0); // idle: seating X's fresh start is allowed
-      unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
-      await settle();
-      harness.healthState = {
-        ...harness.healthState!,
-        'sessionId': 'ses-X',
-        'turnOpen': true,
-      };
-      await a.setBridgeDir('/proj-x'); // name X while its turn streams
-      await settle();
-      final before = harness.seatCalls.length;
-      expect(
-        await a.switchSession(1),
-        'the harness is mid-turn — stop it before switching sessions',
-        reason: 'an unnamed destination resets; resets rest mid-turn',
-      );
-      expect(harness.seatCalls.length, before, reason: 'no wire verb fired');
-      expect(a.view.tabIndex, 0, reason: 'stayed put, honestly');
-      // The turn closes; the same move is now free (resetting nothing).
-      harness.emit(BridgeEvent.forTest('done'));
-      harness.finishView();
-      harness.healthState = Map.of({...harness.healthState!})
-        ..remove('turnOpen'); // the real bridge closes its flag with the turn
-      await settle();
-      expect(await a.switchSession(1), isNull);
-      expect(a.view.tabIndex, 1);
-    });
+    test(
+      '+256: the unnamed destination is a reset — a mid-turn swipe '
+      'onto a never-spoken tab REFUSES with words, not a silent kill',
+      () async {
+        // The xray tape's opening act: the first swipe reset the
+        // bridge's conversation under a 'free to move' verdict and
+        // SIGTERM'd the answering turn. A tab that never spoke has no
+        // id; seating it sends fresh:true; fresh ALWAYS resets; so the
+        // rest law reads the reset law. Idle moves stay free — the
+        // refusal is exactly the shape +248 already wrote for fresh.
+        await a.createSession(harness: 'opencode', dir: '/proj-x');
+        await a.createSession(
+          harness: 'opencode',
+          dir: '/proj-z',
+        ); // never speaks
+        await a.switchSession(0); // idle: seating X's fresh start is allowed
+        unawaited(a.runQuickCommand('work in X', bubble: 'work in X'));
+        await settle();
+        harness.healthState = {
+          ...harness.healthState!,
+          'sessionId': 'ses-X',
+          'turnOpen': true,
+        };
+        await a.setBridgeDir('/proj-x'); // name X while its turn streams
+        await settle();
+        final before = harness.seatCalls.length;
+        expect(
+          await a.switchSession(1),
+          'the harness is mid-turn — stop it before switching sessions',
+          reason: 'an unnamed destination resets; resets rest mid-turn',
+        );
+        expect(harness.seatCalls.length, before, reason: 'no wire verb fired');
+        expect(a.view.tabIndex, 0, reason: 'stayed put, honestly');
+        // The turn closes; the same move is now free (resetting nothing).
+        harness.emit(BridgeEvent.forTest('done'));
+        harness.finishView();
+        harness.healthState = Map.of({...harness.healthState!})
+          ..remove('turnOpen'); // the real bridge closes its flag with the turn
+        await settle();
+        expect(await a.switchSession(1), isNull);
+        expect(a.view.tabIndex, 1);
+      },
+    );
 
     test(
       'unheard messages rest the seat — a tab verb may not eat the backlog',

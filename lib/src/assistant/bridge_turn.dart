@@ -590,8 +590,7 @@ class BridgeTurn {
     final viewHome =
         _viewSid == null || seatedNow == null || _viewSid == seatedNow;
     final focusAt = env.focusAtMs();
-    if (!viewHome ||
-        (focusAt != 0 && ev.wireMs != 0 && ev.wireMs < focusAt)) {
+    if (!viewHome || (focusAt != 0 && ev.wireMs != 0 && ev.wireMs < focusAt)) {
       chat.addBlock(turnBubble, sayText);
       env.log(
         '${viewHome ? 'pre-focus backlog' : 'unfocused conversation'}:'
@@ -751,7 +750,25 @@ class BridgeTurn {
         ? QueuedVerdict(ev.detail)
         : StepLine(ev.toolName, ev.detail);
     final stepLine = act.text(mode: env.mode());
-    env.setStatus(act);
+    // +259: the band belongs to the seated conversation, like the bar
+    // (+249) and the busy shimmer (+256). A backgrounded thread's tool
+    // frame keeps its own ledger current (noteToolStep below), its own
+    // ticker, its own journal — but the command it is chewing must not
+    // paint the tab you are watching (the field shape: work backgrounded
+    // in A, swipe to B — A's 'Bash …' squatting on B's top band). The
+    // view's identity, learned from its context frames, decides; an
+    // unnamed view (old bridge, fresh birth) merges on trust, as ever.
+    final seatedForBand = env.seatedSession?.call();
+    final bandHome =
+        _viewSid == null || seatedForBand == null || _viewSid == seatedForBand;
+    if (bandHome) {
+      env.setStatus(act);
+    } else {
+      env.log(
+        'unfocused conversation: band kept, $stepLine not painted'
+        '${transport.wireTag(ev)}',
+      );
+    }
     if (!queued) {
       // The newest REAL step: what the bottom line names if this turn
       // leaves the ear now. Steps landing behind a queue pin — or

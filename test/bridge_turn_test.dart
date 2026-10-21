@@ -382,11 +382,9 @@ void main() {
       await r;
       out.complete();
       await settle();
-      expect(
-        engine.synthesized,
-        ['new since you landed.'],
-        reason: 'the backlog you swiped onto never interrupts the welcome',
-      );
+      expect(engine.synthesized, [
+        'new since you landed.',
+      ], reason: 'the backlog you swiped onto never interrupts the welcome');
       expect(bubble.blocks, [
         'owed from before the swipe.',
         'new since you landed.',
@@ -482,11 +480,84 @@ void main() {
         isTrue,
         reason: 'the ctx frame named the conversation; the gate read it',
       );
-      expect(
-        probe.workHomed,
-        ['ses-newborn'],
-        reason: '+257: the done of the named conversation retires its marker',
+      expect(probe.workHomed, [
+        'ses-newborn',
+      ], reason: '+257: the done of the named conversation retires its marker');
+    });
+
+    test("+259: a backgrounded thread's tool frames keep the band of "
+        'the tab on screen — ledger current, band silent', () async {
+      // The band leak Tim's tape caught: work backgrounded in X, eyes
+      // on Y — X's 'Bash …' must not squat on Y's top line. The step
+      // still feeds every ledger it fed before (the backgrounded row's
+      // label, the journal); only the paint is gated — the same owner
+      // law as the meter (+249) and the shimmer (+256).
+      probe.seatedNow = 'ses-Y'; // watching Y; this view is away work in X
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 10,
+          contextWindow: 20,
+          ctxSession: 'ses-X',
+        ),
       );
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'make build',
+        ),
+      );
+      await settle();
+      expect(
+        probe.statuses.whereType<StepLine>(),
+        isEmpty,
+        reason: "the away command must not paint the watching tab's band",
+      );
+      expect(
+        probe.logs.any((l) => l.contains('unfocused conversation: band kept')),
+        isTrue,
+        reason: 'the silence has a name on the tape, like the mute path',
+      );
+      expect(
+        turn.lastToolStep,
+        'Bash make build…',
+        reason: 'the backgrounded row still knows exactly what works',
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
+    test('+259: unstamped views paint the band on trust, as ever', () async {
+      // An old bridge that cannot name sessions: no subject for the
+      // gate, so the single-thread behaviour stands untouched.
+      probe.seatedNow = 'ses-Y';
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Read',
+          detail: 'a/b/c.dart',
+        ),
+      );
+      await settle();
+      expect(
+        probe.statuses.whereType<StepLine>(),
+        hasLength(1),
+        reason: 'nameless frames merge on trust (+249 clause, kept)',
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
     });
 
     test('+163: a steered pickup makes the turn heard and promises no '
@@ -874,24 +945,39 @@ void main() {
       await r;
       await settle();
       expect(probe.errored, isTrue);
-      expect(probe.errorWhy, isNull,
-          reason: 'an old bridge sends the flag alone — no reason, no lie');
-      expect(probe.logs.any((l) => l.contains('done clean')), isTrue,
-          reason: 'flag-only still journals as the clean-done shape it is');
+      expect(
+        probe.errorWhy,
+        isNull,
+        reason: 'an old bridge sends the flag alone — no reason, no lie',
+      );
+      expect(
+        probe.logs.any((l) => l.contains('done clean')),
+        isTrue,
+        reason: 'flag-only still journals as the clean-done shape it is',
+      );
     });
 
     test('+219: a REASONED error-done travels the wire into the status '
         'line and the journal', () async {
       mkTurn();
       final r = turnLoop.run(wire.stream);
-      wire.add(BridgeEvent.forTest('done',
-          isError: true, text: 'Access to model denied.'));
+      wire.add(
+        BridgeEvent.forTest(
+          'done',
+          isError: true,
+          text: 'Access to model denied.',
+        ),
+      );
       await r;
       await settle();
       expect(probe.errored, isTrue);
       expect(probe.errorWhy, 'Access to model denied.');
-      expect(probe.logs.any((l) =>
-          l.contains('done error: Access to model denied.')), isTrue);
+      expect(
+        probe.logs.any(
+          (l) => l.contains('done error: Access to model denied.'),
+        ),
+        isTrue,
+      );
     });
   });
 

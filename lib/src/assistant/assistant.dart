@@ -1253,21 +1253,14 @@ class VoiceAssistant extends ChangeNotifier {
         'ticker=${_ticker.isOn} owner=${_turn.workOwner ?? '-'} '
         '-> marker=${_turnHomeSid ?? '-'} seat=${_sessionId ?? 'unnamed'}',
       );
-      // +257 (Tim's law, round three): LEAVING IS DROPPING. The
-      // barge-in doctrine — 'for barge in just drop' — is the tab
-      // switch's too: every word still queued for the conversation
+      // +257 (Tim's law, round three): LEAVING IS DROPPING — the
+      // speaker's cut and the named drop now ride EVERY landing (see
+      // _noteFocusMoved; +259 moved it out of this branch, where a
+      // speak tail with fallen flags slipped past it and kept talking
+      // on the new tab). Every word still queued for the conversation
       // being left dies unheard (its mid was TAKEN at the take, so
       // the return's mail fetch files it silently and never re-
-      // speaks it), and the speaker falls silent at once. An
-      // in-audio cut with no trace is the one thing the barge-in
-      // spec forbids, so the drop is named.
-      if (_reply.playing || _reply.queuedCount > 0) {
-        _logDebug(
-          'switch: ear let go — ${_reply.queuedCount} queued '
-          'block(s) dropped unheard',
-        );
-        _reply.stopPlayback();
-      }
+      // speaks it).
       // The bar belongs to the conversation, like the row: blank it
       // now; /health's owner gate keeps it honest until the seated
       // conversation's own turn names a size (/mergeContext ignores
@@ -1301,8 +1294,45 @@ class VoiceAssistant extends ChangeNotifier {
   /// transport's calibrated skew makes the comparison honest). A say
   /// stamped BEFORE it is backlog: filed, acked, visible, mute (see
   /// SessionChannel.focusAtMs and BridgeTurn._onSay).
-  void _noteFocusMoved() =>
-      _chan.focusAtMs = _clock().millisecondsSinceEpoch - _transport.skewMs;
+  void _noteFocusMoved() {
+    _chan.focusAtMs = _clock().millisecondsSinceEpoch - _transport.skewMs;
+    // +259 (Tim's field round): LEAVING IS DROPPING — for EVERY mouth,
+    // not only the mouth with lit busy flags. +257 hung the cut on the
+    // live-work capture, and the tape caught the half that walked
+    // past it: the speak tail of a turn whose flags had already fallen
+    // kept talking over the new tab ('it's just speaking in the
+    // background'). The landing itself is now the cut — same doctrine
+    // as the press's 'for barge in just drop', and just as traceable:
+    // an in-audio cut with no journal line is the one thing the
+    // barge-in spec forbids.
+    if (_reply.playing || _reply.queuedCount > 0) {
+      _logDebug(
+        'switch: ear let go — ${_reply.queuedCount} queued '
+        'block(s) dropped unheard',
+      );
+      _reply.stopPlayback();
+    }
+    // +259: a landing also RE-STAMPS the band. The say path has had its
+    // watermark since +254; the top line was the leak the tape caught —
+    // a NEW session opened the previous conversation's 'Bash …' still
+    // printed there, because the band is global and nobody swept it.
+    // The destination's at-rest line goes up now; its own live stream
+    // repaints a work line the moment a frame lands (and the working
+    // row never needed the band to say work — the +171 belt dresses a
+    // lit box in work words on its own).
+    if (_activity is StepLine ||
+        _activity is TurnWaiting ||
+        _activity is QueuedVerdict) {
+      _logDebug(
+        "switch: band reset — the seat's at-rest line, not "
+        "'${_activity.text(mode: _mode)}' borrowed from the tab left",
+      );
+      _activity = _phase == AssistantPhase.listening
+          ? const ListeningHint()
+          : const IdleHint();
+      notifyListeners();
+    }
+  }
 
   /// +230: ✕ on the pill — FORGET A TAB. The tab's bubbles leave with
   /// it (the same replace law as /new: a deleted thread whose store
@@ -2288,8 +2318,10 @@ class VoiceAssistant extends ChangeNotifier {
     noteWorkHome: (sid) {
       if (_turnHomeSid == sid) {
         _turnHomeSid = null;
-        _logDebug('work home: done — marker retired, every tab its '
-            'own face again');
+        _logDebug(
+          'work home: done — marker retired, every tab its '
+          'own face again',
+        );
       }
     },
     turnOpenOnWire: () async {
@@ -2529,9 +2561,7 @@ class VoiceAssistant extends ChangeNotifier {
         // way.
         // +257: the out-of-earshot debts have an owner too — cut the
         // conversation that owes them, not whoever is seated.
-        unawaited(
-          _gateway?.stop(sid: _turn.workOwner ?? _sessionId),
-        );
+        unawaited(_gateway?.stop(sid: _turn.workOwner ?? _sessionId));
         _reply.stopPlayback();
         if (owed) _idleReady();
       }
