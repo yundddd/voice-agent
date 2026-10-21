@@ -616,6 +616,102 @@ void main() {
       },
     );
 
+    test('+270: the return SPEAKS — a switch cut kills the mouth, not '
+        'the turn', () async {
+      // The field signature of this round, in Tim's words: 'the cutoff
+      // is working — it stops immediately. But when I swipe back, new
+      // messages don\'t come through at all. Just completely silent.'
+      // The tape agreed: after the return, every say passed the gates,
+      // synthesised, reached the queue — and died there unheard for
+      // the rest of the turn (119 s of it): the cut retired the pump
+      // and NOTHING revived it. The +254 arc\'s proof of \"speaks
+      // after the return\" checked engine.synthesized — a mouth that
+      // never opened can still mouth words. This walk counts the
+      // PLAYER.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('one in Y', bubble: 'one in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('talk in X', bubble: 'talk in X'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 10,
+          contextWindow: 20,
+          ctxSession: 'ses-X',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'on air when you go.', mid: 61),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50)); // the pump delivers
+      await settle();
+      final playedBefore = out.played.length;
+      expect(
+        playedBefore,
+        greaterThan(0),
+        reason: 'the paragraph reached the player',
+      );
+      expect(out.playing, isTrue, reason: 'audio ON AIR at the swipe');
+      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      expect(await a.switchSession(1), isNull);
+      await settle();
+      expect(
+        out.playing,
+        isFalse,
+        reason: 'the cut is instant — the half that already works',
+      );
+      // Away, the thread keeps answering: the identity gate files it,
+      // and the watched tab's player stays cold.
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'away, filed mute.', mid: 62),
+      );
+      await settle();
+      expect(
+        out.played.length,
+        playedBefore,
+        reason: "someone else's answer does not speak on this tab",
+      );
+      // COME HOME — and the NEXT paragraph must be HEARD, not merely
+      // filed: the revival law (ReplyPipeline.enqueue respawns the
+      // cut pump while the stream lives).
+      expect(await a.switchSession(0), isNull);
+      harness.emit(
+        const BridgeEvent.forTest('say', text: 'home, and audible.', mid: 63),
+      );
+      await settle();
+      time.advance(const Duration(milliseconds: 50));
+      await settle();
+      expect(
+        out.played.length,
+        greaterThan(playedBefore),
+        reason:
+            'the queue found a reader again — this is AUDIO, not '
+            'synthesis: a mouth that never opened can still mouth words',
+      );
+      expect(out.playing, isTrue);
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+    });
+
     test(
       "+259: a creation that WOULD inherit a command refuses instead",
       () async {

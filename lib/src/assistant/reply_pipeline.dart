@@ -97,6 +97,7 @@ class ReplyPipeline {
   StreamSubscription<void>? _endSub;
   bool _playing = false;
   bool _pumpAlive = false;
+  bool Function()? _pumpIsStale; // the live pump's producer test (+270)
   DateTime _startedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // ── Debug replay state (see [replayDebug]) ──
@@ -180,6 +181,23 @@ class ReplyPipeline {
   }) {
     _queue.add((chunk, sampleRate, onStarted));
     _wakeNow();
+    // +270 (Tim's tape: return to a cut turn is 'completely silent'):
+    // a pump KILLED mid-stream by stopPlayback — the switch landing
+    // cut, a hide cut — died with the queue cleared, and every chunk
+    // the STILL-LIVE turn synthesised after it went into a queue with
+    // no reader: text arriving, voice never, for as long as the turn
+    // ran (the tape: 119 s unheard after the return). The barge-in
+    // case genuinely wants the pump gone (the turn itself is being
+    // abandoned, and clearAndClose closes the stream first — the
+    // guard below sees it). A SURVIVING producer does not: if the
+    // stream is still open and the pump's producer is still current,
+    // the next chunk respawns the pump. The rule lives HERE, at the
+    // one enqueue door every producer passes, precisely so no speak
+    // call site has to remember to revive anyone.
+    final stale = _pumpIsStale;
+    if (!_pumpAlive && !_streamDone && stale != null && !stale()) {
+      unawaited(runPump(isStale: stale));
+    }
   }
 
   /// Speak one answer block end-to-end: synth streamed into the play
@@ -263,6 +281,11 @@ class ReplyPipeline {
   Future<void> runPump({required bool Function() isStale}) async {
     var firstChunk = true;
     _pumpAlive = true;
+    // +269: remember the staleness rule of the CURRENT pump so an
+    // enqueue can respawn with the SAME producer identity (a respawn
+    // under a newer generation's rule would play an abandoned turn's
+    // leftovers back to us).
+    _pumpIsStale = isStale;
     _armEnd();
     try {
       while (true) {
@@ -386,7 +409,17 @@ class ReplyPipeline {
   /// current chunk, the preview waiter. Stop, not natural end: release
   /// any preview waiter right away.
   void stopPlayback() {
-    if (!_playing) return;
+    // +270 (Tim's field: 'when I swipe back it is just completely
+    // silent'): the early return on !_playing used to skip the FLUSH
+    // too — a cut landing between chunks (audio done, the next block
+    // queued, nothing audible this instant) stopped nothing and left
+    // the whole backlog alive to speak on the tab you switched TO
+    // (a drop whose name was a lie), while the pump — returning on
+    // the !_playing seam check below — took the queue with it and
+    // left the surviving turn's EVERY later paragraph synthesising
+    // into a readerless queue: silent forever, however many times
+    // you came back. Flush is the point; hearing audio is optional.
+    if (!_playing && _queue.isEmpty) return; // nothing audible, nothing queued
     _playing = false;
     _playedRecently = false;
     gatePin(false);

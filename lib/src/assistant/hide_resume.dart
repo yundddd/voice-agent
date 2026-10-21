@@ -72,6 +72,14 @@ final class HideResume {
   /// debt to the old one.
   void buryDropMark() => _drop = null;
 
+  /// +270 (Tim's switch-cut round): a TAB SWITCH cuts the mouth of a
+  /// turn that survives it — audio dies, the stream lives. Same
+  /// ledger as the hide cut: the paragraph that was on air is marked,
+  /// its synth tail dies chunk-by-chunk on the shouldDrop gate (or
+  /// the flush already took it), and no path replays it mid-sentence
+  /// when the pump respawns on the next paragraph.
+  void markAudibleCut() => _drop = _lastReply;
+
   /// A say landed while hidden: logged text-only everywhere, and the
   /// MOST RECENT one earns the "speak it when you're back" promise
   /// (the chat log already shows all of them — one voice, the answer).

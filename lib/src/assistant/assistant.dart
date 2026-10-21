@@ -1310,6 +1310,13 @@ class VoiceAssistant extends ChangeNotifier {
         'switch: ear let go — ${_reply.queuedCount} queued '
         'block(s) dropped unheard',
       );
+      // +270: the paragraph actually on air joins the drop ledger
+      // (the hide cut's own door) — its synth tail may not resurrect
+      // as a mid-sentence resume when the respawned pump finds the
+      // NEXT paragraph; and the flush now happens even landing
+      // between chunks, which is where the old early return hid the
+      // readerless queue that made the return 'completely silent'.
+      _hide.markAudibleCut();
       _reply.stopPlayback();
     }
   }
