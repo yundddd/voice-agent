@@ -316,7 +316,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
             IconButton(
               tooltip: 'Preview this voice',
               onPressed: a.voiceBusy ? null : a.previewVoice,
-              icon: const Icon(Icons.headphones),
+              // +240: the press answers itself with a spin — for the
+              // seconds the preview synthesises and plays, this
+              // button (and nothing else on the page) says so.
+              icon: a.voiceBusy ? _spin(scheme) : const Icon(Icons.headphones),
             ),
           if (installed && !active)
             IconButton(
@@ -585,7 +588,11 @@ class _StylePickerState extends State<_StylePicker> {
         onPressed: busy
             ? null
             : () => a.previewVoice(sid: s.sid, text: s.previewText),
-        icon: Icon(active ? Icons.headphones : Icons.play_arrow_outlined),
+        // +240: same law one sheet down: while an audition plays, its
+        // own play/headphones glyph is the thing that spins.
+        icon: busy
+            ? _spin(scheme)
+            : Icon(active ? Icons.headphones : Icons.play_arrow_outlined),
       ),
       onTap: active || busy
           ? null
@@ -593,3 +600,11 @@ class _StylePickerState extends State<_StylePicker> {
     );
   }
 }
+
+/// The preview/audition busy glyph: a compact indeterminate spinner
+/// sized to IconButton's 24 px slot so the button never resizes when
+/// its verb starts working.
+Widget _spin(ColorScheme scheme) => SizedBox.square(
+  dimension: 24,
+  child: CircularProgressIndicator(strokeWidth: 2.4, color: scheme.primary),
+);

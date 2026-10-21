@@ -2685,7 +2685,10 @@ class VoiceAssistant extends ChangeNotifier {
     final line =
         text ?? 'Hi! This is how your assistant will sound with this voice.';
     _voiceBusy = true;
-    _voiceStatus = 'Making the preview…';
+    // +240: no 'Making the preview…' line — the pressed button spins
+    // for exactly the duration this flag is set, where the eye already
+    // is. The status line keeps only what the spinner cannot say:
+    // failures.
     _reply.stopDebug();
     _reply
         .stopPlayback(); // a live reply would fight the preview for the speaker
