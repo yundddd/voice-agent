@@ -68,67 +68,72 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// IS the question "new session?". The `+` pill opens the same
   /// sheet from anywhere; past the newest tab, left is nothing.
   ///
-  /// +263 (Tim's second read; it replaces +261's half-measure): the
-  /// swap is ONE MOTION that begins at the finger and survives the
-  /// wait for the receipt. +261 killed the snap but left the seam in
-  /// three acts — release, spring settle, and then (one to fifteen
-  /// frames later: the /seat round trip is ASYNC) the AnimatedSwitcher
-  /// starting its own slide from a fresh beginning. That second act is
-  /// the 'the spring re-animates itself' the field keeps reading, in a
-  /// new costume. Now:
+  /// +264 (after the third redesign Tim said it plainly: 'it looks
+  /// like shit. just make it horizontal swiping'): the swipe is NOW
+  /// NOTHING BUT A HORIZONTAL SLIDE. The +230 theatre (edge glow,
+  /// card tilt, + fade) and the +261..+263 choreography (springs,
+  /// held seams, crossfades, inherited fractions) all retired —
+  /// every one had its reason, none of them looked like a swipe.
+  /// What remains is ONE horizontal value with ONE animation and the
+  /// simplest grammar a gesture can have:
   ///
-  ///  * COMMIT: the thread FREEZES at the finger's offset — the seam
-  ///    held open while the bridge thinks — and when the tab index
-  ///    actually moves, the switcher takes over FROM that exact
-  ///    offset: the old thread closes the seam (gliding from where
-  ///    the finger left it back to centre as it fades), the new
-  ///    thread enters from the opened edge, both on one
-  ///    fast-then-slow curve, never a rest in between. The swap's
-  ///    first frame is a pixel-perfect copy of the held seam.
-  ///  * REFUSAL (a drift, nothing that side, the seat-rest law): the
-  ///    seam CLOSES — a 240 ms ease-out, the decel of a thrown cloth,
-  ///    velocity spent.
+  ///  * the finger drags the thread 1:1 (duration zero — the value IS
+  ///    the gesture, painted as stated);
+  ///  * a committed release keeps going the SAME WAY out (160 ms);
+  ///    /seat answers behind the thread's own absence — the content
+  ///    swap happens off-screen, invisible by construction, so the
+  ///    async receipt has no act of its own and cannot stutter;
+  ///  * the new thread is hop-swapped to the far edge (a zero-duration
+  ///    move at the off-screen edge, and there is nothing to see) and
+  ///    eases home (240 ms). Every leg starts from where the previous
+  ///    one stood: one continuous slide in, one continuous slide out.
   ///
-  /// The scroll's tail-correction (+230) fires at the hand-off frame,
-  /// BEHIND the outgoing card — the entering thread appears already
-  /// resting at its newest word, no chase.
-  double _dragDx = 0; // the finger's 1:1 offset
-  bool _dragLive = false; // the finger owns the stick
-  double? _frozenAt; // the seam, held open awaiting the commit verdict
-  bool _swapping = false; // the switcher's children own the motion
-  double _swapFrom = 0; // the held seam's signed fraction at hand-off
-  Timer? _swapFuse; // a lost receipt may not hold the seam forever
+  /// Refusal (the seat-rest law, a dead bridge, the 1.5 s fuse on a
+  /// silent one): the thread eases home from wherever it got to —
+  /// the same single value, the same curve. The words ride the
+  /// snackbar; the thread only ever slides.
+  ///
+  /// +230's tail-correction fires at the off-screen hop — the
+  /// entering thread appears already resting at its newest word.
+  double _dragDx = 0; // the finger's 1:1 offset while it owns the stick
+  bool _dragLive = false;
+  double _offsetTarget = 0; // THE painted value — one source, one axis
+  Duration _offsetDur = Duration.zero;
+  double _exitDir = 1; // committed exit side: +1 right (walked OLDER)
+  bool _flipArmed = false; // awaiting the receipt beyond the edge
+  Timer? _flipFuse; // a silent bridge behaves as a refusing one
 
-  /// Slide direction for the swap animation: -1 exits left (walked
-  /// to a NEWER tab), +1 exits right (walked OLDER). Set by the
-  /// gesture and the pill tap alike, read by the transition builder.
-  int _slideDir = -1;
-
-  /// Commit a thread slide in the given exit direction (the fling's,
-  /// or the pill jump's sign against the current index). A drag's seam
-  /// stays held ([_frozenAt]) until the index moves or the fuse blows;
-  /// a pill tap has no seam and slides the classic understated way.
-  void _slideTo(VoiceAssistant a, int index, {bool fromDrag = false}) {
+  /// The thread eases home and the gesture is over: the ONLY way a
+  /// swipe ends without a swap, and the way a refused one ends too.
+  void _slideHome() {
+    _flipFuse?.cancel();
+    if (_dragLive) return; // the finger owns the stick; it decides
     setState(() {
-      _slideDir = index >= a.view.tabIndex ? -1 : 1;
-      if (!fromDrag) {
-        _frozenAt = null;
-        _swapFrom = 0;
-      }
+      _flipArmed = false;
+      _dragDx = 0;
+      _offsetTarget = 0;
+      _offsetDur = const Duration(milliseconds: 240);
     });
-    _tabTap(a, index);
   }
 
-  /// The seam closes: whatever the thread parted, it eases home on
-  /// one decelerating curve. This is the ONLY way a committed-or-not
-  /// release ends without a swap.
-  void _thaw() {
-    _swapFuse?.cancel();
+  /// Commit: keep sliding the way the finger was going. The receipt
+  /// (the tab index actually moving — see the hand-off in build)
+  /// takes the thread off-screen and brings the new one home.
+  void _slideOut(VoiceAssistant a, int index) {
     setState(() {
       _dragLive = false;
-      _frozenAt = null;
-      _dragDx = 0;
+      _exitDir = index >= a.view.tabIndex ? -1 : 1;
+      _flipArmed = true;
+      _offsetTarget = _exitDir * MediaQuery.sizeOf(context).width;
+      _offsetDur = const Duration(milliseconds: 160);
     });
+    _flipFuse?.cancel();
+    // An away-network /seat; silence behaves as a refusal — the
+    // thread glides home and the seam of the swap is simply never
+    // seen. (The snackbar's reason, if the bridge ever answers, is
+    // still honest.)
+    _flipFuse = Timer(const Duration(milliseconds: 1500), _slideHome);
+    _tabTap(a, index);
   }
 
   /// +230: the session's own wash — see [AssistantScreenSupport].
@@ -140,45 +145,52 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _onTabDragUpdate(DragUpdateDetails d) {
     setState(() {
       _dragLive = true;
-      _frozenAt = null; // re-grab of a half-flung thread mid-wait
       _dragDx += d.delta.dx;
+      _offsetTarget = _dragDx; // re-grab mid-slide: the value simply
+      _offsetDur = Duration.zero; // answers to the finger again
+    });
+  }
+
+  /// A stolen gesture (the vertical scroll claimed the pointer) is
+  /// not a commit: the thread was never away from home.
+  void _onTabDragCancel() {
+    setState(() {
+      _dragLive = false;
+      _dragDx = 0;
+      _offsetTarget = 0;
+      _offsetDur = Duration.zero;
     });
   }
 
   void _onTabSwipe(VoiceAssistant a, double vx) {
     final was = _dragDx;
-    if (vx.abs() < 450 && was.abs() < 120) {
-      _thaw(); // a drift, not a fling: ease home right away
-      return;
-    }
+    setState(() => _dragLive = false);
+    // No separate fling threshold, no velocity law: past half a
+    // screen of PARTED thread the neighbour is the answer the finger
+    // gave; a hard flick counts as the same answer early (the
+    // velocity can only speak where the position could not yet).
+    final committed = was.abs() > 160 || (vx.abs() > 600 && was != 0);
+    final toOlder = (committed ? was.sign : vx.sign) > 0;
     final v = a.view;
     if (v.tabs.isEmpty) {
-      _thaw();
       if (vx > 0) _newSessionTap(a); // the first-launch gesture
       return;
     }
-    final toOlder = !(vx < 0 || was < -120);
+    if (!committed) {
+      _slideHome(); // an unfinished drag: ease back, nothing more
+      return;
+    }
     final target = toOlder ? v.tabIndex - 1 : v.tabIndex + 1;
     if (target < 0) {
-      _thaw(); // past the first tab sits the NEW slot: the seam
-      _newSessionTap(a); // closes as the sheet opens
+      _slideHome(); // past the first tab sits the NEW slot: the
+      _newSessionTap(a); // thread goes home as the sheet opens
       return;
     }
     if (target >= v.tabs.length) {
-      _thaw(); // past the newest tab, the older direction is nothing
+      _slideHome(); // past the newest tab that side is nothing
       return;
     }
-    // COMMIT: hold the seam open at the finger's offset while /seat
-    // runs; the swap starts from HERE, not from a rest.
-    _swapFuse?.cancel();
-    setState(() {
-      _dragLive = false;
-      _frozenAt = was;
-    });
-    _slideTo(a, target, fromDrag: true);
-    // Two seconds is an away-network /seat; a bridge that never
-    // answers behaves like a refusal, seam and all.
-    _swapFuse = Timer(const Duration(seconds: 2), _thaw);
+    _slideOut(a, target);
   }
 
   /// A pill tap: jump the seat to that tab. A refusal (mid-turn, a
@@ -218,7 +230,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           ),
           child: InkWell(
             borderRadius: const BorderRadius.all(Radius.circular(16)),
-            onTap: () => _slideTo(a, t.index),
+            onTap: () => _slideOut(a, t.index),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               child: Row(
@@ -270,9 +282,9 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   void _tabRemove(VoiceAssistant a, int index) {
     unawaited(() async {
-      // The seat will land on the NEIGHBOUR (older side) — tell the
-      // switcher so the thread slides that way, not as a jump cut.
-      setState(() => _slideDir = 1);
+      // (+264 retired the prepared slide here: a ✕ is not a swipe,
+      // and the thread that loses its tab simply yields its place —
+      // the neighbour's bubbles appear at rest, which is the truth.)
       final err = await a.removeSessionTab(index);
       if (err != null && mounted) {
         ScaffoldMessenger.of(
@@ -286,9 +298,10 @@ class _AssistantScreenState extends State<AssistantScreen>
     unawaited(() async {
       final err = await a.switchSession(index);
       if (err != null && mounted) {
+        _slideHome(); // +264: a refusal glides the thread home — the
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(err)));
+        ).showSnackBar(SnackBar(content: Text(err))); // words carry the reason
       }
     }());
   }
@@ -748,6 +761,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   @override
   void dispose() {
+    _flipFuse?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _framesAlive = false; // +206: persistent callbacks are forever; disarm
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
@@ -821,15 +835,32 @@ class _AssistantScreenState extends State<AssistantScreen>
       // the held offset into a screen fraction, and let the outgoing
       // card start exactly where it was caught. The tail correction
       // below then rides this same frame, behind that card.
-      final held = _frozenAt;
-      if (held != null) {
-        _swapFrom = (held / MediaQuery.sizeOf(context).width).clamp(-1.0, 1.0);
-        _swapping = true;
-        _frozenAt = null;
-        _dragDx = 0; // the switcher's children own the offset now
-        _swapFuse?.cancel();
-        Timer(const Duration(milliseconds: 340), () {
-          if (mounted) setState(() => _swapping = false);
+      if (_flipArmed) {
+        // +264 HAND-OFF: the receipt is in and the index moved.
+        // Finish the exit (80 ms — from anywhere, including dead
+        // at the edge), hop the absent thread to the far side (zero
+        // duration AT THE OFF-SCREEN EDGE: there is nothing to see —
+        // the content swap rides this hop), then ease home. Three
+        // setState legs, one continuous slide: no rest, no fade, no
+        // second act.
+        _flipArmed = false;
+        _flipFuse?.cancel();
+        _offsetTarget = _exitDir * MediaQuery.sizeOf(context).width;
+        _offsetDur = const Duration(milliseconds: 80);
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _offsetTarget = -_exitDir * MediaQuery.sizeOf(context).width;
+            _offsetDur = Duration.zero;
+          });
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {
+                _offsetTarget = 0;
+                _offsetDur = const Duration(milliseconds: 240);
+              });
+            }
+          });
         });
       }
       _lastPaintedTab = v.tabIndex;
@@ -993,7 +1024,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                       // A stolen gesture is still a release: the
                       // thread springs home from where it stood
                       // rather than snapping (+261).
-                      onHorizontalDragCancel: _thaw,
+                      onHorizontalDragCancel: _onTabDragCancel,
                       onHorizontalDragEnd: (d) =>
                           _onTabSwipe(a, d.velocity.pixelsPerSecond.dx),
                       child: SingleChildScrollView(
@@ -1054,253 +1085,51 @@ class _AssistantScreenState extends State<AssistantScreen>
                                   ),
                                 ],
                                 const SizedBox(height: 16),
-                                // +230: the thread — one ANIMATED
-                                // swap per tab. The finger's own dx
-                                // rides the thread while the drag is
-                                // down (Transform.translate), and on
-                                // commit the outgoing thread slides
-                                // out against the swipe while the
-                                // incoming one slides in from the
-                                // other side, crossfading the tab's
-                                // own gradient tint — a different
-                                // session is visibly a different
-                                // place, in motion, not after a
-                                // layout change. Refused switches
-                                // (mid-turn, unheard owed) spring the
-                                // thread back with no swap at all:
-                                // the key did not change.
-                                // +230: the drag IN MOTION: the thread
-                                // lifts like a grabbed card (a hair of
-                                // scale and tilt per pixel parted) and
-                                // the NEXT session's own hue glows in
-                                // from the edge being pulled open —
-                                // the swipe announces itself while the
-                                // finger is still down, not only at the
-                                // commit. Past the first tab the parted
-                                // edge glows the creation slot's primary
-                                // and a + fades in: that gesture means
-                                // NEW, and it looks like it.
+                                // +230: the thread — +264: ONE
+                                // horizontal offset, one transform,
+                                // one animation. It rides the finger
+                                // out, swaps its conversation while
+                                // absent, and eases home; the tab's
+                                // own tint says WHERE you are, not a
+                                // glow, not a tilt, not a crossfade.
                                 TweenAnimationBuilder<double>(
-                                  // The thread's ONE offset. Zero
-                                  // duration while any owner of
-                                  // motion is named (the finger, the
-                                  // held seam, the switcher) — the
-                                  // value then IS the gesture's
-                                  // truth, painted as stated. Only a
-                                  // closing seam animates: 240 ms of
-                                  // ease-out, one deceleration.
-                                  tween: Tween<double>(end: _dragDx),
-                                  duration:
-                                      (_dragLive ||
-                                          _frozenAt != null ||
-                                          _swapping)
-                                      ? Duration.zero
-                                      : const Duration(milliseconds: 240),
+                                  tween: Tween<double>(end: _offsetTarget),
+                                  duration: _offsetDur,
                                   curve: Curves.easeOutCubic,
-                                  builder: (context, dragDx, _) {
-                                    // glow, tilt and translate all
-                                    // ride this single value — the
-                                    // seam, its edge light and the
-                                    // card move as one object, never
-                                    // two clocks arguing.
-                                    final part = (dragDx.abs() / 160).clamp(
-                                      0.0,
-                                      1.0,
-                                    );
-                                    final toOlder = dragDx > 0;
-                                    final atFirst = v.tabIndex == 0;
-                                    final edgeTint = toOlder && atFirst
-                                        ? scheme.primary
-                                        : AssistantScreenSupport.sessionTint(
-                                            (v.tabIndex + (toOlder ? -1 : 1))
-                                                .clamp(
-                                                  0,
-                                                  v.tabs.isEmpty
-                                                      ? 0
-                                                      : v.tabs.length - 1,
-                                                ),
-                                          );
-                                    return Stack(
-                                      children: [
-                                        // The glow pad UNDER the card, on the
-                                        // parted edge.
-                                        if (part > 0)
-                                          Positioned(
-                                            left: toOlder ? 0 : null,
-                                            right: toOlder ? null : 0,
-                                            top: 0,
-                                            bottom: 0,
-                                            child: IgnorePointer(
-                                              child: Container(
-                                                width: 64,
-                                                decoration: BoxDecoration(
-                                                  gradient: LinearGradient(
-                                                    begin: toOlder
-                                                        ? Alignment.centerLeft
-                                                        : Alignment.centerRight,
-                                                    end: toOlder
-                                                        ? Alignment.centerRight
-                                                        : Alignment.centerLeft,
-                                                    colors: [
-                                                      edgeTint.withValues(
-                                                        alpha: 0.35 * part,
-                                                      ),
-                                                      edgeTint.withValues(
-                                                        alpha: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        // The + slot past the FIRST tab
-                                        // (right-drag home of the new
-                                        // session).
-                                        if (toOlder && atFirst && part > 0)
-                                          Positioned(
-                                            left: 6,
-                                            top: 0,
-                                            bottom: 0,
-                                            child: Opacity(
-                                              opacity: part,
-                                              child: Center(
-                                                child: Icon(
-                                                  Icons.add_circle_outline,
-                                                  color: scheme.primary,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        Transform.translate(
-                                          offset: Offset(dragDx, 0),
-                                          child: Transform.scale(
-                                            scale: 1 - 0.03 * part,
-                                            child: AnimatedSwitcher(
-                                              duration: const Duration(
-                                                milliseconds: 260,
-                                              ),
-                                              // +263: ONE curve for
-                                              // both halves of the
-                                              // hand-off. The old
-                                              // pair (ease-OUT for
-                                              // the newcomer, ease-IN
-                                              // for the leaving one)
-                                              // made the departing
-                                              // thread ACCELERATE
-                                              // away from a dead
-                                              // stop — the visible
-                                              // jolt, twice decelerated
-                                              // and then thrown. Both
-                                              // now ease out: the
-                                              // seam closes on the
-                                              // leaving card while the
-                                              // new one glides in, and
-                                              // the whole swap shares
-                                              // the finger's own
-                                              // fast-then-settling
-                                              // shape.
-                                              switchInCurve:
-                                                  Curves.easeOutCubic,
-                                              switchOutCurve:
-                                                  Curves.easeOutCubic,
-                                              transitionBuilder: (child, anim) {
-                                                final incoming =
-                                                    child.key
-                                                        is ValueKey<int> &&
-                                                    (child.key as ValueKey<int>)
-                                                            .value ==
-                                                        v.tabIndex;
-                                                // A drag hands the
-                                                // swap its exact
-                                                // offset: the leaving
-                                                // card starts WHERE
-                                                // THE FINGER LEFT IT
-                                                // and the newcomer
-                                                // enters from the
-                                                // opened edge, so the
-                                                // first frame of the
-                                                // animation is a
-                                                // pixel-perfect copy
-                                                // of the held seam.
-                                                // (This is the piece
-                                                // +261 got backwards:
-                                                // it subtracted the
-                                                // paid travel and let
-                                                // a spring REPLAY the
-                                                // gesture.) A pill tap
-                                                // has no seam to
-                                                // inherit and pays the
-                                                // classic slide.
-                                                final from = _swapping
-                                                    ? (incoming
-                                                          ? _swapFrom -
-                                                                _slideDir
-                                                          : _swapFrom)
-                                                    : (incoming
-                                                              ? -_slideDir
-                                                              : _slideDir) *
-                                                          0.35;
-                                                return FadeTransition(
-                                                  opacity: anim,
-                                                  child: SlideTransition(
-                                                    position: Tween<Offset>(
-                                                      begin: Offset(from, 0.01),
-                                                      end: Offset.zero,
-                                                    ).animate(anim),
-                                                    child: child,
-                                                  ),
-                                                );
-                                              },
-                                              child: DecoratedBox(
-                                                key: ValueKey(v.tabIndex),
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      const BorderRadius.all(
-                                                        Radius.circular(18),
-                                                      ),
-                                                  gradient: LinearGradient(
-                                                    begin: Alignment.topLeft,
-                                                    end: Alignment.bottomRight,
-                                                    colors: _sessionTint(
-                                                      v.tabIndex,
-                                                    ),
-                                                  ),
-                                                ),
-                                                child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 6,
-                                                        vertical: 2,
-                                                      ),
-                                                  child: Column(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      for (final e in v.chat)
-                                                        if (e.fromUser ||
-                                                            e
-                                                                .blocks
-                                                                .isNotEmpty ||
-                                                            // A file bubble has no text
-                                                            // blocks — the slip IS the
-                                                            // bubble.
-                                                            e.isFile)
-                                                          _bubbleFor(
-                                                            e,
-                                                            a,
-                                                            context,
-                                                          ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
+                                  builder: (context, dx, _) => Transform.translate(
+                                    offset: Offset(dx, 0),
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        borderRadius: const BorderRadius.all(
+                                          Radius.circular(18),
                                         ),
-                                      ],
-                                    );
-                                  },
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: _sessionTint(v.tabIndex),
+                                        ),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            for (final e in v.chat)
+                                              if (e.fromUser ||
+                                                  e.blocks.isNotEmpty ||
+                                                  // A file bubble has no text
+                                                  // blocks — the slip IS the
+                                                  // bubble.
+                                                  e.isFile)
+                                                _bubbleFor(e, a, context),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
 
                                 // The working row: spinner, one-line

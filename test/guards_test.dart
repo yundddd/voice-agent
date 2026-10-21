@@ -219,63 +219,60 @@ void main() {
     });
   });
 
-  group('the fling hands its seam to the swap (+263)', () {
-    // Tim's feel report, second reading: 'I want a very smooth
-    // transition — no jitter, continuous motion'. +261's spring still
-    // played three acts (settle, wait, re-animate) because /seat is
-    // ASYNC; the law now is a HELD SEAM — the release freezes at the
-    // finger's offset, and the switch animation starts from exactly
-    // that frozen value. Layout needs the device; the LAW is pinned
-    // at the source, same as the band's.
+  group('the swipe is nothing but a horizontal slide (+264)', () {
+    // Tim's third read of the gesture, and the one that ends the
+    // redesign cycle: 'it looks like shit. just make it horizontal
+    // swiping as simple as that.' Three generations of cleverness
+    // (spring, held seam, inherited fractions) each bought its own
+    // stutter; the law now is ONE painted offset on ONE axis with
+    // the swap hidden in the thread's own absence. Pinned at the
+    // source — layout needs the device, the shape of the machinery
+    // does not.
     final ui = File('lib/src/ui/assistant_screen.dart').readAsStringSync();
-    test('a committed release FREEZES the seam, it does not settle', () {
+    test('one painted offset, one animation, one axis', () {
+      expect(ui, contains('Tween<double>(end: _offsetTarget)'));
       expect(
-        ui,
-        contains('_frozenAt = was;'),
+        RegExp(
+          r'AnimatedSwitcher|SpringSimulation|TweenAnimationBuilder',
+        ).allMatches(ui).where((m) => m.group(0) == 'AnimatedSwitcher').length,
+        0,
         reason:
-            'the thread holds at the finger while /seat runs — '
-            'a settle before the swap IS the re-animation the field reads',
+            'the crossfade switcher is retired — it was the '
+            'second act every tape blamed',
       );
     });
-    test('the swap begins at the frozen fraction, both directions', () {
-      // Leaving starts WHERE THE FINGER LEFT IT; the newcomer enters
-      // from the opened edge (_swapFrom - _slideDir), so the
-      // animation's first frame is the seam, not a new story.
+    test('the content swap hides off-screen, never mid-slide', () {
+      // The hand-off: finish the exit, hop at the off-screen edge
+      // (zero duration), ease home. The receipt can land whenever
+      // the network likes — there is nothing painted to stutter.
+      expect(ui, contains('_offsetDur = Duration.zero')); // the hop
+      expect(ui, contains('milliseconds: 80')); // the exit's last leg
+      expect(ui, contains('milliseconds: 240')); // the way home
+      expect(ui, contains('_flipArmed = false'));
+    });
+    test('a refusal is the same single value easing home', () {
+      expect(ui, contains('void _slideHome()'));
+      // _tabTap's error branch must glide the thread back — a
+      // refusal that leaves the card parked mid-screen is a lie
+      // with extra steps.
+      final tap = ui.substring(
+        ui.indexOf('void _tabTap('),
+        ui.indexOf('void _tabTap(') + 700,
+      );
       expect(
-        ui,
-        contains(
-          '? _swapFrom -\n                                                                _slideDir',
-        ),
-      );
-      expect(ui, contains(': _swapFrom)'));
-    });
-    test('one deceleration curve for both halves of the hand-off', () {
-      // The ease-IN exit from a dead stop was the thrown-card jolt.
-      final swaps = RegExp('switchOutCurve:\\s*Curves\\.(\\w+)').firstMatch(ui);
-      expect(swaps, isNotNull);
-      expect(
-        swaps!.group(1),
-        'easeOutCubic',
-        reason: 'in and out share the finger\'s fast-then-settling shape',
+        tap,
+        contains('_slideHome()'),
+        reason: 'the snackbar carries the reason; the thread just returns',
       );
     });
-    test('only a closing seam may animate the offset', () {
-      // Finger / frozen / swapping frames state the value (zero
-      // duration — the gesture's truth is painted as stated); the
-      // 240 ms ease exists for ONE branch: the thaw.
-      expect(ui, contains('_dragLive'));
-      expect(ui, contains('_frozenAt != null ||'));
-      expect(ui, contains('Duration.zero'));
-      expect(
-        RegExp(r'SpringSimulation|AnimationController\.unbounded').hasMatch(ui),
-        isFalse,
-        reason:
-            'the +261 spring settled BEFORE the swap — three acts '
-            'again; the freeze replaced it on purpose',
-      );
-    });
-    test('a lost receipt may not hold the seam forever', () {
-      expect(ui, contains('_swapFuse'));
+    test('no gesture theatre may return to the drag', () {
+      for (final gone in ['_frozenAt', '_swapFrom', '_swapping', '_thaw']) {
+        expect(
+          ui,
+          isNot(contains(gone)),
+          reason: '$gone belonged to a design Tim rejected',
+        );
+      }
     });
   });
 
