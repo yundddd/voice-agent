@@ -403,6 +403,64 @@ void main() {
       expect(a.view.tabIndex, 1);
     });
 
+    test('+249: mid-turn, a switch hides the thinking row at the '
+        'destination and restores it at home', () async {
+      // The field shape: two named threads, a turn WORKING in one.
+      // Swiping to the other tab backgrounds the turn (+246) — and
+      // its THINKING BOX must travel with its thread, not the window
+      // (+249): the destination shows nothing until IT has work in
+      // flight; swiping back is the foreground, and the row is lit
+      // exactly where the work lives.
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X', bubble: 'one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y', bubble: 'two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // Seat X and leave a turn WORKING there (no done on the wire).
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('think in X', bubble: 'think in X'));
+      await settle();
+      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      expect(a.view.showWorkingRow, isTrue); // working, and at home here
+      // SWIPE to the other tab mid-turn: the turn backgrounds.
+      expect(await a.switchSession(1), isNull);
+      expect(a.view.tabIndex, 1);
+      expect(
+        a.view.turnHomeHere,
+        isFalse,
+        reason: 'the work stayed with ses-X',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isFalse,
+        reason:
+            'no thinking box in the tab that is only the audience — '
+            'the gear badge (+230) still owns the cross-session sign',
+      );
+      // SWIPE BACK: the foreground restored — the row is lit at home,
+      // not re-orphaned by the second move's own bookkeeping.
+      expect(await a.switchSession(0), isNull);
+      expect(a.view.turnHomeHere, isTrue);
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason: 'the turn never stopped; coming home shows it working',
+      );
+    });
+
     test(
       'unheard messages rest the seat — a tab verb may not eat the backlog',
       () async {

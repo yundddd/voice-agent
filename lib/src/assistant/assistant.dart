@@ -1161,11 +1161,21 @@ class VoiceAssistant extends ChangeNotifier {
     // +249: if live work rides along, remember WHERE it lives — the
     // id the seat held a moment ago (the /seat response just named the
     // destination; the outgoing conversation keeps its own pointer).
+    // The capture only signs for work that lives HERE: if a previous
+    // backgrounding already parked the work in another conversation,
+    // the busy flags lit now are ITS stream — moving seats again must
+    // not re-sign the marker to the tab merely left, or swiping home
+    // would hide the row in the very conversation working (the field
+    // shape: A working, swipe to B — row gone, correct; swipe back to
+    // A — the old capture overwrote the marker with B, orphaning the
+    // box again, and a further swipe to B showed it thinking there).
     if (_bridgeBusy ||
         _turn.backgrounded ||
         _harnessBackgrounded ||
         _ticker.isOn) {
-      _turnHomeSid = _sessionId;
+      if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
+        _turnHomeSid = _sessionId;
+      }
       // The bar belongs to the conversation, like the row: blank it
       // now; /health's owner gate keeps it honest until the seated
       // conversation's own turn names a size (/mergeContext ignores
