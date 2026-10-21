@@ -606,6 +606,46 @@ void main() {
       );
       expect(find.text('context · measuring…'), findsOne);
     });
+
+    testWidgets('+241: the proven model name rides the same line', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const ContextBar(
+            view: ContextBarView(
+              tokensIn: 21000,
+              window: 200000,
+              busy: false,
+              model: 'aliyun/qwen3.8-flash',
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.text('aliyun/qwen3.8-flash · context 21.00k / 200.00k · 11%'),
+        findsOne,
+        reason:
+            'the bar the eye checks for context is the one line '
+            'that can also carry WHICH model is holding that context',
+      );
+    });
+
+    testWidgets('no model verdict yet: the label is unchanged', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const ContextBar(
+            view: ContextBarView(
+              tokensIn: 21000,
+              window: 200000,
+              busy: false,
+              model: '',
+            ),
+          ),
+        ),
+      );
+      expect(find.text('context 21.00k / 200.00k · 11%'), findsOne);
+    });
   });
 
   group('the small projections', () {

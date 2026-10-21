@@ -483,6 +483,7 @@ class VoiceAssistant extends ChangeNotifier {
       tokensIn: _contextIn,
       window: _contextWindow,
       busy: _bridgeBusy,
+      model: bridgeLastModel, // +241: the name rides the bar it fills
     ),
     latency: LatencyView(
       recordSeconds: _recordSeconds,

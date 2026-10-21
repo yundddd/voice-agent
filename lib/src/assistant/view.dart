@@ -95,21 +95,30 @@ final class ContextBarView {
     required this.tokensIn,
     required this.window,
     required this.busy,
+    this.model,
   });
   final int tokensIn, window;
   final bool busy; // a turn is running (drives the indeterminate shimmer)
+
+  /// +241: the model THIS session last answered with (proven by the
+  /// harness's own model.selected event, +219; null before the first
+  /// verdict or on a default-model harness). The bar is the one line
+  /// the eye checks for context; the model belongs on the same line.
+  final String? model;
 
   double get frac => window > 0 ? (tokensIn / window).clamp(0.0, 1.0) : 0;
 
   /// The one-line readout; 'measuring…' until a `result` names a number.
   String get label {
     final pct = frac * 100;
-    return tokensIn == 0
+    final body = tokensIn == 0
         ? 'context · measuring…'
         : frac > 0
         ? 'context ${fmtTokenCount(tokensIn)} / ${fmtTokenCount(window)} '
               '· ${pct >= 10 ? pct.toStringAsFixed(0) : pct.toStringAsFixed(1)}%'
         : 'context ${fmtTokenCount(tokensIn)} · window unknown';
+    final m = model;
+    return (m == null || m.isEmpty) ? body : '$m · $body';
   }
 
   /// null = the indeterminate shimmer (window unknown but the harness
