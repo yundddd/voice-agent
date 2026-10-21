@@ -237,6 +237,24 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// model, folder, big buttons, and one POST that seats and files
   /// the tab (the sheet submits its own answer; the refusal reason
   /// lands inside it, next to the Start button).
+  /// +243: the control row's shared compact skin — tighter internal
+  /// padding and zero label padding; the label rides the default body
+  /// size, the icon 18 px, the whole chip ~6 dp narrower per side than
+  /// the stock ActionChip. Tap targets stay finger-honest (compact
+  /// visualDensity, padded target).
+  ActionChip _controlChip({
+    required Widget avatar,
+    required Widget label,
+    VoidCallback? onPressed,
+  }) => ActionChip(
+    avatar: avatar,
+    label: label,
+    onPressed: onPressed,
+    visualDensity: VisualDensity.compact,
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    labelPadding: EdgeInsets.zero,
+  );
+
   /// +242: the '/model' chip's verb — the settings sheet's own picker
   /// (GET /models, current checked) over the talking screen; the pick
   /// lands through setBridgeModel (POST /model + remembered per harness
@@ -1190,8 +1208,14 @@ class _AssistantScreenState extends State<AssistantScreen>
                       const SizedBox(width: 4),
                       for (final chip in VoiceAssistant.controlChips)
                         Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
+                          // +243: the row got a fourth member and the
+                          // pocket widths stayed — chips wear a compact
+                          // skin so /model /new /compact Stop all read
+                          // at a glance on one line, no sideways hunt.
+                          // The scroll view stays as the belt for the
+                          // smallest phones, not as the design.
+                          padding: const EdgeInsets.only(right: 6),
+                          child: _controlChip(
                             avatar: Icon(_chipIcons[chip], size: 18),
                             label: Text(chip),
                             onPressed: v.bridgeBusy
@@ -1205,7 +1229,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                                       : a.bridgeControl(chip),
                           ),
                         ),
-                      ActionChip(
+                      _controlChip(
                         avatar: Icon(
                           Icons.stop_circle_outlined,
                           size: 18,
