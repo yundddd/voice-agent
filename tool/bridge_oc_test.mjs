@@ -457,3 +457,63 @@ test('+223 moving folders carries the destination\u2019s remembered session', as
       'the moved-to session was not resumed');
   } finally { bridge.kill(); }
 });
+
+// ── +229: the opencode usage dialect ─────────────────────────────────
+test('the context bar reads per-call usage, not the session\u2019s lifetime sum', async () => {
+  // The field bug: the phone's bar marched past 1M inside one turn
+  // while the real prompt sat in the tens of thousands. The bus's
+  // token counters are session CUMULATES; the bar's law (+609) reads
+  // message_start's input as THIS call's context. The adapter must
+  // subtract, or every step re-presents the whole past as new.
+  const w = await world();
+  try {
+    const t1 = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'one' });
+    await until('first done', async () => t1.text.includes('event: done'));
+    // Turn one closes with the call's own usage: 1234 in + 42 out.
+    assert.equal((await health(w.port)).context.in, 1276);
+    const t2 = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'two' });
+    await until('second done', async () => t2.text.includes('event: done'));
+    // The second call's message_start carries THIS call's context —
+    // the pre-bug wire said 2468 (the cumulative total).
+    assert.ok(t2.text.includes('"in":1234'),
+      'the second turn did not report a per-call context: ' + t2.text);
+    assert.ok(!t2.text.includes('"in":2468'),
+      'the context bar was fed the session\u2019s lifetime sum');
+    assert.equal((await health(w.port)).context.in, 1276,
+      'the post-turn snapshot grew by the whole past, not the delta');
+  } finally { w.stop(); }
+});
+
+test('a tool round-trip inside a turn does not blink the spinner off', async () => {
+  // The field bug: the box went on and off through a working turn.
+  // The bus closes EVERY step with a message_stop, and the tool has
+  // already resolved by then — so the shared +83 path read 'settled'
+  // mid-turn and the phone hid the working box between steps. The
+  // turn has ONE boundary; the settled verdict may speak only at it.
+  const w = await world({ stubEnv: { STUB_OC_TOOL: '1' } });
+  try {
+    const a = await call(w.port, `/talk?token=${TOKEN}`,
+      { method: 'POST', body: 'run the suite' });
+    await until('done', async () => a.text.includes('event: done'));
+    // Both sentences of the two-step turn arrived, exactly once.
+    assert.ok(a.text.includes('Running a check.'), 'step one missing');
+    assert.ok(a.text.includes('All green.'), 'step two missing');
+    // The settled tally appears ONCE, and only AFTER the last words
+    // (the held stop flushed by the turn's result). A per-step stop
+    // settled after step one — before 'All green.' — the blink.
+    const lines = a.text.split('\n');
+    const settledAt = lines.findIndex((l) =>
+      l.startsWith('data: {') && l.includes('"kind":"settled"'));
+    assert.ok(settledAt >= 0, 'the turn never declared itself settled');
+    const lastSay = lines.findLastIndex((l) =>
+      l.startsWith('data: {"text":"All green."'));
+    assert.ok(lastSay >= 0, 'the second step never spoke');
+    assert.ok(settledAt > lastSay,
+      'settled relayed before the turn\u2019s last words — the blink');
+    assert.equal(lines.filter((l) =>
+      l.startsWith('data: {') && l.includes('"kind":"settled"')).length, 1,
+      'more than one settled verdict in one turn');
+  } finally { w.stop(); }
+});

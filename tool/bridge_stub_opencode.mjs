@@ -23,7 +23,8 @@
 // finds it. STUB_OC_SAYS: answer lines (default one). STUB_OC_MS: gap
 // between bus frames. STUB_OC_PERMISSION=1: a permission request sits
 // mid-turn, closed only by a schema-legal reply. STUB_OC_STALL=1: the
-// answer never closes (for the /stop cut test).
+// answer never closes (for the /stop cut test). STUB_OC_TOOL=1: a
+// two-step turn with a tool round-trip between the steps (+229).
 import http from 'node:http';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -67,6 +68,14 @@ const push = (type, data, ms) => send(type, data, ms);
 let SID = 'soc-1';
 let curModel = 'acme/alpha'; // what the next step.started will name
 let turnSeq = 0; // a cut turn's late frames must not speak
+// +229: the real service's token counters are LIFETIME CUMULATES, not
+// per-call usage (measured against /api/session: a voice session of
+// ~60k real context reported 2.18M input). The stub keeps the books
+// the same way, or it would bless the bug it was written to fence.
+let cumIn = 0, cumOut = 0;
+const usageUpdated = (ms) => push('session.usage.updated', { cost: 0,
+  tokens: { input: (cumIn += 1234), output: (cumOut += 42),
+            cache: { read: 0, write: 0 } } }, ms);
 
 // ── the surface ──────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
@@ -187,13 +196,43 @@ const server = http.createServer(async (req, res) => {
       { model: { providerID: curModel.split('/')[0],
                  id: curModel.split('/').slice(1).join('/') } }, at());
     if (wantPermission) push('session.permission.request', { requestID: 'perm-1' }, at());
+    // +229: STUB_OC_TOOL=1 runs the shape that made the spinner blink —
+    // a tool round-trip INSIDE the turn: the step closes (usage,
+    // step.ended) with its tool already resolved, then a second step
+    // opens a breath later. A per-step message_stop would tell the
+    // phone 'settled' between them; the turn has one boundary, not two.
+    if (process.env.STUB_OC_TOOL === '1') {
+      push('session.text.started', { ordinal: 0 }, at());
+      push('session.text.delta', { delta: 'Running a check.' }, at());
+      push('session.text.ended', { text: 'Running a check.' }, at());
+      push('session.tool.input.started', { name: 'bash' }, at());
+      push('session.tool.called', { id: 'call-1', name: 'bash',
+        input: { command: 'npm test' } }, at());
+      usageUpdated(at());
+      // The live capture's order (success 1 ms BEFORE step.ended): the
+      // tool is resolved when the step closes, so the shared +83 path
+      // sees no open tool and declares the turn settled — mid-turn.
+      push('session.tool.success', { id: 'call-1',
+        content: [{ text: 'all green' }] }, at() + stepMs * 3);
+      push('session.step.ended', {}, at() + stepMs * 4);
+      push('session.step.started',
+        { model: { providerID: curModel.split('/')[0],
+                   id: curModel.split('/').slice(1).join('/') } },
+        at() + stepMs * 5);
+      push('session.text.started', { ordinal: 0 }, at() + stepMs * 6);
+      push('session.text.delta', { delta: 'All green.' }, at() + stepMs * 7);
+      push('session.text.ended', { text: 'All green.' }, at() + stepMs * 8);
+      usageUpdated(at() + stepMs * 9);
+      push('session.step.ended', {}, at() + stepMs * 10);
+      if (!stall) push('session.execution.succeeded', {}, at() + stepMs * 11);
+      res.writeHead(204).end(); return;
+    }
     for (const s of says) {
       push('session.text.started', { ordinal: 0 }, at());
       push('session.text.delta', { delta: s }, at());
       push('session.text.ended', { text: s }, at());
     }
-    push('session.usage.updated',
-      { cost: 0, tokens: { input: 1234, output: 42, cache: { read: 0, write: 0 } } }, at());
+    usageUpdated(at());
     push('session.step.ended', {}, at());
     // STUB_OC_FAIL models the field's 'picked a model the provider
     // refuses': the turn closes FAILED and the error rides as the

@@ -1002,6 +1002,8 @@ const oc = {
   seen: new Set(), // bus event ids (a resubscribe may replay the tail)
   tools: new Map(), // oc call id -> tool name (for error results)
   callIn: 0, callOut: 0, cost: 0, needsPreamble: false, extraErrs: [],
+  cumIn: 0, cumOut: 0,  // session LIFETIME token totals (see +229 below)
+  stopTimer: null,      // a step-end message_stop held back (+229)
   model: null,        // 'provider/model' the last step proved itself on
   pendingModel: null, // a pick made before any session existed
 };
@@ -1073,6 +1075,35 @@ const seCBStart = (block) =>
 const seCBStop = () =>
   ocEmit({ type: 'stream_event', event: { type: 'content_block_stop' } });
 
+// +229: an opencode STEP is a message, not the turn — the bus closes a
+// step while the next one is a breath away (tool round-trip, retry
+// backoff, the harness's own accounting between calls). Relaying
+// message_stop the instant step.ended lands tells the phone 'text
+// final, nothing generating' (+83's settled verdict) in the MIDDLE of
+// a working turn, and the field verdict was the box blinking off and
+// on through every step boundary — where the claude CLI, whose
+// message_stop lands with a tool still open, stays quiet and keeps the
+// wheel lit. So the step-end stop is HELD: any new activity cancels
+// it (no settled frame at all, exactly like claude's between-calls
+// truth), and the turn's own result flushes it first (the settled
+// verdict still speaks at the real boundary, with the draft tail, one
+// beat before the done). The hold only ever expires on a bus that has
+// gone mute mid-turn — where 'settled' is the honest word anyway.
+const OC_STOP_HOLD_MS = 3000;
+function ocHoldStop() {
+  if (oc.stopTimer) return;
+  oc.stopTimer = setTimeout(() => {
+    oc.stopTimer = null;
+    ocEmit({ type: 'stream_event', event: { type: 'message_stop' } });
+  }, OC_STOP_HOLD_MS);
+}
+function ocBreakStop(flush) {
+  if (!oc.stopTimer) return;
+  clearTimeout(oc.stopTimer);
+  oc.stopTimer = null;
+  if (flush) ocEmit({ type: 'stream_event', event: { type: 'message_stop' } });
+}
+
 function ocTranslate(j) {
   const t = typeof j.type === 'string' ? j.type : '';
   const d = j.data ?? {};
@@ -1085,6 +1116,7 @@ function ocTranslate(j) {
   // it too. Only OUR session (or session-less server events) may speak.
   if (d.sessionID && d.sessionID !== oc.sid) return;
   if (t === 'session.step.started') {
+    ocBreakStop(false); // generation resumed — no settled verdict this side
     // +216: the step names the model it runs — the picker's current
     // goes from optimistic to PROVEN the moment the turn starts.
     if (d.model?.id && d.model?.providerID) {
@@ -1094,6 +1126,7 @@ function ocTranslate(j) {
       message: { usage: { input_tokens: oc.callIn,
         cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } });
   } else if (t === 'session.reasoning.started') {
+    ocBreakStop(false);
     seCBStart({ type: 'thinking' });
   } else if (t === 'session.reasoning.delta') {
     ocEmit({ type: 'stream_event', event: { type: 'content_block_delta',
@@ -1101,6 +1134,7 @@ function ocTranslate(j) {
   } else if (t === 'session.reasoning.ended') {
     seCBStop();
   } else if (t === 'session.text.started') {
+    ocBreakStop(false);
     seCBStart({ type: 'text' });
   } else if (t === 'session.text.delta') {
     ocEmit({ type: 'stream_event', event: { type: 'content_block_delta',
@@ -1114,8 +1148,10 @@ function ocTranslate(j) {
       ocEmit({ type: 'assistant', message: { content: [{ type: 'text', text: d.text }] } });
     }
   } else if (t === 'session.tool.input.started') {
+    ocBreakStop(false);
     seCBStart({ type: 'tool_use', name: d.name ?? 'tool' });
   } else if (t === 'session.tool.called') {
+    ocBreakStop(false);
     oc.tools.set(d.id, d.name);
     ocEmit({ type: 'assistant', message: { content: [{ type: 'tool_use',
       id: d.id, name: d.name, input: d.input ?? {} }] } });
@@ -1126,11 +1162,27 @@ function ocTranslate(j) {
       content: (d.content ?? []).map(c => c.text ?? '').join('\n'),
       is_error: t !== 'session.tool.success' }] } });
   } else if (t === 'session.step.ended') {
-    ocEmit({ type: 'stream_event', event: { type: 'message_stop' } });
+    ocHoldStop(); // +229: held, not relayed — the next breath may cancel it
   } else if (t === 'session.usage.updated') {
+    // +229: the bus's token numbers are the session's LIFETIME
+    // CUMULATES, not this call's usage (field: a ~60k-context voice
+    // session reported 2.18M input — every step's whole prompt,
+    // summed). The claude-shaped machinery downstream reads every
+    // number here as THIS call's usage — message_start's input_tokens
+    // IS the context the call carried (the +609 law the context bar
+    // stands on) — so the bar marched past the model's window inside
+    // one turn while the real prompt had barely grown. Derive the
+    // deltas: what the counters moved since the last snapshot IS the
+    // call's usage (and for a no-cache provider, each call carries the
+    // whole context, so the delta IS the context). A counter SMALLER
+    // than the last snapshot is a new session or a compaction's fresh
+    // page: the whole number stands as the delta.
     const tok = d.tokens ?? {};
-    oc.callIn = (tok.input ?? 0) + (tok.cache?.read ?? 0) + (tok.cache?.write ?? 0);
-    oc.callOut = tok.output ?? 0;
+    const cumIn = (tok.input ?? 0) + (tok.cache?.read ?? 0) + (tok.cache?.write ?? 0);
+    const cumOut = tok.output ?? 0;
+    oc.callIn = cumIn >= oc.cumIn ? cumIn - oc.cumIn : cumIn;
+    oc.callOut = cumOut >= oc.cumOut ? cumOut - oc.cumOut : cumOut;
+    oc.cumIn = cumIn; oc.cumOut = cumOut;
     oc.cost = d.cost ?? oc.cost;
     ocEmit({ type: 'stream_event', event: { type: 'message_delta',
       usage: { output_tokens: oc.callOut } } });
@@ -1164,12 +1216,14 @@ function ocTranslate(j) {
       oc.model = `${d.model.providerID}/${d.model.id}`;
     }
   } else if (t === 'session.execution.succeeded') {
+    ocBreakStop(true); // +229: the turn's REAL boundary — settled before done
     ocEmit({ type: 'result', subtype: 'success', is_error: false,
       session_id: oc.sid, duration_ms: 0, num_turns: 1,
       usage: { input_tokens: oc.callIn, output_tokens: oc.callOut },
       total_cost_usd: oc.cost });
   } else if (/^session\.execution\.(failed|cancelled|canceled|interrupted)$/.test(t)
              || t === 'session.error') {
+    ocBreakStop(true);
     ocEmit({ type: 'result', subtype: 'error', is_error: true,
       session_id: oc.sid, result: t,
       errors: [d.error ?? d.reason ?? t, ...oc.extraErrs] });
@@ -1192,6 +1246,7 @@ function ocClose(errText) {
   // bookkeeping (detached tools, receipts, error relay) runs the same.
   if (oc.disposed) return;
   oc.disposed = true;
+  if (oc.stopTimer) { clearTimeout(oc.stopTimer); oc.stopTimer = null; }
   try { oc.ctrl?.abort(); } catch {}
   process.nextTick(() => oc.ev.emit('exit', errText ? 1 : 0, null));
 }
@@ -1205,6 +1260,7 @@ async function ocPrompt(text) {
       });
       oc.pendingModel = null;
       oc.sid = s.data?.id ?? s.id;
+      oc.cumIn = 0; oc.cumOut = 0; // +229: a fresh session's counters are its own
       // The voice prompt belongs to the SESSION, not to one message, so
       // every later utterance keeps the spoken-answer shape. The v2
       // instructions API takes {value} (schema-verified: {content} is a
