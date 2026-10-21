@@ -249,6 +249,24 @@ void main() {
         reason: 'the snackbar carries the reason; the thread just returns',
       );
     });
+    test('a swipe only MOVES — creation is the + pill, not an edge (+268)', () {
+      // Tim's rule: past the end of the strip there is NOTHING, not
+      // a question. The right-swipe-at-the-oldest-tab sheet (and the
+      // fresh-install variant of it) are retired; the swipe must not
+      // reach the creation sheet from a gesture handler — the pill
+      // (outside the scroller, always visible) and the boot gate
+      // own that door.
+      final swipe = ui.substring(
+        ui.indexOf('void _onTabSwipe('),
+        ui.indexOf('void _onTabSwipe(') + 2400,
+      );
+      expect(
+        swipe,
+        isNot(contains('_newSessionTap')),
+        reason: 'create-by-compass was a trap dressed as a shortcut',
+      );
+      expect(ui, contains('_slideHome(); // THAT side is nothing'));
+    });
     test('no gesture theatre may return to the drag', () {
       for (final gone in ['_frozenAt', '_swapFrom', '_swapping', '_thaw']) {
         expect(

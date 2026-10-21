@@ -62,11 +62,10 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   /// +230: swipe classification for the tab gestures. Tabs live on a
   /// horizontal strip in creation order; a fling LEFT walks NEWER, a
-  /// fling RIGHT walks OLDER — and the slot to the LEFT of the first
-  /// tab is the creation popup, which is why the gesture that meets a
-  /// fresh install (one tab, so any right-swipe is "past the first")
-  /// IS the question "new session?". The `+` pill opens the same
-  /// sheet from anywhere; past the newest tab, left is nothing.
+  /// fling RIGHT walks OLDER. (+268: and the strip is the whole map —
+  /// past either edge there is nothing to walk to, and the swipe
+  /// that used to turn "past the oldest" into the creation question
+  /// is retired below.)
   ///
   /// +264 (after the third redesign Tim said it plainly: 'it looks
   /// like shit. just make it horizontal swiping'): the swipe is NOW
@@ -186,26 +185,31 @@ class _AssistantScreenState extends State<AssistantScreen>
     // screen of PARTED thread the neighbour is the answer the finger
     // gave; a hard flick counts as the same answer early (the
     // velocity can only speak where the position could not yet).
-    final committed = was.abs() > 160 || (vx.abs() > 600 && was != 0);
-    final toOlder = (committed ? was.sign : vx.sign) > 0;
+    // +268: a swipe only ever MOVES. For as long as the strip has
+    // existed, the edge on the OLDER side was not a wall but a
+    // question — past the first tab, the right-swipe opened the
+    // creation sheet ('swipe right, be asked'), and on a fresh
+    // install any right-swipe was that question outright. Tim's
+    // verdict: the gesture that CREATES by arriving from a
+    // direction nobody asked about is a trap dressed as a
+    // shortcut — and the sheet can never be far to find anyway:
+    // the + pill is pinned outside the scroller in the bar, the
+    // boot gate opens it by itself when there is nothing to show,
+    // and both were here before the gesture was. Past either edge
+    // the thread now does exactly what the middle refuses when
+    // half-dragged: eases home. Create is a button, not a
+    // compass reading.
     final v = a.view;
-    if (v.tabs.isEmpty) {
-      if (vx > 0) _newSessionTap(a); // the first-launch gesture
+    final committed = was.abs() > 160 || (vx.abs() > 600 && was != 0);
+    if (!committed || v.tabs.isEmpty) {
+      _slideHome(); // an unfinished drag — ease back, nothing more
       return;
     }
-    if (!committed) {
-      _slideHome(); // an unfinished drag: ease back, nothing more
-      return;
-    }
+    final toOlder = was.sign > 0;
     final target = toOlder ? v.tabIndex - 1 : v.tabIndex + 1;
-    if (target < 0) {
-      _slideHome(); // past the first tab sits the NEW slot: the
-      _newSessionTap(a); // thread goes home as the sheet opens
-      return;
-    }
-    if (target >= v.tabs.length) {
-      _slideHome(); // past the newest tab that side is nothing
-      return;
+    if (target < 0 || target >= v.tabs.length) {
+      _slideHome(); // THAT side is nothing: past either edge the
+      return; // strip ends, and the strip is the whole law
     }
     _slideOut(a, target);
   }
@@ -1044,11 +1048,12 @@ class _AssistantScreenState extends State<AssistantScreen>
                     // TAB gesture (the scroll view only claims the
                     // vertical half, so the horizontal drag comes
                     // here free): left = the next tab, right = the
-                    // previous one — and the first tab answered with
-                    // the same swipe right IS the creation popup
-                    // ("swipe right, be asked"). Past the newest tab
-                    // the older direction is nothing; past the
-                    // oldest, the question.
+                    // previous one. +268 retired the third answer:
+                    // past the oldest tab, a right-swipe USED to open
+                    // the creation sheet ("swipe right, be asked");
+                    // now past either end there is simply nothing —
+                    // the thread eases home, and NEW lives on the +
+                    // pill, where it was already one honest tap.
                     child: GestureDetector(
                       behavior: HitTestBehavior.deferToChild,
                       onHorizontalDragUpdate: _onTabDragUpdate,
