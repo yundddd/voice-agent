@@ -366,6 +366,75 @@ void main() {
       );
     });
 
+    test(
+      '/new under a stable name: the thread is gone, the tab '
+      'keeps its identity, the ack survives and speaks whole (+302)',
+      () async {
+        // +295 froze the NAME (/new starts the record fresh; it does not
+        // rename it), and the old wipe predated that law: it purged the
+        // live channel along with the history, so the seat went unnamed,
+        // the ack stamped the pending sentinel, userOnly adoption hid it,
+        // and the audio chunk got killed between chunks by a staleness
+        // closure reading the SWAPPED-IN coordinator's generation (the
+        // field tape: three presses in thirty seconds, '[app] reply tail
+        // dropped: 1 unplayed chunk(s) — pump superseded between
+        // chunks'). The button looked dead because its confirmation
+        // was invisible and voiceless.
+        final x = await tab('/proj-x');
+        unawaited(a.runQuickCommand('remember this please'));
+        await pump();
+        bridge.say(x.uuid, 'Noted.');
+        bridge.endTurn(x.uuid);
+        await pump();
+        expect(
+          a.view.chat.any((e) => e.blocks.contains('Noted.')),
+          isTrue,
+          reason: 'one exchange on screen before the wipe',
+        );
+        await a.bridgeControl('/new');
+        await pump();
+        expect(
+          a.view.chat.any((e) => e.blocks.contains('Noted.')),
+          isFalse,
+          reason: 'the thread is erased',
+        );
+        expect(
+          a.view.chat,
+          isEmpty,
+          reason:
+              "the screen goes BLANK — every bubble, the chip's own "
+              'two included (the +230 law: a /new that leaves its '
+              'own tombstone is not blank). The wipe IS the visual '
+              'word; the confirmation is the (whole, un-cut) voice '
+              'and the clean slate the next word meets.',
+        );
+        expect(
+          engine.synthesized.contains('Starting a new conversation.'),
+          isTrue,
+          reason:
+              'and is spoken WHOLE: the wipe may not evict its own '
+              'confirmation between chunks',
+        );
+        expect(
+          a.debugLog.any((l) => l.contains('reply tail dropped')),
+          isFalse,
+          reason: 'no self-truncated farewell on the new button',
+        );
+        expect(
+          a.view.tabs[a.view.tabIndex].currentId,
+          x.uuid,
+          reason:
+              'the tab wears the SAME uuid: +295 identities do not '
+              'move when the thread dies',
+        );
+        // And the fresh start is real: the next words name the same
+        // record, on the same tab, with nothing above them.
+        unawaited(a.runQuickCommand('first word'));
+        await pump();
+        expect(bridge.conv(x.uuid).turnOpen, isTrue);
+      },
+    );
+
     test('the wire can die; the agent did not (+D, behaviourally)', () async {
       final x = await tab('/proj-x');
       unawaited(a.runQuickCommand('long turn please'));

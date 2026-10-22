@@ -210,3 +210,38 @@ mail-fetch law exists to forbid — history the ear already owns must
 not speak. Tim's rule, verbatim: an inactive session "shouldn't process
 the TTS, but we should still receive messages from the bridge" —
 received means acked; an ack that could be re-sent is not received.
+
+## +302: the new button, or why staleness must ask the issuer
+
+The field tape for a phone-side law: three presses of the /new chip
+in thirty seconds, each answered by the bridge (`[seat] … starts
+fresh on the next word`) and each cut short on the phone —
+`reply tail dropped: 1 unplayed chunk(s) — pump superseded between
+chunks`. The button looked dead because its confirmation was
+invisible-orphaned and its voice was self-truncated.
+
+Two leaks, both grandchildren of +295's frozen name and +298's
+swappable seat:
+
+1. **The /new wipe predated the identity law.** It purged the live
+   channel along with the history — correct when /new RENAMED the
+   record, wrong now that /new only starts it fresh. The seat went
+   unnamed, the ack stamped the pending sentinel (invisible under a
+   named tab, and userOnly adoption can't rescue an assistant
+   bubble), and the swap itself armed leak two. The law now: the
+   HISTORY dies, the IDENTITY stands. The seat's channel retires its
+   warrants in place (debts settled, badge and work retired — an
+   erased thread's owed shells have no ear), the tab's OTHER ids
+   lose their channels, the bubbles (the chip's own two included —
+   the +230 blankness law) go, and `sessionIds` keeps exactly the
+   uuid the bridge still calls this record.
+2. **Every staleness closure read `gen == _generation`** — the
+   generation of WHICHEVER channel the seat looks through now.
+   Sound in one-channel worlds; since +298 a seat swap (a tab
+   switch, or /new's own wipe) flips the verdict of every live
+   replay. Sixteen sites now bind the ISSUING ledger at the claim —
+   `_stale(led, gen)`, `_startPump(gen, led:)`,
+   `_speakResumedPending(text, gen, led:)` — because a generation is
+   a number only its ledger can interpret. The scenario rig walks
+   it: /new blanks the screen, speaks its ack WHOLE, keeps the tab's
+   uuid, and the next exchange lands on the same tab clean.

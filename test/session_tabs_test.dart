@@ -366,7 +366,11 @@ void main() {
         // /new: the tab's whole past goes, the OTHER tab's stays.
         await a.bridgeControl('/new');
         await settle();
-        expect(a.view.tabs[0].currentId, isNull); // replaced in place
+        // +302: under +295's identity law /new REPLACES the thread
+        // IN PLACE — the history dies, the name stands. (The old
+        // wipe nulled it and let adoption chase the re-name; that
+        // churn is what silently ate the ack's audio on the phone.)
+        expect(a.view.tabs[0].currentId, 'ses-X');
         expect(
           a.chat.where((e) => e.blocks.contains('one in X')),
           isEmpty,

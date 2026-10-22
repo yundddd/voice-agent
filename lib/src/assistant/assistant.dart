@@ -2717,7 +2717,8 @@ class VoiceAssistant extends ChangeNotifier {
     // interrupted turn keeps the sections actually spoken — that IS what
     // the conversation was. A turn that never spoke is removed at the end.
     final turn = _chat.beginTurn();
-    final gen = _turn.supersede(); // supersedes any in-flight voice reply
+    final led = _turn; // +302: the ledger THIS gen belongs to
+    final gen = led.supersede(); // supersedes any in-flight voice reply
     _reply.stopPlayback(); // cut the current audio, like the voice preview does
     final mySeq = _turn.claimSlot(); // claim the busy flag for this turn
     // A heard turn clears the badge; a detached continuation keeps it —
@@ -2766,7 +2767,7 @@ class VoiceAssistant extends ChangeNotifier {
     _ttsFirstTimed = false; // first spoken block stamps the tts number
     _reply.playSeconds = 0; // once (first-word latency) and play time accrues
     _hide.buryDropMark(); // a fresh turn buries any hide-marked paragraph
-    _startPump(gen);
+    _startPump(gen, led: led);
     await BridgeTurn(
       origin: events == null ? BridgeTurnOrigin.talk : BridgeTurnOrigin.control,
       env: _turnEnv,
@@ -3135,8 +3136,20 @@ class VoiceAssistant extends ChangeNotifier {
   set _drainAfterSpeech(({int gen, int mySeq})? v) =>
       _chan.drainAfterSpeech = v;
 
-  void _startPump(int gen) =>
-      unawaited(_reply.runPump(isStale: () => gen != _generation));
+  /// +302: staleness is a relationship between a TURN and its OWN
+  /// conversation's ledger. Every `gen == _generation` closure below
+  /// compared against WHICHEVER channel the seat looks through now —
+  /// sound in a single-channel world, a leak since +298 made the
+  /// seat swappable: the field tape's /new pressed its own wipe, the
+  /// wipe swapped the active coordinator, and the fresh ack's audio
+  /// died 'between chunks' to a generation comparison against a
+  /// stranger's zero. Generations are issued by a ledger; ask the
+  /// issuer, not the furniture.
+  bool Function() _stale(TurnCoordinator led, int gen) =>
+      () => gen != led.generation;
+
+  void _startPump(int gen, {required TurnCoordinator led}) =>
+      unawaited(_reply.runPump(isStale: _stale(led, gen)));
 
   // Voice barge-in (or any takeover) while a harness turn is in flight
   // goes through TurnCoordinator.detach — THE funnel every trigger lands
@@ -3237,12 +3250,40 @@ class VoiceAssistant extends ChangeNotifier {
           if (tab == null) {
             _chat.clearAll();
           } else {
-            // +276: the thread this tab had is gone — any banner it
-            // owed dies with it (a shell still running in a erased
-            // conversation has no ear to report to).
-            _purgeChannelsOwned(tab.sessionIds);
+            // +302: rewritten under +295's identity law. /new starts
+            // the record FRESH; it does not RENAME it. The old wipe
+            // predated that law and purged the live channel with the
+            // history: the seat went unnamed, the ack stamped the
+            // pending sentinel (invisible to the named tab the
+            // adoption had just become), userOnly adoption couldn't
+            // rescue an assistant bubble, and the mid-synth reply
+            // pump — reading the SWAPPED-IN coordinator's generation
+            // — declared the fresh ack stale between chunks (field
+            // tape: three presses, no visible ack, no whole word
+            // spoken; 'the new button stopped working'). The law
+            // again: the HISTORY dies, the IDENTITY stands. The
+            // seat's channel retires its warrants IN PLACE (an
+            // erased thread's owed shells have no ear to report to,
+            // +276 unchanged); the tab's OTHER ids — a resumed
+            // thread's predecessors, a forked birth — are truly
+            // gone and their channels go with them.
+            final here = _sessionId;
+            _turn.retireBadgeAndWork();
+            _turn.settleDebtsOwnedBy(here);
+            final doomed = {
+              for (final id in tab.sessionIds)
+                if (id != here) id,
+            };
+            _purgeChannelsOwned(doomed);
             _chat.removeSessions({...tab.sessionIds, ChatStore.pendingSession});
-            tab.sessionIds.clear();
+            // The name stands (replace-in-place, +295's way): the
+            // uuid survives as the tab's currentId and its one
+            // remaining ledger name — the next /health will name
+            // this same record anyway. A still-unnamed birth keeps
+            // its sentinel as the name, honestly: it has none yet.
+            tab.sessionIds
+              ..clear()
+              ..add(here ?? ChatStore.pendingSession);
             unawaited(_saveBridgePrefs());
           }
           // And the meter goes blank with the chat, not into a
@@ -3685,7 +3726,8 @@ class VoiceAssistant extends ChangeNotifier {
         .warmUpRoute(); // the route rides the wait exactly like a real PTT turn
     _benchNote = 'Transcribing…';
     notifyListeners();
-    final gen = _generation; // stays ours unless a newer turn supersedes it
+    final led = _turn; // +302
+    final gen = led.generation; // stays ours unless a newer turn supersedes it
     try {
       final text = (await _worker!.transcribe(pcm, 16000)).trim();
       final asrMs = _benchT0!.elapsedMilliseconds;
@@ -3696,10 +3738,10 @@ class VoiceAssistant extends ChangeNotifier {
       final swTts = Stopwatch()..start();
       _reply.startStream();
       var sawFirstChunk = false;
-      final playTask = _reply.runPump(isStale: () => gen != _generation);
+      final playTask = _reply.runPump(isStale: _stale(led, gen));
       await _reply.speakBlock(
         text,
-        alive: () => gen == _generation,
+        alive: () => gen == led.generation,
         onAir: (_) {
           // [_benchFirstAudioMs] itself is stamped in the pipeline's
           // audible hook: the honest figure is when the PLAYER got the
@@ -3745,7 +3787,7 @@ class VoiceAssistant extends ChangeNotifier {
       _benchBusy = false;
       _benchChunks.clear();
       _benchT0 = null;
-      if (gen == _generation) _phase = AssistantPhase.idle;
+      if (gen == led.generation) _phase = AssistantPhase.idle;
       notifyListeners();
     }
     _afterCapture();
@@ -3903,7 +3945,7 @@ class VoiceAssistant extends ChangeNotifier {
       // survived turn would stream as text-only forever: respawn it, and
       // only when none runs (a pump parked on the wake hook must not get
       // a twin competing for the chunk queue).
-      if (!_reply.pumpAlive) _startPump(_generation);
+      if (!_reply.pumpAlive) _startPump(_generation, led: _turn);
       // Keep the hide's promise ("I'll show every reply and speak the
       // last one when you're back"): says that landed DURING the hide
       // were logged text-only — the backgrounded branch of the turn
@@ -3913,7 +3955,7 @@ class VoiceAssistant extends ChangeNotifier {
       // just revived, under the live turn's generation — no supersede,
       // no orphaned turn.
       if (plan.unheardReply case final String pending when _worker != null) {
-        unawaited(_speakResumedPending(pending, _generation));
+        unawaited(_speakResumedPending(pending, _generation, led: _turn));
       }
       // Re-lease the quiet-wire watchdog for the stream we're trusting to
       // have survived the hide. If it's alive, the kernel's buffered
@@ -4162,7 +4204,7 @@ class VoiceAssistant extends ChangeNotifier {
     final turn = _chat.beginTurn();
     _reply.stopPlayback(); // cut any current audio, like the voice preview does
     _reply.startStream();
-    _startPump(gen);
+    _startPump(gen, led: chan.turn);
     unawaited(() async {
       // The caller's unheard reply leads the backlog (see [replayFirst]):
       // synthesised through THIS reattach's gen into the queue the pump
@@ -4172,7 +4214,7 @@ class VoiceAssistant extends ChangeNotifier {
       // during the synth (new /talk took the ear) drops the audio and
       // the whole attach with it.
       if (replayFirst != null && replayFirst.trim().isNotEmpty) {
-        await _speakResumedPending(replayFirst, gen);
+        await _speakResumedPending(replayFirst, gen, led: chan.turn);
         if (gen != chan.turn.generation) return; // superseded mid-replay
       }
       await BridgeTurn(
@@ -4211,12 +4253,19 @@ class VoiceAssistant extends ChangeNotifier {
   /// branch of the loop's speak — this is the audio the room was promised.
   /// [gen] is the caller's turn generation: a superseded replay drops
   /// its chunks exactly like a superseded speak would.
-  Future<void> _speakResumedPending(String text, int gen) async {
+  /// +302: takes its ISSUING LEDGER with its generation — a replay
+  /// for a conversation the eye left behind answers to THAT
+  /// conversation's supersede, not to whatever the seat reads.
+  Future<void> _speakResumedPending(
+    String text,
+    int gen, {
+    required TurnCoordinator led,
+  }) async {
     if (_worker == null) return;
     try {
       await _reply.speakBlock(
         text,
-        alive: () => gen == _generation,
+        alive: () => gen == led.generation,
         onAir: (sinceText) {
           _phase = AssistantPhase.speaking; // first audible chunk flips
           // the status, like the loop's speak
@@ -4228,7 +4277,9 @@ class VoiceAssistant extends ChangeNotifier {
           _chat.touch();
         },
       );
-      if (gen != _generation) return; // superseded mid-replay: chunks dropped
+      if (gen != led.generation) {
+        return; // superseded mid-replay: chunks dropped
+      }
       _lastSpoken = text; // echo guard: this voice coming back is ours
     } catch (e) {
       _logDebug('resume replay failed: $e');
@@ -4239,8 +4290,8 @@ class VoiceAssistant extends ChangeNotifier {
     // drained the pump dry at its seam: respawn (only when none runs — a
     // parked pump must not get a twin) so the replayed chunks actually
     // reach the speaker and the natural-end hook eventually idles the UI.
-    if (gen == _generation && _reply.queuedCount > 0 && !_reply.pumpAlive) {
-      _startPump(gen);
+    if (gen == led.generation && _reply.queuedCount > 0 && !_reply.pumpAlive) {
+      _startPump(gen, led: led);
     }
   }
 
@@ -4250,7 +4301,8 @@ class VoiceAssistant extends ChangeNotifier {
   }) async {
     final worker = _worker;
     if (worker == null) return;
-    final gen = _turn.supersede(); // supersede whatever half-state survived
+    final led = _turn; // +302
+    final gen = led.supersede(); // supersede whatever half-state survived
     _reply.stopPlayback();
     _error = '';
     _phase = AssistantPhase.transcribing;
@@ -4258,7 +4310,7 @@ class VoiceAssistant extends ChangeNotifier {
     notifyListeners();
     _reply.warmUpRoute(); // hold the output route through the synth wait
     _reply.startStream();
-    _startPump(gen);
+    _startPump(gen, led: led);
     // The buffered reply's text is old (it arrived before the app went
     // away), so received-to-ear isn't meaningful here; the first-chunk
     // elapsed measures the wait the user feels NOW.
@@ -4267,7 +4319,7 @@ class VoiceAssistant extends ChangeNotifier {
     try {
       await _reply.speakBlock(
         text,
-        alive: () => gen == _generation,
+        alive: () => gen == led.generation,
         onAir: (sinceText) {
           _phase = AssistantPhase.speaking;
           _hops.tts(); // reply→audio hop crossed
@@ -4275,7 +4327,7 @@ class VoiceAssistant extends ChangeNotifier {
           notifyListeners();
         },
       );
-      if (gen != _generation) return; // cut off mid-replay: user moved on
+      if (gen != led.generation) return; // cut off mid-replay: user moved on
       _lastSpoken = text; // echo guard: this voice coming back is ours
       _reply.closeStream();
       if (_backgrounded) return; // hidden again mid-replay: pause owns UI
@@ -4817,7 +4869,8 @@ class VoiceAssistant extends ChangeNotifier {
     bool cutTool = false,
     bool parkBehind = false,
   }) async {
-    final gen = _turn.supersede(); // any newer turn supersedes this one
+    final led = _turn; // +302
+    final gen = led.supersede(); // any newer turn supersedes this one
     _ptt.bridgeHold = false; // the hold is over: the turn owns the choice now
     _phase = AssistantPhase.transcribing;
     if (!parkBehind) {
@@ -4834,10 +4887,10 @@ class VoiceAssistant extends ChangeNotifier {
       _asrAudioRate = 16000;
       final text = (await _worker!.transcribe(samples, 16000)).trim();
       swAsr.stop();
-      if (gen != _generation) {
+      if (gen != led.generation) {
         _withdrawTranscribe('superseded during ASR');
         _logDebug(
-          'message SWALLOWED: superseded during ASR (gen $gen → $_generation)'
+          'message SWALLOWED: superseded during ASR (gen $gen → ${led.generation})'
           ' — transcript "${text.substring(0, text.length < 40 ? text.length : 40)}" '
           'went nowhere',
         );
@@ -4948,7 +5001,7 @@ class VoiceAssistant extends ChangeNotifier {
         _reply
             .speakBlock(
               text,
-              alive: () => gen == _generation,
+              alive: () => gen == led.generation,
               drop: () => _hide.shouldDrop(text), // hide cut this
               // reply mid-play: skip the rest whole, no replay on return
               onAir: (sinceText) {
@@ -4963,15 +5016,15 @@ class VoiceAssistant extends ChangeNotifier {
               },
             )
             .then((_) {
-              if (gen != _generation) return;
+              if (gen != led.generation) return;
               _reply.closeStream();
             })
             .catchError((Object e) {
               _reply.closeStream();
-              if (gen == _generation) _fail('Round trip failed: $e');
+              if (gen == led.generation) _fail('Round trip failed: $e');
             }),
       );
-      await _reply.runPump(isStale: () => gen != _generation);
+      await _reply.runPump(isStale: _stale(led, gen));
     } catch (e) {
       // +188: a transcribe that threw never fills its bubble — take
       // the pulsing shell back rather than leave it beating on screen.
@@ -5212,7 +5265,8 @@ class VoiceAssistant extends ChangeNotifier {
     // Offline cleanup (high-pass + frame noise gate) using the live noise
     // floor — safe here: the user already finished speaking, so gating can
     // never clip utterance onsets, only quiet fill between words.
-    final gen = _generation; // a press during cleanup interrupts this turn
+    final led = _turn; // +302
+    final gen = led.generation; // a press during cleanup interrupts this turn
     _phase = AssistantPhase.transcribing;
     if (!(bridgeHold && !interrupt)) {
       // +148: the QUEUE flavour leaves the box alone — even the
@@ -5228,13 +5282,13 @@ class VoiceAssistant extends ChangeNotifier {
     } catch (e) {
       debugPrint('denoise failed, using raw audio: $e');
     }
-    if (gen != _generation) {
+    if (gen != led.generation) {
       _withdrawTranscribe('superseded during cleanup');
       // The button was pressed again mid-cleanup: that hold owns the mic
       // (and the reply is abandoned); don't resurrect this turn.
       _logDebug(
         'message SWALLOWED: superseded during cleanup (gen $gen → '
-        '$_generation, pointers=${_ptt.pointers}) — the recording died untranscribed',
+        '${led.generation}, pointers=${_ptt.pointers}) — the recording died untranscribed',
       );
       if (_ptt.pointers == 0) _idleReady();
       return;
