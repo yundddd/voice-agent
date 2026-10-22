@@ -40,7 +40,8 @@ void main() {
       expect(store.entries.first.blocks.single, 'u2');
     });
 
-    test('+E: retention is PER SESSION — a busy tab cannot wipe a quiet one',
+    test(
+      '+E: retention is PER SESSION — a busy tab cannot wipe a quiet one',
       () {
         // Review E: one shared cap trimmed oldest-first across ALL
         // conversations, so a chatty session evicted a quiet one's
@@ -65,8 +66,7 @@ void main() {
           hasLength(1),
           reason: 'the quiet conversation keeps its ONE memory while A floods',
         );
-        final aKept =
-            s.entries.where((e) => e.session == 'ses-A').toList();
+        final aKept = s.entries.where((e) => e.session == 'ses-A').toList();
         expect(aKept, hasLength(5));
         expect(
           aKept.first.blocks.single,

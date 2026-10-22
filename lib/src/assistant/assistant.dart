@@ -506,6 +506,7 @@ class VoiceAssistant extends ChangeNotifier {
       ),
       bridgeBusy: _bridgeBusy,
       harnessBackgrounded: _harnessBackgrounded,
+      awaitPickup: _awaitPickup, // +295: the pin's own warrant
       turnHomeHere: turnHome,
       drainOwed: _drainAfterSpeech != null,
       drainReading: _drainReading,

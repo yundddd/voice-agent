@@ -620,6 +620,103 @@ void main() {
   });
 
   group('the polite queue and its pin (0.1.0+81, +90)', () {
+    test('+295: a parked prompt keeps the working row lit through the '
+        'tool wait — the settled verdict must not outvote the pin', () async {
+      // Field tape (post-+295): 'do a foreground sleep' → 'the message
+      // is queued correctly but the spinning box is missing'. The
+      // ring's story: the press detached the open turn (its
+      // foreground sleep-10 keeps working), the polite release
+      // PARKED the prompt — and the row died there, not at the
+      // stranger's receipt. Chain of causes: the tool-carrying
+      // message's stop rode the relayed 'settled' verdict (no fresh
+      // tally to void it on a partial-less upstream — the +170
+      // shape); the queue release retired the badge (banner law);
+      // and the +182 veto `!token.settled || harnessBackgrounded`
+      // then had no witness left to speak for the still-open round
+      // the pin itself promises. The pin IS that witness (+146
+      // already credits it to agentBusy): it exists only because
+      // talk() parked behind a live turn. The stranger's finished
+      // receipt rides the wait too — the walk keeps it in, so the
+      // payment of one debt row can never become this regression's
+      // alibi again.
+      await withBridge();
+      a.setMode(InteractionMode.pushToTalk);
+      engine.transcripts = ['hello there'];
+      unawaited(a.runQuickCommand('foreground sleep please'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'sleep 10'),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'Bash sleep 20',
+          toolKind: 'background',
+        ),
+      );
+      // The message carrying the tool_use goes FINAL (bridge
+      // message_stop → the relayed 'settled' verdict): from here the
+      // row's ONLY warrant is the badge arm — the +182 clause,
+      // 'only a turn still GENERATING can outvote a per-message
+      // settled', carried on the wire by the detached turn's badge.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          toolKind: 'settled',
+        ),
+      );
+      await settle();
+      // (Heard + settled hides the box by +182's own law — the band
+      // names the tool. The field window opens with the press, whose
+      // detach is what moves the row's warrant onto the badge arm.)
+
+      // Press over the live tool, record, plain release → parked pin.
+      a.pttDown(Offset.zero);
+      await settle();
+      mic.emit(FakeMic.audio(10));
+      await settle();
+      time.advance(const Duration(milliseconds: 600));
+      a.pttUp(Offset.zero);
+      await settle();
+      expect(
+        a.queuedText,
+        'hello there',
+        reason: 'the polite release parked the prompt',
+      );
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason: '+148: the parked prompt leaves the row lit',
+      );
+
+      // THE STRANGER'S RECEIPT (the tape's #21282/#21283): the sleep-20
+      // shell finishes. It pays its OWN debt — it may not retire the
+      // badge/box warrant of a turn that is still GENERATING behind
+      // the pin. This is +287's law restated for receipts: a clean
+      // bill naming a stranger is no verdict for the work on screen.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 20',
+        ),
+      );
+      await settle();
+      expect(
+        a.view.showWorkingRow,
+        isTrue,
+        reason:
+            '+295: the receipt settled a debt; the still-open detached '
+            'turn keeps the box — bridgeBusy=${a.view.bridgeBusy} '
+            'drainReading=${a.view.drainReading} '
+            'harnessBackgrounded=${a.view.harnessBackgrounded} '
+            'turnHomeHere=${a.view.turnHomeHere} '
+            'settled=${a.view.token.settled}',
+      );
+    });
+
     test('push view: a parked pin dies at the started marker, not the '
         'first frame (+149)', () async {
       await withBridge();

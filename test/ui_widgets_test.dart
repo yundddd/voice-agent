@@ -45,6 +45,7 @@ AssistantView _view({
   bool harnessBackgrounded = false,
   bool drainOwed = false,
   bool drainReading = false,
+  bool awaitPickup = false,
   PttGuide ptt = const PttGuide(
     holdActive: false,
     slide: PttSlide.none,
@@ -64,6 +65,7 @@ AssistantView _view({
   harnessBackgrounded: harnessBackgrounded,
   drainOwed: drainOwed,
   drainReading: drainReading,
+  awaitPickup: awaitPickup,
   bridgeConfigured: true,
   ttsOn: true,
   userSpeaking: false,

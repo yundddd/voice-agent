@@ -214,6 +214,7 @@ final class AssistantView {
     required this.harnessBackgrounded,
     required this.drainOwed,
     required this.drainReading,
+    required this.awaitPickup,
     required this.bridgeConfigured,
     required this.ttsOn,
     required this.userSpeaking,
@@ -370,6 +371,18 @@ final class AssistantView {
   /// from VoiceAssistant._drainReading.
   final bool drainReading;
 
+  /// +295: a PARKED prompt awaiting its pickup (the grey pin's own
+  /// state, VoiceAssistant._awaitPickup). The wait a pin tells is a
+  /// TOOL ROUND still generating on the bridge — the +170 truth,
+  /// re-stated for the box: a per-message `settled` verdict (text
+  /// final, tool still running, no fresh tally to void it on a
+  /// partial-less upstream) must not silence the row of the prompt
+  /// that is WAITING ON that round. The field tape: 'the message is
+  /// queued correctly but the spinning box is missing' — after a
+  /// polite release the queue verdict retires the badge (the banner
+  /// law) and the settled veto then hid the box the whole wait.
+  final bool awaitPickup;
+
   /// +164: a parked drain verdict — the wire owes this phone a reply
   /// it has taken but not yet heard, waiting for the speaker to fall
   /// silent (+124's no-interruptions rule). Projected straight from
@@ -396,7 +409,16 @@ final class AssistantView {
       turnHomeHere &&
       agentWorking &&
       spinnerVisible &&
-      (!token.settled || harnessBackgrounded);
+      // +295: `awaitPickup` joins the badge as a settled-outvoter. A
+      // parked prompt IS proof of an open round on the bridge (the
+      // pin only exists because talk() parked it behind a live turn —
+      // the same warrant +146 credits to agentBusy: 'the turn it
+      // waits behind is bridgeBusy anyway'). Without it the queue
+      // verdict's badge retirement + a per-message `settled` hid the
+      // box THROUGH the whole tool wait the pin stands for — the
+      // field tape's 'the message is queued correctly but the
+      // spinning box is missing'.
+      (!token.settled || harnessBackgrounded || awaitPickup);
 
   /// +249: the row (spinner, thought, draft) belongs to the conversation
   /// it thinks for. After a mid-turn tab switch the work is backgrounded
