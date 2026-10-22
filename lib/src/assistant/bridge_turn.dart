@@ -788,6 +788,24 @@ class BridgeTurn {
       env.log('queue picked up: "${ev.detail}"${transport.wireTag(ev)}');
       return;
     }
+    // +297: the +274/+290 ownership verdict, computed ONCE at the
+    // top of the tool arm — the meter arms below used to run BEFORE
+    // it, so a stranger conversation's frame drove this view's
+    // ticker. The foreground-sleep tape's missing box: another
+    // session's honest `settled` verdict (its launch message stopped
+    // with openTools empty — run_in_background lives in bgTools)
+    // rode the shared ring into this pump, settled THIS turn's
+    // meter, and the +182 veto then hid the row THROUGH this tab's
+    // own running tool. The meter belongs to the conversation on
+    // screen: a frame stamped for a stranger paints neither the
+    // ticker nor the step freeze.
+    final seatedForBand = env.seatedSession?.call();
+    final homeUnproven = seatedForBand == null && _viewSid == null;
+    final foreign =
+        ev.session != null &&
+        ev.session != seatedForBand &&
+        ev.session != _viewSid &&
+        !homeUnproven;
     if (ev.toolName == 'finished') {
       // The bridge's receipt that the out-of-earshot work is OVER —
       // the lifecycle receipt of a backgrounded turn (+128) and/or the
@@ -823,8 +841,11 @@ class BridgeTurn {
       // the fallback for a bridge too old to stamp.
       turn.noteAgentWork(ev.detail, sid: ev.session ?? _viewSid);
       // +170: the harness backgrounded a shell — a tool IS running,
-      // whatever the last message's message_stop said.
-      ticker.markToolStep();
+      // whatever the last message's message_stop said. +297: that
+      // void speaks for the OWNER's meter — a stranger's shell must
+      // not re-light this view's row either (the debt ledger below
+      // takes it fine: the stamp names whose it is).
+      if (!foreign) ticker.markToolStep();
       env.log(
         'agent backgrounded "${ev.detail}" — banner lit'
         '${transport.wireTag(ev)}',
@@ -845,12 +866,16 @@ class BridgeTurn {
       // Live token tally ("thinking · 1.2k out · 21k in"): rewrites the
       // spinner label only — the heartbeat line and the narrate gate
       // stay untouched, or the voice would ticker-tape a counter every
-      // relay.
-      ticker.onFrame(ev);
+      // relay. And (since +297) never another conversation's: the
+      // stranger's `settled` verdict that hid the box is this door.
+      if (!foreign) ticker.onFrame(ev);
       return;
     }
-    ticker.markToolStep(); // a real step froze the counter: the estimate
-    // stopped being about live generation
+    if (!foreign) {
+      ticker.markToolStep(); // a real step froze the counter: the estimate
+      // stopped being about live generation — the OWNER's estimate;
+      // a stranger's step freezes nothing here (+297).
+    }
     // 'queued' (from the bridge's talk()) gets the human wording: the
     // instant an utterance parks behind a running tool, the phone says
     // 'one moment' and what happens next, instead of the old silent
@@ -879,32 +904,14 @@ class BridgeTurn {
     // +259: the band belongs to the seated conversation, like the bar
     // (+249) and the busy shimmer (+256). A backgrounded thread's tool
     // frame keeps its own ledger current (noteToolStep below), its own
-    // ticker, its own journal — but the command it is chewing must not
-    // paint the tab you are watching (the field shape: work backgrounded
-    // in A, swipe to B — A's 'Bash …' squatting on B's top band). The
-    // view's identity, learned from its context frames, decides; an
-    // unnamed view (old bridge, fresh birth) merges on trust, as ever.
-    final seatedForBand = env.seatedSession?.call();
-    // +274: the same outright verdict as the say gate — a frame whose
-    // stamp names a conversation that is neither the seat's nor this
-    // view's belongs to a thread this pump is only passing through.
-    // Its band files to the OWNER's cache (whose tab will show it on
-    // return), and none of this view's ledgers take a word of it:
-    // the step line, the backgrounded row's label, the journal — all
-    // belong to the drain that speaks it.
-    // +290's law, stated for the band gate too (review C): the stamp
-    // verdict needs a POSITIVE home to contradict. With neither the
-    // seat nor this view named, there is no stranger to point at —
-    // the frame's own stamp cannot make a nameless tab look foreign,
-    // or every status line of a fresh seat is suppressed exactly when
-    // the reader most needs it. The say/file gates got this clause at
-    // +290; this gate had been left behind.
-    final homeUnproven = seatedForBand == null && _viewSid == null;
-    final foreign =
-        ev.session != null &&
-        ev.session != seatedForBand &&
-        ev.session != _viewSid &&
-        !homeUnproven;
+    // ticker (+297: the verdict moved to the top of this arm, and the
+    // meter doors read it there), its own journal — but the command it
+    // is chewing must not paint the tab you are watching (the field
+    // shape: work backgrounded in A, swipe to B — A's 'Bash …'
+    // squatting on B's top band). The view's identity, learned from
+    // its context frames, decides; an unnamed view (old bridge, fresh
+    // birth) merges on trust, as ever (+290's clause rides with the
+    // verdict above — review C closed this gate at +295).
     final bandHome =
         !foreign &&
         (_viewSid == null ||

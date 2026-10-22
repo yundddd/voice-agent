@@ -451,6 +451,23 @@ class VoiceAssistant extends ChangeNotifier {
     ];
   }
 
+  /// +297: does the machine's live work belong to the conversation on
+  /// screen? The laws that PARK, GREY or HOLD a prompt behind a live
+  /// turn may only be moved by THIS conversation's own turn: the
+  /// bridge has queued per record since +257 (a prompt to a resting
+  /// conversation STARTS, whatever a stranger is mid-thinking about),
+  /// so parking behind a STRANGER's busy flag makes the phone lie
+  /// about a wait that will not happen (field: 'the other session
+  /// erroneously shows messages as queued even though it's processed
+  /// immediately'). The owner pair is the badge gate's own (+279):
+  /// the debt's sid first, the signed home marker behind; neither
+  /// named = no away work = the single-thread world, home by
+  /// presumption (the +256 clause, restated for the press laws).
+  bool get _liveWorkIsHere {
+    final owner = _turn.workOwner ?? _turnHomeSid;
+    return owner == null || owner == _sessionId;
+  }
+
   /// The conversation screen as ONE immutable snapshot: what to paint,
   /// computed from the machine's truth in exactly one place. Widgets
   /// read this (or re-read it on their own tick through a [ViewSource]);
@@ -2498,14 +2515,17 @@ class VoiceAssistant extends ChangeNotifier {
     // which clears _bridgeBusy and would launder an audible detach into
     // a silent continuation.
     final detachedContinuation = _harnessBackgrounded && !_bridgeBusy;
-    final queuedBehindLiveTurn = !interrupt && _bridgeBusy;
+    // +297: the wait is only real when the turn waited behind is
+    // THIS conversation's — see _liveWorkIsHere.
+    final queuedBehindLiveTurn = !interrupt && _bridgeBusy && _liveWorkIsHere;
     // Pin policy aside, ANY prompt sent while the bridge holds a turn
     // (heard or backgrounded) PARKS at its front — and on the POLL ring
     // the parked pump inherits the busy turn's farewell done, which it
     // must survive to see its own pickup (the bash-sleep field report).
     // The transport's pre-pickup armor is armed off this same
     // before-abandon snapshot.
-    final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
+    final bridgeHadLiveTurn =
+        (_bridgeBusy || _harnessBackgrounded) && _liveWorkIsHere;
     // +149: two parked truths, computed once. PARKED (broad): work is
     // live and this prompt waits behind it — the spinner box and its
     // line must survive the send, whichever transport later reports
@@ -4130,7 +4150,9 @@ class VoiceAssistant extends ChangeNotifier {
       // to the release, and _pttCutTrace holds the bubble's paperwork
       // until then. Same supersede semantics as a
       // spoken barge-in in conversation mode — here, per spec, PTT's.
-      _ptt.bridgeHold = _bridgeBusy;
+      // +297: only a turn of THIS conversation can be waited behind;
+      // the stranger's busy flag must not arm the queue flavour.
+      _ptt.bridgeHold = _bridgeBusy && _liveWorkIsHere;
       // The press detaches (the mic must open now) but the banner
       // HOLDS: the release gesture decides whether this turn is
       // genuinely out of the ear (+146 — a banner that blinked on
@@ -4620,7 +4642,9 @@ class VoiceAssistant extends ChangeNotifier {
       // FILLS that bubble (pulse gives way to the words, same card,
       // same place); every other route (conversation VAD, typed, chip)
       // keeps adding the bubble here as it always did.
-      final queuedFlavour = !interrupt && (parkBehind || _bridgeBusy);
+      // +297: same owner law as the typed path's park.
+      final queuedFlavour =
+          !interrupt && (parkBehind || (_bridgeBusy && _liveWorkIsHere));
       final bubble = _transcribeBubble;
       _transcribeBubble = null;
       if (bubble != null) {

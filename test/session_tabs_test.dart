@@ -384,6 +384,114 @@ void main() {
       },
     );
 
+    test(
+      '+297: a stranger conversation\'s tally may not drive this '
+      'view\'s meter — the working row survives a foreign `settled`',
+      () async {
+        // The foreground-sleep tape, to the frame: tab X works while
+        // tab Y launches a background shell. Y's launch message goes
+        // FINAL and the bridge honestly relays `settled` for IT
+        // (openTools is empty — run_in_background lives in bgTools) —
+        // and the frame rides the shared ring into X's pump. The
+        // tally branch used to feed the meter BEFORE the +274
+        // ownership gate was computed, so Y's verdict settled X's
+        // ticker, the +182 veto armed, and X's own box went dark
+        // THROUGH its own running tool.
+        await a.createSession(harness: 'claude', dir: '/proj-x');
+        harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+        await a.setBridgeDir('/proj-x'); // name the seat (+256)
+        await settle();
+        unawaited(a.runQuickCommand('foreground sleep please'));
+        await settle();
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'Bash',
+            detail: 'sleep 10',
+            session: 'ses-X',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.showWorkingRow,
+          isTrue,
+          reason: 'a heard turn with a running tool owns the row',
+        );
+
+        // The stranger's settled verdict lands on this view's pump.
+        harness.emit(
+          const BridgeEvent.forTest(
+            'tool',
+            toolName: 'tokens',
+            toolKind: 'settled',
+            session: 'ses-OTHER',
+          ),
+        );
+        await settle();
+        expect(
+          a.view.showWorkingRow,
+          isTrue,
+          reason:
+              'the stranger went final; THIS turn is chewing a tool — '
+              'its meter may not be rewritten by a frame stamped '
+              'for another conversation',
+        );
+      },
+    );
+
+    test('+297: a prompt on an idle tab never wears the stranger\'s pin '
+        '— the park law asks whose turn is live', () async {
+      // The same tape's second symptom: while X runs a foreground
+      // sleep, a POLITE prompt typed on resting Y shows greyed
+      // 'queued' — even though the bridge has per-record queues
+      // since +257 and STARTS it within a heartbeat (field: 'the
+      // other session erroneously shows messages as queued even
+      // though it\'s processed immediately'). The phone parked it on
+      // the machine-global busy/badge flags: since +246 those can
+      // belong to a backgrounded conversation, and the pin lied
+      // about a wait that never happened.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x'); // name tab X while it is seated
+      await settle();
+      await a.createSession(harness: 'claude', dir: '/proj-y');
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y'); // name tab Y (createSession seated it)
+      await settle();
+      expect(await a.switchSession(0), isNull); // start on X
+      await settle();
+      unawaited(a.runQuickCommand('sleep ten in X'));
+      await settle();
+      // Swipe to Y mid-turn: X backgrounds (+246 — the turn lives,
+      // busy/badge now speak for a conversation that is NOT this tab).
+      expect(await a.switchSession(1), isNull);
+      await settle();
+
+      // A polite press on the RESTING tab: the prompt goes to Y's
+      // record, Y has no open turn — no pin, and the spinner speaks
+      // for a prompt that is being asked, not a wait.
+      unawaited(
+        a.runQuickCommand(
+          'hello from Y',
+          interrupt: false,
+          bubble: 'hello from Y',
+        ),
+      );
+      await settle();
+      expect(
+        a.queuedText,
+        isNull,
+        reason:
+            'the live turn belongs to the OTHER conversation — the '
+            'phone must not park/grey behind a stranger\'s busy flag',
+      );
+      expect(
+        a.view.activity,
+        isA<TurnWaiting>(),
+        reason: 'an immediate prompt shows its own ask, not the wait',
+      );
+    });
+
     test('+246: mid-turn, a SAME-harness switch backgrounds — the seat '
         'moves, the answer lives, no refusal', () async {
       // The app-background law applied to tabs: switching sessions
