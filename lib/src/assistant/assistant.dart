@@ -159,7 +159,6 @@ class VoiceAssistant extends ChangeNotifier {
       scheduler: _scheduler,
       repaint: notifyListeners,
     );
-    final ticker = TokenTicker(clock: _clock, repaint: notifyListeners);
     _narr = NarrationGate(clock: _clock);
     _ptt = PttHold(clock: _clock);
     _transport = BridgeTransport(
@@ -227,43 +226,57 @@ class VoiceAssistant extends ChangeNotifier {
       disposed: () => _disposed,
     );
     _reply.log = _logDebug;
-    // The bridge-turn truth (busy slot, backgrounded badge, the bottom
-    // line's snapshot, the generation/seq tokens) lives in the
-    // coordinator; this class reads it and fires its named transitions.
-    // The machine parts a transition orchestrates arrive as callbacks —
-    // the coordinator owns the truth and the ORDER, this class owns the
-    // reattach chain and the reply player those callbacks pull.
-    final turn = TurnCoordinator(
+    // +298 (+251 step 3): the seat starts on the UNNAMED slot; the
+    // map below grows a channel per conversation the ledger names.
+    final boot = _openChannel();
+    _activeChan = boot;
+    _channels[_pendingKey] = boot;
+  }
+
+  /// One conversation's wire companions (session_channel.dart): the
+  /// turn machine, its meter, its retry ladder. Every env closure binds
+  /// THIS channel (the late `chan` binding is what lets the ladder's
+  /// env speak of the channel it serves, not whichever tab is seated
+  /// when a rung fires): +249..+297's owner gates dissolve into that
+  /// binding — a channel can only ever speak for its own conversation.
+  SessionChannel _openChannel() {
+    final ticker = TokenTicker(clock: _clock, repaint: notifyListeners);
+    late final SessionChannel chan;
+    late final TurnCoordinator turn; // late: hardStop speaks of the machine
+    turn = TurnCoordinator(
       clock: _clock,
       log: _logDebug,
       hardStop: () async {
-        // +257: cut the conversation the MACHINE holds (its context
-        // frames named it), not whichever tab is seated — since the
-        // router era every conversation has its own floor, and the
-        // Stop chip cuts the one this phone is listening to.
-        await _gateway?.stop(sid: _turn.workOwner ?? _sessionId);
+        // +257: cut the conversation the machine holds (its frames
+        // named it), not whichever tab is seated — every conversation
+        // has its own floor, and the Stop chip cuts the one this
+        // phone is listening to.
+        await _gateway?.stop(sid: turn.workOwner ?? chan.sessionId);
       },
-      beforeDetach: _chainCancel,
+      beforeDetach: () => chan.chain.cancel(),
       afterDetach: _reply.clearAndClose,
-      queuedPin: () => _chat.queuedBubble != null,
+      // The pin that labels a step for the bottom line is THIS
+      // conversation's pin (ChatStore keeps them per session).
+      queuedPin: () =>
+          _chat.queuedFor(chan.sessionId ?? ChatStore.pendingSession) != null,
     );
-    // The retry ladder for views that died mid-turn. Its env is all
-    // tear-offs into this class: the chain decides WHEN, this class owns
-    // the gateway, badge and mic it acts on.
+    // The retry ladder for views that died mid-turn — per conversation
+    // (+287's 'retire only on its OWN clean bill' is now the ladder's
+    // shape: it belongs to, and settles, the channel it armed on).
     final chain = ReattachChain(
       scheduler: _scheduler,
       env: ReattachEnv(
         canProbe: () => _gateway != null && _worker != null,
-        busy: () => _bridgeBusy,
-        generation: () => _generation,
-        turnSeq: () => _bridgeTurnSeq,
+        busy: () => turn.busy,
+        generation: () => turn.generation,
+        turnSeq: () => turn.seq,
         pointersDown: () => _ptt.pointers > 0,
         probe: () => _gateway?.healthInfo() ?? Future.value(null),
         noteHealth: _transport.noteHealth,
-        reattach: (health) => reattachBackgroundTurn(health: health),
+        reattach: (health) => reattachBackgroundTurn(health: health, via: chan),
         retireWork: () {
           // +277: the orphan's band goes with its badge.
-          final ownedBy = _turn.workOwner ?? _turnHomeSid;
+          final ownedBy = turn.workOwner ?? chan.sessionId;
           turn.retireBadgeAndWork();
           _clearOwnedBand(ownedBy);
         },
@@ -274,14 +287,12 @@ class VoiceAssistant extends ChangeNotifier {
         // +287: the chain retires only on its OWN conversation's clean
         // bill — the turn's claimed owner first, the signed home
         // marker behind it (the same pair +276's badge gate reads).
-        ownerSid: () => _turn.workOwner ?? _turnHomeSid,
+        // +298: the marker is gone; the LADDER is the marker.
+        ownerSid: () => turn.workOwner,
       ),
     );
-    // The three wire companions above belong to THE channel — one
-    // conversation's complete private life (session_channel.dart).
-    // This era has exactly one; the getter forwards make the storage
-    // move without touching a call site.
-    _chan = SessionChannel(turn: turn, ticker: ticker, chain: chain);
+    chan = SessionChannel(turn: turn, ticker: ticker, chain: chain);
+    return chan;
   }
 
   // Silence duration that ends an utterance in conversation mode.
@@ -451,39 +462,29 @@ class VoiceAssistant extends ChangeNotifier {
     ];
   }
 
-  /// +297: does the machine's live work belong to the conversation on
-  /// screen? The laws that PARK, GREY or HOLD a prompt behind a live
-  /// turn may only be moved by THIS conversation's own turn: the
-  /// bridge has queued per record since +257 (a prompt to a resting
-  /// conversation STARTS, whatever a stranger is mid-thinking about),
-  /// so parking behind a STRANGER's busy flag makes the phone lie
-  /// about a wait that will not happen (field: 'the other session
-  /// erroneously shows messages as queued even though it's processed
-  /// immediately'). The owner pair is the badge gate's own (+279):
-  /// the debt's sid first, the signed home marker behind; neither
-  /// named = no away work = the single-thread world, home by
-  /// presumption (the +256 clause, restated for the press laws).
-  bool get _liveWorkIsHere {
-    final owner = _turn.workOwner ?? _turnHomeSid;
-    return owner == null || owner == _sessionId;
-  }
+  // +297's question — 'may THIS conversation's press laws look at the
+  // live work?' — dissolved into the map: the getters the laws read
+  // (`_bridgeBusy`, `_harnessBackgrounded`, `_ticker`) are the SEAT's
+  // channel's own truth, and a stranger's turn lives in another
+  // channel. Parking behind another tab's busy flag became
+  // unrepresentable, which is exactly what +297 legislated by hand.
 
   /// The conversation screen as ONE immutable snapshot: what to paint,
   /// computed from the machine's truth in exactly one place. Widgets
   /// read this (or re-read it on their own tick through a [ViewSource]);
   /// gestures come back as the intent methods below.
   AssistantView get view {
-    // +256 (the xray tape): HOME is where the working row and the
-    // context bar's busy-ness come from — and an unnamed seat is NOT
-    // automatically home. +249's third clause ('_sessionId == null →
-    // home') made sense for the pre-tab world, where a null id was
-    // simply 'not tracked yet'; with a marker SET, a null seat names
-    // a different conversation than the work — a fresh (unnamed) tab
-    // was showing another conversation's thinking box and its
-    // stranger-driven shimmer precisely because it had no name to
-    // mismatch on. No marker = no away work = the row/bar serve the
-    // seat; that is the whole clause now.
-    final turnHome = _turnHomeSid == null || _turnHomeSid == _sessionId;
+    // +298 (+251 step 3): the snapshot is built FROM the seat's own
+    // channel — busy-ness, banner and meter speak for the conversation
+    // on screen by construction, so 'is the work's home here' is
+    // answered by WHICH CHANNEL these getters read, not by a marker.
+    // turnHomeHere stays in the view API (the +249-era widgets and
+    // walks read it) and is now, honestly, always true of the channel
+    // being projected: an away conversation's work has its own channel
+    // and cannot borrow this tab's face. The +256 clause — a null
+    // seat is not automatically home — holds too: the fresh tab looks
+    // through the unnamed slot, not the work's channel.
+    const turnHome = true;
     return AssistantView(
       phase: _phase,
       mode: _mode,
@@ -524,6 +525,18 @@ class VoiceAssistant extends ChangeNotifier {
       bridgeBusy: _bridgeBusy,
       harnessBackgrounded: _harnessBackgrounded,
       awaitPickup: _awaitPickup, // +295: the pin's own warrant
+      // +298: the gear badge's cross-session sign — work alive on
+      // another channel (busy, badge, promise or owed shell). Where
+      // the marker era gated the paint by name, the map answers it
+      // by construction.
+      awayWork: _channels.values.any(
+        (c) =>
+            !identical(c, _chan) &&
+            (c.turn.busy ||
+                c.turn.backgrounded ||
+                c.turn.detachedPromise ||
+                c.turn.agentWork),
+      ),
       turnHomeHere: turnHome,
       drainOwed: _drainAfterSpeech != null,
       drainReading: _drainReading,
@@ -681,14 +694,96 @@ class VoiceAssistant extends ChangeNotifier {
   // named transitions; the old raw fields' meaning now lives on those
   // methods' docs. What each getter answers:
   //
-  // +251 step 1: the turn, its ticker and its retry ladder live on the
-  // SESSION CHANNEL (session_channel.dart) — one conversation's
-  // complete private life. This era holds exactly one channel and the
-  // speaker focus is trivially on it; the forwarding getters below
-  // keep every +250-era name (and every walk that pins it) intact
-  // while the storage is no longer global. Step 3 replaces this field
-  // with the per-session map and deletes the markers.
-  late final SessionChannel _chan;
+  // +298 (+251 step 3): the store. One SESSION CHANNEL per conversation
+  // — the review's SessionStore[sessionId], turn slice — keyed by the
+  // conversation's app id (the bridge's uuid-at-birth, +295). The
+  // unnamed slot (ChatStore.pendingSession) houses a conversation
+  // before its first name is spoken; _name() re-keys it when the wire
+  // speaks one — the exact law ChatStore's pending bubbles follow, for
+  // the exact same reason: what must survive naming is the bookkeeping,
+  // not the label. `_chan` answers for the SEAT, so every +250-era
+  // getter and walk stays intact across the storage move; the marker
+  // laws it replaces (turnHomeSid above all) are gone with the concept
+  // that needed them.
+  final Map<String, SessionChannel> _channels = {};
+  SessionChannel? _activeChan;
+  static String get _pendingKey => ChatStore.pendingSession;
+
+  /// The channel the seat looks through — the conversation on screen.
+  SessionChannel get _chan => _activeChan ??= _channelFor(null);
+
+  /// The channel that speaks for [sid] (the pending slot when unnamed),
+  /// minted on first sight. Does NOT move the seat.
+  SessionChannel _channelFor(String? sid) {
+    final key = (sid == null || sid.isEmpty) ? _pendingKey : sid;
+    return _channels.putIfAbsent(key, () {
+      final c = _openChannel();
+      c.sessionId = sid;
+      return c;
+    });
+  }
+
+  /// Re-key [chan] to wear [id]: the pending slot adopts the name the
+  /// wire just spoke (/seat answers, /health glances, the +290 reattach
+  /// wear). A channel already wearing that name is the ELDER — the
+  /// conversation was seen before — and its life stands; the speaker's
+  /// (unnamed) slot resets fresh.
+  void _name(SessionChannel chan, String? id) {
+    final key = (id == null || id.isEmpty) ? _pendingKey : id;
+    final old = chan.sessionId;
+    final oldKey = (old == null || old.isEmpty) ? _pendingKey : old;
+    if (oldKey == key) {
+      chan.sessionId = id;
+      return;
+    }
+    if (_channels[oldKey] == chan) _channels.remove(oldKey);
+    final elder = _channels[key];
+    if (elder != null && elder != chan) {
+      // The life under the name is older than the nameless claim:
+      // the ELDER keeps living (its debts, its turn, its meter) and
+      // the claim dissolves into it — the seat follows the life, and
+      // a fresh unnamed slot stands where the claim was.
+      elder.sessionId = id;
+      _channels[key] = elder;
+      if (identical(chan, _activeChan)) _activeChan = elder;
+      chan.sessionId = null;
+      _channels[_pendingKey] = chan;
+      return;
+    }
+    chan.sessionId = id;
+    _channels[key] = chan;
+    if (identical(chan, _activeChan)) _activeChan = chan;
+  }
+
+  /// Move the seat's eye to the channel for [id] (created when this app
+  /// has not seen that conversation yet).
+  SessionChannel _switchToChannel(String? id) => _activeChan = _channelFor(id);
+
+  /// The active channel wears [id] — every former `_sessionId = ...`
+  /// door (the seat's name moved; the bookkeeping rides with it).
+  void _setSessionId(String? id) => _name(_chan, id);
+
+  /// +298: the tab's ledger is dropping these conversations — their
+  /// channels go (debts buried first, so the band cache follows the
+  /// receipt path, not a vanish), and a seat left without its channel
+  /// lands on the unnamed slot.
+  void _purgeChannelsOwned(Iterable<String> ids) {
+    for (final c in _channels.values.toList()) {
+      c.turn.retireIfOwned({...ids, _pendingKey});
+    }
+    for (final id in ids) {
+      final chan = _channels.remove(id);
+      if (chan == null) continue;
+      if (identical(chan, _activeChan)) _activeChan = _channelFor(null);
+      chan.dispose();
+    }
+  }
+
+  /// +298: test seam — the per-conversation ledger as the store keys
+  /// it (does NOT move the seat; creates on sight, like the wire does).
+  @visibleForTesting
+  SessionChannel channelForTest(String? sid) => _channelFor(sid);
+
   TurnCoordinator get _turn => _chan.turn;
   TokenTicker get _ticker => _chan.ticker;
   ReattachChain get _chain => _chan.chain;
@@ -894,11 +989,12 @@ class VoiceAssistant extends ChangeNotifier {
   /// doing the sleep and the banner is gone'). With no debt rows,
   /// the single-owner badge answers by its stamp; an unstamped badge
   /// (the pre-tab world) belongs to the only conversation there is.
-  bool get _bannerAtHome {
-    if (_turn.debtFor(_sessionId) != null) return true;
-    if (_turn.agentWork) return false; // every row belongs to another
-    return !_turn.badgeOwnedByOtherThan(_sessionId);
-  }
+  // +298: STRUCTURAL now — the banner rows live on the channel that
+  // owes them; `_turn` is the seat's channel, so every row this getter
+  // can see is by construction this conversation's own. The +279/279.1
+  // 'per seat, per row' laws survive as the map's shape: another tab's
+  // owed shell is in ANOTHER channel and was never visible here.
+  bool get _bannerAtHome => true;
 
   /// The banner's clock: this seat's debt row's launch-time when one
   /// is owed, else the badge's own clock (+279.1 — never a global
@@ -998,8 +1094,6 @@ class VoiceAssistant extends ChangeNotifier {
   // The marker is CHANNEL state too (its step-3 deletion is planned):
   // it can only ever name an away-work belonging to the channel you
   // are looking through.
-  String? get _turnHomeSid => _chan.turnHomeSid;
-  set _turnHomeSid(String? v) => _chan.turnHomeSid = v;
   int get _contextWindow => _chan.contextWindow;
   set _contextWindow(int v) => _chan.contextWindow = v;
   int get contextIn => _contextIn;
@@ -1270,7 +1364,15 @@ class VoiceAssistant extends ChangeNotifier {
       ),
     );
     prefs.activeTab = prefs.tabs.length - 1;
-    _sessionId = r['sessionId'] is String ? r['sessionId'] as String : null;
+    // +298: the creation names the channel in hand when the sheet sat
+    // on an unnamed tab (adopt), and lands on a fresh channel otherwise
+    // (the conversation you left keeps its own life).
+    final bornId = r['sessionId'] is String ? r['sessionId'] as String : null;
+    if (_chan.sessionId == null) {
+      _name(_chan, bornId);
+    } else {
+      _switchToChannel(bornId);
+    }
     // +280: a creation is a landing too — and a brand-new tab knows
     // nothing, so the bar it wears is blank, not the numbers the
     // conversation you came from was showing a second ago.
@@ -1353,27 +1455,19 @@ class VoiceAssistant extends ChangeNotifier {
         _harnessBackgrounded ||
         _ticker.isOn ||
         _turn.agentWork) {
-      // +257: THE TURN KNOWS WHOSE IT IS. A claimed context frame
-      // names the conversation the machine holds — sign the marker
-      // to THAT, not to the seat (a reattach claim for a stranger's
-      // work used to sign it to the watching tab and orphan the real
-      // home). Unstamped (a bridge too old to name sessions): the
-      // +251 seat-presumption, guard included.
-      if (_turn.workOwner != null) {
-        _turnHomeSid = _turn.workOwner;
-      } else if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
-        _turnHomeSid = _sessionId;
-      }
-      // +255: the capture's whole input set, journalled (the +247
-      // doctrine: the next 'the box still shows' reads a clause, not
-      // a guess — busy/badge/ticker say whether work was seen here,
-      // marker/seat say what the row will be gated on at the
-      // destination).
+      // +298 (+257's law, taken to its end): there is no marker to
+      // sign. The live work STAYS where it is — on the channel of the
+      // conversation being left, with its own banner, its own row and
+      // its own spinner — and the box you come home to finds it
+      // there, because the channel is the marker the +249..+287
+      // series kept re-homing. Only the tape line remains.
       _logDebug(
         'work home: busy=$_bridgeBusy detached=${_turn.backgrounded} '
-        'ticker=${_ticker.isOn} owner=${_turn.workOwner ?? '-'} '
-        '-> marker=${_turnHomeSid ?? '-'} seat=${_sessionId ?? 'unnamed'}',
+        'ticker=${_ticker.isOn} debts=${_turn.agentWork} '
+        '-> home stays on ${_sessionId ?? 'the unnamed seat'}',
       );
+      // +255's input set rides the line above; the marker clause it
+      // journalled is the concept +298 deletes.
       // +257 (Tim's law, round three): LEAVING IS DROPPING — the
       // speaker's cut and the named drop now ride EVERY landing (see
       // _noteFocusMoved; +259 moved it out of this branch, where a
@@ -1390,12 +1484,13 @@ class VoiceAssistant extends ChangeNotifier {
       // ignores zeros, so the manual blank is the law's hands — as
       // with /new).
     } else {
-      // +255: no live work seen — no marker written. Say so on the
-      // tape: a box lighting the destination after THIS line is a
-      // different animal than one after the line above.
+      // +255: no live work seen. Say so on the tape: a box lighting
+      // the destination after THIS line is a different animal than one
+      // after the line above (+298: the marker clause the line used to
+      // carry is the concept the map deleted).
       _logDebug(
-        'work home: no live work at the seat -> marker='
-        '${_turnHomeSid ?? '-'} seat=${_sessionId ?? 'unnamed'}',
+        'work home: no live work at the seat -> every tab keeps its '
+        'own face, seat=${_sessionId ?? 'unnamed'}',
       );
     }
     prefs.activeTab = index;
@@ -1414,7 +1509,13 @@ class VoiceAssistant extends ChangeNotifier {
     // nobody yet — the pointer goes null exactly as the refreshing
     // /health would report it (nameless birth keeps the old global
     // proof until its first frame speaks a name).
-    _sessionId = sid is String ? sid : null;
+    // +298: the destination's channel takes the seat here — at the
+    // LANDING, exactly where the old code moved the single _sessionId:
+    // the cut at the commit, the capture and the refusal paths above
+    // all still spoke for the conversation being left. The answer now
+    // NAMES it (or clears it for a fresh seat).
+    _switchToChannel(tab.currentId);
+    _setSessionId(sid is String ? sid : null);
     // +280 (Tim, with the control row below): the bar lands WEARING
     // this conversation's own last reading, not a 'measuring'
     // placeholder. The blank is uniform now (the old law zeroed only
@@ -1606,7 +1707,7 @@ class VoiceAssistant extends ChangeNotifier {
     // +276: a deleted conversation retires the banner IT owed —
     // nothing will ever report a backgrounded shell whose thread
     // the user threw away.
-    _turn.retireIfOwned({...doomed.sessionIds, ChatStore.pendingSession});
+    _purgeChannelsOwned(doomed.sessionIds);
     _chat.removeSessions({
       ...doomed.sessionIds,
       ChatStore.pendingSession, // its nameless birth turn goes too
@@ -1700,7 +1801,7 @@ class VoiceAssistant extends ChangeNotifier {
     // re-read), and every id the active tab spoke gets filed.
     _tabsOnHealth(h, eraNow, s);
     if (s != _sessionId) {
-      _sessionId = s;
+      _setSessionId(s);
       if (s != null) {
         // +223: the id has a NAME now — every bubble born under the
         // sentinel (this session's own birth turn) adopts it, and ONCE
@@ -1767,15 +1868,18 @@ class VoiceAssistant extends ChangeNotifier {
     // line has no work left to name and retires on the proof.
     final det = h?['detached'];
     final missedNow = (h?['missed'] as num?)?.toInt() ?? 0;
+    // +298: the net runs for a banner owed on ANY tab — the clean
+    // report will settle only the channel it names (or journal the
+    // hold); an away debt keeps its heartbeat like a home one.
     if (h != null &&
-        (_turn.detachedPromise || _harnessBackgrounded || _bgWork.isNotEmpty) &&
+        _anyWorkOwed &&
         h['turnOpen'] != true &&
         h['queued'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
         missedNow == 0) {
       _settleBannerFromHealth(h, 'health'); // +279 (scoped, partial)
     } else if (h != null &&
-        showsBackgroundedWork &&
+        _anyWorkOwed &&
         h['turnOpen'] != true &&
         (det is num ? det.toInt() : 0) == 0 &&
         missedNow > 0) {
@@ -1791,7 +1895,7 @@ class VoiceAssistant extends ChangeNotifier {
     // A turn end (or boot, or setBridge) that leaves the bottom line
     // lit starts the heartbeat: +133's agent-backgrounded work reports
     // UNPROMPTED, and an idle phone has no other channel to hear it.
-    if (showsBackgroundedWork) _scheduleBgProbe();
+    if (_anyWorkOwed) _scheduleBgProbe();
   }
 
   /// +277: a band line lives exactly as long as the work it
@@ -1842,18 +1946,35 @@ class VoiceAssistant extends ChangeNotifier {
   /// retires only when nothing anywhere is owed any more.
   void _settleBannerFromHealth(Map<String, Object> h, String door) {
     final spoke = h['sessionId'] is String ? h['sessionId'] as String : null;
-    final paid = _turn.settleDebtsOwnedBy(spoke);
-    final othersRemain = _turn.agentWork;
-    final badgeElsewhere = _turn.badgeOwnedByOtherThan(spoke);
+    // +298: a clean bill settles the conversation it NAMES — the
+    // spoke's own channel. The +279 'scoped, partial' law is now the
+    // map's shape: a stranger's badge lives in another object and was
+    // never in reach of this settlement.
+    final led = (spoke == null ? _chan : _channelFor(spoke)).turn;
+    // Did THIS channel wear a warrant before the settle? (An empty
+    // idle stranger must not print 'retired' over a banner owed on
+    // another tab.)
+    final had =
+        led.backgrounded || led.detachedPromise || led.workOwner != null;
+    final paid = led.settleDebtsOwnedBy(spoke);
+    final othersRemain = led.agentWork;
+    final badgeElsewhere = led.badgeOwnedByOtherThan(spoke);
     for (final d in paid) {
       _bgFinishedBubble(d.label, session: d.sid ?? spoke);
       // +277: the stale row follows; +282: by NAME, so a stranger's
       // live pump cannot veto the burial of the line that just died.
       _clearOwnedBand(d.sid ?? spoke, settledLabel: d.label);
     }
-    if (!othersRemain && !badgeElsewhere) {
-      final ownedBy = _turn.workOwner;
-      _turn.retireBadgeAndWork(); // the promise goes with the snapshot
+    // +298: 'nothing open, none detached' is a verdict ONLY for the
+    // conversation the report names — the channel it speaks for must
+    // actually be the one wearing a badge to retire; an idle stranger
+    // named by the glance proves nothing anywhere and holds on the
+    // tape (+276's law, per-channel). A report that names NOBODY
+    // keeps the old global proof (the pre-tab world, and bridges too
+    // old to speak ids).
+    if (!othersRemain && !badgeElsewhere && (had || spoke == null)) {
+      final ownedBy = led.workOwner;
+      led.retireBadgeAndWork(); // the promise goes with the snapshot
       _logDebug('bg line retired: $door — nothing open, none detached');
       _clearOwnedBand(ownedBy ?? spoke);
     } else if (paid.isEmpty) {
@@ -1870,8 +1991,9 @@ class VoiceAssistant extends ChangeNotifier {
   /// +276: does THIS /health report speak for the conversation the
   /// banner owes its work to? A /health names the SEAT — it can only
   /// prove absence in the conversation it describes. The badge's home
-  /// is the conversation its own stream stamped (the pump's owner, or
-  /// the away marker). Different conversations, different truths: a
+  /// is the conversation its own stream stamped (+298: the homes are
+  /// the channels wearing warrants; the pair's marker half is gone).
+  /// Different conversations, different truths: a
   /// clean report from tab B must never retire tab A's spinner —
   /// the field tape (21:38:28): swiping to an idle tab filed
   /// 'Bash sleep 15 finished.' two seconds into the sleep and took
@@ -1879,15 +2001,30 @@ class VoiceAssistant extends ChangeNotifier {
   /// stale band and no box. No owner known (pre-tab worlds, bridges
   /// that name nothing) keeps the old global proof.
   bool _healthSpeaksForBadge(Map<String, Object>? h, String door) {
-    final badgeOwner = _turn.workOwner ?? _turnHomeSid;
-    if (badgeOwner == null) return true;
     final speaks = h?['sessionId'];
-    if (speaks is String && speaks == badgeOwner) return true;
+    if (speaks is! String) return true; // a nameless report keeps the
+    // old global proof (a bridge that names nothing has one seat).
+    // +298: the badge's homes are the channels WEARING warrants; a
+    // report naming one other than those proves absence where it
+    // speaks and nowhere the banner lives.
+    String? badgeOwner;
+    for (final c in _channels.values) {
+      if (!(c.turn.backgrounded ||
+          c.turn.detachedPromise ||
+          c.turn.agentWork)) {
+        continue;
+      }
+      final key = c.turn.workOwner ?? c.sessionId;
+      if (key != null && key != speaks) {
+        badgeOwner = key;
+        break;
+      }
+    }
+    if (badgeOwner == null) return true;
     // Test ids are short; tape ids are long. Abbreviate honestly.
     String eight(String s) => s.length <= 8 ? s : '${s.substring(0, 8)}…';
     _logDebug(
-      'bg line holds: $door said clean for '
-      '${speaks is String ? eight(speaks) : 'an unnamed seat'}, '
+      'bg line holds: $door said clean for ${eight(speaks)}, '
       'the badge belongs to ${eight(badgeOwner)}',
     );
     return false;
@@ -1900,10 +2037,18 @@ class VoiceAssistant extends ChangeNotifier {
   // While the banner is warranted, this asks /health whether a report
   // turn opened, and wakes the existing reattach chain when one did.
 
+  /// +298: a banner owed on ANY tab warrants the beat — an away
+  /// conversation's report must be fetched too (its gear-badge promise
+  /// +230 stays honest). At-home warrants it FASTER (see _bgWake).
+  bool get _anyWorkOwed => _channels.values.any(
+    (c) =>
+        c.turn.backgroundUnheard || c.turn.agentWork || c.turn.detachedPromise,
+  );
+
   /// Arm the bottom line's ask-again heartbeat — while the line is
   /// warranted, once is enough (the wake re-arms its own successor).
   void _scheduleBgProbe({Duration every = const Duration(seconds: 10)}) {
-    if (_bgProbe != null || !showsBackgroundedWork || _gateway == null) {
+    if (_bgProbe != null || !_anyWorkOwed || _gateway == null) {
       return;
     }
     _bgProbe = _scheduler.after(every, () {
@@ -1919,7 +2064,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// probe decides ATTACH-vs-idle and whose age rules speak (or
   /// silently file) the report when one is streaming.
   Future<void> _bgWake() async {
-    if (!showsBackgroundedWork) return;
+    if (!_anyWorkOwed) return;
     final h = await _gateway?.healthInfo();
     if (h == null) return;
     final det = h['detached'];
@@ -1931,9 +2076,10 @@ class VoiceAssistant extends ChangeNotifier {
       // +279: scoped like the refresh net — the beat proves absence
       // for the conversation it NAMES; other threads' debts hold.
       _settleBannerFromHealth(h, 'idle probe');
-      if (!_turn.backgrounded && !_turn.agentWork && !_turn.detachedPromise) {
-        return;
-      }
+      if (!_anyWorkOwed) return; // settled where it spoke; other tabs
+      // may still owe — the beat holds for them (+298: 'any' is honest
+      // cross-channel where the old single-flag check could only see
+      // the one conversation that existed).
     }
     // Wake the ear for a report that is STREAMING, and — the case the
     // 10 s beat could miss — for one that already OPENED AND CLOSED
@@ -1943,16 +2089,21 @@ class VoiceAssistant extends ChangeNotifier {
     // delivers it out of sync (field report: 'no response unless I
     // ask'). The chain's probe turns a missed>0 verdict into ATTACH;
     // the replay dedups or ages whatever the beat raced.
+    // +298: the report names its conversation; the LADDER that wakes
+    // belongs to it, not to whichever tab is on screen.
+    final owed = _channelFor(
+      h['sessionId'] is String ? h['sessionId'] as String : _sessionId,
+    );
     if ((h['turnOpen'] == true || h['backgrounded'] == true || missed > 0) &&
-        !_bridgeBusy &&
-        !_turn.backgrounded &&
+        !owed.turn.busy &&
+        !owed.turn.backgrounded &&
         !_benchCapturing &&
         !_benchBusy &&
         _ptt.pointers == 0 &&
-        !_chain.armed) {
-      _chain.start(
-        gen: _generation,
-        seq: _bridgeTurnSeq,
+        !owed.chain.armed) {
+      owed.chain.start(
+        gen: owed.turn.generation,
+        seq: owed.turn.seq,
         firstProbe: Duration.zero,
       );
     }
@@ -1963,7 +2114,9 @@ class VoiceAssistant extends ChangeNotifier {
     // the phone to the news). Away, the slow beat suffices — the
     // landing's catch-up probe (see switchSession) covers the return.
     _scheduleBgProbe(
-      every: _bannerAtHome
+      // +298: 'the banner is on THIS tab' is what showsBackgroundedWork
+      // now answers (the seat's channel); away debts keep the slow beat.
+      every: showsBackgroundedWork
           ? const Duration(seconds: 2)
           : const Duration(seconds: 10),
     );
@@ -1991,11 +2144,16 @@ class VoiceAssistant extends ChangeNotifier {
     // one THAT thread launched.
     String? session,
   }) {
+    // +298: the receipt pays on the channel of the conversation it
+    // STAMPS (the +279 law's end state — where the payment lands was
+    // legislated; now it is storage).
+    final chan = session == null ? _chan : _channelFor(session);
+    final led = chan.turn;
     // +277: remember whose band this payment might settle — the
     // retirement clears the owner, so capture it first.
-    final wasOwner = _turn.workOwner ?? _turnHomeSid;
+    final wasOwner = led.workOwner ?? chan.sessionId;
     final unnamed = detail.isEmpty || detail.startsWith('ended after');
-    if (unnamed && _turn.agentWork) {
+    if (unnamed && led.agentWork) {
       _logDebug(
         'turn closed unheard with agent work owed — '
         'probing the bridge instead of paying',
@@ -2004,11 +2162,11 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _turn.clearBgWork(); // the promise is paid here (see turn_session)
-    if (_harnessBackgrounded) _turn.retireBadgeAndWork();
+    led.clearBgWork(); // the promise is paid here (see turn_session)
+    if (led.backgrounded) led.retireBadgeAndWork();
     // +277: the LAST debt paid (the ledger released its owner — see
     // turn_session) settles that conversation's band as well.
-    if (_turn.workOwner == null && wasOwner != null) {
+    if (led.workOwner == null && wasOwner != null) {
       _clearOwnedBand(wasOwner, settledLabel: detail); // +282
     }
     if (unnamed) {
@@ -2019,9 +2177,9 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _turn.payAgentDebt(detail, sid: session); // +279
+    led.payAgentDebt(detail, sid: session); // +279
     // +277: if that was the final debt, the band is history.
-    if (_turn.workOwner == null && wasOwner != null) {
+    if (led.workOwner == null && wasOwner != null) {
       _clearOwnedBand(wasOwner, settledLabel: detail); // +282
     }
     // +279.1: the period card stamps for the conversation that OWED
@@ -2172,10 +2330,14 @@ class VoiceAssistant extends ChangeNotifier {
       // whose ear had just been switched off, and the press read as
       // the cause.
       _reply.stopPlayback();
-      final parked = _drainAfterSpeech;
-      if (parked != null) {
-        _drainAfterSpeech = null;
-        unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq));
+      // +298: a parked drain belongs to the conversation that parked
+      // it; the speaker is single, so any channel's verdict that was
+      // waiting on this audio runs now — on ITS channel, its guards.
+      for (final c in _channels.values.toList()) {
+        final parked = c.drainAfterSpeech;
+        if (parked == null) continue;
+        c.drainAfterSpeech = null;
+        unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq, via: c));
       }
       if (_phase == AssistantPhase.speaking &&
           !_bridgeBusy &&
@@ -2474,17 +2636,10 @@ class VoiceAssistant extends ChangeNotifier {
     bool parkBehind = false,
     Stream<BridgeEvent> Function()? events,
   }) async {
-    // +249→+257: a turn the SEAT starts is at home here — but ONLY
-    // where that was already true. A marker naming ANOTHER
-    // conversation is backgrounded work, and work does not change
-    // homes because this tab decided to speak (the xray volley:
-    // typing in x-ray cleared claude's marker, and the next reattach
-    // of claude's turn lit the wrong tab's box). The away marker
-    // retires on proof: the done of THAT conversation's own view
-    // (see noteWorkHome).
-    if (_turnHomeSid == null || _turnHomeSid == _sessionId) {
-      _turnHomeSid = null;
-    }
+    // +249→+257→+298: a turn the SEAT starts is at home here — the
+    // claim lands on the seat's OWN channel, and another conversation's
+    // backgrounded work cannot be dragged over by this tab deciding to
+    // speak (the xray volley's law, now the map's shape).
     final gateway = _gateway;
     if (gateway == null) {
       _fail('No bridge — open the terminal icon and set url + token.');
@@ -2515,17 +2670,17 @@ class VoiceAssistant extends ChangeNotifier {
     // which clears _bridgeBusy and would launder an audible detach into
     // a silent continuation.
     final detachedContinuation = _harnessBackgrounded && !_bridgeBusy;
-    // +297: the wait is only real when the turn waited behind is
-    // THIS conversation's — see _liveWorkIsHere.
-    final queuedBehindLiveTurn = !interrupt && _bridgeBusy && _liveWorkIsHere;
+    // +297 (structural via +298): the wait is only real when the turn
+    // waited behind is THIS conversation's — `_bridgeBusy` IS this
+    // channel's flag.
+    final queuedBehindLiveTurn = !interrupt && _bridgeBusy;
     // Pin policy aside, ANY prompt sent while the bridge holds a turn
     // (heard or backgrounded) PARKS at its front — and on the POLL ring
     // the parked pump inherits the busy turn's farewell done, which it
     // must survive to see its own pickup (the bash-sleep field report).
     // The transport's pre-pickup armor is armed off this same
     // before-abandon snapshot.
-    final bridgeHadLiveTurn =
-        (_bridgeBusy || _harnessBackgrounded) && _liveWorkIsHere;
+    final bridgeHadLiveTurn = _bridgeBusy || _harnessBackgrounded;
     // +149: two parked truths, computed once. PARKED (broad): work is
     // live and this prompt waits behind it — the spinner box and its
     // line must survive the send, whichever transport later reports
@@ -2649,94 +2804,142 @@ class VoiceAssistant extends ChangeNotifier {
   /// [BridgeTurnEnv]): the UI truth, the hide/resume bookkeeping, and
   /// the teardown follow-ups. All tear-offs — no assistant-side logic
   /// lives in these closures beyond the field each one owns.
-  late final BridgeTurnEnv _turnEnv = BridgeTurnEnv(
-    mode: () => _mode,
-    backgrounded: () => _backgrounded,
-    narrateOn: () => _bridgePrefs.narrate,
-    speakingNow: () => _phase == AssistantPhase.speaking,
-    generation: () => _generation,
-    turnSeq: () => _bridgeTurnSeq,
-    busy: () => _bridgeBusy,
-    badgeLit: () => _harnessBackgrounded,
-    hasError: () => _error.isNotEmpty,
-    mergeContext: _mergeContext,
-    seatedSession: () => _sessionId,
-    cacheAwayBand: cacheAwayBand, // +266: away frames keep the owner's
-    setStatus: _setStatus, // cache current, not the painted band
-    setPhase: (ph) => _phase = ph,
-    markSpeaking: () => _phase = AssistantPhase.speaking,
-    idleReady: _idleReady,
-    fail: _fail,
-    // +219 showed the provider's words to the STATUS LINE — and Tim's
-    // eye, on the CHAT WINDOW, still saw nothing: an assistant bubble
-    // that never spoke is hidden by design, and the caption row is
-    // not history. +110 already has the law for turn verdicts: the
-    // verdict gets its OWN card. The error-done now files one — the
-    // provider's own sentence (the bridge's words when an old wire
-    // sent only the flag), in the receipt outline (+184: a receipt
-    // reads as a receipt, not as prose the agent said), stamped with
-    // the era that heard it, so each thread keeps its own failures.
-    // Adjacency-idempotent like every note: a replay of one error-done
-    // files one card.
-    noteHarnessError: (why, session) {
-      // +275: the error card belongs to the conversation that HEARD
-      // it (the pump's stamp), not to whatever tab the seat paints
-      // when the frame lands — the wrong-tab receipt leak.
-      _chat.addSystemNote(
-        _error = why ?? 'the harness reported an error',
-        receipt: true,
-        session: session,
-      );
-    },
-    noteReplyText: _hide.noteReplyText,
-    noteUnheardSay: _hide.noteUnheardSay,
-    noteSpoken: (s) => _lastSpoken = s,
-    isDropped: _hide.shouldDrop,
-    blockAired: _hide.blockAired,
-    noteFirstWord: _noteFirstWordLatency,
-    noteAudioActivity: _narr.audioActivity,
-    refreshSession: _refreshSession,
-    armReattach: _armReattach,
-    drainBacklog: _drainStrandedBacklog,
-    log: _logDebug,
-    repaint: notifyListeners,
-    ttsOff: () => _ttsOff,
-    retireBgWork: _retireBgWork,
-    parkCutTrace: (e) => _pttCutTrace ??= e,
-    cutTrace: () => _pttCutTrace,
-    promptBumps: () => _promptBumps,
-    phase: () => _phase,
-    armBgProbe: _scheduleBgProbe,
-    notePickup: () => _awaitPickup = false,
-    awaitingPickup: () => _awaitPickup,
-    isHeard: _heard.isHeard,
-    commitHeard: _heard.commit,
-    focusAtMs: () => _chan.focusAtMs, // +253: the channel keeps the time
-    // +257: DONE IS THE PROOF — the away marker retires when the
-    // conversation it guards says its period, and not one frame
-    // earlier: a swipe, a supersede, or an age-out must never orphan
-    // work that is still thinking.
-    noteWorkHome: (sid) {
-      if (_turnHomeSid == sid) {
-        _turnHomeSid = null;
-        _logDebug(
-          'work home: done — marker retired, every tab its '
-          'own face again',
+  BridgeTurnEnv get _turnEnv => _envFor(_chan);
+
+  /// Freshly built for every pump (+298): the token arm — generation,
+  /// seq, busy, badge, pickup, focus watermark — binds to the pump's
+  /// OWN channel at build time, so a swipe after the POST can never
+  /// make a live pump compare its generation against another
+  /// conversation's counter (the law the single-channel era got for
+  /// free and the marker era legislated clause by clause).
+  BridgeTurnEnv _envFor(SessionChannel chan) {
+    final led = chan.turn;
+    return BridgeTurnEnv(
+      mode: () => _mode,
+      backgrounded: () => _backgrounded,
+      narrateOn: () => _bridgePrefs.narrate,
+      speakingNow: () => _phase == AssistantPhase.speaking,
+      // +298: the pump's tokens read ITS channel (built fresh per pump).
+      generation: () => led.generation,
+      turnSeq: () => led.seq,
+      busy: () => led.busy,
+      badgeLit: () => led.backgrounded,
+      hasError: () => _error.isNotEmpty,
+      mergeContext: _mergeContext,
+      seatedSession: () => _sessionId,
+      cacheAwayBand: cacheAwayBand, // +266: away frames keep the owner's
+      setStatus: _setStatus, // cache current, not the painted band
+      setPhase: (ph) => _phase = ph,
+      markSpeaking: () => _phase = AssistantPhase.speaking,
+      idleReady: _idleReady,
+      fail: _fail,
+      // +219 showed the provider's words to the STATUS LINE — and Tim's
+      // eye, on the CHAT WINDOW, still saw nothing: an assistant bubble
+      // that never spoke is hidden by design, and the caption row is
+      // not history. +110 already has the law for turn verdicts: the
+      // verdict gets its OWN card. The error-done now files one — the
+      // provider's own sentence (the bridge's words when an old wire
+      // sent only the flag), in the receipt outline (+184: a receipt
+      // reads as a receipt, not as prose the agent said), stamped with
+      // the era that heard it, so each thread keeps its own failures.
+      // Adjacency-idempotent like every note: a replay of one error-done
+      // files one card.
+      noteHarnessError: (why, session) {
+        // +275: the error card belongs to the conversation that HEARD
+        // it (the pump's stamp), not to whatever tab the seat paints
+        // when the frame lands — the wrong-tab receipt leak.
+        _chat.addSystemNote(
+          _error = why ?? 'the harness reported an error',
+          receipt: true,
+          session: session,
         );
-      }
-    },
-    turnOpenOnWire: () async {
-      final h = await _gateway?.healthInfo();
-      return h != null && h['turnOpen'] == true;
-    },
-  );
+      },
+      noteReplyText: _hide.noteReplyText,
+      noteUnheardSay: _hide.noteUnheardSay,
+      noteSpoken: (s) => _lastSpoken = s,
+      isDropped: _hide.shouldDrop,
+      blockAired: _hide.blockAired,
+      noteFirstWord: _noteFirstWordLatency,
+      noteAudioActivity: _narr.audioActivity,
+      refreshSession: _refreshSession,
+      armReattach:
+          ({
+            required int gen,
+            required int seq,
+            bool retire = false,
+            bool resetStep = true,
+            Duration? firstProbe,
+          }) => _armReattach(
+            gen: gen,
+            seq: seq,
+            retire: retire,
+            resetStep: resetStep,
+            firstProbe: firstProbe,
+            via: chan,
+          ),
+      drainBacklog: (g, sq) => _drainStrandedBacklog(g, sq, via: chan),
+      log: _logDebug,
+      repaint: notifyListeners,
+      ttsOff: () => _ttsOff,
+      retireBgWork: _retireBgWork,
+      parkCutTrace: (e) => _pttCutTrace ??= e,
+      cutTrace: () => _pttCutTrace,
+      promptBumps: () => _promptBumps,
+      phase: () => _phase,
+      armBgProbe: _scheduleBgProbe,
+      notePickup: () => chan.awaitPickup = false,
+      awaitingPickup: () => chan.awaitPickup,
+      isHeard: _heard.isHeard,
+      commitHeard: _heard.commit,
+      focusAtMs: () => chan.focusAtMs, // +253: the channel keeps the time
+      // +257: DONE IS THE PROOF — the away marker retires when the
+      // conversation it guards says its period, and not one frame
+      // earlier: a swipe, a supersede, or an age-out must never orphan
+      // work that is still thinking. +298: the marker IS the channel —
+      // a done speaks for its own thread by construction; the line keeps
+      // the tape honest when away work had been signed here.
+      noteWorkHome: (sid) {
+        final c = _channelFor(sid);
+        if (c.turn.backgrounded || c.turn.detachedPromise || c.turn.agentWork) {
+          _logDebug(
+            'work home: done — marker retired, every tab its '
+            'own face again',
+          );
+        }
+      },
+      // +298: a frame stamped for another conversation writes ITS OWN
+      // ledger instead of being suppressed by the +297 owner gates — the
+      // meter keeps ticking for the work you are not watching, and the
+      // row you come home to learned what it was doing.
+      routeForeignTool: (ev, stepLine) {
+        final c = _channelFor(ev.session);
+        if (ev.toolName == 'tokens') {
+          c.ticker.onFrame(ev);
+          return;
+        }
+        if (ev.toolName == 'backgrounded') {
+          c.turn.noteAgentWork(ev.detail, sid: ev.session);
+          c.ticker.markToolStep();
+          return;
+        }
+        c.ticker.markToolStep();
+        if (stepLine.isNotEmpty) c.turn.noteToolStep(stepLine);
+      },
+      turnOpenOnWire: () async {
+        final h = await _gateway?.healthInfo();
+        return h != null && h['turnOpen'] == true;
+      },
+    );
+  }
 
   /// +148: a polite prompt PARKED behind work still running (pin or
   /// badge — the PTT queue release has no pin). While set, the spinner
   /// box stays on the RUNNING work's bubble and its text survives; the
   /// bridge's pickup (whichever transport delivers it) clears the flag
   /// and the answer's bubble takes the box.
-  bool _awaitPickup = false;
+  bool get _awaitPickup => _chan.awaitPickup; // +298: the wait is the
+  // conversation's, not the machine's
+  set _awaitPickup(bool v) => _chan.awaitPickup = v;
 
   /// +168: this view is a MAIL FETCH — an /attach claimed while /health
   /// said no turn is open, so its replay surfaces history, not work.
@@ -2858,7 +3061,15 @@ class VoiceAssistant extends ChangeNotifier {
   /// live PTT hold (the mic owns the moment), while hidden (the resume
   /// probes cover it), and once a newer turn owns the wire (its own
   /// teardown drains then).
-  Future<void> _drainStrandedBacklog(int gen, int mySeq) async {
+  Future<void> _drainStrandedBacklog(
+    int gen,
+    int mySeq, {
+    SessionChannel? via,
+  }) async {
+    // +298: the drain re-runs the OWNING conversation's verdict — its
+    // guards read its turn tokens, its park lives on its channel, and
+    // the ladder it arms is its own.
+    final chan = via ?? _chan;
     if (pttHoldActive || _backgrounded) return;
     // +164: flush heard-acks in flight BEFORE the verdict — a just-
     // spoken reply trims its backlog copies under this POST, and the
@@ -2876,13 +3087,13 @@ class VoiceAssistant extends ChangeNotifier {
       // early return that left it standing stranded the lit brake
       // whenever another listener (the resume probe, the bg-probe
       // chain) drained the backlog out from under it.
-      if (_drainAfterSpeech != null) {
-        _drainAfterSpeech = null;
+      if (chan.drainAfterSpeech != null) {
+        chan.drainAfterSpeech = null;
         notifyListeners();
       }
       return;
     }
-    if (gen != _generation || _bridgeTurnSeq != mySeq) return;
+    if (gen != chan.turn.generation || chan.turn.seq != mySeq) return;
     // +124: the field's last mid-word cut. The bridge's `missed` is the
     // backlog LENGTH — a replayable history that only the heard-dedup
     // filters — so this verdict fires at nearly every turn end, and it
@@ -2896,7 +3107,7 @@ class VoiceAssistant extends ChangeNotifier {
     // silent, and every guard (PTT, hidden, ownership, missed) is
     // re-checked then.
     if (_reply.playing) {
-      _drainAfterSpeech = (gen: gen, mySeq: mySeq);
+      chan.drainAfterSpeech = (gen: gen, mySeq: mySeq);
       _logDebug(
         'stranded backlog: missed=$missed — audio still on air; '
         'drain parked to the natural end',
@@ -2907,9 +3118,14 @@ class VoiceAssistant extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _drainAfterSpeech = null;
+    chan.drainAfterSpeech = null;
     _logDebug('stranded backlog: missed=$missed — draining via reattach');
-    _chain.start(gen: gen, seq: mySeq, retire: true, firstProbe: Duration.zero);
+    chan.chain.start(
+      gen: gen,
+      seq: mySeq,
+      retire: true,
+      firstProbe: Duration.zero,
+    );
   }
 
   /// A drain verdict the teardown parked behind on-air audio (+124);
@@ -2936,7 +3152,7 @@ class VoiceAssistant extends ChangeNotifier {
   /// out, the interrupted session context carries over.
   void bridgeStop() {
     // +277: a stopped badge's band retires with it.
-    final stoppedOwner = _turn.workOwner ?? _turnHomeSid;
+    final stoppedOwner = _turn.workOwner ?? _sessionId;
     if (_turn.stopDetachedWork()) {
       _clearOwnedBand(stoppedOwner);
       _activity = const StatusText(
@@ -3024,7 +3240,7 @@ class VoiceAssistant extends ChangeNotifier {
             // +276: the thread this tab had is gone — any banner it
             // owed dies with it (a shell still running in a erased
             // conversation has no ear to report to).
-            _turn.retireIfOwned({...tab.sessionIds, ChatStore.pendingSession});
+            _purgeChannelsOwned(tab.sessionIds);
             _chat.removeSessions({...tab.sessionIds, ChatStore.pendingSession});
             tab.sessionIds.clear();
             unawaited(_saveBridgePrefs());
@@ -3779,7 +3995,8 @@ class VoiceAssistant extends ChangeNotifier {
     bool retire = false,
     bool resetStep = true,
     Duration? firstProbe,
-  }) => _chain.start(
+    SessionChannel? via,
+  }) => (via ?? _chan).chain.start(
     gen: gen,
     seq: seq,
     retire: retire,
@@ -3833,10 +4050,15 @@ class VoiceAssistant extends ChangeNotifier {
   Future<bool> reattachBackgroundTurn({
     Map<String, Object>? health,
     String? replayFirst,
+    SessionChannel? via,
   }) async {
+    // +298: the ladder belongs to the conversation whose view died;
+    // every claim, ticker reset and park lands on THAT channel, no
+    // matter which tab the eye looks through when the rung fires.
+    var chan = via ?? _chan;
     final gateway = _gateway;
     if (gateway == null || _worker == null) return false;
-    if (_bridgeBusy ||
+    if (chan.turn.busy ||
         _backgrounded ||
         _benchCapturing ||
         _benchBusy ||
@@ -3870,10 +4092,26 @@ class VoiceAssistant extends ChangeNotifier {
     // below then answers 'whose backlog are we draining' with the
     // truth, and the drain files the answer where it lives.
     final probeSid = probe?['sessionId'];
-    if (probeSid is String && probeSid != _sessionId) {
-      _sessionId = probeSid;
+    if (probeSid is String &&
+        probeSid.isNotEmpty &&
+        probeSid != chan.sessionId) {
+      if (chan.sessionId == null) {
+        // +290: the seat that FORGOT its name wears the one the probe
+        // carries — the law, now re-keying bookkeeping instead of a
+        // field.
+        _name(chan, probeSid);
+      } else {
+        // +298: the /health described ANOTHER conversation — the
+        // backlog it promises is THAT thread's, and the drain moves
+        // to its channel. Claiming on the caller's tab would light
+        // the wrong box: the +255 law in the map's new shape.
+        chan = _channelFor(probeSid);
+      }
       notifyListeners();
     }
+    if (chan.turn.busy) return false; // that view is already heard —
+    // nothing to steal (+257's inertness, now checked against the
+    // conversation the report actually speaks for).
     if (bridgeReattachNeeded(probe) != true) return false;
     _logDebug(
       'REATTACH start: ${_transport.noteHealth(probe)} — replaying backlog',
@@ -3903,11 +4141,12 @@ class VoiceAssistant extends ChangeNotifier {
     // so a field tape answers 'whose spin was this' without a guess.
     _logDebug(
       'attach claim: turnOpen=${probe['turnOpen'] == true} '
-      'drainReading=$_drainReading marker=${_turnHomeSid ?? '-'} '
+      'drainReading=${chan.drainReading} '
+      'home=${chan.sessionId ?? 'unnamed'} '
       'seat=${_sessionId ?? 'unnamed'}',
     );
     _error = '';
-    _ticker.resetForTurn();
+    chan.ticker.resetForTurn();
     _phase = AssistantPhase.transcribing;
     _activity = StatusText(
       _drainReading
@@ -3934,14 +4173,14 @@ class VoiceAssistant extends ChangeNotifier {
       // the whole attach with it.
       if (replayFirst != null && replayFirst.trim().isNotEmpty) {
         await _speakResumedPending(replayFirst, gen);
-        if (gen != _generation) return; // superseded mid-replay
+        if (gen != chan.turn.generation) return; // superseded mid-replay
       }
       await BridgeTurn(
         origin: BridgeTurnOrigin.attach,
-        env: _turnEnv,
-        turn: _turn,
+        env: _envFor(chan),
+        turn: chan.turn,
         chat: _chat,
-        ticker: _ticker,
+        ticker: chan.ticker,
         narr: _narr,
         hops: _hops,
         reply: _reply,
@@ -4150,9 +4389,10 @@ class VoiceAssistant extends ChangeNotifier {
       // to the release, and _pttCutTrace holds the bubble's paperwork
       // until then. Same supersede semantics as a
       // spoken barge-in in conversation mode — here, per spec, PTT's.
-      // +297: only a turn of THIS conversation can be waited behind;
-      // the stranger's busy flag must not arm the queue flavour.
-      _ptt.bridgeHold = _bridgeBusy && _liveWorkIsHere;
+      // +297 (structural via +298): only a turn of THIS conversation
+      // can be waited behind; the stranger's busy flag cannot arm the
+      // queue flavour — it lives in another channel.
+      _ptt.bridgeHold = _bridgeBusy;
       // The press detaches (the mic must open now) but the banner
       // HOLDS: the release gesture decides whether this turn is
       // genuinely out of the ear (+146 — a banner that blinked on
@@ -4642,9 +4882,9 @@ class VoiceAssistant extends ChangeNotifier {
       // FILLS that bubble (pulse gives way to the words, same card,
       // same place); every other route (conversation VAD, typed, chip)
       // keeps adding the bubble here as it always did.
-      // +297: same owner law as the typed path's park.
-      final queuedFlavour =
-          !interrupt && (parkBehind || (_bridgeBusy && _liveWorkIsHere));
+      // +297: same owner law as the typed path's park (structural
+      // since +298: `_bridgeBusy` is the seat's own flag).
+      final queuedFlavour = !interrupt && (parkBehind || _bridgeBusy);
       final bubble = _transcribeBubble;
       _transcribeBubble = null;
       if (bubble != null) {
@@ -4776,14 +5016,16 @@ class VoiceAssistant extends ChangeNotifier {
         notifyListeners();
       }
     }
-    final parked = _drainAfterSpeech;
-    _drainAfterSpeech = null;
-    if (parked != null) {
-      // +124: the speaker fell silent on its own terms; the parked
-      // backlog verdict gets its second look (a barge-in's stop is not
-      // a natural end, so a parked verdict that dies this way is
-      // simply re-formed by the next turn's teardown — self-healing).
-      unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq));
+    // +124: the speaker fell silent on its own terms; every channel's
+    // parked backlog verdict gets its second look, consumed on the
+    // conversation that parked it (+298 — a barge-in's stop is not a
+    // natural end, so a parked verdict that dies this way is simply
+    // re-formed by the next turn's teardown — self-healing).
+    for (final c in _channels.values.toList()) {
+      final parked = c.drainAfterSpeech;
+      if (parked == null) continue;
+      c.drainAfterSpeech = null;
+      unawaited(_drainStrandedBacklog(parked.gen, parked.mySeq, via: c));
     }
     _mic.fastCheck();
   }
@@ -5080,7 +5322,9 @@ class VoiceAssistant extends ChangeNotifier {
     unawaited(_flushChatPersist()); // +199: no pending snapshot dies
     _hops.dispose(); // with the timer
     _lease.cancel();
-    _chain.cancel();
+    for (final c in _channels.values) {
+      c.dispose(); // +298: every conversation's ladder, not just the seat's
+    }
     _bgProbe?.cancel();
     _pttMaxTimer?.cancel();
     _ptt.cancel();

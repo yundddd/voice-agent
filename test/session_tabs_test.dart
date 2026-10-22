@@ -492,6 +492,134 @@ void main() {
       );
     });
 
+    test('+298: away work keeps its OWN meter moving — frames route '
+        'by stamp, they are not suppressed', () async {
+      // The SessionStore's turn slice, end to end: the +297 walk
+      // proved a stranger's tally cannot rewrite the seated view's
+      // box; the map's other half is that the stranger's OWN ledger
+      // learns the numbers — the bar you come home to shows where
+      // the work was, not where you left it.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      unawaited(a.runQuickCommand('one in X'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      await a.createSession(harness: 'claude', dir: '/proj-y');
+      unawaited(a.runQuickCommand('two in Y'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      // Seat X and leave a turn WORKING there (no done on the wire):
+      // the swipe to Y backgrounds it, and the pump stays open — the
+      // answer lives, unheard-but-filed (+246).
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('X builds'));
+      await settle();
+      expect(await a.switchSession(1), isNull);
+      await settle();
+      expect(a.view.showWorkingRow, isFalse, reason: 'Y is the audience');
+      // X's pump, still open, receives a real tally and a stranger's
+      // settled verdict: the first lands on X's OWN meter (the pump's
+      // bound channel), the second on the channel it names.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          session: 'ses-X',
+          outTokens: 4321,
+          inputTokens: 987,
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'tokens',
+          session: 'ses-OTHER',
+          outTokens: 500,
+        ),
+      );
+      await settle();
+      expect(
+        a.channelForTest('ses-X').ticker.tokensOut,
+        greaterThan(0),
+        reason: 'the away work\'s meter kept counting while you watched Y',
+      );
+      expect(
+        a.channelForTest('ses-OTHER').ticker.tokensOut,
+        greaterThan(0),
+        reason: 'a stamped frame writes ITS OWN ledger (+298 routing)',
+      );
+      expect(
+        a.view.token.on,
+        isFalse,
+        reason: 'the seated tab borrowed neither',
+      );
+    });
+
+    test('+298: the pending slot adopts its name — naming moves the '
+        'label, never the life', () async {
+      // The ChatStore law for bubbles, now for the whole turn slice:
+      // a conversation born nameless accrues its bookkeeping in the
+      // unnamed slot, and the first name the wire speaks re-keys the
+      // SLOT — debts, badge, meter and all ride into the name. A
+      // banner that blinked out at the moment of naming would tell a
+      // lie about work that never stopped.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      unawaited(a.runQuickCommand('start unnamed'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash sleep 5',
+        ),
+      );
+      await settle();
+      expect(
+        a.view.backgrounded.visible,
+        isTrue,
+        reason: 'the nameless birth owes its shell — banner lit',
+      );
+      // The wire finally speaks the id (the /health law names seats).
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-B'};
+      await a.setBridgeModel('default'); // any awaited refresh path
+      await settle();
+      expect(
+        a.view.backgrounded.visible,
+        isTrue,
+        reason: '+298: the slot adopted the name; the debt rode with it',
+      );
+      expect(
+        a.channelForTest('ses-B').turn.agentDebts,
+        contains('Bash sleep 5'),
+        reason: 'the ledger now LIVES under the name',
+      );
+      expect(
+        a.channelForTest(null).turn.agentWork,
+        isFalse,
+        reason: 'a fresh unnamed slot stands where the claim was',
+      );
+      // The receipt pays at home: the debt retires where it lives.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'finished',
+          detail: 'Bash sleep 5',
+          session: 'ses-B',
+        ),
+      );
+      await settle();
+      expect(a.view.backgrounded.visible, isFalse);
+    });
+
     test('+246: mid-turn, a SAME-harness switch backgrounds — the seat '
         'moves, the answer lives, no refusal', () async {
       // The app-background law applied to tabs: switching sessions
@@ -569,9 +697,13 @@ void main() {
       expect(await a.switchSession(1), isNull);
       expect(a.view.tabIndex, 1);
       expect(
-        a.view.turnHomeHere,
+        a.view.bridgeBusy,
         isFalse,
-        reason: 'the work stayed with ses-X',
+        reason:
+            'the work stayed with ses-X — +298 (+251 step 3): '
+            'the CHANNEL is the marker; a stranger\'s busy flag '
+            'lives on the stranger\'s ledger, and the seat reads '
+            'its own',
       );
       expect(
         a.view.showWorkingRow,
@@ -704,7 +836,9 @@ void main() {
         expect(
           a.view.turnHomeHere,
           isTrue,
-          reason: 'the marker still points at X — the band changed nothing',
+          reason:
+              '+298: the work still lives on X\'s channel — '
+              'the band cache changed nothing',
         );
         harness.emit(
           const BridgeEvent.forTest(
@@ -1096,9 +1230,13 @@ void main() {
       expect(await a.switchSession(1), isNull);
       await settle();
       expect(
-        a.view.turnHomeHere,
+        a.view.bridgeBusy,
         isFalse,
-        reason: 'the work stayed with ses-X',
+        reason:
+            'the work stayed with ses-X — +298 (+251 step 3): '
+            'the CHANNEL is the marker; a stranger\'s busy flag '
+            'lives on the stranger\'s ledger, and the seat reads '
+            'its own',
       );
       expect(
         a.view.showWorkingRow,
@@ -1107,15 +1245,20 @@ void main() {
       );
       // The stranded-backlog drain runs while X still owns the
       // machine: reading mail stays mail — the box must not re-light
-      // just because /health says SOME turn is open.
+      // just because /health says SOME turn is open. +298: the probe
+      // names the backgrounded turn (an old bridge's ONE focus), the
+      // drain moves to THAT channel — and finds the view still
+      // heard: inert, no claim, nothing to rent.
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
       await a.reattachBackgroundTurn();
       await settle();
       expect(
         a.view.showWorkingRow,
         isFalse,
         reason:
-            'the attach claimed the OPEN (foreign) turn — the row '
-            'belongs to the conversation, not to whoever holds the busy slot',
+            'the foreign OPEN turn may not be claimed here at all — '
+            'the row belongs to the conversation, and so does its '
+            'attach (the +255 law, per-channel)',
       );
       // +256 (the xray tape's third finding): the bar's MOTION obeys
       // the same ownership as its numbers and the row — and an
@@ -1126,13 +1269,21 @@ void main() {
         ..remove('sessionId');
       await a.setBridgeModel('default'); // any awaited refresh path
       await settle();
-      expect(a.view.bridgeBusy, isTrue, reason: 'the foreign turn is open');
       expect(
-        a.view.turnHomeHere,
+        a.view.bridgeBusy,
         isFalse,
         reason:
-            'an unnamed seat with a named away work is NOT home — '
-            'the +249 clause let the stranger\'s box show here',
+            '+298: the foreign turn is open — ON ITS OWN '
+            'CHANNEL. The seat reads its own ledger and borrows '
+            'nothing; the +256 clause (a nameless seat is not '
+            'home by default) is now the map\'s shape',
+      );
+      expect(
+        a.view.agentBusy,
+        isTrue,
+        reason:
+            'the away work keeps the cross-session sign (+230) '
+            '— the gear badge owns it, not this tab\'s box',
       );
       expect(
         a.view.context.busy,
@@ -1201,9 +1352,11 @@ void main() {
       );
       expect(out.playing, isFalse);
       expect(
-        a.view.turnHomeHere,
+        a.view.bridgeBusy,
         isFalse,
-        reason: 'the STATED owner (ses-X) holds the marker, not the seat',
+        reason:
+            'the STATED owner (ses-X) holds the work on ITS '
+            'OWN channel (+298: the marker became the map)',
       );
       // X keeps streaming into its still-open view while Y is on
       // screen (the switch dropped the AUDIO, not the subscription):
@@ -1228,13 +1381,20 @@ void main() {
         reason: 'the conversation you left speaks into its thread, mute',
       );
       expect(
-        a.view.turnHomeHere,
+        a.view.bridgeBusy,
         isFalse,
-        reason: 'a lit busy slot on the watching tab may not move the marker',
+        reason:
+            'a lit busy slot for the stranger lives on the '
+            'stranger\'s channel — the sharing bug is '
+            'unrepresentable (+298)',
       );
       expect(a.view.showWorkingRow, isFalse, reason: 'no borrowed box on Y');
       // The reattach path itself is inert while the view is heard —
-      // nothing to steal when the ear never let go.
+      // nothing to steal when the ear never let go. +298: the probe
+      // names the backgrounded turn (the old bridge's one focus), and
+      // the inertness checks against THAT conversation's busy flag —
+      // the drain cannot even claim the watching tab as a proxy.
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
       expect(await a.reattachBackgroundTurn(), isFalse);
       // COME HOME: the stated owner re-signs the marker on the way
       // (owner beats seat), and arrival finds the box at its door.
@@ -1251,14 +1411,24 @@ void main() {
         reason: 'home, still working: the box is lit where it belongs',
       );
       // PROOF RETIRES IT: X's turn says its period (heard now — it
-      // speaks like any live answer).
+      // speaks like any live answer). +298: 'the done retires the
+      // marker' reads structurally — the box goes dark on the
+      // conversation that closed because ITS ledger says so.
       harness.emit(BridgeEvent.forTest('done'));
       harness.finishView();
       await settle();
       expect(
-        a.debugLog.any((l) => l.contains('work home: done — marker retired')),
+        a.view.showWorkingRow,
+        isFalse,
+        reason:
+            'the farewell consumed the work — the box goes dark '
+            'where it was heard, by its own flags (+298: this is '
+            'what marker-retirement became)',
+      );
+      expect(
+        a.view.turnHomeHere,
         isTrue,
-        reason: 'the farewell retires the marker, and says so',
+        reason: '+298: every projection is its own home',
       );
     });
 
@@ -1882,7 +2052,9 @@ void main() {
               'the machine does hold X\'s turn — the gear badge still '
               'carries that cross-session sign (+230)',
         );
-        expect(a.view.turnHomeHere, isFalse);
+        // +298: turnHomeHere is tautological now (the snapshot is
+        // built FROM this tab's channel); the brake and the chips
+        // below ARE the law.
         expect(
           a.view.stopHere,
           isFalse,

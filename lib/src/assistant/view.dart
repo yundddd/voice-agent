@@ -202,6 +202,7 @@ final class SessionTabInfo {
 final class AssistantView {
   const AssistantView({
     this.turnHomeHere = true,
+    this.awayWork = false,
     required this.phase,
     required this.mode,
     required this.activity,
@@ -333,7 +334,11 @@ final class AssistantView {
   /// behind is bridgeBusy anyway). +182: this set no longer reaches the
   /// box — [agentWorking] keeps only the badge arm; the banner and the
   /// brake answer to the whole of it.
-  bool get outOfEarshotWork => harnessBackgrounded || backgrounded.visible;
+  bool get outOfEarshotWork =>
+      // +298: work ALIVE ON ANOTHER CHANNEL is the very shape of
+      // 'out of the ear's reach' — the sign spans the store now that
+      // the busy/badge flags speak only for the seat.
+      harnessBackgrounded || backgrounded.visible || awayWork;
 
   /// Any bridge work in flight — heard, unheard, or owed. The Stop
   /// chip's enablement (+154): grey when nothing can be stopped, lit
@@ -345,7 +350,14 @@ final class AssistantView {
   /// The box asks the narrower [agentWorking]; the owed reply (+164)
   /// keeps the brake honest without making the agent look busy while
   /// the phone is only talking.
-  bool get agentBusy =>
+  bool get agentBusy => hereBusy || awayWork;
+
+  /// +298: the WORK THIS TAB OWNS — everything [agentBusy] answers,
+  /// minus the other channels' sign. The brake's enablement is a HERE
+  /// question (a lit brake must have something to stop in reach of
+  /// this tab's /stop), and the queue laws read the seat's own truth;
+  /// the cross-session sign alone keeps the gear badge honest.
+  bool get hereBusy =>
       agentWorking || bridgeBusy || drainOwed || backgrounded.visible;
 
   /// +280 (Tim): the CONTROL ROW's owner law — the +249 doctrine,
@@ -358,13 +370,20 @@ final class AssistantView {
   /// field caught: 'that agent is not even busy'). Scoped off
   /// [agentBusy]/[bridgeBusy], which stay the machine truths the
   /// queue laws, the talk-surface stop and the hints read.
-  bool get stopHere => turnHomeHere && agentBusy;
+  bool get stopHere => turnHomeHere && hereBusy;
 
   /// A live turn THIS conversation has open — the arm that holds the
   /// slash chips greyed mid-turn at home (a press there would supersede
   /// an answer in flight). Away work does not hold them: the seated
   /// tab is free to talk.
   bool get seatBusy => turnHomeHere && bridgeBusy;
+
+  /// +298 (+251 step 3): live work on ANOTHER conversation's channel
+  /// — busy, badge, promise or owed shell. The gear badge's cross-
+  /// session sign (+230), answered by the store rather than by one
+  /// global flag: 'that agent is busy' remains honest even when the
+  /// brake here correctly sits grey.
+  final bool awayWork;
 
   /// +168: the current view is an /attach drain (claimed while
   /// turnOpen=false) — replay only, no generating turn. Projected

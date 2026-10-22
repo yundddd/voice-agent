@@ -121,6 +121,15 @@ final class BridgeTurnEnv {
     required this.commitHeard,
     required this.focusAtMs,
     required this.noteWorkHome,
+
+    /// +298: a frame STAMPED for another conversation gets ROUTED to
+    /// that conversation's channel — its meter ticks, its ledger row
+    /// learns the step, its debt lands at home — instead of being
+    /// suppressed here. The +259/266/297 line's end state: the away
+    /// work keeps living where it belongs while the seat stays quiet.
+    /// (Absent = the single-channel rigs: the +297 suppression then
+    /// answers alone, exactly as it shipped.)
+    this.routeForeignTool,
   });
 
   final InteractionMode Function() mode;
@@ -262,6 +271,7 @@ final class BridgeTurnEnv {
   /// conversation's away-marker — backgrounded work is only background
   /// until it isn't.
   final void Function(String sid) noteWorkHome;
+  final void Function(BridgeEvent ev, String stepLine)? routeForeignTool;
 
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
@@ -839,13 +849,16 @@ class BridgeTurn {
       // launched it — and the WIRE STAMP is the authority (the frame
       // says whose stream it rode, +274); the pump's view id is only
       // the fallback for a bridge too old to stamp.
-      turn.noteAgentWork(ev.detail, sid: ev.session ?? _viewSid);
-      // +170: the harness backgrounded a shell — a tool IS running,
-      // whatever the last message's message_stop said. +297: that
-      // void speaks for the OWNER's meter — a stranger's shell must
-      // not re-light this view's row either (the debt ledger below
-      // takes it fine: the stamp names whose it is).
-      if (!foreign) ticker.markToolStep();
+      // +298: and the row itself lives THERE — a stranger's shell
+      // books its debt on its OWN ledger (+170's void freezes the
+      // OWNER's meter, not the watching tab's; the ledger is stamped
+      // either way so the old wires keep working).
+      if (foreign && env.routeForeignTool != null) {
+        env.routeForeignTool!(ev, '');
+      } else {
+        turn.noteAgentWork(ev.detail, sid: ev.session ?? _viewSid);
+        if (!foreign) ticker.markToolStep();
+      }
       env.log(
         'agent backgrounded "${ev.detail}" — banner lit'
         '${transport.wireTag(ev)}',
@@ -867,8 +880,14 @@ class BridgeTurn {
       // spinner label only — the heartbeat line and the narrate gate
       // stay untouched, or the voice would ticker-tape a counter every
       // relay. And (since +297) never another conversation's: the
-      // stranger's `settled` verdict that hid the box is this door.
-      if (!foreign) ticker.onFrame(ev);
+      // stranger's `settled` verdict that hid the box is this door —
+      // though (+298) the stranger's numbers now update the stranger's
+      // OWN meter, so the bar you come home to shows where it was.
+      if (foreign && env.routeForeignTool != null) {
+        env.routeForeignTool!(ev, '');
+      } else if (!foreign) {
+        ticker.onFrame(ev);
+      }
       return;
     }
     if (!foreign) {
@@ -938,6 +957,14 @@ class BridgeTurn {
       // still get label-only voice treatment (+73/+94): the eyes keep
       // the full line.
       turn.noteToolStep(stepLine);
+    } else if (queued) {
+      // (the queue verdict is by construction about THIS pump's
+      // prompt — it never routes.)
+    } else {
+      // +298: a stranger's step freezes ITS meter and updates ITS
+      // row — the band cache above already holds its command for the
+      // return; the ledger no longer waits for the home visit.
+      env.routeForeignTool?.call(ev, stepLine);
     }
     if (!isAttach && !foreign) {
       if (queued) {

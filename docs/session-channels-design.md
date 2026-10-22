@@ -149,19 +149,44 @@ the away conversation's thread is fed by its still-alive view, mute
 by the +253 identity gate, and the marker family retires when the
 phone's map lands.
 
-3. ◐ (+254) Phone: the TTS gate (identity + watermark) at
-   `_onSay` — walks (a), (b-silent), (c) and the return-arc are
-   green. Still owed for this step to close: N channel instances
-   with per-channel live subscriptions (the single `_chan` still
-   wears every tab's state; the watermark rides it correctly because
-   every focus MOVE re-stamps it, but the away conversation's turn
-   bookkeeping — ticker, drain, row — is still ONE bed that two
-   conversations take turns in), per-session rings for the
-   never-acked backlog, and (d) a barge scoped to the focused turn
-   only.
-4. Delete the marker laws: `turnHomeSid`, `ctxOwner` gate,
-   `turnHomeHere`, the rest/refusal journal. The +246…+251 walks
-   retarget to the structural equivalents.
+3. ✅ (+254, closed +298) Phone: the TTS gate (identity + watermark)
+   at `_onSay` — walks (a), (b-silent), (c) and the return-arc are
+   green. The debts this step owed until +298: N channel instances
+   with per-channel live subscriptions (the single `_chan` wore every
+   tab's state; the watermark rode it correctly because every focus
+   MOVE re-stamps it, but the away conversation's turn bookkeeping —
+   ticker, drain, row — was ONE bed two conversations took turns
+   in). CLOSED at +298: `VoiceAssistant` now holds
+   `{sessionId: SessionChannel}` — the review's
+   SessionStore[sessionId], turn slice — keyed by the bridge's
+   app uuid (+295), with the unnamed slot
+   (`ChatStore.pendingSession`) adopted into the first name the
+   wire speaks (the exact law the chat bubbles follow). The seat
+   looks through `_chan`; pumps bind their channel at build, so
+   the generation/seq/busy/badge tokens, the meter, the badge,
+   the owed-shell ledger, the parked drain and the pick-up wait
+   all speak for THEIR conversation by construction. Frames
+   stamped for another conversation ROUTE to its ledger
+   (`BridgeTurnEnv.routeForeignTool`) — away work keeps its own
+   meter moving; the bar you come home to shows where the work
+   was. Still honestly deferred: per-session rings for the
+   never-acked backlog (one multiplexed wire, one cursor — the
+   +249..+274 stamp laws serve it), and (d) a barge scoped to
+   the focused turn only (one speaker; the epoch law A already
+   silences what must not sound).
+4. ✅ (+298) The marker laws are deleted: `turnHomeSid` (its whole
+   capture/sign/retire family — a channel IS its own marker), the
+   +297 owner gates (`_liveWorkIsHere` — parking behind a
+   stranger's busy flag is now UNREPRESENTABLE), the +287
+   owner-pair probe (the ladder belongs to its channel and
+   settles it alone), and the +279.1 nameless-row fallback.
+   `turnHomeHere` stays in the view API, honestly tautological —
+   every projection is its own home — while the gear badge's
+   cross-session sign (+230) moved to the new `awayWork` arm
+   (any channel busy/badged/owing). The +246…+257 walks retargeted
+   to the structural signals; /health's clean bill settles only
+   the channel it names, and a nameless report keeps the old
+   global proof for the old wires.
 
 ### The focus switch is a watermark (Tim's +251 clarification)
 

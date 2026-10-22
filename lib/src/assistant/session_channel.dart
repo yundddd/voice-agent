@@ -1,19 +1,28 @@
-// +251 design step 1: THE SESSION CHANNEL — one conversation's complete
-// private life (docs/session-channels-design.md). The +246..+251 line
-// of fixes kept re-homing pieces of ONE global conversation state
-// every time the user moved between tabs (the working row's marker,
-// the context bar's owner, the rest refusals); the model behind them
-// is that each session is a completely separate thing and the wire
-// merely routes frames to the right one. This class is that thing's
-// home: the turn, its ticker, its reattach ladder, its thread's id and
-// sizes, its parked drain verdict. In this era VoiceAssistant holds
-// exactly ONE channel and the speaker focus is trivially on it — the
-// extraction itself is the proof the scattered globals were always one
-// conversation's furniture. Step 3 swaps the single field for
-// {sessionId: SessionChannel}, keeps the focused one's frames as the
-// only TTS feed, and lets every non-focused channel receive, file and
-// ack its messages silently; the marker laws (turnHomeSid above all)
-// then delete with the concept that needed them.
+/// +251 step 3 (shipped +298): THE SESSION CHANNEL — one conversation's
+/// complete private life (docs/session-channels-design.md). The
+/// +246..+251 line of fixes kept re-homing pieces of ONE global
+/// conversation state every time the user moved between tabs (the
+/// working row's marker, the context bar's owner, the rest refusals);
+/// the model behind them is that each session is a completely separate
+/// thing and the wire merely routes frames to the right one. This class
+/// is that thing's home: the turn, its ticker, its reattach ladder, its
+/// thread's id and sizes, its parked drain verdict, its focus
+/// watermark, its parked-prompt wait. VoiceAssistant now holds
+/// {sessionId: SessionChannel} and the getter `_chan` answers for the
+/// seated one: every law the +249..+297 series legislated with owner
+/// gates (the borrowed box, the badge's home, the stranger's settled
+/// verdict, the false grey pin) holds STRUCTURALLY — a channel can
+/// only ever speak for its own conversation. The marker laws
+/// (turnHomeSid above all) delete with the concept that needed them.
+///
+/// What deliberately stays on the assistant, single: the reply/audio
+/// pipeline and its epoch (ONE speaker — the review's AudioController),
+/// the chat store (session-stamped entries, per-session retention),
+/// the transport and its ring cursor (ONE multiplexed wire), and the
+/// background-work heartbeat (it asks one /health and settles the
+/// channel that report names).
+library;
+
 import 'reattach_chain.dart';
 import 'token_ticker.dart';
 import 'turn_session.dart';
@@ -26,8 +35,9 @@ final class SessionChannel {
   });
 
   /// The wire turn machine, the token ticker and the retry ladder —
-  /// constructed by VoiceAssistant (their envs reach the gateway, the
-  /// reply player and the mic) and owned here as this conversation's.
+  /// constructed per channel by VoiceAssistant._openChannel (their
+  /// envs reach the gateway, the reply player and the mic) and owned
+  /// here as THIS conversation's.
   final TurnCoordinator turn;
   final TokenTicker ticker;
   final ReattachChain chain;
@@ -51,13 +61,6 @@ final class SessionChannel {
   double get contextFrac =>
       contextWindow > 0 ? (contextIn / contextWindow).clamp(0.0, 1.0) : 0;
 
-  /// +249: the conversation the LIVE work belongs to, when a mid-turn
-  /// switch backgrounded it; null = the work, if any, is the seat's
-  /// own. Step 3 deletes this field: with one channel per session the
-  /// working row is furniture INSIDE the channel that owns it, so
-  /// 'which tab shows the box' stops being legislated.
-  String? turnHomeSid;
-
   /// A drain verdict the teardown parked behind on-air audio (+124);
   /// consumed by the channel's own natural-end, superseded by any
   /// newer verdict. One conversation never parks another's drain.
@@ -68,6 +71,15 @@ final class SessionChannel {
   /// streams in.
   bool drainReading = false;
 
+  /// +298: the PARKED prompt's wait (was VoiceAssistant._awaitPickup,
+  /// a global). The grey pin's law (+146/+148): a parked prompt leaves
+  /// the spinner's box to the running work and the started marker
+  /// lifts the wait — and (+296, made structural here) only the
+  /// conversation whose prompt waits may outvote a `settled` verdict
+  /// with that wait. A park on tab A was never a warrant for tab B's
+  /// box.
+  bool awaitPickup = false;
+
   /// +253 THE FOCUS WATERMARK (Tim's law): the moment (bridge clock,
   /// milliseconds — same domain as a frame's _ts stamp) this
   /// conversation became the one on screen. A say stamped BEFORE it
@@ -76,4 +88,8 @@ final class SessionChannel {
   /// down. 0 = no watermark yet (fresh boot: the age and heard-ledger
   /// laws alone decide, as they always have).
   int focusAtMs = 0;
+
+  void dispose() {
+    chain.cancel();
+  }
 }
