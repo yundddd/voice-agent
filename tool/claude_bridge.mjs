@@ -249,7 +249,6 @@ const arg = (name, dflt) => {
 // Bridge screen browses inside dir-root and moves the agent between
 // folders. --dir-root (default: the home tree) is the allowlist: the
 // agent can work in a folder, never in a filesystem.
-let dir = resolve(arg('dir', process.cwd()));
 const dirRoot = resolve(arg('dir-root', homedir()));
 
 // Resolve a picker path to something that EXISTS inside dirRoot ('~'
@@ -321,7 +320,6 @@ const dumpDir = arg('dump-requests', null);
 // (--harness opencode) or at runtime (POST /harness, below); the choice
 // PERSISTS in ~/.claude_bridge_harness so the trial survives a restart
 // and a rollback is one POST, not an edit to the unit file.
-let harness = arg('harness', null);
 const harnessFile = join(homedir(), '.claude_bridge_harness');
 // +214: the ERA TIMELINE. The phone's chat split needs more than the
 // CURRENT harness to migrate its pre-split history: it needs to know
@@ -366,16 +364,43 @@ function harnessHistory() {
       }).filter(Boolean);
   } catch { return []; }
 }
-if (harness !== 'claude' && harness !== 'opencode') {
+// +312: ONE copy of a conversation's truth. The fields that used to
+// be module globals live ONLY on the record object they belong to;
+// the bare names throughout this file now READ AND WRITE THROUGH the
+// focused record (focus.field), and the bundle save/load that copied
+// thirty-odd fields in and out of the focus on every seat move and
+// every withConv detour is gone with them — no second copy, nothing
+// to drift. Their declarations (each with its own comment, its own
+// hard-won history) collapsed into this object's boot defaults: the
+// same values a fresh process began with, now owned by whoever is
+// seated. The first real record is minted FROM these.
+let focus = {
+  uuid: null, key: null, sid: null,
+  harness: arg('harness', null), dir: resolve(arg('dir', process.cwd())),
+  claudeModel: arg('model', 'default'), claudeRan: null,
+  child: null, childDead: true, turnOpen: false, curRes: null,
+  proactiveTurn: false, pending: null, contextFull: false,
+  lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
+  foldUnanswered: false, foldHeld: false, turnStartAt: 0, turnBeganAt: 0,
+  tokIn: 0, tokOutExact: 0, tokMsgBase: 0, tokLastMsgOut: 0,
+  tokChars: 0, tokKind: '', thinkBuf: '', curMsg: null, lastTextBlk: null,
+  lastTextOpen: false, tokSentAt: 0, census: {}, ctxWindow: 0,
+  lastCtx: { in: 0, window: 0 }, ctxOwner: null, estIn: 0, estSentIn: 0,
+  openTools: new Map(), detached: new Map(), bgTools: new Map(),
+  agentTasks: new Map(), spokenTools: new Set(), spokenTexts: new Set(),
+  heldFinished: [], backlog: [], updatedAt: 0,
+};
+
+if (focus.harness !== 'claude' && focus.harness !== 'opencode') {
   // An explicit --claude NAMES the binary, and naming the binary is
   // choosing the harness: the persisted runtime flip must not hijack a
   // pointed launch (the test rig passes --claude <stub> and got dragged
   // onto the live opencode service by exactly this).
-  if (argv.includes('--claude')) harness = 'claude';
-  else { try { harness = readFileSync(harnessFile, 'utf8').trim(); } catch {} }
+  if (argv.includes('--claude')) focus.harness = 'claude';
+  else { try { focus.harness = readFileSync(harnessFile, 'utf8').trim(); } catch {} }
 }
-if (harness !== 'opencode') harness = 'claude';
-noteHarnessEra(harness); // the era the boot found (or was pinned to)
+if (focus.harness !== 'opencode') focus.harness = 'claude';
+noteHarnessEra(focus.harness); // the era the boot found (or was pinned to)
 // +216: the model picker's data. ONE seam (GET /models, POST /model)
 // for both harnesses; each answers in its own dialect. Claude has no
 // model-list control (verified against 2.1.296's binary: set_model
@@ -387,8 +412,6 @@ noteHarnessEra(harness); // the era the boot found (or was pinned to)
 // own id field is the bare modelID — providers can collide).
 const modelMenu = String(arg('models', 'default,sonnet,opus,haiku'))
   .split(',').map((s) => s.trim()).filter(Boolean);
-let claudeModel = arg('model', 'default');
-// +282 (Tim): 'default' is a PROMISE, not a name. The CLI speaks the
 // model it ACTUALLY runs — system/init names it on every user message,
 // result repeats it in modelUsage — and that word, not the --models
 // placeholder, is what /health.model and the picker's current report
@@ -398,7 +421,7 @@ let claudeModel = arg('model', 'default');
 let claudeRan = null;
 const modelAcks = new Map(); // control_request id -> the model it set
 function claudeCurrent(modelFlag, ran) {
-  const m = modelFlag === undefined ? claudeModel : modelFlag;
+  const m = modelFlag === undefined ? focus.claudeModel : modelFlag;
   if (m !== 'default') return m;
   return ran ?? focus?.claudeRan ?? claudeRan ?? 'default';
 }
@@ -410,21 +433,21 @@ function claudeCurrent(modelFlag, ran) {
 // echoed the ghost back. An unknown model is dropped at the door
 // (the tape names it); the record is born and wakes on the default.
 function saneModel(m, where) {
-  if (m && harness === 'claude' && !modelMenu.includes(m)) {
+  if (m && focus.harness === 'claude' && !modelMenu.includes(m)) {
     console.error(`  [model] ${where}: dropping '${m}' — not in the menu`);
     return null;
   }
   return m;
 }
 function currentModel() {
-  return harness === 'opencode' ? oc.model : claudeCurrent();
+  return focus.harness === 'opencode' ? oc.model : claudeCurrent();
 }
 function modelList(h, d) { // [{id,label}] — the picker's whole menu
   // +230: the menu can be ASKED about a harness/dir the seat is not
   // yet on (the session-creation sheet previews the other harness's
   // catalog before flipping anything); default args keep the seat's
   // own answer for every existing caller.
-  h = h ?? harness; d = d ?? dir;
+  h = h ?? focus.harness; d = d ?? focus.dir;
   if (h === 'opencode') {
     return ocReq('/api/model?location%5Bdirectory%5D=' +
       encodeURIComponent(d))
@@ -442,16 +465,16 @@ function rememberedModel(h) { // +230: each harness's current, seat or not
   return h === 'opencode' ? oc.model : claudeCurrent();
 }
 function applyModel(id) { // resolves with the new current, or throws
-  if (harness === 'claude') {
+  if (focus.harness === 'claude') {
     if (!modelMenu.includes(id)) {
       return Promise.reject(new Error(`not in --models: ${id}`));
     }
     const reqID = randomUUID();
-    const prev = claudeModel;
-    claudeModel = id; // remembered FIRST: a dead child respawns WITH it
-    if (child && !childDead) {
+    const prev = focus.claudeModel;
+    focus.claudeModel = id; // remembered FIRST: a dead child respawns WITH it
+    if (focus.child && !focus.childDead) {
       modelAcks.set(reqID, prev); // control_response error rolls back
-      child.stdin.write(JSON.stringify({
+      focus.child.stdin.write(JSON.stringify({
         type: 'control_request', request_id: reqID,
         request: { subtype: 'set_model', model: id },
       }) + '\n');
@@ -491,9 +514,6 @@ const opencodeBin = arg('opencode', [
 // --dump-requests turn that from folklore into measurement.
 
 // -- claude child process: one per /new, kept alive across /talk ----------
-let child = null;       // claude process
-let childDead = true;   // needs respawn?
-let sessionId = null;   // for --resume after a bridge restart
 // Keyed on the LIVE dir: each project remembers its own voice session,
 // and POST /dir moving the agent moves the pointer with it. Each
 // harness remembers its own conversation: a runtime switch never
@@ -511,15 +531,9 @@ const sidFilePath = (h, d) => join(POINTER_DIR,
   `${h === 'opencode' ? 'opencode' : 'claude'}-${dirKey(d)}`);
 const legacyPointerPath = (h, d) => join(d, h === 'opencode'
   ? '.opencode_bridge_session' : '.claude_bridge_session');
-let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
-let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
-let proactiveTurn = false; // +133: this turn is the harness speaking
 // UNPROMPTED — the completion report of a shell it backgrounded itself
 // (Bash run_in_background). Nobody pressed anything; its `result` closes
 // it like any other, and while it runs a fresh /talk queues politely.
-let bgTools = new Map();    // tool_use ids launched run_in_background
-let agentTasks = new Map(); // background task id -> {label, outPath}
-let pending = null;     // { res, text, keep } — prompt queued behind a background turn
 // +250: 'Prompt is too long' is not a retryable failure — it is the
 // conversation itself being unreadable to the model. Re-asking costs a
 // full re-upload of the oversized transcript just to be told the same
@@ -530,19 +544,15 @@ let pending = null;     // { res, text, keep } — prompt queued behind a backgr
 // /compact is exactly the way back this notice points at — and a clean
 // result, a compact_boundary, or any conversation reset clears the
 // memory (recovery is proven, never assumed).
-let contextFull = false;
 const CONTEXT_FULL_MSG =
   'Context window exceeded. Please compact or create a new session.';
 const tooLongErr = (t) => /\btoo long\b/i.test(String(t ?? ''));
-let lastCompactingRelay = 0; // throttle for the status:"compacting" frame
 // +163: the id of a PARKED prompt that was folded (steered) into the
 // running turn at a tool-result boundary instead of waiting for the
 // turn to close. It has no turn of its own — its pickup rode the
 // 'started kind:steered' marker stamped with this id, and its farewell
 // is the host turn's `done` re-stamped to it, so the phone's pump ends
 // exactly as cleanly as on a real turn handover. 0 = no fold open.
-let foldedTurnId = 0;
-// +273: the fold's farewell must wait for the fold's ANSWER. The
 // +163 probe showed the CLI folding a mid-tool message into the SAME
 // turn — true when it answers; but the field tape (21:02) caught the
 // other shape: the fold lands on the last tool round of a closing
@@ -555,15 +565,10 @@ let foldedTurnId = 0;
 // foldUnanswered is armed at the fold and cleared by any assistant
 // word; a result met with it still armed HOLDS (once — foldHeld) and
 // defers the re-stamp to the steer run's own result.
-let foldUnanswered = false;
-let foldHeld = false;
-// Tool calls an interrupt (or a cuttool queue) orphaned: tool_use id →
 // the step label the phone put on its banner. Their late tool_results
 // relay a `tool finished` frame — the banner's retirement word — and
 // /health counts these as `detached` so the phone knows a promise is
 // still owed (and finds it honestly cleared when the process dies).
-let detached = new Map();
-// A cut tool's receipt, held until the flush explains the cut: while a
 // prompt waits in `pending`, the killed tool's late tool_result lands
 // BEFORE the turn's `result` (and with it flushPending's queued/started
 // notices) — relaying it on the spot stamped 'Bash sleep 10 finished.'
@@ -573,21 +578,14 @@ let detached = new Map();
 // at once). Held frames go out at the flush, AFTER the disposition,
 // with the honest verb: an error tool_result (Claude's own interrupt
 // reply) pays as 'cancelled', never 'finished'.
-let heldFinished = [];
-// +106: the open turn was cut by interruptTurn to let a waiting prompt
 // through — its `result` is then the phone's own doing, and the `done`
 // relay skips it (see the result branch).
-let cutForPrompt = false;
-// Events a detached turn produced while NOBODY was listening. The phone's
 // stream can die while the app is hidden (Android process death, an OS-
 // dropped socket): the turn then runs unheard to its result, and without
 // this buffer its entire output was dropped on the floor — the phone came
 // back to nothing. An attaching client (GET /attach) replays these first.
-let backlog = []; // +257: per-record (saved/loaded)
 const BACKLOG_CAP = 200;
-let turnStartAt = 0;    // when the open turn began (survives a detach: the
                         // replay-timestamp guards read this, not curRes)
-let turnBeganAt = 0;    // true begin (no replay-slack): the 'finished'
                         // receipt's duration reads this, not turnStartAt
 // tool_use ids still without tool_result in the open turn. This is the
 // evidence that decides what a new /talk does while a backgrounded turn
@@ -596,8 +594,6 @@ let turnBeganAt = 0;    // true begin (no replay-slack): the 'finished'
 // only thinking — an in-band interrupt cuts that (the process survives),
 // my prompt starts in a heartbeat". Each id maps to its step label —
 // the banner line an interrupt leaves in its wake (see `detached`).
-let openTools = new Map();
-// ── Live token tally (the TUI's "thinking · N tokens" progress) ──
 // With --include-partial-messages the CLI streams `stream_event`
 // wrapper messages: message_start carries this call's input tokens
 // (context consumed), content_block_delta carries the growing text /
@@ -608,27 +604,20 @@ let openTools = new Map();
 // while deltas flow (plus one exact-settling frame whenever a message
 // closes) — the phone paints them on the spinner and grows the number
 // locally between relays.
-let tokIn = 0;        // last message_start input (incl. cache reads)
-let tokOutExact = 0;  // exact output tokens THIS TURN (per-message cumulative, pinned)
-let tokMsgBase = 0;   // tokOutExact at the current message's start — message_delta's
                       // usage.output_tokens is a CUMULATIVE running total for its own
                       // message, so += double-counts the earlier part every time a
                       // call emits more than one delta (long thinking turns inflated
                       // the out-count until it 'matched the context'; field report
                       // 0.1.0+77). The number for a message is base + cumulative.
-let tokLastMsgOut = 0; // output tokens of the most recent message (for
 // the post-turn context figure: the next prompt carries the FULL history,
 // so last call's input + last message's output IS tomorrow's context)
-let tokChars = 0;     // delta chars since the last exact figure
-let tokKind = '';     // 'thinking' | 'answering' | 'calling X'
 // The tail of the model's live thinking text (extended thinking). The
 // spinner's "thinking" word is only a CLAIM — the honest display is the
 // thought itself, so the growing text rides the tally frame as
 // `thought` (last ~160 chars, one line: the phone shows a rolling
 // window, not the whole chain of thought). A rolling cap keeps the
 // frame small no matter how long the model rambles.
-let thinkBuf = '';    // last ~400 chars of thinking deltas
-const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
+const thinkTail = (n) => focus.thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 // The answer, spoken sentence by sentence instead of block by block:
 // text deltas land in the live buffer below, and the first completed
 // sentence is TTS-able the moment its period arrives — no waiting for
@@ -638,9 +627,6 @@ const thinkTail = (n) => thinkBuf.slice(-n).replace(/\s+/g, ' ').trim();
 // and none is dropped). The remainder logic in the assistant-snapshot
 // path keeps the no-partials fallback exactly the old block-close
 // behavior.
-let curMsg = null;      // {blocks: {}, seq} for the LIVE message
-let lastTextBlk = null; // newest live text block (the draft frame's view)
-let lastTextOpen = false; // and whether it can still receive deltas
 // The cutter itself moved to sentence_relay.mjs (unit-tested). This
 // wrapper only supplies the ring/stdio side: one say frame per
 // sentence, journalled by its first 40 chars.
@@ -659,10 +645,9 @@ function relaySentences(blk, {force = false} = {}) {
 // frames (mirrors how `thought` rides the thinking tail): the phone
 // paints the reply while it is still being written. Rolling cap keeps
 // the frame small no matter how long the answer runs.
-const draftTail = (n) => lastTextBlk
-  ? lastTextBlk.buf.slice(lastTextBlk.spoken).slice(-n).replace(/\s+/g, ' ').trim()
+const draftTail = (n) => focus.lastTextBlk
+  ? focus.lastTextBlk.buf.slice(focus.lastTextBlk.spoken).slice(-n).replace(/\s+/g, ' ').trim()
   : '';
-let tokSentAt = 0;    // relay throttle clock
 // Quiet-token heartbeat period: after this many ms with nothing relayed
 // to the heard view (no deltas, no settles), the keep-pinger re-sends
 // the tally marked `quiet:true` so the phone can tell "thinking, but
@@ -676,7 +661,6 @@ const HEARTBEAT_MS = Number(arg('tok-heartbeat', 5000));
 // tallies every kind, and pronounces the verdict at the `result` —
 // "the app shows no progress" is answered from the bridge's own journal
 // instead of by guessing what the proxy does with SSE.
-let census = newCensus();
 function newCensus() {
   // t0 = beginTurn clock: the gap to the first partial is the prefix
   // cache REPORT (sglang never tells this proxy its cached-token count —
@@ -691,16 +675,12 @@ function newCensus() {
 // call's input tokens in every `message_start`; the `result` usage is
 // the authoritative post-turn figure and gets snapshotted here so
 // /health can answer even for turns the phone never attached to.
-let ctxWindow = 0; // model context window (0 until a result names it)
-let lastCtx = {'in': 0, 'window': 0}; // {in, window} snapshot for /health
 // +249: WHOSE conversation that snapshot describes. The seat's context
 // bar belongs to the conversation it is seated on — a backgrounded
 // turn keeps updating the numbers for ITS thread, and until the seated
 // conversation's own turn names a size the bar reads measuring, not
 // the vacationer's luggage (the field report: the bar showed the old
 // session's context until the new session's first turn).
-let ctxOwner = null;
-// ── +257 THE CONVERSATION REGISTRY — the router era ─────────────────────
 // (docs/session-channels-design.md; the ledger at +253 was the dress
 // rehearsal — this is the play.) Every conversation the bridge seats
 // gets a RECORD: its child, its turn, its queue slot, its parse tally,
@@ -820,11 +800,11 @@ function saveCmds(rec) {
   } catch {}
 }
 function writePointer(h, d, rec) {
-  const sid = rec === focus ? sessionId : rec.sid;
+  const sid = rec === focus ? focus.sid : rec.sid;
   try {
     mkdirSync(POINTER_DIR, { recursive: true });
     writeFileSync(sidFilePath(h, d),
-      `${sid ?? ''}\n${rec.uuid}\n${(rec === focus ? dir : rec.dir) ?? ''}`);
+      `${sid ?? ''}\n${rec.uuid}\n${(rec === focus ? focus.dir : rec.dir) ?? ''}`);
     rmSync(legacyPointerPath(h, d), { force: true });
   } catch {}
 }
@@ -839,8 +819,8 @@ function newConv(seed) {
   return {
     uuid: randomUUID(), // the app identity: minted once, never moved
     sid: null, key: null,
-    harness: seed?.harness ?? harness, dir: seed?.dir ?? dir,
-    claudeModel: seed?.model ?? claudeModel,
+    harness: seed?.harness ?? focus.harness, dir: seed?.dir ?? focus.dir,
+    claudeModel: seed?.model ?? focus.claudeModel,
     child: null, childDead: true, turnOpen: false, curRes: null,
     proactiveTurn: false, pending: null, contextFull: false,
     lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
@@ -858,82 +838,45 @@ function newConv(seed) {
   };
 }
 // The record whose numbers the module globals currently carry.
-let focus = null;
-function bundleSave(r) {
-  r.child = child; r.childDead = childDead; r.sessionId_ = sessionId;
-  r.turnOpen = turnOpen; r.curRes = curRes; r.proactiveTurn = proactiveTurn;
-  r.pending = pending; r.contextFull = contextFull;
-  r.lastCompactingRelay = lastCompactingRelay; r.foldedTurnId = foldedTurnId;
-  r.foldUnanswered = foldUnanswered; r.foldHeld = foldHeld;
-  r.cutForPrompt = cutForPrompt; r.turnStartAt = turnStartAt;
-  r.turnBeganAt = turnBeganAt;
-  r.tokIn = tokIn; r.tokOutExact = tokOutExact; r.tokMsgBase = tokMsgBase;
-  r.tokLastMsgOut = tokLastMsgOut; r.tokChars = tokChars; r.tokKind = tokKind;
-  r.thinkBuf = thinkBuf; r.curMsg = curMsg; r.lastTextBlk = lastTextBlk;
-  r.lastTextOpen = lastTextOpen; r.tokSentAt = tokSentAt; r.census = census;
-  r.ctxWindow = ctxWindow; r.lastCtx = lastCtx; r.ctxOwner = ctxOwner;
-  r.estIn = estIn; r.estSentIn = estSentIn;
-  r.harness = harness; r.dir = dir; r.claudeModel = claudeModel;
-  r.openTools = openTools; r.detached = detached; r.bgTools = bgTools;
-  r.agentTasks = agentTasks; r.spokenTools = spokenTools;
-  r.spokenTexts = spokenTexts; r.heldFinished = heldFinished;
-  r.backlog = backlog;
-  r.updatedAt = Date.now();
-}
-function bundleLoad(r) {
-  sessionId = r.sessionId_ ?? null;
-  child = r.child; childDead = r.childDead; turnOpen = r.turnOpen;
-  curRes = r.curRes; proactiveTurn = r.proactiveTurn; pending = r.pending;
-  contextFull = r.contextFull; lastCompactingRelay = r.lastCompactingRelay;
-  foldedTurnId = r.foldedTurnId; cutForPrompt = r.cutForPrompt;
-  foldUnanswered = r.foldUnanswered; foldHeld = r.foldHeld;
-  turnStartAt = r.turnStartAt; turnBeganAt = r.turnBeganAt;
-  tokIn = r.tokIn; tokOutExact = r.tokOutExact; tokMsgBase = r.tokMsgBase;
-  tokLastMsgOut = r.tokLastMsgOut; tokChars = r.tokChars; tokKind = r.tokKind;
-  thinkBuf = r.thinkBuf; curMsg = r.curMsg; lastTextBlk = r.lastTextBlk;
-  lastTextOpen = r.lastTextOpen; tokSentAt = r.tokSentAt; census = r.census;
-  ctxWindow = r.ctxWindow; lastCtx = r.lastCtx; ctxOwner = r.ctxOwner;
-  estIn = r.estIn; estSentIn = r.estSentIn;
-  harness = r.harness; dir = r.dir;
-  // +304: a record that WENT to sleep on a ghost word wakes clean —
-  // the sweep fixes the record too, not just the globals.
-  r.claudeModel = claudeModel = saneModel(r.claudeModel, 'record load');
-  openTools = r.openTools; detached = r.detached; bgTools = r.bgTools;
-  agentTasks = r.agentTasks; spokenTools = r.spokenTools;
-  spokenTexts = r.spokenTexts; heldFinished = r.heldFinished;
-  backlog = r.backlog;
-}
-// The door. Run fn under rec's bundle, restore the previous focus
-// after — synchronously. Timers and stream handlers that outlive the
-// tick that armed them call withConv themselves when they fire; the
-// async variant re-saves whatever got loaded while the await ran, so
-// the invariant 'globals == focus bundle' survives an interleaved
-// /seat the same way a database cursor survives a page swap.
+
 function withConv(rec, fn) {
   if (!rec || rec === focus) return fn();
   const prev = focus;
-  if (prev) bundleSave(prev);
-  bundleLoad(rec); focus = rec;
+  wake(rec);
+  focus = rec;
   try { return fn(); } finally {
-    if (focus) bundleSave(focus);
-    if (prev) { bundleLoad(prev); focus = prev; }
+    rec.updatedAt = Date.now();
+    focus = prev;
   }
 }
+// +312: THE DOOR, at a third of the words. Running fn 'under rec's
+// bundle' was a save/load dance around the call; with one copy of the
+// truth the door is a pointer swap: focus to the record, run,
+// restore. A handler that captures a record across awaits (child
+// stdout, timers, res 'close') names the record it belongs to and
+// this door speaks for it — whatever the seat did in the meantime,
+// the state under fn is rec's own, because the state lives HERE.
 async function withConvA(rec, fn) {
   if (!rec || rec === focus) return await fn();
   const prev = focus;
-  if (prev) bundleSave(prev);
-  bundleLoad(rec); focus = rec;
+  wake(rec);
+  focus = rec;
   try { return await fn(); } finally {
-    if (focus) bundleSave(focus);
-    if (prev) { bundleLoad(prev); focus = prev; }
+    rec.updatedAt = Date.now();
+    focus = prev;
   }
 }
-// Seat the given record: save the current focus back, load the new.
+// +312: seating is an assignment. wake() gives back what +304 taught:
+// a record that went to sleep on a ghost model word wakes clean — the
+// sweep rides the seat move it used to ride the load.
+function wake(rec) {
+  rec.claudeModel = saneModel(rec.claudeModel, 'record load');
+}
 function swapFocus(rec) {
   if (focus === rec) return;
-  if (focus) bundleSave(focus);
-  bundleLoad(rec); focus = rec;
+  if (focus) focus.updatedAt = Date.now();
+  wake(rec);
+  focus = rec;
 }
 function parkConv(rec) { // ensure the record is (re)keyed and filed
   const key = rec.uuid; // identity at birth: the key never moves
@@ -963,20 +906,20 @@ function convRow(r) {
     sid: r.uuid, // identity at birth: the phone's name for this
     // conversation, stable for its whole life (live rows report the
     // same uuid the globals describe — it never moved)
-    backendSid: (live ? sessionId : r.sid) || null, // --resume
+    backendSid: (live ? focus.sid : r.sid) || null, // --resume
     // material, kept as a SEPARATE backend property (review §4): the
     // harness may rename it all it likes; the tab's name never moves.
-    harness: live ? harness : r.harness,
-    dir: live ? dir : r.dir,
+    harness: live ? focus.harness : r.harness,
+    dir: live ? focus.dir : r.dir,
     // +282: a resting record's 'default' resolves by ITS OWN tape (what
     // this conversation last ran), not the seat's habit.
     model: live ? currentModel() : claudeCurrent(r.claudeModel ?? null,
                                                 r.claudeRan),
-    ctx: live ? { in: lastCtx.in, window: ctxWindow }
+    ctx: live ? { in: focus.lastCtx.in, window: focus.ctxWindow }
               : { in: r.lastCtx?.in ?? 0, window: r.ctxWindow ?? 0 },
-    missed: live ? backlog.length : (r.backlog?.length ?? 0),
-    turnOpen: live ? turnOpen : r.turnOpen,
-    queued: live ? !!pending : !!r.pending,
+    missed: live ? focus.backlog.length : (r.backlog?.length ?? 0),
+    turnOpen: live ? focus.turnOpen : r.turnOpen,
+    queued: live ? !!focus.pending : !!r.pending,
     updatedAt: Date.now(),
   };
 }
@@ -999,8 +942,6 @@ function convPublic() { return [...sessions.values()].map(convRow); }
 // cares. The next `message_start` (exact, incl. server-side
 // compaction) or the turn's `result` always overrules a preview; so
 // does /health, which only ever stores exact figures.
-let estIn = 0;      // preview tally in force right now
-let estSentIn = 0;  // what we last relayed (delta-gate for relays)
 // Rough token count of stream-json content (string or block array):
 // text at Claude Code's own ~4 chars/token, images flat (a base64
 // screenshot's 150 KB is NOT 37k tokens of reading).
@@ -1019,12 +960,12 @@ const estTokens = (content) => {
 // Relay the preview (when attached and it moved the needle) — one
 // `context` frame per growth step, not per byte.
 const ctxPreviewFrame = () =>
-  sse(curRes.res, 'context',
-      { in: estIn, window: ctxWindow, preview: true, session: ctxOwner });
-const relayEst = (dir) => {
-  estIn = Math.max(0, estIn + dir);
-  if (curRes && estIn > 0 && Math.abs(estIn - estSentIn) >= 300) {
-    estSentIn = estIn;
+  sse(focus.curRes.res, 'context',
+      { in: focus.estIn, window: focus.ctxWindow, preview: true, session: focus.ctxOwner });
+const relayEst = (delta) => {
+  focus.estIn = Math.max(0, focus.estIn + delta);
+  if (focus.curRes && focus.estIn > 0 && Math.abs(focus.estIn - focus.estSentIn) >= 300) {
+    focus.estSentIn = focus.estIn;
     ctxPreviewFrame();
   }
 };
@@ -1099,14 +1040,14 @@ const relay = (ev, data) => {
   // frame is born under its record's bundle, so the record's own app
   // uuid is the stamp (no nameless window any more — a phone never
   // has to guess whose frame this is from age, order or hope).
-  data._sess ??= (focus && focus.uuid) || sessionId || '';
+  data._sess ??= (focus && focus.uuid) || focus.sid || '';
   // ??=, never =: a re-relayed receipt (heldFinished rides two turns)
   // keeps the identity it was born with — one message, one id.
   data._mid ??= ++msgSeq;
   data._turn ??= curTurnId;
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
-  if (curRes) sse(curRes.res, ev, data);
+  if (focus.curRes) sse(focus.curRes.res, ev, data);
   // +114 (the answered-interruption echo, final form): every `say`
   // keeps EXACTLY ONE copy in the unheard backlog — even one delivered
   // live. Delivery to a view is not proof of hearing: the socket can
@@ -1117,14 +1058,14 @@ const relay = (ev, data) => {
   // the replay dedup defers to it. A re-relay of the same sentence
   // retires the parked copy rather than stacking a second.
   if (ev === 'say' && data.text) {
-    for (let i = backlog.length - 1; i >= 0; i--) {
-      if (backlog[i].ev === 'say' && backlog[i].data.text === data.text) {
-        backlog.splice(i, 1);
+    for (let i = focus.backlog.length - 1; i >= 0; i--) {
+      if (focus.backlog[i].ev === 'say' && focus.backlog[i].data.text === data.text) {
+        focus.backlog.splice(i, 1);
       }
     }
-    backlog.push({ ev, data });
-    if (backlog.length > BACKLOG_CAP) backlog.shift();
-    if (!curRes) console.error(`  [backlog] say (n=${backlog.length})`);
+    focus.backlog.push({ ev, data });
+    if (focus.backlog.length > BACKLOG_CAP) focus.backlog.shift();
+    if (!focus.curRes) console.error(`  [backlog] say (n=${focus.backlog.length})`);
     return;
   }
   // +157: the started marker is PERMANENT, like a say. It is the
@@ -1134,14 +1075,14 @@ const relay = (ev, data) => {
   // the POST body, died with the view and never reached the backlog).
   // One copy per prompt: a re-relay replaces the parked one.
   if (ev === 'tool' && data?.name === 'started') {
-    for (let i = backlog.length - 1; i >= 0; i--) {
-      if (backlog[i].ev === 'tool' && backlog[i].data?.name === 'started'
-          && backlog[i].data?.detail === data.detail) {
-        backlog.splice(i, 1);
+    for (let i = focus.backlog.length - 1; i >= 0; i--) {
+      if (focus.backlog[i].ev === 'tool' && focus.backlog[i].data?.name === 'started'
+          && focus.backlog[i].data?.detail === data.detail) {
+        focus.backlog.splice(i, 1);
       }
     }
-    backlog.push({ ev, data });
-    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    focus.backlog.push({ ev, data });
+    if (focus.backlog.length > BACKLOG_CAP) focus.backlog.shift();
     return;
   }
   // A `file` frame is a DELIVERY, like a say: every phone must end up
@@ -1149,8 +1090,8 @@ const relay = (ev, data) => {
   // phone's ledger dedups replays by id; /heard trims this copy the
   // moment the phone takes it, like any say).
   if (ev === 'file') {
-    backlog.push({ ev, data });
-    if (backlog.length > BACKLOG_CAP) backlog.shift();
+    focus.backlog.push({ ev, data });
+    if (focus.backlog.length > BACKLOG_CAP) focus.backlog.shift();
     return;
   }
   // +159: counters are noise, not memory — the law stated at the head
@@ -1161,10 +1102,10 @@ const relay = (ev, data) => {
   // exists to deliver — and every survivor inflated `missed` with a
   // number no ack could ever retire (0.1.0+159: stuck at 197).
   if (ev === 'context' || (ev === 'tool' && data?.name === 'tokens')) return;
-  if (curRes) return; // transient frames stay live-only while heard
-  backlog.push({ ev, data });
-  if (backlog.length > BACKLOG_CAP) backlog.shift();
-  console.error(`  [backlog] ${ev} (n=${backlog.length})`);
+  if (focus.curRes) return; // transient frames stay live-only while heard
+  focus.backlog.push({ ev, data });
+  if (focus.backlog.length > BACKLOG_CAP) focus.backlog.shift();
+  console.error(`  [backlog] ${ev} (n=${focus.backlog.length})`);
 };
 // The wire shape of the spinner's live counter: a display string (for
 // anything that only shows text) plus numeric fields so the phone can
@@ -1180,22 +1121,22 @@ const relay = (ev, data) => {
 // never silently degrades into "stuck".
 const tokFrame = (out, {quiet = false} = {}) => {
   const o = Math.max(0, Math.round(out));
-  const inTok = Math.max(tokIn, estSentIn);
-  const parts = [tokKind || 'working', `${fmtTok(o)} out`];
+  const inTok = Math.max(focus.tokIn, focus.estSentIn);
+  const parts = [focus.tokKind || 'working', `${fmtTok(o)} out`];
   if (inTok > 0) parts.push(`${fmtTok(inTok)} in`);
   if (quiet) parts.push('no deltas from upstream');
   return {
     name: 'tokens',
     detail: parts.join(' · '),
-    out: o, in: inTok, kind: tokKind,
-    ...(tokKind === 'thinking' && thinkTail(160)
+    out: o, in: inTok, kind: focus.tokKind,
+    ...(focus.tokKind === 'thinking' && thinkTail(160)
       ? {thought: thinkTail(160)} : {}),
     // The reply, painted before it is spoken: the un-relayed tail of the
     // live answer rides the same frame the moment the model starts
     // answering. Old clients ignore the field (unknown keys in a tool
     // frame are harmless); the chat window shows it while the text
     // streams. Kept off `quiet` frames — a silent turn has no draft.
-    ...(tokKind === 'answering' && !quiet && draftTail(240)
+    ...(focus.tokKind === 'answering' && !quiet && draftTail(240)
       ? {draft: draftTail(240)} : {}),
     ...(quiet ? {quiet: true} : {}),
   };
@@ -1260,7 +1201,7 @@ function startDumpTap() {
 }
 
 function spawnClaude(resume) {
-  if (harness === 'opencode') return spawnOpenCode(resume);
+  if (focus.harness === 'opencode') return spawnOpenCode(resume);
   const args = ['-p', '--input-format', 'stream-json',
     '--output-format', 'stream-json', '--verbose',
     // Live token progress for the spinner (see the stream_event branch of
@@ -1279,8 +1220,8 @@ function spawnClaude(resume) {
   // +216: a model picked mid-session survives a respawn — the CLI's
   // own flag carries it into the fresh process, so the picker's choice
   // is not hostage to the child's lifespan.
-  if (claudeModel && claudeModel !== 'default') {
-    args.push('--model', claudeModel);
+  if (focus.claudeModel && focus.claudeModel !== 'default') {
+    args.push('--model', focus.claudeModel);
   }
   console.error('  [claude] spawn (resume=' +
     (resume ? resume.slice(0, 8) : 'none — fresh session') + ')');
@@ -1300,28 +1241,28 @@ function spawnClaude(resume) {
   // edits; the cache_control breakpoint still wanders per turn but the
   // adapter does pure longest-prefix radix and ignores marker position
   // (turn-2 replay hit 15,936 cached / 64 new tokens).
-  child = spawn(claudeBin, args, { cwd: dir, env: {
+  focus.child = spawn(claudeBin, args, { cwd: focus.dir, env: {
     ...process.env,
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
   } });
-  childDead = false;
+  focus.childDead = false;
   // +257: the child is BOUND to the record that spawned it. Every
   // line it prints — and its exit verdict — is parsed under that
   // record's bundle, whoever happens to be seated when the bytes
   // land. This one binding is what lets two conversations work at
   // once without ghosting each other's tallies.
   const rec = focus;
-  attachJsonLines(child, rec);
-  child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
+  attachJsonLines(focus.child, rec);
+  focus.child.stderr.on('data', (b) => process.stderr.write(`[claude] ${b}`));
   // A replaced child's late exit must not speak: /new SIGTERMs the old
   // one and the FIRST TALK respawns before the old exit lands, and the
   // handler used to read the fresh turn's turnOpen as its own death —
   // phantoming an 'error' and ending the new turn's view (the done
   // fell to the backlog unheard, field-proven by +216's wire test).
   // `this !== child` means a NEW child owns the seat (or none does).
-  child.on('exit', function (code, sig) {
+  focus.child.on('exit', function (code, sig) {
     withConv(rec, () => {
-      if (child !== this) {
+      if (focus.child !== this) {
         console.error('  [claude] exit from a replaced child — ignored');
         return;
       }
@@ -1346,7 +1287,7 @@ function attachJsonLines(stream, rec) {
   });
 }
 function onChildExit(code, sig) {
-    childDead = true;
+    focus.childDead = true;
     // An exit while a turn is OPEN is news (crash, kill, proxy death):
     // relay it so the phone hears the turn died instead of timing out on
     // silence. An exit while NO turn is open is the normal lifecycle
@@ -1356,22 +1297,22 @@ function onChildExit(code, sig) {
     // note (probe-verified): this CLI re-emits system/init on EVERY user
     // message and re-renders the request each turn, so cross-turn prefix
     // cache misses are its behaviour, not an exit symptom.
-    if (turnOpen) relay('error', { error: harness + ' exited' });
+    if (focus.turnOpen) relay('error', { error: focus.harness + ' exited' });
     console.error(`  [claude] exit code=${code} sig=${sig} ` +
-      (turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
+      (focus.turnOpen ? 'MID-TURN (turn was open — phone gets the error)'
                 : 'while idle (expected: /new kill or between-turns exit)'));
-    turnOpen = false;
-    openTools.clear();
-    detached.clear(); // a dead process retires no tool: no tool_result
+    focus.turnOpen = false;
+    focus.openTools.clear();
+    focus.detached.clear(); // a dead process retires no tool: no tool_result
                       // will ever land to say 'finished' — the receipts
                       // are gone, and /health honestly drops to 0
-    foldedTurnId = 0; // +163: no result will ever come to re-stamp it
-    foldUnanswered = false; foldHeld = false; // +273: nothing to hold
-    agentTasks.clear();
-    bgTools.clear();
-    heldFinished.length = 0; // no flush will ever come to owe them
-    proactiveTurn = false;
-    if (curRes) endTurn();
+    focus.foldedTurnId = 0; // +163: no result will ever come to re-stamp it
+    focus.foldUnanswered = false; focus.foldHeld = false; // +273: nothing to hold
+    focus.agentTasks.clear();
+    focus.bgTools.clear();
+    focus.heldFinished.length = 0; // no flush will ever come to owe them
+    focus.proactiveTurn = false;
+    if (focus.curRes) endTurn();
     flushPending();
 }
 
@@ -1646,7 +1587,7 @@ async function ocPrompt(text) {
     if (!oc.sid) {
       // A model picked before the session existed rides its creation.
       const s = await ocReq('/api/session', {
-        title: 'voice bridge', location: { directory: dir },
+        title: 'voice bridge', location: { directory: focus.dir },
         ...(oc.pendingModel ? { model: oc.pendingModel } : {}),
       });
       oc.pendingModel = null;
@@ -1745,7 +1686,7 @@ async function ocListen(gen) {
       // retries are quiet; the heartbeat already says quiet-not-gone.
       if (backoff === 500) {
         console.error('  [oc] event stream dropped: ' + e);
-        if (turnOpen) {
+        if (focus.turnOpen) {
           relay('tool', {
             name: 'wire',
             detail: 'harness event stream dropped — reconnecting',
@@ -1769,20 +1710,20 @@ function spawnOpenCode(resume) {
   oc.seen.clear();
   oc.tools.clear();
   oc.disposed = false;
-  child = oc;
-  childDead = false;
+  focus.child = oc;
+  focus.childDead = false;
   // +257: same binding as the claude side — the backend's translated
   // lines are parsed under the record that raised it. (One opencode
   // conversation at a time this era: the oc object is singular, so a
   // second opencode record shares its session identity — documented
   // limitation, the bus filter speaks for it.)
   const rec = focus;
-  attachJsonLines(child, rec);
+  attachJsonLines(focus.child, rec);
   // Same law as the claude side: only the backend that HOLDS the seat
   // may announce a death (a replaced backend's exit is bookkeeping).
   oc.ev.on('exit', (code, sig) => {
     withConv(rec, () => {
-      if (child !== oc) {
+      if (focus.child !== oc) {
         console.error('  [oc] exit from a replaced backend — ignored');
         return;
       }
@@ -1804,7 +1745,7 @@ function handleEvent(line) {
       const prev = modelAcks.get(r.request_id);
       modelAcks.delete(r.request_id);
       if (r.subtype !== 'success') {
-        claudeModel = prev;
+        focus.claudeModel = prev;
         console.error('  [model] claude refused; back to ' + prev);
       }
     }
@@ -1835,90 +1776,90 @@ function handleEvent(line) {
       (m.type === 'system' && m.subtype === 'status'
         ? ' body=' + JSON.stringify(m).slice(0, 400) : ''));
   }
-  if (m.session_id && m.session_id !== sessionId) {
+  if (m.session_id && m.session_id !== focus.sid) {
     // +257: a record is KEYED by its conversation's name. The birth
     // turn is rekeyed the moment the harness first speaks an id (the
     // placeholder held its place until then), and a refused resume —
     // the CLI mints fresh where --resume asked — moves the WHOLE
     // record, live turn included, to the truth the CLI minted.
-    sessionId = m.session_id;
-    if (focus) { focus.sid = sessionId; parkConv(focus); }
+    focus.sid = m.session_id;
+    if (focus) { focus.sid = focus.sid; parkConv(focus); }
   }
   if (m.type === 'stream_event') {
     const e = m.event ?? {};
-    census.types[e.type] = (census.types[e.type] || 0) + 1;
-    if (!census.sawFirst) {
-      census.sawFirst = true;
-      census.firstMs = Date.now() - census.t0;
-      console.error(`  [census] first partial after ${census.firstMs} ms: ` +
+    focus.census.types[e.type] = (focus.census.types[e.type] || 0) + 1;
+    if (!focus.census.sawFirst) {
+      focus.census.sawFirst = true;
+      focus.census.firstMs = Date.now() - focus.census.t0;
+      console.error(`  [census] first partial after ${focus.census.firstMs} ms: ` +
         e.type + (e.type === 'message_start'
           ? ` (in=${e.message?.usage?.input_tokens ?? '?'})` : ''));
     }
     if (e.type === 'message_start') {
-      census.msgStarts++;
-      curMsg = {blocks: {}, seq: 0}; // the sentence buffer starts fresh per call
-      tokMsgBase = tokOutExact;     // this message's deltas count from here
+      focus.census.msgStarts++;
+      focus.curMsg = {blocks: {}, seq: 0}; // the sentence buffer starts fresh per call
+      focus.tokMsgBase = focus.tokOutExact;     // this message's deltas count from here
       const u = e.message?.usage ?? {};
-      tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+      focus.tokIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
             + (u.cache_creation_input_tokens ?? 0);
       // Live context consumption as the API call begins (window may be
       // 0 = still unknown until the first result names it; the bar just
       // shows tokens with no fill). The exact number also ends any
       // preview run: the estimate grows from here on, not from there.
-      estIn = tokIn; estSentIn = tokIn;
-      ctxOwner = (focus && focus.uuid) || sessionId;
-      relay('context', { in: tokIn, window: ctxWindow, session: ctxOwner });
+      focus.estIn = focus.tokIn; focus.estSentIn = focus.tokIn;
+      focus.ctxOwner = (focus && focus.uuid) || focus.sid;
+      relay('context', { in: focus.tokIn, window: focus.ctxWindow, session: focus.ctxOwner });
     } else if (e.type === 'content_block_start') {
       const b = e.content_block ?? {};
       // A fresh thinking block starts the rolling window over: the
       // phone only ever shows the CURRENT thought, never an old one.
-      if (b.type === 'thinking') thinkBuf = '';
-      if (b.type === 'text' && curMsg) {
+      if (b.type === 'thinking') focus.thinkBuf = '';
+      if (b.type === 'text' && focus.curMsg) {
         // Keyed by OUR insertion order, not the wrapper's index (see the
         // snapshot matcher): a second text block must not overwrite the
         // first's watermark.
-        lastTextBlk = curMsg.blocks['b' + ++curMsg.seq] = {buf: '', spoken: 0};
-        lastTextOpen = true;
+        focus.lastTextBlk = focus.curMsg.blocks['b' + ++focus.curMsg.seq] = {buf: '', spoken: 0};
+        focus.lastTextOpen = true;
       } else if (b.type === 'thinking' || b.type === 'tool_use') {
-        lastTextOpen = false;
+        focus.lastTextOpen = false;
       }
       // +107: bare tool name, not 'calling X' — while a call's input
       // streams the label is the tool itself; the moment the snapshot
       // lands it grows the command (see the tool_use relay).
-      tokKind = b.type === 'thinking' ? 'thinking'
+      focus.tokKind = b.type === 'thinking' ? 'thinking'
         : b.type === 'tool_use' ? (b.name ?? 'tool')
-        : b.type === 'text' ? 'answering' : tokKind;
+        : b.type === 'text' ? 'answering' : focus.tokKind;
     } else if (e.type === 'content_block_delta') {
       const d = e.delta ?? {};
       if (typeof d.thinking === 'string' && d.thinking) {
-        thinkBuf = (thinkBuf + d.thinking).slice(-400);
+        focus.thinkBuf = (focus.thinkBuf + d.thinking).slice(-400);
       }
       const n = (d.text ?? d.thinking ?? d.partial_json ?? '').length;
-      tokChars += n; census.deltaChars += n;
-      if (typeof d.text === 'string' && d.text && lastTextOpen) {
+      focus.tokChars += n; focus.census.deltaChars += n;
+      if (typeof d.text === 'string' && d.text && focus.lastTextOpen) {
         // The live answer grows — and complete sentences leave the
         // buffer as say frames right here, before the message closes.
         // Deltas are appended to the LAST-OPEN text block: the stream is
         // serial, and the wrapper's block index proved unreliable.
-        if (lastTextBlk) { lastTextBlk.buf += d.text; relaySentences(lastTextBlk); }
+        if (focus.lastTextBlk) { focus.lastTextBlk.buf += d.text; relaySentences(focus.lastTextBlk); }
       }
     } else if (e.type === 'message_delta') {
-      census.msgDeltas++;
+      focus.census.msgDeltas++;
       const o = e.usage?.output_tokens;
       if (o) {
-        census.usageOut += o;
+        focus.census.usageOut += o;
         // The estimate just went exact — settle the phone's counter NOW
         // instead of letting it drift on estimates for another second:
         // one extra frame per closed message is nothing on the wire, and
         // it is the number the app's local growth will be judged against.
-        tokOutExact = tokMsgBase + o; tokLastMsgOut = o; tokChars = 0;
+        focus.tokOutExact = focus.tokMsgBase + o; focus.tokLastMsgOut = o; focus.tokChars = 0;
         // +75: no curRes gate anymore. 'CurRes' is the PUSH view, and a
         // pull-mode phone never sets one — every later tally frame died
         // behind this if and the ring kept only the turn-start zero
         // (field report: "still see zero token count"). relay() feeds
         // the ring and the view/backlog itself; the ring is capped.
-        tokSentAt = Date.now();
-        relay('tool', tokFrame(tokOutExact));
+        focus.tokSentAt = Date.now();
+        relay('tool', tokFrame(focus.tokOutExact));
       }
     }
     if (e.type === 'message_stop') {
@@ -1930,21 +1871,21 @@ function handleEvent(line) {
       // work left. 'settled' on the tally tells the phone the truth;
       // a still-open tool run means generation WILL continue, so we
       // stay quiet and the wheel keeps its well-earned spin.
-      if (!openTools.size) {
-        tokKind = 'settled';
-        tokSentAt = Date.now();
+      if (!focus.openTools.size) {
+        focus.tokKind = 'settled';
+        focus.tokSentAt = Date.now();
         // Carry the un-spoken draft tail explicitly: tokFrame only
         // attaches it while 'answering', and the phone needs those
         // sentences on screen until their audio actually lands.
-        relay('tool', { ...tokFrame(tokOutExact), draft: draftTail(1300) });
+        relay('tool', { ...tokFrame(focus.tokOutExact), draft: draftTail(1300) });
       }
     }
     if (e.type === 'content_block_stop') {
       // The text is final: the sentence buffer must empty completely,
       // including an un-terminated tail the streaming pass would wait
       // on whitespace for forever.
-      if (lastTextOpen && lastTextBlk) relaySentences(lastTextBlk, {force: true});
-      lastTextOpen = false;
+      if (focus.lastTextOpen && focus.lastTextBlk) relaySentences(focus.lastTextBlk, {force: true});
+      focus.lastTextOpen = false;
     }
     // One tally line per ~0.8 s of ACTIVE generation, only while someone
     // is listening: no deltas flowing (waiting, running a tool) means
@@ -1954,9 +1895,9 @@ function handleEvent(line) {
     // whoever attaches next) but relays nothing. Between relays the
     // phone extrapolates at the rate its own consecutive relays taught
     // it, so the displayed number grows smoothly, not in 2-second jumps.
-    if (tokChars && Date.now() - tokSentAt >= 800) {
-      tokSentAt = Date.now();
-      relay('tool', tokFrame(tokOutExact + Math.floor(tokChars / 4)));
+    if (focus.tokChars && Date.now() - focus.tokSentAt >= 800) {
+      focus.tokSentAt = Date.now();
+      relay('tool', tokFrame(focus.tokOutExact + Math.floor(focus.tokChars / 4)));
     }
     return;
   }
@@ -1988,14 +1929,14 @@ function handleEvent(line) {
     // REGISTERS the debt, so a just-launched task cannot be seen,
     // let alone paid, by them.
     if ((m.type === 'user' || m.subtype === 'task_notification') &&
-        agentTasks.size) {
+        focus.agentTasks.size) {
       const hay = typeof m.message?.content === 'string'
         ? m.message.content
         : JSON.stringify(m.message?.content ?? m);
-      for (const [id, t] of agentTasks) {
+      for (const [id, t] of focus.agentTasks) {
         if ((t.outPath && hay.includes(t.outPath)) ||
             hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
-          agentTasks.delete(id);
+          focus.agentTasks.delete(id);
           console.error(`  -> finished "${t.label}" ` +
             `(task notification in stream)`);
           // +186: the task's own id rides the receipt — the phone
@@ -2013,7 +1954,7 @@ function handleEvent(line) {
         // in another turn's stream entirely).
         const step = summarize(c);
         const label = step ? `${c.name} ${step}` : String(c.name ?? 'tool');
-        openTools.set(c.id, label);
+        focus.openTools.set(c.id, label);
         // +133: the agent backgrounded a shell ITSELF. Its tool_use
         // carries run_in_background; its tool_result returns at once
         // (a start receipt, not a completion), so the tool closes here
@@ -2022,17 +1963,17 @@ function handleEvent(line) {
         // press involved — and the `finished` receipt lands when the
         // harness reports the task in, whichever shape that takes.
         if (c.input?.run_in_background === true) {
-          bgTools.set(c.id, label);
+          focus.bgTools.set(c.id, label);
           relay('tool', { name: 'backgrounded', detail: label });
         }
         // A Read/BashOutput/monitor of a tracked task's output file IS
         // the completion moment: the model is one block away from
         // speaking its outcome.
-        for (const [id, t] of agentTasks) {
+        for (const [id, t] of focus.agentTasks) {
           const hay = JSON.stringify(c.input ?? {});
           if ((t.outPath && hay.includes(t.outPath)) ||
               hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
-            agentTasks.delete(id);
+            focus.agentTasks.delete(id);
             console.error(`  -> finished "${t.label}" ` +
               `(agent's own background task)`);
             relay('tool', { name: 'finished', detail: t.label, id });
@@ -2040,20 +1981,20 @@ function handleEvent(line) {
         }
       } else if (c.type === 'tool_result' && c.tool_use_id) {
         sawToolResult = true;
-        openTools.delete(c.tool_use_id);
+        focus.openTools.delete(c.tool_use_id);
         // The start receipt of the agent's own background shell: the
         // CLI names a task id and an output file — register the debt.
         // This result is NOT a completion: the tool closed, the work
         // did not, so the detached-tool 'finished' below must not
         // fire for it.
-        if (bgTools.has(c.tool_use_id)) {
-          const bgLabel = bgTools.get(c.tool_use_id);
-          bgTools.delete(c.tool_use_id);
+        if (focus.bgTools.has(c.tool_use_id)) {
+          const bgLabel = focus.bgTools.get(c.tool_use_id);
+          focus.bgTools.delete(c.tool_use_id);
           const txt = typeof c.content === 'string'
             ? c.content : JSON.stringify(c.content ?? '');
           const idm = txt.match(/background with ID: ([A-Za-z0-9_-]+)/);
-          const om = txt.match(/([^\s'"]+\.output)/);
-          agentTasks.set(idm?.[1] ?? c.tool_use_id,
+          const om = txt.match(new RegExp('([^\\s\'"]+\\.output)'));
+          focus.agentTasks.set(idm?.[1] ?? c.tool_use_id,
             { label: bgLabel, outPath: om?.[1] ?? null });
           console.error(`  [bg] tracking agent task ` +
             `"${bgLabel}" (id ${idm?.[1] ?? c.tool_use_id})`);
@@ -2066,9 +2007,9 @@ function handleEvent(line) {
         // (is_error / 'Interrupted'), and a 'finished' receipt for it
         // contradicts the agent's own 'the sleep was cancelled' on the
         // phone's screen within the same second.
-        const label = detached.get(c.tool_use_id);
+        const label = focus.detached.get(c.tool_use_id);
         if (label !== undefined) {
-          detached.delete(c.tool_use_id);
+          focus.detached.delete(c.tool_use_id);
           const txt = typeof c.content === 'string'
             ? c.content : JSON.stringify(c.content ?? '');
           const cancelled = c.is_error === true ||
@@ -2088,7 +2029,7 @@ function handleEvent(line) {
           // (queued/started) has not been written yet: hold the receipt
           // so the chat reads backgrounded → then its outcome, never
           // the outcome first (see heldFinished).
-          if (pending) heldFinished.push(frame);
+          if (focus.pending) focus.heldFinished.push(frame);
           else relay('tool', frame);
         }
       }
@@ -2105,7 +2046,7 @@ function handleEvent(line) {
     // tool round-trip has no boundary: the prompt rides to `result`
     // and flushes as a turn of its own — the old polite behavior is
     // the guaranteed floor, never a regression.
-    if (sawToolResult && turnOpen && pending && pending.polite) {
+    if (sawToolResult && focus.turnOpen && focus.pending && focus.pending.polite) {
       foldPending();
     }
     // A tool output is the next call's newest read: preview its weight
@@ -2114,8 +2055,8 @@ function handleEvent(line) {
     // call's message_start. Replays from a --resume (stale timestamps)
     // are history, not fresh weight — same guard as the say path.
     if (m.type === 'user') {
-      const replay = m.timestamp && turnStartAt &&
-        Date.parse(m.timestamp) < turnStartAt;
+      const replay = m.timestamp && focus.turnStartAt &&
+        Date.parse(m.timestamp) < focus.turnStartAt;
       if (!replay) {
         for (const c of content) {
           if (c.type === 'tool_result') relayEst(estTokens(c.content));
@@ -2131,7 +2072,7 @@ function handleEvent(line) {
     // net.) Only on a PROACTIVE close: an unrelated /talk's result
     // must not drain tasks whose shells are still sleeping. The
     // app's receipt note dedups, so an over-eager payment is free.
-    if (proactiveTurn) {
+    if (focus.proactiveTurn) {
       // +182: the belt stopped clearing the ledger. The tape (15:51:06):
       // two shells owed, the TEN-second one's report came in, and this
       // drain paid BOTH — the sixty had 24 seconds still to sleep and
@@ -2143,24 +2084,24 @@ function handleEvent(line) {
       // notification, output path quoted in its own words — and leaves
       // every still-sleeping sibling's debt for its own report turn.
       const hay = JSON.stringify(m);
-      for (const [id, t] of agentTasks) {
+      for (const [id, t] of focus.agentTasks) {
         if ((t.outPath && hay.includes(t.outPath)) ||
             hay.includes(`tasks/${id}.output`) || hay.includes(id)) {
-          agentTasks.delete(id);
+          focus.agentTasks.delete(id);
           console.error(`  -> finished "${t.label}" (named in report)`);
           relay('tool', { name: 'finished', detail: t.label, id });
         }
       }
-      proactiveTurn = false;
+      focus.proactiveTurn = false;
     }
-    bgTools.clear(); // an unpaired launch receipt dies with its turn
+    focus.bgTools.clear(); // an unpaired launch receipt dies with its turn
     // The turn's last word — processed even when no one is listening, so
     // backgrounded turns end properly: free the state machine, persist the
     // session id, hand the attached client its done (if it stayed), and
     // give the floor to a queued prompt.
-    turnOpen = false;
-    openTools.clear();
-    if (sessionId && focus) writePointer(harness, dir, focus);
+    focus.turnOpen = false;
+    focus.openTools.clear();
+    if (focus.sid && focus) writePointer(focus.harness, focus.dir, focus);
     // Post-turn context snapshot: the LAST API call's input already
     // carries the whole history (earlier outputs included), so the next
     // prompt's size is that input plus the final message's output. The
@@ -2169,34 +2110,34 @@ function handleEvent(line) {
     const u = m.usage ?? {};
     const histIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
                  + (u.cache_creation_input_tokens ?? 0);
-    const used = tokIn ? tokIn + tokLastMsgOut
+    const used = focus.tokIn ? focus.tokIn + focus.tokLastMsgOut
                        : histIn + (u.output_tokens ?? 0);
     const win = Object.values(m.modelUsage ?? {})
         .reduce((a, x) => Math.max(a, x?.contextWindow ?? 0), 0);
-    if (win) ctxWindow = win;
-    if (used) { lastCtx = { in: used, window: ctxWindow };
-      ctxOwner = (focus && focus.uuid) || sessionId; }
-    if (lastCtx.in) {
-      relay('context', { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
+    if (win) focus.ctxWindow = win;
+    if (used) { focus.lastCtx = { in: used, window: focus.ctxWindow };
+      focus.ctxOwner = (focus && focus.uuid) || focus.sid; }
+    if (focus.lastCtx.in) {
+      relay('context', { in: focus.lastCtx.in, window: focus.ctxWindow, session: focus.ctxOwner });
     }
     // Per-turn verdict on what the upstream actually delivered (see
     // census): the answer to "the app showed no progress" that is
     // written by the wire, not by hope.
-    const cacheVerdict = !census.sawFirst ? 'no first partial observed'
-      : census.firstMs < 1500 ? 'PREFIX CACHE HIT (first partial in '
-          + `${census.firstMs} ms — prompt prefix reused)`
-      : 'PREFIX CACHE MISS (first partial in ' + census.firstMs
+    const cacheVerdict = !focus.census.sawFirst ? 'no first partial observed'
+      : focus.census.firstMs < 1500 ? 'PREFIX CACHE HIT (first partial in '
+          + `${focus.census.firstMs} ms — prompt prefix reused)`
+      : 'PREFIX CACHE MISS (first partial in ' + focus.census.firstMs
           + ` ms — full re-prefill; ~context/prefill-rate. Cross-turn `
           + 'misses are this CLI\'s per-turn re-init: it re-renders the '
           + 'request on every user message — probe-verified)';
-    console.error('  [census] ' + (census.sawFirst
-        ? `stream_event kinds: ${Object.entries(census.types)
+    console.error('  [census] ' + (focus.census.sawFirst
+        ? `stream_event kinds: ${Object.entries(focus.census.types)
             .map(([k, v]) => `${k}=${v}`).join(' ')} ` +
-          `deltaChars=${census.deltaChars} usageOut=${census.usageOut}`
+          `deltaChars=${focus.census.deltaChars} usageOut=${focus.census.usageOut}`
         : 'NO stream_event frames at all') + ' → ' + (
-        census.deltaChars > 0
+        focus.census.deltaChars > 0
           ? 'LIVE DELTAS: phone ticker streams, heartbeats stay silent'
-          : census.usageOut > 0
+          : focus.census.usageOut > 0
           ? 'USAGE-ONLY STREAM: numbers settle once per message; quiet '
             + 'heartbeats carry the spinner between them'
           : 'NO LIVE EVENTS: upstream buffers SSE (OpenAI-style or '
@@ -2236,17 +2177,17 @@ function handleEvent(line) {
       // (The +106 skip still silences the WHOLE farewell when a
       // prompt replaced the cut — this is the /stop cut, whose view
       // needs its funeral, just not the provider's mumbo-jumbo.)
-      if (cutForPrompt) errText = 'interrupted';
+      if (focus.cutForPrompt) errText = 'interrupted';
       // +250: the oversized-conversation verdict, in the one wording
       // the ear deserves (the API's 'Prompt is too long' blames the
       // prompt; the fix is a compaction or a new session, and THAT is
       // what gets said).
       if (tooLongErr(errText)) {
-        contextFull = true;
+        focus.contextFull = true;
         errText = CONTEXT_FULL_MSG;
       }
     } else {
-      contextFull = false; // an answer came: the window fits again
+      focus.contextFull = false; // an answer came: the window fits again
     }
     // +106: a turn the phone CUT to make room for its own waiting
     // prompt gets no funeral notice. The +99 interrupt path always
@@ -2271,19 +2212,19 @@ function handleEvent(line) {
     // moves through it — a steer IS mid-flight), progress line for
     // the spinner. One hold per fold: a steer run that stays silent
     // anyway closes on the next result like anything else.
-    if (foldedTurnId && foldUnanswered && !foldHeld) {
-      foldHeld = true;
-      turnOpen = true; // the steer run has not reported yet
+    if (focus.foldedTurnId && focus.foldUnanswered && !focus.foldHeld) {
+      focus.foldHeld = true;
+      focus.turnOpen = true; // the steer run has not reported yet
       console.error('  [steer] host result without an answer — holding ' +
         'the folded view for the steer run');
       relay('tool', {
         name: 'queued',
         detail: 'your message is running now',
-        _turn: foldedTurnId,
+        _turn: focus.foldedTurnId,
       });
       return;
     }
-    if (!(pending && cutForPrompt)) {
+    if (!(focus.pending && focus.cutForPrompt)) {
       // +219: an error's REASON rides the done frame now (declared
       // where the result branch built it; a clean turn never sets it).
       // The lifecycle receipt for a turn that is ending with NO ear on
@@ -2297,9 +2238,9 @@ function handleEvent(line) {
       // badge-stayed-lit-long-after-the-work-finished triage question,
       // answered by the wire instead of probe archaeology. It lands
       // ahead of the done, so a replay reads work…, finished, done.
-      if (!curRes) {
-        const ran = turnBeganAt
-            ? Math.max(0, Math.round((Date.now() - turnBeganAt) / 1000))
+      if (!focus.curRes) {
+        const ran = focus.turnBeganAt
+            ? Math.max(0, Math.round((Date.now() - focus.turnBeganAt) / 1000))
             : 0;
         relay('tool', {
           name: 'finished',
@@ -2317,11 +2258,11 @@ function handleEvent(line) {
         costUsd: m.total_cost_usd,
         isError: m.is_error,
         ...(errText ? {error: errText} : {}),
-        ...(foldedTurnId ? {_turn: foldedTurnId} : {}),
+        ...(focus.foldedTurnId ? {_turn: focus.foldedTurnId} : {}),
       });
-      foldedTurnId = 0;
+      focus.foldedTurnId = 0;
     }
-    if (curRes) endTurn();
+    if (focus.curRes) endTurn();
     flushPending();
     return;
   }
@@ -2330,8 +2271,8 @@ function handleEvent(line) {
   // filter every resume re-speaks the whole conversation history — heard as
   // "the same response, over and over". Fresh events carry now-stamps, so
   // anything older than this turn's start is history, not an answer.
-  if (m.type === 'assistant' && m.timestamp && turnStartAt &&
-      Date.parse(m.timestamp) < turnStartAt) {
+  if (m.type === 'assistant' && m.timestamp && focus.turnStartAt &&
+      Date.parse(m.timestamp) < focus.turnStartAt) {
     console.error('  (replay, skipped)');
     return;
   }
@@ -2345,10 +2286,10 @@ function handleEvent(line) {
   // /talk queues politely, /stop can cut it, and the result path's
   // receipts and done all apply unchanged. Assistant messages only —
   // a stray tool_result is bookkeeping, not a mouth.
-  if (!turnOpen && m.type === 'assistant') {
-    turnOpen = true;
-    proactiveTurn = true;
-    turnBeganAt = Date.now();
+  if (!focus.turnOpen && m.type === 'assistant') {
+    focus.turnOpen = true;
+    focus.proactiveTurn = true;
+    focus.turnBeganAt = Date.now();
     console.error('  [proactive] the harness speaks unprompted ' +
       '(background work reporting in)');
   }
@@ -2357,7 +2298,7 @@ function handleEvent(line) {
       // +273: the CLI has a mouth on this event — post-fold, it is
       // proof the steer is being consumed (woven in or freshly run),
       // so the next result may re-stamp the folded farewell.
-      foldUnanswered = false;
+      focus.foldUnanswered = false;
       // Snapshot handling. The proxy re-emits the growing message but NOT
       // necessarily as an appending prefix: under thinking mode we observed
       // event 1 = [thinking] and event 2 = [text] under the SAME message id,
@@ -2377,8 +2318,8 @@ function handleEvent(line) {
           // Within one turn, relay each exact text once. Identical
           // consecutive progress lines lose their second copy — right
           // trade for audio.
-          if (spokenTexts.has(t)) continue;
-          spokenTexts.add(t);
+          if (focus.spokenTexts.has(t)) continue;
+          focus.spokenTexts.add(t);
           // Sentence relays from the live deltas may have spoken most of
           // this block already; the snapshot only owes the watermark's
           // remainder. The live block is found by TEXT MATCH, not by
@@ -2393,7 +2334,7 @@ function handleEvent(line) {
           // The match itself is settleOwed (unit-guarded): it also
           // claims SILENT live blocks, the gap that let a settle and
           // the block-close flush speak one short reply twice.
-          const blocks = Object.values(curMsg?.blocks ?? {});
+          const blocks = Object.values(focus.curMsg?.blocks ?? {});
           const owed = settleOwed(blocks, t);
           if (owed.claim >= 0) {
             const blk = blocks[owed.claim];
@@ -2404,12 +2345,12 @@ function handleEvent(line) {
           // same friendly rewrite as the result frame — spoken BEFORE
           // the result handler runs, so the flag lands here too.
           const speak = tooLongErr(owed.text)
-            ? (contextFull = true, CONTEXT_FULL_MSG) : owed.text;
+            ? (focus.contextFull = true, CONTEXT_FULL_MSG) : owed.text;
           console.error(`  -> say "${speak.slice(0, 40)}"`);
           relay('say', { text: speak });
         }
-        if (c.type === 'tool_use' && c.id && !spokenTools.has(c.id)) {
-          spokenTools.add(c.id);
+        if (c.type === 'tool_use' && c.id && !focus.spokenTools.has(c.id)) {
+          focus.spokenTools.add(c.id);
           relay('tool', { name: c.name, detail: summarize(c) });
           // +107: the command line BECOMES the activity label — plain,
           // no 'running a command' wrapper — until the next block starts
@@ -2420,21 +2361,21 @@ function handleEvent(line) {
           // thinking, paragraphs just drip out of the TTS'). The bare
           // command is the honest answer to what the turn is doing.
           const step = summarize(c);
-          tokKind = step ? `${c.name} ${step}` : c.name;
+          focus.tokKind = step ? `${c.name} ${step}` : c.name;
         }
         if (c.type === 'thinking' && typeof c.thinking === 'string' &&
-            c.thinking && census.deltaChars === 0) {
+            c.thinking && focus.census.deltaChars === 0) {
           // This upstream sends no partials at all (the census says so),
           // so the snapshot's full thinking block is the only live view
           // the thought ever gets: feed the same rolling window the
           // deltas would have filled and push a tally frame, throttled
           // like every other relay.
           const tailNow = c.thinking.slice(-400);
-          if (tailNow !== thinkBuf && Date.now() - tokSentAt >= 800) {
-            thinkBuf = tailNow;
-            tokSentAt = Date.now();
+          if (tailNow !== focus.thinkBuf && Date.now() - focus.tokSentAt >= 800) {
+            focus.thinkBuf = tailNow;
+            focus.tokSentAt = Date.now();
             relay('tool',
-              tokFrame(tokOutExact + Math.floor(tokChars / 4)));
+              tokFrame(focus.tokOutExact + Math.floor(focus.tokChars / 4)));
           }
         }
       }
@@ -2451,8 +2392,8 @@ function handleEvent(line) {
       // the CLI re-states the status across a long compaction, and the
       // spinner needs no ticker for the same work.
       if (m.subtype === 'status' && m.status === 'compacting') {
-        if (Date.now() - lastCompactingRelay > 60000) {
-          lastCompactingRelay = Date.now();
+        if (Date.now() - focus.lastCompactingRelay > 60000) {
+          focus.lastCompactingRelay = Date.now();
           console.error('  -> tool compacting');
           relay('tool', {
             name: 'compact',
@@ -2464,7 +2405,7 @@ function handleEvent(line) {
       // no assistant message, empty result text), so relay it as live
       // tool-style progress instead of dead air.
       } else if (m.subtype === 'compact_boundary') {
-        contextFull = false; // +250: the transcript just got smaller —
+        focus.contextFull = false; // +250: the transcript just got smaller —
         // the recovery the refusal notice pointed at, proven on the wire
         console.error('  -> tool compact');
         relay('tool', {
@@ -2524,12 +2465,12 @@ function startKeep(res, rec) {
     // whatever happens to be seated when the interval comes due.
     withConv(rec, () => {
     try {
-      if (HEARTBEAT_MS > 0 && curRes && curRes.res === res && turnOpen &&
-          !openTools.size && Date.now() - tokSentAt >= HEARTBEAT_MS) {
-        tokSentAt = Date.now();
+      if (HEARTBEAT_MS > 0 && focus.curRes && focus.curRes.res === res && focus.turnOpen &&
+          !focus.openTools.size && Date.now() - focus.tokSentAt >= HEARTBEAT_MS) {
+        focus.tokSentAt = Date.now();
         relay('tool', tokFrame(
-          tokOutExact + Math.floor(tokChars / 4),
-          {quiet: tokChars === 0 && tokOutExact === 0}));
+          focus.tokOutExact + Math.floor(focus.tokChars / 4),
+          {quiet: focus.tokChars === 0 && focus.tokOutExact === 0}));
       }
       // Padded like every other frame: a bare ': ping' is exactly the
       // small, isolated write the cellular path coalesces into silence —
@@ -2545,7 +2486,7 @@ function startKeep(res, rec) {
   // with 2 s pings and padded frames). Continuous fat writes give them
   // nothing to coalesce; the steady dribble outlives the turn's lulls.
   // Outside an open turn, back to the slow heartbeat cadence.
-  }, turnOpen ? 150 : Math.min(HEARTBEAT_MS || 15000, 2000));
+  }, focus.turnOpen ? 150 : Math.min(HEARTBEAT_MS || 15000, 2000));
 }
 // End the ATTACHED *view* of a turn. This deliberately does NOT clear
 // turnOpen: when the phone hangs up mid-turn the turn itself keeps
@@ -2555,10 +2496,10 @@ function startKeep(res, rec) {
 // sets belong to the turn, not to this view, so they survive a detach and
 // are cleared by the next beginTurn.
 function endTurn() {
-  if (!curRes) return;
-  endKeep(curRes);
-  const r = curRes.res;
-  curRes = null;
+  if (!focus.curRes) return;
+  endKeep(focus.curRes);
+  const r = focus.curRes.res;
+  focus.curRes = null;
   r.end();
 }
 function writeUserMsg(text) {
@@ -2571,7 +2512,7 @@ function writeUserMsg(text) {
       : { type: 'user',
           message: { role: 'user',
             content: [{ type: 'text', text }] } };
-  child.stdin.write(JSON.stringify(msg) + '\n');
+  focus.child.stdin.write(JSON.stringify(msg) + '\n');
   if (dumpDir) {
     try {
       appendFileSync(join(dumpDir, 'MANIFEST'), new Date().toISOString() +
@@ -2596,8 +2537,8 @@ function summarize(tool) {
 // user message — so the in-band interrupt buys process survival and
 // fast queue flush, not a warm prefix (see the header latency note).
 function interruptTurn() {
-  if (!child || childDead) return;
-  cutForPrompt = true; // this turn's result is a cut, not a close (+106)
+  if (!focus.child || focus.childDead) return;
+  focus.cutForPrompt = true; // this turn's result is a cut, not a close (+106)
   // Whatever tool the cut turn was running becomes the phone's banner
   // promise: its tool_result — whenever it arrives, in whichever turn
   // holds the view then — relays the 'finished' frame that retires the
@@ -2605,7 +2546,7 @@ function interruptTurn() {
   // error/absent result still clears the banner via /health (nothing
   // open, nothing detached) — the app's dismissal paths admit every
   // honest outcome.
-  for (const [id, label] of openTools) detached.set(id, label);
+  for (const [id, label] of focus.openTools) focus.detached.set(id, label);
   if (dumpDir) {
     try {
       appendFileSync(join(dumpDir, 'MANIFEST'),
@@ -2613,7 +2554,7 @@ function interruptTurn() {
     } catch {}
   }
   try {
-    child.stdin.write(JSON.stringify({
+    focus.child.stdin.write(JSON.stringify({
       type: 'control_request', request_id: randomUUID(),
       request: { subtype: 'interrupt' },
     }) + '\n');
@@ -2628,11 +2569,11 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   // for news we already have. The frames wear the reserved turn id so
   // the phone's pump closes exactly like any other turn; slash lines
   // pass through untouched (/compact cannot run against a refusal).
-  if (contextFull && !String(text).startsWith('/')) {
+  if (focus.contextFull && !String(text).startsWith('/')) {
     console.error('  [context-full] instant refusal (no upstream call)');
     curTurnId = turnId ?? ++nextTurnId;
-    foldedTurnId = 0;
-    curRes = { res, keep, turnStart: Date.now() };
+    focus.foldedTurnId = 0;
+    focus.curRes = { res, keep, turnStart: Date.now() };
     relay('tool', {
       name: 'started',
       detail: String(text).slice(0, 60),
@@ -2643,31 +2584,31 @@ function beginTurn(text, res, keep, markerKind, turnId) {
     endTurn(); // closes the view and the pinger; turnOpen never opened
     return;
   }
-  if (childDead) spawnClaude(sessionId); // resume our voice conversation if any
+  if (focus.childDead) spawnClaude(focus.sid); // resume our voice conversation if any
   // The id the POST promised this prompt; every frame relayed from here
   // on wears it (proactive turns invent their own — no echo, no queue).
   curTurnId = turnId ?? ++nextTurnId;
-  foldedTurnId = 0; // +163: a fresh turn's farewell closes its OWN id —
+  focus.foldedTurnId = 0; // +163: a fresh turn's farewell closes its OWN id —
   // a stale fold id must never re-stamp a later done.
-  foldUnanswered = false; foldHeld = false; // +273: ditto the hold
-  turnStartAt = Date.now() - 5000; // slack: clock skew
-  turnBeganAt = Date.now(); // the receipt's honest duration clock
-  curRes = { res, keep, turnStart: turnStartAt };
-  backlog.length = 0; // a new turn: the old one's buffered frames are stale
-  cutForPrompt = false; // a fresh turn closes with its own done (+106)
-  turnOpen = true;
-  spokenTools.clear(); // every message lives inside one turn
-  spokenTexts.clear();
-  census = newCensus(); // one wire-shape census per turn
-  tokIn = tokOutExact = tokLastMsgOut = tokChars = tokSentAt = tokMsgBase = 0; // fresh tally
-  thinkBuf = ''; // no thought survives into the next turn
-  curMsg = null; lastTextBlk = null; lastTextOpen = false; // ditto live answer
+  focus.foldUnanswered = false; focus.foldHeld = false; // +273: ditto the hold
+  focus.turnStartAt = Date.now() - 5000; // slack: clock skew
+  focus.turnBeganAt = Date.now(); // the receipt's honest duration clock
+  focus.curRes = { res, keep, turnStart: focus.turnStartAt };
+  focus.backlog.length = 0; // a new turn: the old one's buffered frames are stale
+  focus.cutForPrompt = false; // a fresh turn closes with its own done (+106)
+  focus.turnOpen = true;
+  focus.spokenTools.clear(); // every message lives inside one turn
+  focus.spokenTexts.clear();
+  focus.census = newCensus(); // one wire-shape census per turn
+  focus.tokIn = focus.tokOutExact = focus.tokLastMsgOut = focus.tokChars = focus.tokSentAt = focus.tokMsgBase = 0; // fresh tally
+  focus.thinkBuf = ''; // no thought survives into the next turn
+  focus.curMsg = null; focus.lastTextBlk = null; focus.lastTextOpen = false; // ditto live answer
   // Provisional until the first content_block_start relabels it to truth
   // ('answering', 'calling Bash'): between the prompt landing and the
   // first visible token, 'thinking' IS the honest state — and on an
   // upstream that never shows partials at all, it stays the honest
   // description of the black-box interval, heartbeat frames included.
-  tokKind = 'thinking';
+  focus.tokKind = 'thinking';
   // +155: every turn start announces its pickup — not just the queued
   // flush. The poll transport's replay ledger needs the boundary to
   // retire at, and an idle bridge has no flushPending to give it one:
@@ -2686,9 +2627,9 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   // context + this utterance's own tokens, relayed as the turn's very
   // first frame. A brand-new conversation has no baseline to preview
   // from (0 = nothing honest to say yet; the first message_start will).
-  estIn = lastCtx.in > 0 ? lastCtx.in + estTokens(text) : 0;
-  estSentIn = estIn;
-  if (estIn > 0) ctxPreviewFrame();
+  focus.estIn = focus.lastCtx.in > 0 ? focus.lastCtx.in + estTokens(text) : 0;
+  focus.estSentIn = focus.estIn;
+  if (focus.estIn > 0) ctxPreviewFrame();
   // The turn's first tally frame, ONE RTT after the prompt: the phone's
   // line flips from "Asking the bridge…" to "thinking · …" immediately,
   // before the upstream has proved anything. Whether the number then
@@ -2705,10 +2646,10 @@ function foldPending() {
   // fold site in the tool_result branch). One slot, one fold: pending
   // empties here, so the result-time flushPending finds nothing and the
   // prompt is never also run as its own turn.
-  const p = pending;
-  pending = null;
-  foldedTurnId = p.turnId; // the host's `done` will carry this id
-  foldUnanswered = true; foldHeld = false; // +273 until the CLI speaks
+  const p = focus.pending;
+  focus.pending = null;
+  focus.foldedTurnId = p.turnId; // the host's `done` will carry this id
+  focus.foldUnanswered = true; focus.foldHeld = false; // +273 until the CLI speaks
   // The view seat moves FIRST (a marker relayed to the old listener
   // would die with its stream): everything the host turn says from
   // here — the corrected continuation — goes to the phone that
@@ -2720,7 +2661,7 @@ function foldPending() {
     // done closes the pump of whoever spoke /compact as clean as any
     // steer. The caller's keep-alive dies with its answered notice.
     endKeep(p);
-  } else if (curRes) {
+  } else if (focus.curRes) {
     endTurn();
     if (p.poll || p.res.writableEnded) {
       // +104's law holds at the fold: a dead stream decides the
@@ -2728,12 +2669,12 @@ function foldPending() {
       // phone's reattach replay catches the continuation.
       endKeep(p);
     } else {
-      curRes = { res: p.res, keep: p.keep, turnStart: turnStartAt };
+      focus.curRes = { res: p.res, keep: p.keep, turnStart: focus.turnStartAt };
     }
   } else if (p.poll || p.res.writableEnded) {
     endKeep(p);
   } else {
-    curRes = { res: p.res, keep: p.keep, turnStart: turnStartAt };
+    focus.curRes = { res: p.res, keep: p.keep, turnStart: focus.turnStartAt };
   }
   // The pickup, by reserved id — the phone's pump ends its wait
   // exactly here (marker-first law, +81/+155/+157). kind='steered'
@@ -2750,15 +2691,15 @@ function foldPending() {
   // Receipts after their explanation (the heldFinished order, mirrored
   // from flushPending): a backgrounded tool's outcome never outruns the
   // notice that backgrounded it.
-  for (const f of heldFinished.splice(0)) relay('tool', f);
+  for (const f of focus.heldFinished.splice(0)) relay('tool', f);
   writeUserMsg(p.text);
   console.error(`  [steer] parked prompt folded into the running turn ` +
     `(id ${p.turnId})`);
 }
 function flushPending() {
-  if (!pending) return;
-  const p = pending;
-  pending = null;
+  if (!focus.pending) return;
+  const p = focus.pending;
+  focus.pending = null;
   // The disposition notice and everything after it belong to the
   // RESERVED turn, not the one whose `done` just fired (the result
   // handler relays that farewell BEFORE flushing — it stays stamped
@@ -2809,7 +2750,7 @@ function flushPending() {
     // turn's first frame. kind='background' below: THIS prompt cut a
     // running tool — the phone's banner promise, delivered where a
     // shared ring cursor cannot lose it.
-    const receipts = heldFinished.splice(0);
+    const receipts = focus.heldFinished.splice(0);
     beginTurn(p.text, mute, 0, p.backgrounded ? 'background' : undefined,
       p.turnId);
     // The cut's receipts, relayed AFTER the disposition AND after the
@@ -2824,8 +2765,8 @@ function flushPending() {
     // retire the banner too, not just the pin (their live copies above
     // may die with a superseded loop the same way the notice's did).
     for (const f of receipts) {
-      backlog.push({ ev: 'tool', data: f });
-      if (backlog.length > BACKLOG_CAP) backlog.shift();
+      focus.backlog.push({ ev: 'tool', data: f });
+      if (focus.backlog.length > BACKLOG_CAP) focus.backlog.shift();
     }
     endTurn();
     return;
@@ -2835,7 +2776,7 @@ function flushPending() {
   // Same ordering rule on the push transport: receipts follow their
   // explanation. The live view takes these directly; the ring copy is
   // the phone's deduped replay insurance.
-  for (const f of heldFinished.splice(0)) relay('tool', f);
+  for (const f of focus.heldFinished.splice(0)) relay('tool', f);
 }
 // [the phone's ear] is pressed to it) or only a BACKGROUNDED turn is
 // open. Either way a new prompt never waits on it — it is QUEUED at the
@@ -2887,8 +2828,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
   // stream before claude ever answers. res 'close' = client hung up or
   // response finished.
   res.on('close', () => withConv(rec, () => {
-    if (curRes && curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
-    else if (pending && pending.res === res && !pending.poll) {
+    if (focus.curRes && focus.curRes.res === res) { console.error('  (client detached — turn runs background)'); endTurn(); }
+    else if (focus.pending && focus.pending.res === res && !focus.pending.poll) {
       // A POLL prompt closes its response AT QUEUE TIME by design (the
       // ring carries its turn) — this close is our own res.end()
       // landing, and dropping pending here silently ate the utterance:
@@ -2900,21 +2841,21 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
       // (slide-right), so after the 'queued' promise the turn is owed
       // regardless: flip to the poll transport and let flushPending
       // run it on the ring.
-      pending.poll = true;
+      focus.pending.poll = true;
     }
   }));
-  if (curRes || turnOpen) {
+  if (focus.curRes || focus.turnOpen) {
     // Something is in flight — still HEARD (curRes: the phone never let
     // go, e.g. a second client, or the detach's 'close' hasn't landed
     // yet) or backgrounded (turnOpen). Park this prompt at the front of
     // the queue; whichever event frees the floor (the attached turn's
     // `result` closes its stream, or the backgrounded one's) flushes it.
-    if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); }
+    if (focus.pending) { endKeep(focus.pending); if (!focus.pending.res.writableEnded) focus.pending.res.end(); }
     // The cut decision, once: an interrupt always cuts; a cutTool queue
     // cuts ONLY a running tool (behaviour 2: polite towards thinking,
     // the agent is freed the moment it is chewing on a command).
-    const cut = interrupt || (cutTool && openTools.size > 0);
-    pending = {
+    const cut = interrupt || (cutTool && focus.openTools.size > 0);
+    focus.pending = {
       res, text, keep, poll, interrupt, turnId: t,
       // +171: /compact is HOUSEKEEPING, not conversation: it must
       // never hold a seat. The field deadlock: an agent queued
@@ -2933,8 +2874,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
       polite: !cut,
       // Remember what the cut decision saw, so the flush can re-announce
       // both the notice wording and the background promise (see above).
-      hadTools: openTools.size > 0,
-      backgrounded: cut && openTools.size > 0,
+      hadTools: focus.openTools.size > 0,
+      backgrounded: cut && focus.openTools.size > 0,
     };
     // +252: the queue belongs to the conversation holding the floor
     // (the +246 reading: a mid-turn flush rides with ITS turn, not
@@ -2948,7 +2889,7 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
       // promises neither — and since +163 it promises MORE: over a
       // running tool it will steer the turn at the tool's result, not
       // wait for the turn to settle.
-      detail: openTools.size
+      detail: focus.openTools.size
         ? cut
           ? 'the running call was interrupted — the agent is freed to '
             + 'answer you now; the tool outcome reports on its own'
@@ -2958,7 +2899,7 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
           ? 'the thinking was interrupted and aborted; '
             + 'your message goes next'
           : 'finishing the current turn; your message goes next',
-      ...(openTools.size && cut ? {kind: 'background'} : {}),
+      ...(focus.openTools.size && cut ? {kind: 'background'} : {}),
       _ts: Date.now(), _mid: ++msgSeq, _turn: t,
     };
     // The ring too (+behaviour 1): the poll client drains its POST
@@ -2986,8 +2927,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
       // frames, not its own body). Closing here is what dissolves the
       // curl deadlock: the response ending is the tool completing,
       // which is the boundary the fold was waiting for.
-      if (pending.noSeat) {
-        endKeep(pending); // interval first (a tick must not write an
+      if (focus.pending.noSeat) {
+        endKeep(focus.pending); // interval first (a tick must not write an
         // ended stream); foldPending's endKeep is idempotent.
         try { res.end(); } catch {}
       }
@@ -3027,15 +2968,10 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false,
 // call and stable across snapshots of the same message). Cleared at
 // beginTurn: a turn is the natural lifecycle here and it keeps the set
 // from growing forever.
-let spokenTools = new Set();
-// Exact say texts already relayed this turn (catches replays that arrive
 // under fresh message ids, e.g. a resumed transcript). Same lifecycle.
 // v2 note: this dedups the CLI's snapshot re-emissions AT THE SOURCE —
 // it is not the phone's dedup (that is _mid + /heard, and the phone
 // never guesses from text again).
-let spokenTexts = new Set();
-
-// ── Phone-side journal: relay, liveness, dial-back bookkeeping ─────────
 // The app keeps a seq-numbered event journal of its OWN lifecycle story
 // (lib/app_events.dart); see the file header /applog entry for the two
 // transports. The pull model was the original design and stays useful
@@ -3159,8 +3095,8 @@ setInterval(pumpAppLog, appLogEveryMs || 3600000).unref(); // cheap when off
 // No respawn here: /new leaves the child dead and the next beginTurn
 // respawns lazily (/dir relies on the same law).
 function resetConversation() {
-  sessionId = null;
-  turnOpen = false;
+  focus.sid = null;
+  focus.turnOpen = false;
   if (focus) {
     // +257: the dead conversation releases its KEY (a reset wiped it
     // back to nameless; the record lives on as the focus bundle under
@@ -3170,27 +3106,27 @@ function resetConversation() {
     focus.sid = null;
     parkConv(focus);
   }
-  openTools.clear();
-  agentTasks.clear();
-  bgTools.clear();
-  proactiveTurn = false;
-  detached.clear(); // a fresh conversation inherits no banner promise
-  heldFinished.length = 0; // …nor a receipt still owed one
+  focus.openTools.clear();
+  focus.agentTasks.clear();
+  focus.bgTools.clear();
+  focus.proactiveTurn = false;
+  focus.detached.clear(); // a fresh conversation inherits no banner promise
+  focus.heldFinished.length = 0; // …nor a receipt still owed one
   // A reset conversation has nothing unheard: drop the replay backlog
   // or the next /attach (a later cold start, a respawned app) dutifully
   // re-speaks the dead conversation's tail as if it still mattered.
-  backlog.length = 0;
+  focus.backlog.length = 0;
   // The dead conversation's size is not the fresh one's: drop the
   // context snapshot (and any preview run) so the bar goes blank
   // instead of wearing old numbers. /health reports in:0 from now
   // on until the new session's first message_start proves itself.
-  lastCtx = { in: 0, window: ctxWindow };
-  ctxOwner = null; // +249: a fresh conversation inherits no size record
-  contextFull = false; // +250: ...nor the oversized verdict
-  estIn = estSentIn = 0;
-  if (pending) { endKeep(pending); if (!pending.res.writableEnded) pending.res.end(); pending = null; }
+  focus.lastCtx = { in: 0, window: focus.ctxWindow };
+  focus.ctxOwner = null; // +249: a fresh conversation inherits no size record
+  focus.contextFull = false; // +250: ...nor the oversized verdict
+  focus.estIn = focus.estSentIn = 0;
+  if (focus.pending) { endKeep(focus.pending); if (!focus.pending.res.writableEnded) focus.pending.res.end(); focus.pending = null; }
   endTurn();
-  child?.kill('SIGTERM'); child = null; childDead = true;
+  focus.child?.kill('SIGTERM'); focus.child = null; focus.childDead = true;
 }
 
 const server = http.createServer((req, res) => {
@@ -3262,17 +3198,17 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      ok: true, claudeUp: !childDead,
+      ok: true, claudeUp: !focus.childDead,
       // The conversation NAME the phone speaks: the seated record's
       // app uuid. backendSid rides alongside for the diagnostics
       // screen — the --resume material, never an identity again.
-      sessionId: (focus && focus.uuid) || sessionId || null,
-      backendSid: sessionId || null,
+      sessionId: (focus && focus.uuid) || focus.sid || null,
+      backendSid: focus.sid || null,
       uuidAtBirth: true,
       // +306: execution verbs by name: /sessions/:id/prompts|stop|
       // reset|model — unknown ids reject, the seat is presentation.
       targeted: true,
-      harness,
+      harness: focus.harness,
       // +214: who held the pen WHEN — the phone's one-time chat
       // migration matches each legacy bubble's timestamp into an era
       // with this instead of guessing one label for the whole past.
@@ -3283,11 +3219,11 @@ const server = http.createServer((req, res) => {
       model: currentModel(),
       // The folder the agent works in (mutable via POST /dir): the
       // Bridge screen shows it and the picker moves it.
-      dir,
+      dir: focus.dir,
       // Bridge wall clock: the phone calibrates its skew against this
       // (on every /health probe) so frame stamps become honest latencies.
       now: Date.now(),
-      turnOpen, queued: !!pending,
+      turnOpen: focus.turnOpen, queued: !!focus.pending,
       // v2 handshake: ids are law. An app that sees anything else
       // shows one honest error banner instead of guessing.
       proto: 2, turn: curTurnId,
@@ -3295,18 +3231,18 @@ const server = http.createServer((req, res) => {
       // older bridge (proto 2, no flag) gets no seat calls: the app
       // keeps its single-thread behavior instead of guessing.
       seat: true,
-      backgrounded: turnOpen && !curRes,
+      backgrounded: focus.turnOpen && !focus.curRes,
       // Open tool_use ids an interrupt (or a cuttool queue) parked
       // out-of-earshot, plus the agent's own run_in_background shells
       // (+133) — (+detached): every one owes the phone a
       // `tool finished` frame, until its result lands or the process
       // retires it.
-      detached: detached.size + agentTasks.size,
+      detached: focus.detached.size + focus.agentTasks.size,
       // Relayed and NOT yet acked by the phone: what /attach will
       // replay, even after the turn itself ended. v2: the phone trims
       // it with /heard, so this is literally the never-heard count —
       // the background banner's data source finally tells the truth.
-      missed: backlog.length,
+      missed: focus.backlog.length,
       // Last known phone-journal peer and our relay watermark: visible on
       // the app's Bridge screen (which renders /health) so you can see the
       // loop is closed from either end without touching a terminal.
@@ -3333,8 +3269,8 @@ const server = http.createServer((req, res) => {
       // +249 owner gate: the seated conversation's size, or honest
       // zero (the phone reads 0 → 'measuring…') while a foreign
       // conversation holds the pen.
-      context: { in: ctxOwner === ((focus && focus.uuid) || sessionId) ? lastCtx.in : 0,
-                 window: ctxWindow },
+      context: { in: focus.ctxOwner === ((focus && focus.uuid) || focus.sid) ? focus.lastCtx.in : 0,
+                 window: focus.ctxWindow },
       // +257: the conversation registry, live. One row per
       // conversation this bridge holds — backgrounded turns included,
       // each with ITS OWN queue slot and open-turn flag (the rows
@@ -3343,7 +3279,7 @@ const server = http.createServer((req, res) => {
       // to a resting record STARTS there instead of queueing behind
       // a stranger). The focused row is read off the live globals.
       sessions: convPublic(),
-      turnSid: (focus && focus.uuid) || sessionId || null, // the conversation the globals describe
+      turnSid: (focus && focus.uuid) || focus.sid || null, // the conversation the globals describe
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
@@ -3442,9 +3378,9 @@ const server = http.createServer((req, res) => {
     // harness? which model? which folder?) before any of them moves
     // the seat. Absent params keep answering for the live seat.
     const askedH = ['claude', 'opencode'].includes(url.searchParams.get('harness'))
-      ? url.searchParams.get('harness') : harness;
-    const askedD = url.searchParams.get('dir') || dir;
-    const asked = askedH !== harness || askedD !== dir;
+      ? url.searchParams.get('harness') : focus.harness;
+    const askedD = url.searchParams.get('dir') || focus.dir;
+    const asked = askedH !== focus.harness || askedD !== focus.dir;
     modelList(askedH, askedD).then((models) => {
       res.writeHead(200, {'content-type': 'application/json'})
         .end(JSON.stringify({
@@ -3452,7 +3388,7 @@ const server = http.createServer((req, res) => {
           // The SEAT's current for its own harness; the other one's
           // remembered pick answers too (the +218 memory law: the
           // app knows what the server forgot — for both).
-          current: askedH === harness ? currentModel() : rememberedModel(askedH),
+          current: askedH === focus.harness ? currentModel() : rememberedModel(askedH),
           models,
         }));
     }).catch((e) => {
@@ -3494,32 +3430,32 @@ const server = http.createServer((req, res) => {
     // attacher takes gets acked and trimmed within the same second;
     // what it never reaches (a death mid-replay) legitimately waits
     // for the next ear instead of being consumed unseen.
-    for (const { ev, data } of backlog) sse(res, ev, data);
-    if (!turnOpen) { clearInterval(keep); res.end(); return; }
+    for (const { ev, data } of focus.backlog) sse(res, ev, data);
+    if (!focus.turnOpen) { clearInterval(keep); res.end(); return; }
     // Become the turn's heard view — STEALING it from a (believed) attached
     // previous socket. That previous view's keep-pinger must die with it,
     // or a zombie-socket repair leaks an interval writing into the void
     // forever (the old socket's 'close' hook no longer matches curRes and
     // deliberately does nothing — identity moved on, by design).
-    if (curRes) {
+    if (focus.curRes) {
       console.error('  (/attach steals the view from the old socket)');
-      const old = curRes;
-      curRes = null; // endTurn's identity dance, then the new view takes it
+      const old = focus.curRes;
+      focus.curRes = null; // endTurn's identity dance, then the new view takes it
       endKeep(old);
       try { old.res.end(); } catch {}
     }
-    curRes = { res, keep, turnStart: turnStartAt };
+    focus.curRes = { res, keep, turnStart: focus.turnStartAt };
     // +249: a context frame is never backlogged (a stale number would
     // only lie), so the returning ear gets the live conversation's
     // size RE-PRESENTED the moment it takes the view — the foreground
     // law for the bar: come back and the numbers are where you left
     // them, without waiting for the next message_start.
-    if (ctxOwner === ((focus && focus.uuid) || sessionId) && lastCtx.in) {
+    if (focus.ctxOwner === ((focus && focus.uuid) || focus.sid) && focus.lastCtx.in) {
       sse(res, 'context',
-        { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
+        { in: focus.lastCtx.in, window: focus.ctxWindow, session: focus.ctxOwner });
     }
     res.on('close', () => withConv(rec, () => {
-      if (curRes && curRes.res === res) endTurn(); // detach → background it
+      if (focus.curRes && focus.curRes.res === res) endTurn(); // detach → background it
     }));
     return;
   }
@@ -3551,10 +3487,10 @@ const server = http.createServer((req, res) => {
       } else {
         swapFocus(rec); // the named record's runtime takes the globals
         if (verb === 'stop') {
-          if (turnOpen) interruptTurn();
+          if (focus.turnOpen) interruptTurn();
           res.writeHead(200).end('ok\n');
         } else if (verb === 'reset') {
-          rmPointer(harness, dir);
+          rmPointer(focus.harness, focus.dir);
           resetConversation();
           res.writeHead(200).end('ok\n');
         } else if (verb === 'model') {
@@ -3565,7 +3501,7 @@ const server = http.createServer((req, res) => {
           } else {
             applyModel(id).then((now) => {
               res.writeHead(200, {'content-type': 'application/json'})
-                .end(JSON.stringify({ok: true, harness, id: now}));
+                .end(JSON.stringify({ok: true, harness: focus.harness, id: now}));
             }).catch((e) => {
               res.writeHead(400).end('could not set the model: ' +
                 (e?.message ?? e) + '\n');
@@ -3634,17 +3570,17 @@ const server = http.createServer((req, res) => {
       if (to !== 'claude' && to !== 'opencode') {
         res.writeHead(400).end('to=claude|opencode\n');
       } else {
-        if (to !== harness) {
-          harness = to;
+        if (to !== focus.harness) {
+          focus.harness = to;
           try { writeFileSync(harnessFile, to); } catch {}
           noteHarnessEra(to); // the flip's instant is the era's start
           resetConversation();
           // The new harness resumes ITS OWN remembered conversation
-          sessionId = readPointer(harness, dir).sid ?? null;
+          focus.sid = readPointer(focus.harness, focus.dir).sid ?? null;
         }
-        console.error('  [harness] ' + harness);
+        console.error('  [harness] ' + focus.harness);
         res.writeHead(200, {'content-type': 'application/json'})
-          .end(JSON.stringify({ ok: true, harness }));
+          .end(JSON.stringify({ ok: true, harness: focus.harness }));
       }
     } else if (url.pathname === '/model') {
       let j = null;
@@ -3655,7 +3591,7 @@ const server = http.createServer((req, res) => {
       } else {
         applyModel(id).then((now) => {
           res.writeHead(200, {'content-type': 'application/json'})
-            .end(JSON.stringify({ ok: true, harness, id: now }));
+            .end(JSON.stringify({ ok: true, harness: focus.harness, id: now }));
         }).catch((e) => {
           res.writeHead(400).end('could not set the model: ' +
             (e?.message ?? e) + '\n');
@@ -3683,10 +3619,10 @@ const server = http.createServer((req, res) => {
           return;
         }
       }
-      withConv(stopRec, () => { if (turnOpen) interruptTurn(); });
+      withConv(stopRec, () => { if (focus.turnOpen) interruptTurn(); });
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
-      rmPointer(harness, dir);
+      rmPointer(focus.harness, focus.dir);
       resetConversation();
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/seat') {
@@ -3708,7 +3644,7 @@ const server = http.createServer((req, res) => {
       const seatErr = (code, msg) =>
         res.writeHead(code, {'content-type': 'application/json'})
           .end(JSON.stringify({ok: false, error: msg}) + '\n');
-      const to = j?.harness === undefined ? harness
+      const to = j?.harness === undefined ? focus.harness
         : (j.harness === 'claude' || j.harness === 'opencode')
           ? j.harness : null;
       let model = j?.model === undefined || j?.model === null ||
@@ -3719,8 +3655,8 @@ const server = http.createServer((req, res) => {
         : (typeof j.sessionId === 'string' &&
             /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(j.sessionId))
           ? j.sessionId : null;
-      let target = dir;
-      if (typeof j?.dir === 'string' && j.dir && resolve(j.dir) !== dir) {
+      let target = focus.dir;
+      if (typeof j?.dir === 'string' && j.dir && resolve(j.dir) !== focus.dir) {
         const q = resolveInRoot(j.dir);
         target = q && isDir(q) ? q : null;
       }
@@ -3774,13 +3710,13 @@ const server = http.createServer((req, res) => {
         // 'finished' receipt then still arrives, into ITS backlog,
         // for the phone to pay when the user comes home.
         const backgroundable =
-          (turnOpen || detached.size > 0 || agentTasks.size > 0 ||
-           bgTools.size > 0) &&
+          (focus.turnOpen || focus.detached.size > 0 || focus.agentTasks.size > 0 ||
+           focus.bgTools.size > 0) &&
           !fresh;
         if (!backgroundable) resetConversation(); // ends the conversation being left
-        const eraFlip = to !== harness;
+        const eraFlip = to !== focus.harness;
         if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat
-        bundleSave(leaving); // whatever the reset left, the record remembers
+        // +312: no save — the record already IS the memory.
         const ptr = fresh ? {} : readPointer(to, target);
         if (fresh) rmPointer(to, target);
         // +UUID: resolve the named conversation by its APP identity —
@@ -3837,25 +3773,26 @@ const server = http.createServer((req, res) => {
           rec.sid = spokenSid ?? ptr.sid ?? null;
         }
         rec.harness = to; rec.dir = target; // the seat's words are the row's truth
-        bundleLoad(rec); focus = rec; parkConv(rec);
+        swapFocus(rec); parkConv(rec);
         if (eraFlip) { try { writeFileSync(harnessFile, to); } catch {} }
         if (fresh) {
-          rmPointer(harness, dir);
-          sessionId = null;
+          rmPointer(focus.harness, focus.dir);
+          focus.sid = null;
         } else {
-          sessionId = rec.sid;
-          writePointer(harness, dir, rec); // v2: sid AND uuid, so both
+          focus.sid = rec.sid;
+          writePointer(focus.harness, focus.dir, rec); // v2: sid AND uuid, so both
           // the resume and the tab name survive a restart
         }
         const settle = () => {
-          console.error('  [seat] ' + harness + ' @ ' + dir +
+          console.error('  [seat] ' + focus.harness + ' @ ' + focus.dir +
             ' (conversation ' + rec.uuid +
-            (sessionId ? ', backend ' + sessionId : ', starts fresh on the next word') +
+            (focus.sid ? ', backend ' + focus.sid : ', starts fresh on the next word') +
             (model ? ', model ' + model : '') + ')');
           res.writeHead(200, {'content-type': 'application/json'})
             .end(JSON.stringify({
-              ok: true, harness, dir, sessionId: rec.uuid,
-              backendSid: sessionId, model: currentModel(),
+              ok: true, harness: focus.harness, dir: focus.dir,
+              sessionId: rec.uuid,
+              backendSid: focus.sid, model: currentModel(),
             }));
         };
         if (model) applyModel(model).then(settle).catch((e) => {
@@ -3882,18 +3819,18 @@ const server = http.createServer((req, res) => {
           .end('not a folder inside the bridge\'s --dir-root\n');
       } else {
         resetConversation(); // kills the child: claudeUp false till next talk
-        dir = target;
+        focus.dir = target;
         // v2 pointer read (line 1 = backend sid); the destination's
         // remembered thread rides immediately, and the focused record
         // adopts its backend id as its own again.
-        sessionId = readPointer(harness, dir).sid ?? null;
-        if (focus) { focus.sid = sessionId; parkConv(focus); }
-        console.error('  [dir] moved the agent to ' + dir +
-          ' (session ' + (sessionId ?? 'starts fresh on the next word') + ')');
+        focus.sid = readPointer(focus.harness, focus.dir).sid ?? null;
+        if (focus) { focus.sid = focus.sid; parkConv(focus); }
+        console.error('  [dir] moved the agent to ' + focus.dir +
+          ' (session ' + (focus.sid ?? 'starts fresh on the next word') + ')');
         res.writeHead(200, {'content-type': 'application/json'})
-          .end(JSON.stringify({ok: true, dir,
-            sessionId: (focus && focus.uuid) || sessionId || null,
-            backendSid: sessionId || null}));
+          .end(JSON.stringify({ok: true, dir: focus.dir,
+            sessionId: (focus && focus.uuid) || focus.sid || null,
+            backendSid: focus.sid || null}));
       }
     } else if (url.pathname === '/send') {
       // The agent's file-out (the fresh APK, a report, anything): the
@@ -3933,7 +3870,7 @@ const server = http.createServer((req, res) => {
       // +257: every record's backlog trims — the mids are globally
       // unique, and a phone that heard a backgrounded conversation's
       // paragraph owes it an ack in whomever's buffer it sits.
-      const buffers = new Set([backlog,
+      const buffers = new Set([focus.backlog,
         ...[...sessions.values()].map((r) => r.backlog).filter(Boolean)]);
       let missedAll = 0;
       for (const bl of buffers) {
@@ -3959,7 +3896,7 @@ const server = http.createServer((req, res) => {
   });
 });
 // no claude yet until first spawn
-if (harness === 'claude' && !existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
+if (focus.harness === 'claude' && !existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
 if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
 // +257 +UUID: the first record — the seat the flags describe — is
 // BORN NAMED: its app uuid comes off the pointer file when one
@@ -3969,12 +3906,12 @@ if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
 // whatever record is focused, so the record must be the first thing
 // this file focuses.
 {
-  const pt = readPointer(harness, dir);
-  sessionId = pt.sid ?? null;
-  const bootRec = newConv({ harness, dir, model: claudeModel });
+  const pt = readPointer(focus.harness, focus.dir);
+  focus.sid = pt.sid ?? null;
+  const bootRec = newConv({ harness: focus.harness, dir: focus.dir, model: focus.claudeModel });
   if (pt.uuid) bootRec.uuid = pt.uuid;
-  bootRec.sid = sessionId;
-  bundleLoad(bootRec); focus = bootRec; parkConv(bootRec);
+  bootRec.sid = focus.sid;
+  focus = bootRec; wake(bootRec); parkConv(bootRec);
 }
-spawnClaude(sessionId || undefined);
-server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} harness=${harness} dir=${dir} sid=${sessionId ?? 'new'}`));
+spawnClaude(focus.sid || undefined);
+server.listen(port, '0.0.0.0', () => console.log(`voice bridge on :${port} harness=${focus.harness} dir=${focus.dir} sid=${focus.sid ?? 'new'}`));

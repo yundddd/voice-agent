@@ -977,3 +977,29 @@ its own pace and lets a FASTER request pre-empt it (a slower request
 never pushes an imminent beat out). The rig's ninth walk rings the
 report between beats and returns home, asserting the news lands
 inside the pending away-beat and the receipt pays.
+
+## +312: the bundle swap is gone — a record holds its own state, once
+
+Structural item 1 of Tim's review. The bridge kept session truth
+TWICE: a set of ~40 module globals and a per-record bundle;
+bundleSave flushed the globals into the leaving record, bundleLoad
+refilled them from the entering one, and every async path (child
+stdout, timers, the res-'close' handler) had to call withConv to
+re-stage the right record before touching 'the' turnOpen — each
+such call a window where the globals and the truth disagreed (the
++52 orphan stomp, the +90 vanished message, and the whole withConv
+commentary are all footnotes to this one design).
+
+Now: the fields live ONLY on the record object they belong to; the
+bare names in the file read and write through `focus.field`; seating
+is an assignment. `withConv(rec, fn)` remains — same door, pointer-
+swap deep: point focus at the record, run, restore, stamp updatedAt.
+The +304 ghost-model sweep rides the swap (wake()). Boot's defaults
+(the old declarations' initial values, comments and all) collapsed
+into the placeholder focus the flags describe until the first record
+is minted from them. The conversion was mechanical (a string/
+comment/template-aware rename of 41 names, one toxic regex literal
+rewritten as a `new RegExp` string, one parameter shadow renamed),
+and the proof is the suite: 28 queue tests, 19 oc, 15 relay, and
+the phone's rig — all unchanged, all green, through a bridge that
+can no longer disagree with itself.
