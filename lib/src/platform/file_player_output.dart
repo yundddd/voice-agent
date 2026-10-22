@@ -45,6 +45,13 @@ abstract interface class FilePlayerPlatform {
 
   /// +318: 0.0..1.0 — the ramp a cut rides down on (and back up on).
   Future<void> setVolume(double volume);
+
+  /// +319: write the GLOBAL audio context — audioplayers' global channel
+  /// is the one that touches AudioManager.mode; writing our
+  /// voice-communication context with mode=normal is the plugin-side way
+  /// of saying 'the call is over', without the app growing Kotlin of its
+  /// own for one setter.
+  Future<void> releaseCommunicationMode();
   Future<void> play(Source source);
   Future<void> stop();
   Stream<void> get onPlayerComplete;
@@ -57,6 +64,18 @@ class _AudioPlayerAdapter implements FilePlayerPlatform {
 
   @override
   Future<void> setVolume(double volume) => _player.setVolume(volume);
+
+  @override
+  Future<void> releaseCommunicationMode() => AudioPlayer.global
+      .setAudioContext(
+        AudioContext(
+          android: const AudioContextAndroid(
+            usageType: AndroidUsageType.voiceCommunication,
+            contentType: AndroidContentType.speech,
+            audioMode: AndroidAudioMode.normal,
+          ),
+        ),
+      );
 
   @override
   Future<void> declareCommunicationLane() => _player.setAudioContext(
@@ -366,6 +385,22 @@ class FilePlayerAudioOutput implements AudioOutput {
       await _player.setVolume(1.0);
       _restoreVolume = false;
     } catch (_) {} // the flag stands; play()'s restore door takes it
+  }
+
+  @override
+  Future<void> releaseCallRoute() async {
+    // +319: the recorder is gone; tell Android the call is over NOW
+    // instead of letting its call line idle for seconds and trapping
+    // the first reply on it (the field's thin-first-chunk tape). A
+    // platform that refuses the write changes nothing for the voice:
+    // the line expires on its own, exactly as it did before +319.
+    try {
+      await _player.releaseCommunicationMode();
+      note?.call(
+        'audio hold: left call mode at mic close (the swap absorbs '
+        'itself in the silence that follows)',
+      );
+    } catch (_) {}
   }
 
   @override

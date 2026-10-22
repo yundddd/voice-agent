@@ -285,6 +285,36 @@ void main() {
     );
     expect(platform.stops, 1);
   });
+
+  test('+319: leaving call mode is a bare global write — no source, no '
+      'volume touch, no cut tick', () async {
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => Directory.systemTemp,
+    );
+    await out.releaseCallRoute();
+    expect(platform.apiOrder, ['release']);
+    expect(platform.volumes, isEmpty);
+    expect(
+      platform.stops,
+      0,
+      reason: 'the release is not a cut — nothing of the +289 clock',
+    );
+  });
+
+  test('+319: a refused release is swallowed — the line expires on its '
+      'own, exactly the pre-+319 world', () async {
+    final dir = await Directory.systemTemp.createTemp('release_refused');
+    final platform = _FakePlatform()..failRelease = true;
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    await out.releaseCallRoute(); // does not throw
+    await out.play(Float32List(1600), 16000, tag: 'A');
+    expect(platform.starts, 1);
+  });
 }
 
 class _FakePlatform implements FilePlayerPlatform {
@@ -302,6 +332,8 @@ class _FakePlatform implements FilePlayerPlatform {
   Completer<void>? holdStart;
   Completer<void>? holdDeclare;
   bool failDeclare = false;
+  bool failRelease = false;
+  int releases = 0;
   final StreamController<void> _complete = StreamController<void>.broadcast();
 
   /// Push the platform's own onPlayerComplete event (the hand-off
@@ -313,6 +345,13 @@ class _FakePlatform implements FilePlayerPlatform {
   Future<void> setVolume(double volume) async {
     apiOrder.add('vol $volume');
     volumes.add(volume);
+  }
+
+  @override
+  Future<void> releaseCommunicationMode() async {
+    apiOrder.add('release');
+    releases++;
+    if (failRelease) throw StateError('global channel refused');
   }
 
   @override

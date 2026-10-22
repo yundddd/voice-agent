@@ -26,6 +26,13 @@ abstract interface class AudioOutput {
   /// Cuts current playback immediately; idempotent.
   Future<void> stop();
 
+  /// +319: leave Android's call-audio mode (the headset's phone line)
+  /// while nothing is being captured, so a reply that starts seconds
+  /// after a release does not begin on the line and audibly switch
+  /// codec mid-sentence. A backend with no call lane to leave may
+  /// ignore it.
+  Future<void> releaseCallRoute();
+
   /// Frees the storage of the finished/stopped play (and any earlier
   /// ones it still holds).
   void discardCurrent();
@@ -43,6 +50,9 @@ class FakeAudioOutput implements AudioOutput {
   final List<(Float32List, int)> played = [];
   final List<String?> tags = [];
   int stopCount = 0;
+
+  /// +319: how often the pipeline asked to leave call mode.
+  int callReleases = 0;
   bool playing = false;
 
   @override
@@ -59,6 +69,11 @@ class FakeAudioOutput implements AudioOutput {
   Future<void> stop() async {
     stopCount++;
     playing = false;
+  }
+
+  @override
+  Future<void> releaseCallRoute() async {
+    callReleases++;
   }
 
   /// Model the natural end of the chunk currently playing.

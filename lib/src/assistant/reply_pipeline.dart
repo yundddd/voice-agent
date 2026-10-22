@@ -651,6 +651,26 @@ class ReplyPipeline {
   /// the output twin of the mic's warm-up drop. Keep it at launch.
   bool _warmedUp = false;
 
+  /// +319 (Tim's field tape: the FIRST reply after a launch — thin
+  /// phone-line chunks, then the same reply full: the headset's phone
+  /// line outlives the mic by a few seconds and the first reply starts
+  /// ON it, mid-sentence, when the line finally lets go): the moment
+  /// capture is truly closed, leave call mode and lay ~0.4 s of
+  /// silence through the same player, so the line's release happens
+  /// against nothing instead of against the first word. No-ops while a
+  /// reply is on air or still queued — the mode-switch case lets the
+  /// narrated answer survive the mic closing, and that release can
+  /// wait for a quieter turn.
+  void holdOutputRoute() {
+    if (_playing || _queue.isNotEmpty) return;
+    unawaited(() async {
+      try {
+        await output.releaseCallRoute();
+        await output.play(Float32List(9600), 24000, tag: 'hold'); // 0.4 s
+      } catch (_) {}
+    }());
+  }
+
   void warmUpRoute() {
     if (_warmedUp) return;
     _warmedUp = true;

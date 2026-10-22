@@ -224,6 +224,11 @@ class VoiceAssistant extends ChangeNotifier {
       reopened: _onMicReopened,
       failed: _fail,
       disposed: () => _disposed,
+      // +319: capture truly gone → leave Android's call mode and lay a
+      // 0.4 s silence so the headset's line release happens against
+      // silence, not against the first word of the reply (the field's
+      // thin-first-chunk tape). Idle-guarded inside the pipeline.
+      onClosed: _reply.holdOutputRoute,
     );
     _reply.log = _logDebug;
     // +298 (+251 step 3): the seat starts on the UNNAMED slot; the

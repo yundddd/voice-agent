@@ -58,6 +58,7 @@ class MicPipeline {
     this.stallAfter = const Duration(milliseconds: 1250),
     this.watchEvery = const Duration(milliseconds: 500),
     this.reopenBackoff = const Duration(milliseconds: 150),
+    this.onClosed,
   });
 
   final MicSource source;
@@ -100,6 +101,15 @@ class MicPipeline {
   /// process mid-recover — the original's `_disposed` gate): the reopen
   /// must silently die rather than fail a dead UI.
   final bool Function() disposed;
+
+  /// +319: fired once the capture is TRULY gone (after the source's own
+  /// stop returns) at every full [close]. This is the one moment that is
+  /// guaranteed safe to hand Android back its call-mode exit: no stream
+  /// left to revoke, no user mid-press. The assistant uses it to leave
+  /// the headset's phone line and lay silence where the switch used to
+  /// bite the first reply. Deliberately NOT fired by [open]'s internal
+  /// pre-start stop — the mic is about to reclaim the line there anyway.
+  final void Function()? onClosed;
 
   /// No bytes for this long while a stream is wanted = stalled.
   final Duration stallAfter;
@@ -162,6 +172,8 @@ class MicPipeline {
     unawaited(sub?.cancel());
     await source.stop();
     _vadBuf.clear();
+    onClosed?.call(); // +319: the line is ours to hand back now — see
+    // the field's law.
   }
 
   void _startWatchdog() {

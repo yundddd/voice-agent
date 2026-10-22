@@ -44,6 +44,33 @@ void main() {
   }
 
   test(
+    '+319: a closed mic releases call mode and lays a silent hold — but '
+    'never while a reply owns the speaker',
+    () async {
+      final (out, _, reply) = rig();
+      reply.holdOutputRoute();
+      await settle();
+      expect(out.callReleases, 1, reason: 'the line is handed back');
+      expect(out.tags, contains('hold'));
+      final (silence, rate) = out.played.last;
+      expect(silence, everyElement(0.0));
+      expect(silence.length, 9600, reason: '0.4 s');
+      expect(rate, 24000);
+
+      // The mode-switch case: narrated audio survives the mic closing,
+      // and a queued tail counts as owning the speaker too — the hold
+      // must not punch a hole in a sentence.
+      final (out2, _, reply2) = rig();
+      reply2.startStream();
+      reply2.enqueue(Float32List(4800), 24000);
+      reply2.holdOutputRoute(); // SAME tick: the queue is still held
+      await settle();
+      expect(out2.callReleases, 0);
+      expect(out2.tags, isNot(contains('hold')));
+    },
+  );
+
+  test(
     'a preview completes on the natural end with NO pump ever run',
     () async {
       final (out, _, reply) = rig();

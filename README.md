@@ -177,8 +177,13 @@ Silero ever sees it:
   audioserver flipped the still-playing first utterance to A2DP
   mid-sentence. The output now declares its lane once, before its first
   source ever reaches the player: `usage=VOICE_COMMUNICATION,
-  content=SPEECH` — the mic's own lane, so there is no second route to
-  negotiate and no switch to hear. The declaration rides the launch
+  content=SPEECH` — the mic's own lane. (The field's honest note: the
+  declaration alone did NOT end the switch for the first reply of a
+  launch — Android holds the call route open for seconds after the mic
+  dies, and the first reply starts inside that window; +319 below closes
+  the window by leaving call mode at mic close. Second chunk of the same
+  reply proved the declared stream sounds full-quality the moment call
+  mode is gone.) The declaration rides the launch
   silent warm-up (the one play guaranteed to run before any mic
   session), which is where its own route-attach cost lands — the output
   twin of the mic's byte-counted warm-up drop, and traceable the same
@@ -186,6 +191,24 @@ Silero ever sees it:
   device's call lane sticks (the +118 signature — full-duration plays
   under a silent speaker), the declaration fails open to the plugin
   default and gets re-asked next play.
+- **Leave call mode at mic close (+319).** The +317 tape still caught
+  the FIRST reply after a launch starting thin and going full mid-
+  sentence (and waiting ten seconds before the first press did not
+  hide it: everything on the headset's call line is slow exactly once
+  per session, and the first reply is the first audio it ever carried).
+  So the app no longer waits for Android to expire the line on its own:
+  at every full mic close — the `onClosed` hook that fires only once
+  the recorder's own stop has returned, never by the pre-start stop in
+  `open()` — the output writes its global audio context with
+  `audioMode=normal` (the plugin's one door to `AudioManager.mode`, no
+  bespoke Kotlin needed) and lays ~0.4 s of silence through the same
+  player so the line's release happens against nothing instead of
+  against the first word. The hold no-ops while a reply is on air or
+  still queued (the mode-switch case lets the narrator survive the mic
+  closing; a hole punched mid-sentence would be worse than the old
+  quiet switch), a refused release is swallowed (the line expires on
+  its own, the pre-+319 world), and the journal carries an `audio hold:
+  left call mode` line — traceable, per the drop law.
 
 ### Voices & voice cloning
 
