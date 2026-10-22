@@ -138,12 +138,80 @@ void main() {
     await settle();
     expect(ends, hasLength(1), reason: 'B\'s real end is heard, once');
   });
+
+  test('+317: the first play declares the lane BEFORE the player is '
+      'handed a source — and only the first', () async {
+    final dir = await Directory.systemTemp.createTemp('lane_first');
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    await out.play(Float32List(1600), 16000, tag: 'warmup');
+    await out.play(Float32List(1600), 16000, tag: 'A');
+    expect(
+      platform.apiOrder,
+      ['declare', 'play', 'play'],
+      reason:
+          'the route negotiation must be over before any audible byte '
+          'is queued, and it must never re-run mid-answer',
+    );
+    expect(platform.declares, 1);
+  });
+
+  test('+317: a refused declaration does not mute the chunk — it plays '
+      'on the default lane and the next play re-asks', () async {
+    final dir = await Directory.systemTemp.createTemp('lane_refused');
+    final platform = _FakePlatform()..failDeclare = true;
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    await out.play(Float32List(1600), 16000, tag: 'A');
+    expect(platform.starts, 1, reason: 'the voice rides the default lane');
+    await out.play(Float32List(1600), 16000, tag: 'B');
+    expect(
+      platform.declares,
+      2,
+      reason: 'a failed opening may be tried again — the +120 law',
+    );
+  });
+
+  test('+317: a cut landing inside the declaration door kills the chunk '
+      'at the door — fileless, unheard', () async {
+    final dir = await Directory.systemTemp.createTemp('lane_cut');
+    final gate = Completer<void>();
+    final platform = _FakePlatform()..holdDeclare = gate;
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    final playing = out.play(Float32List(1600), 16000, tag: 'race');
+    await settle(); // parked inside the platform round trip
+    unawaited(out.stop()); // the cut lands on the declaration door
+    gate.complete();
+    await playing;
+    expect(platform.starts, 0, reason: 'the player never saw it');
+    expect(
+      dir.listSync(),
+      isEmpty,
+      reason: 'the abandoned chunk never even became a file',
+    );
+  });
 }
 
 class _FakePlatform implements FilePlayerPlatform {
   int starts = 0;
   int stops = 0;
+  int declares = 0;
+
+  /// The platform calls this adapter is given, in order (+317: 'the
+  /// lane is declared before the first source' is pinned, not wished —
+  /// the same apiOrder trick as FakeHarness).
+  final List<String> apiOrder = [];
   Completer<void>? holdStart;
+  Completer<void>? holdDeclare;
+  bool failDeclare = false;
   final StreamController<void> _complete = StreamController<void>.broadcast();
 
   /// Push the platform's own onPlayerComplete event (the hand-off
@@ -152,7 +220,16 @@ class _FakePlatform implements FilePlayerPlatform {
   void fireComplete() => _complete.add(null);
 
   @override
+  Future<void> declareCommunicationLane() async {
+    apiOrder.add('declare');
+    declares++;
+    await holdDeclare?.future;
+    if (failDeclare) throw StateError('lane refused');
+  }
+
+  @override
   Future<void> play(Source source) async {
+    apiOrder.add('play');
     starts++;
     await holdStart?.future;
   }

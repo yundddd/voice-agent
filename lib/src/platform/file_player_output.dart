@@ -2,6 +2,17 @@
 /// the shape the whole app has always used (one temp file per chunk,
 /// deleted at the seam, so the plugin's own buffering never grows across
 /// a long answer and the file litter stays one chunk deep).
+///
+/// +317: the first Bluetooth reply announced itself — thin and telephone-
+/// band for its first part, full and stereo for its second — because the
+/// mic session leaves Android's output on the call (SCO) route and the
+/// UNDECLARED media stream flips it to the media (A2DP) route UNDER the
+/// still-playing first utterance. The fix is one declared lane: the very
+/// first play (always the launch silent warm-up) declares the player's
+/// stream voice-communication, the SAME lane the capture rides, so route
+/// negotiation happens once, inside silence no one hears — the output
+/// twin of the mic's warm-up drop (see record_mic_source.dart), and just
+/// as traceable: the declaration journals itself.
 library;
 
 import 'dart:async';
@@ -22,6 +33,9 @@ import 'audio_output.dart';
 /// constructed; the fake wants nothing). One production
 /// implementation: [_AudioPlayerAdapter].
 abstract interface class FilePlayerPlatform {
+  /// +317: declare the playback lane — voice-communication, the same
+  /// lane the mic rides — before the first source is handed over.
+  Future<void> declareCommunicationLane();
   Future<void> play(Source source);
   Future<void> stop();
   Stream<void> get onPlayerComplete;
@@ -31,6 +45,22 @@ abstract interface class FilePlayerPlatform {
 class _AudioPlayerAdapter implements FilePlayerPlatform {
   _AudioPlayerAdapter(this._player);
   final AudioPlayer _player;
+
+  @override
+  Future<void> declareCommunicationLane() => _player.setAudioContext(
+    // usage=VOICE_COMMUNICATION, content=SPEECH: the stream joins the
+    // call lane the record plugin already holds while the mic runs, so
+    // no mid-utterance SCO→A2DP renegotiation remains to hear. Deliberately
+    // NOT forcing audioMode or the speakerphone flag: those globals are
+    // exactly what the record plugin juggles (see record_mic_source.dart's
+    // header), and a per-player attribute must not revoke them under it.
+    AudioContext(
+      android: const AudioContextAndroid(
+        usageType: AndroidUsageType.voiceCommunication,
+        contentType: AndroidContentType.speech,
+      ),
+    ),
+  );
 
   @override
   Future<void> play(Source source) => _player.play(source);
@@ -80,6 +110,12 @@ class FilePlayerAudioOutput implements AudioOutput {
   @override
   Stream<void> get onNaturalEnd => _ended.stream;
 
+  /// +317: the lane declaration is once-per-player — a platform round
+  /// trip that must never re-run mid-answer, and whose failure must
+  /// never mute one: a lane that will not take the declaration plays
+  /// on the plugin default, and the next play re-asks.
+  bool _laneDeclared = false;
+
   @override
   Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
     // +119: the audio-context experiment is REVERTED. +117 (no focus)
@@ -88,6 +124,26 @@ class FilePlayerAudioOutput implements AudioOutput {
     // full-duration plays under a silent speaker smell like a stuck
     // duck in this device's assistant lane. Dedup and ledger fixes
     // stay; the route question gets re-earned with data, not guesses.
+    // +317 re-earned it: the assistant lane died and the field tape
+    // (BT speaker, first reply thin-then-full mid-sentence) named the
+    // media lane's route flip as the survivor — the player now declares
+    // voice-communication, the mic's own lane, once, on the silent
+    // warm-up, so the switch costs a heard nothing. Watch the journal:
+    // a silent speaker with full-duration plays again is the +118
+    // signature and this declaration goes back to the drawer with it.
+    if (!_laneDeclared) {
+      final cutsAtDoor = _cuts;
+      try {
+        await _player.declareCommunicationLane();
+        _laneDeclared = true;
+        note?.call(
+          'audio lane: playback declared voice-communication '
+          '(one lane with the mic; the route switch lands in silence)',
+        );
+      } catch (_) {}
+      if (_cuts != cutsAtDoor) return; // +289: the cut crossed the
+      // declaration door — the chunk dies at the door, fileless.
+    }
     final seam = Stopwatch()..start();
     final cuts0 = _cuts; // +289: this chunk's cut epoch at birth
     final dir = await _tempDir();

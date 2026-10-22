@@ -160,6 +160,25 @@ Silero ever sees it:
   warm-up eats the reply's first word (seen as Pocket TTS "truncation at
   the very beginning" in PTT only — the Settings preview, no active mic,
   stayed clean).
+- **One declared audio lane (+317).** Over a Bluetooth speaker the FIRST
+  reply used to change its own voice mid-sentence — telephone-thin for
+  its first part, full for its second. The synthesized bytes rule the TTS
+  out (every chunk is the same mono 24 kHz PCM; engine warm-up is
+  documented latency-only); the mic explains it: the voice-communication
+  capture puts Android in call mode, which on Bluetooth means the mono
+  SCO codec, while the reply played as an UNDECLARED media stream — so
+  audioserver flipped the still-playing first utterance to A2DP
+  mid-sentence. The output now declares its lane once, before its first
+  source ever reaches the player: `usage=VOICE_COMMUNICATION,
+  content=SPEECH` — the mic's own lane, so there is no second route to
+  negotiate and no switch to hear. The declaration rides the launch
+  silent warm-up (the one play guaranteed to run before any mic
+  session), which is where its own route-attach cost lands — the output
+  twin of the mic's byte-counted warm-up drop, and traceable the same
+  way: the journal gets an `audio lane: playback declared …` line. If a
+  device's call lane sticks (the +118 signature — full-duration plays
+  under a silent speaker), the declaration fails open to the plugin
+  default and gets re-asked next play.
 
 ### Voices & voice cloning
 

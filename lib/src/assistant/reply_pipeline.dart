@@ -644,6 +644,11 @@ class ReplyPipeline {
   /// player when the quick local TTS handed it the real chunk; the
   /// overlap killed the chunk and the once-per-release call sites just
   /// re-armed the same race all afternoon long.
+  /// +317: this silence is also where the output's lane is declared
+  /// (file_player_output.dart): the launch warm-up is the ONE play that
+  /// is guaranteed to run before any mic session, so the play that eats
+  /// the platform's route negotiation is guaranteed to be inaudible —
+  /// the output twin of the mic's warm-up drop. Keep it at launch.
   bool _warmedUp = false;
 
   void warmUpRoute() {
