@@ -556,6 +556,63 @@ void main() {
       );
     });
 
+    // +313: a conversation's channel is its home on THIS phone: it
+    // is created by birth (a tab, a landing, a resume) and destroyed
+    // with the tab — frames can never move back in. The +310-era
+    // hazard note ('unconditional retire on a named receipt') was
+    // one symptom of the creating lookup: every _channelFor(sid) in
+    // an event path RE-OPENED the home of a conversation the user
+    // had just thrown away, and the next heartbeat found a ghost
+    // ledger to wake. Owned reducers rule: events route to the live
+    // channel or die on the step; the dead conversation is already
+    // filed on disk, and nobody pays a receipt for a house that
+    // burned down.
+    test('a dead conversation pays nobody — receipts and reports '
+        'for a deleted tab die with it (+313)', () async {
+      final x = await tab('/proj-x');
+      final y = await tab('/proj-y');
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('background a sleep'));
+      await pump();
+      bridge.backgrounded(x.uuid, 'Bash sleep 20');
+      bridge.say(x.uuid, 'It is running.');
+      bridge.endTurn(x.uuid);
+      await pump();
+      expect(a.view.agentBusy, isTrue, reason: 'the debt is owed');
+      expect(await a.switchSession(1), isNull); // move away
+      // The user throws the thread away.
+      expect(await a.removeSessionTab(0), isNull);
+      await pump();
+      expect(a.view.agentBusy, isFalse, reason: 'deletion retires it');
+      // Everything the bridge can still say about the departed, in
+      // the order a real completion sends it — and a live turn on Y
+      // to drain those foreign frames through the router (a dead
+      // ring is unread, and an unread frame resurrects nobody).
+      bridge.complete(x.uuid, 'Bash sleep 20', report: ['The sleep finished.']);
+      bridge.say(x.uuid, 'Anything else?');
+      bridge.endTurn(x.uuid);
+      unawaited(a.runQuickCommand('a word on the living'));
+      await pump();
+      bridge.say(x.uuid, 'Still talking to nobody.');
+      bridge.endTurn(x.uuid);
+      bridge.endTurn(y.uuid); // the living turn closes honestly — the
+      // busy flag that follows would else be Y's own, not a ghost's
+      await pump(beats: 4);
+      expect(
+        a.liveChannel(x.uuid),
+        isNull,
+        reason:
+            'frames addressed to a conversation never RESURRECT '
+            'it — the receipt has no home to pay, the ghost banner '
+            'stays buried',
+      );
+      expect(
+        a.view.agentBusy,
+        isFalse,
+        reason: 'and no heartbeat finds a ghost ledger to wake',
+      );
+    });
+
     test('a glance naming the neighbour may not rename the seat '
         '(+303, the tape that re-crossed the sessions)', () async {
       // The field tape: after the bridge restart and a /new, the

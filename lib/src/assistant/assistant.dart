@@ -772,6 +772,15 @@ class VoiceAssistant extends ChangeNotifier {
       c.turn.retireIfOwned({...ids, _pendingKey});
     }
     for (final id in ids) {
+      // +313: the tombstone. Deletion is a FACT about the name, not
+      // just an event in the map — a late frame must not undo it,
+      // and the map alone cannot say 'removed' apart from 'never
+      // there'. Bounded by the (small) set of names one phone ever
+      // deletes.
+      _purgedSids.add(id);
+      if (_purgedSids.length > 64) {
+        _purgedSids.remove(_purgedSids.first);
+      }
       final chan = _channels.remove(id);
       if (chan == null) continue;
       if (identical(chan, _activeChan)) _activeChan = _channelFor(null);
@@ -783,6 +792,39 @@ class VoiceAssistant extends ChangeNotifier {
   /// it (does NOT move the seat; creates on sight, like the wire does).
   @visibleForTesting
   SessionChannel channelForTest(String? sid) => _channelFor(sid);
+
+  /// +313: the non-creating view of the map — a channel is LIVE only
+  /// if birth made it and no purge has unmade it. Event paths ask
+  /// this; only tab code asks [channelForTest]'s creating cousin.
+  SessionChannel? liveChannel(String? sid) =>
+      sid == null || sid.isEmpty ? _chan : _channels[sid];
+
+  /// +313: the resolution every FRAME takes. A frame addressed to a
+  /// conversation may never RESURRECT it — the channel is its home on
+  /// this phone, created by birth (a tab, a landing, a resume) and
+  /// destroyed with the tab. The one exception is a still-kept tab
+  /// whose channel this process has not opened yet (prefs restored a
+  /// ledger the user never visited since boot): its birth already
+  /// happened, and paying its own report is opening a door that is
+  /// already owed to it. A DELETED tab is not that: the purge took
+  /// both the row and the home, and the receipt for a burned-down
+  /// house pays nobody.
+  final _purgedSids = <String>{};
+  SessionChannel? _channelIfKnown(String? sid) {
+    final live = liveChannel(sid);
+    if (live != null) return live;
+    if (sid != null && _purgedSids.contains(sid)) return null; // +313
+    if (sid == null ||
+        _bridgePrefs.tabs.any((t) => t.sessionIds.contains(sid))) {
+      return _channelFor(sid);
+    }
+    // +298's law holds for the never-seen: a stamped frame may open a
+    // ledger for a conversation this phone has no tab for (the meter
+    // ticks for work you don't watch). +313's law is that DELETION
+    // outranks stamping — the tombstone above is the whole of the
+    // difference.
+    return _channelFor(sid);
+  }
 
   TurnCoordinator get _turn => _chan.turn;
   TokenTicker get _ticker => _chan.ticker;
@@ -1987,7 +2029,11 @@ class VoiceAssistant extends ChangeNotifier {
     // spoke's own channel. The +279 'scoped, partial' law is now the
     // map's shape: a stranger's badge lives in another object and was
     // never in reach of this settlement.
-    final led = (spoke == null ? _chan : _channelFor(spoke)).turn;
+    // +313: the clean bill speaks for a conversation this phone has
+    // no home for — it settles nothing here.
+    final spokeChan = _channelIfKnown(spoke);
+    if (spokeChan == null) return;
+    final led = spokeChan.turn;
     // Did THIS channel wear a warrant before the settle? (An empty
     // idle stranger must not print 'retired' over a banner owed on
     // another tab.)
@@ -2150,9 +2196,16 @@ class VoiceAssistant extends ChangeNotifier {
     // the replay dedups or ages whatever the beat raced.
     // +298: the report names its conversation; the LADDER that wakes
     // belongs to it, not to whichever tab is on screen.
-    final owed = _channelFor(
+    final owed = _channelIfKnown(
       h['sessionId'] is String ? h['sessionId'] as String : _sessionId,
     );
+    if (owed == null) {
+      // +313: the report names a conversation nobody here keeps —
+      // no ladder to wake (the beat goes on for the debts that ARE
+      // owed somewhere).
+      _scheduleBgProbe();
+      return;
+    }
     if ((h['turnOpen'] == true || h['backgrounded'] == true || missed > 0) &&
         !owed.turn.busy &&
         !owed.turn.backgrounded &&
@@ -2206,7 +2259,13 @@ class VoiceAssistant extends ChangeNotifier {
     // +298: the receipt pays on the channel of the conversation it
     // STAMPS (the +279 law's end state — where the payment lands was
     // legislated; now it is storage).
-    final chan = session == null ? _chan : _channelFor(session);
+    final chan = _channelIfKnown(session);
+    if (chan == null) {
+      // +313: a receipt for a conversation with no home and no kept
+      // tab — the user threw the thread away; the payment dies here.
+      _logDebug('bg receipt for a departed conversation — nothing to pay');
+      return;
+    }
     final led = chan.turn;
     // +277: remember whose band this payment might settle — the
     // retirement clears the owner, so capture it first.
@@ -2978,8 +3037,13 @@ class VoiceAssistant extends ChangeNotifier {
       // a done speaks for its own thread by construction; the line keeps
       // the tape honest when away work had been signed here.
       noteWorkHome: (sid) {
-        final c = _channelFor(sid);
-        if (c.turn.backgrounded || c.turn.detachedPromise || c.turn.agentWork) {
+        // +313: reading a log line is no business of a frame's — it
+        // may not open a home.
+        final c = _channelIfKnown(sid);
+        if (c != null &&
+            (c.turn.backgrounded ||
+                c.turn.detachedPromise ||
+                c.turn.agentWork)) {
           _logDebug(
             'work home: done — marker retired, every tab its '
             'own face again',
@@ -2991,7 +3055,9 @@ class VoiceAssistant extends ChangeNotifier {
       // meter keeps ticking for the work you are not watching, and the
       // row you come home to learned what it was doing.
       routeForeignTool: (ev, stepLine) {
-        final c = _channelFor(ev.session);
+        // +313: a stranger's frame may not invent a stranger.
+        final c = _channelIfKnown(ev.session);
+        if (c == null) return;
         if (ev.toolName == 'tokens') {
           c.ticker.onFrame(ev);
           return;
@@ -4228,7 +4294,11 @@ class VoiceAssistant extends ChangeNotifier {
         // backlog it promises is THAT thread's, and the drain moves
         // to its channel. Claiming on the caller's tab would light
         // the wrong box: the +255 law in the map's new shape.
-        chan = _channelFor(probeSid);
+        final known = _channelIfKnown(probeSid); // +313: the report
+        // speaks for a conversation nobody here keeps — nothing to
+        // reattach to, and nothing to resurrect.
+        if (known == null) return false;
+        chan = known;
       }
       notifyListeners();
     }

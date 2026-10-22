@@ -273,3 +273,31 @@ Under the bridge's `uuidAtBirth: true` declaration the law inverts:
   the same rest law — nothing mid-flight to disturb.
 * pre-birth bridges keep the old adoption untouched; the flag is
   backward-compatible by ignorance.
+
+## +313: frames route to owned reducers — the dead pay nobody
+
+Migration step 4's first law. Six event paths used to resolve their
+channel with the CREATING lookup (`_channelFor`): a receipt, a clean
+health bill, a foreign tool frame, a work-home log line, the
+heartbeat's owed-ladder, a reattach probe. Every one of them could
+RE-BUILD the channel of a conversation the user had just deleted —
+the ledger resurrected with its warrant retired by the purge, ready
+for the next heartbeat to find a ghost to wake. The +276-era hazard
+note ('unconditional retire on a named receipt') was a symptom of
+exactly this creating resolution.
+
+The rule now: **a frame addressed to a conversation never resurrects
+it.** `_channelIfKnown` answers every event path: live channel →
+pay it; tombstoned (purged this life — deletion is a FACT about the
+name, not just an event in the map) → drop; a still-kept tab whose
+ledger this process has not opened yet → open it (its birth already
+happened; the door was owed); a never-seen stamp → open it too
+(+298's meter-ticks-for-away-work law stands). Only the tombstone
+outranks the stamp.
+
+The scenario walk deletes a tab owing a background shell, then lets
+the bridge say everything it can still say about the departed —
+finished receipt, foreign say, stranger's farewell — drained through
+a live turn on the surviving tab (an unread ring resurrects nobody):
+the channel stays gone, the banner stays buried, no heartbeat finds
+a ghost.
