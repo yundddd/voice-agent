@@ -3237,6 +3237,82 @@ void main() {
   });
 
   group('the poll transport\'s wire truths', () {
+    // +311: ONE EVENT CONSUMER. The per-turn poll loop was the last
+    // competitor for the ring cursor: two live turns meant two loops
+    // advancing ONE cursor twice per tick, each seeing only its half
+    // of the frames (the cursor-steal shape behind the +90-era
+    // 'queued and vanished' reports) and the wire's request rate
+    // doubling for free. The transport now runs ONE consumer and
+    // fans out; turns subscribe, and the consumer retires when
+    // nobody watches.
+    test('+311: concurrent turns share one ring connection', () async {
+      final t = FakeScheduler(DateTime(2026, 1, 1, 12));
+      final h = FakeHarness();
+      h.healthState = {
+        'ok': true,
+        'now': t.now.millisecondsSinceEpoch,
+        'poll': {'ring': 0, 'min': 0},
+      };
+      final transport = BridgeTransport(
+        scheduler: t,
+        clock: () => t.now,
+        log: (_) {},
+      );
+      transport.noteHealth(h.healthState?.cast<String, Object>());
+      final seenA = <BridgeEvent>[], seenB = <BridgeEvent>[];
+      final a1 = transport
+          .turn(h, 'for A', false, sessionId: 'ses-A')
+          .forEach(seenA.add);
+      final a2 = transport
+          .turn(h, 'for B', false, sessionId: 'ses-B')
+          .forEach(seenB.add);
+      await settle();
+      final idA = seenA.firstWhere((e) => e.kind == 'turn').turn;
+      final idB = seenB.firstWhere((e) => e.kind == 'turn').turn;
+      expect(idA == idB, isFalse, reason: 'two turns, two reserved ids');
+      final before = h.pollCount;
+      t.advance(const Duration(milliseconds: 250));
+      await settle();
+      expect(
+        h.pollCount - before,
+        1,
+        reason: 'ONE consumer per tick, however many turns watch',
+      );
+      h.pollPages.add({
+        'ok': true,
+        'seq': 9,
+        'events': [
+          {
+            'seq': 8,
+            'ev': 'done',
+            'data': {'_turn': idA},
+          },
+          {
+            'seq': 9,
+            'ev': 'done',
+            'data': {'_turn': idB},
+          },
+        ],
+      });
+      t.advance(const Duration(milliseconds: 250));
+      await settle();
+      expect(
+        seenA.last.isDone && seenB.last.isDone,
+        isTrue,
+        reason: 'one page, both farewells, each to its own pump',
+      );
+      final after = h.pollCount;
+      t.advance(const Duration(milliseconds: 250));
+      await settle();
+      expect(
+        h.pollCount,
+        after,
+        reason: 'the consumer retires when nobody watches',
+      );
+      await a1;
+      await a2;
+    });
+
     test('+D: a dead wire says DISCONNECT, not agent error — the cursor '
         'survives and the recovered ring resumes the stream', () async {
       // Review D: eight failed polls used to yield a terminal `error`

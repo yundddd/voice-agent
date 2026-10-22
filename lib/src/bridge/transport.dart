@@ -143,6 +143,16 @@ class BridgeTransport {
     return _pollTurn(gw, text, interrupt, cutTool, sessionId);
   }
 
+  /// +311: ONE consumer for the ring. Each subscribed turn used to run
+  /// its own poll loop — two live turns advanced the one cursor twice
+  /// per tick, each saw half the frames, and the wire's request rate
+  /// doubled for free. The transport now owns the single loop; turns
+  /// subscribe, the fan-out addresses the funerals, and the loop
+  /// retires when the last subscriber goes.
+  final _subs = <_RingSub>[];
+  bool _loopLive = false;
+  HarnessGateway? _loopGw;
+
   Stream<BridgeEvent> _pollTurn(
     HarnessGateway gw,
     String text,
@@ -155,16 +165,30 @@ class BridgeTransport {
     // stream already delivered — and this pull turn would replay the
     // whole recent conversation as fresh, duplicated bubbles (the field
     // report: 'queue or interrupt shows bubbles I already saw'). Catch
-    // the cursor up to the ring head BEFORE the POST. A polled previous
-    // turn consumed the ring itself — leave the cursor alone, skipping
-    // could eat this turn's own frames.
+    // the cursor up to the ring head BEFORE the POST — but only while
+    // the consumer is COLD: a live loop is advancing the cursor
+    // honestly, and skipping could eat this turn's own birth frames.
     final h = await gw.healthInfo();
     noteHealth(h);
-    if (!_prevTurnViaPoll) {
+    if (!_prevTurnViaPoll && !_loopLive) {
       final head = h?['poll'] is Map ? (h!['poll'] as Map)['ring'] : null;
       if (head is num && head.toInt() > _ringCursor) _ringCursor = head.toInt();
     }
     if (_ringCursor < 0) _ringCursor = 0;
+    // Subscribe BEFORE the POST: the pickup notice can ring between
+    // the receipt and the first poll, and a frame that arrives in
+    // that window must not be consumed by the loop for someone else
+    // alone. Until the receipt names the turn, done/error frames are
+    // not ours by construction and the rest ride through (the old
+    // loop started at the cursor; nothing is missed either way).
+    // myTurn 0 = 'not yet in hand' (the same value an unreadable
+    // receipt carries): farewells cannot match an unassigned turn, so
+    // they pass the foreign test by construction and the rest rides.
+    final sub = _RingSub(clock().add(pollDeadline), 0);
+    sub.ctl.onCancel = () => _retire(sub);
+    _subs.add(sub);
+    _loopGw = gw;
+    if (!_loopLive) unawaited(_ringLoop());
     // v2: the receipt names our turn BEFORE the first poll; the loop
     // learns it from the same event the other transports get first.
     final myTurn = await gw.talkPoll(
@@ -173,39 +197,56 @@ class BridgeTransport {
       interrupt: interrupt,
       cutTool: cutTool,
     );
+    sub.myTurn = myTurn;
     yield BridgeEvent.parse('turn', '{"turn":$myTurn}');
-    var deadline = clock().add(pollDeadline);
-    var misses = 0;
-    while (true) {
+    await for (final ev in sub.ctl.stream) {
+      yield ev;
+      if (ev.isDone || ev.kind == 'error') break;
+    }
+    _retire(sub);
+  }
+
+  /// The single ring consumer: one GET /poll per tick, cursor advanced
+  // exactly once, every frame delivered to every watchful pump. The
+  /// per-turn laws ride UNCHANGED — eight dead polls say non-terminal
+  /// disconnect, a silent ring with a live wire says deadline error
+  /// (unless the wire itself is down, whose fuse extends), a young
+  /// ring rewinds the cursor, and a stranger's funeral may not break
+  /// a parked pump before its pickup.
+  Future<void> _ringLoop() async {
+    _loopLive = true;
+    final gw = _loopGw!;
+    while (_subs.isNotEmpty) {
       await _tick();
+      if (_subs.isEmpty) break;
       final page = await gw.poll(_ringCursor);
       if (page == null) {
-        if (++misses == 8) {
-          // Transport failure is NOT agent failure. Eight dead polls
-          // say the WIRE is down; the bridge may still be running this
-          // turn. The old terminal `error` frame marked the turn as
-          // cleanly ended for the recovery logic and suppressed the
-          // reattach branch while the agent kept working. A non-
-          // terminal `disconnect` names the wire instead: the pump
-          // survives, keeps polling on its cursor, and a recovered
-          // wire resumes the stream at the exact frame it missed.
-          yield BridgeEvent.parse(
-            'disconnect',
-            '{"error":"bridge unreachable — retrying"}',
-          );
+        for (final sub in _subs.toList()) {
+          sub.misses++;
+          if (sub.misses == 8) {
+            // Transport failure is NOT agent failure (see +D): the
+            // WIRE is down; say so non-terminally and keep polling —
+            // a recovered wire resumes at the exact missed frame.
+            sub.emit(
+              BridgeEvent.parse(
+                'disconnect',
+                '{"error":"bridge unreachable — retrying"}',
+              ),
+            );
+          }
         }
         continue;
       }
-      misses = 0;
+      for (final sub in _subs) {
+        sub.misses = 0;
+      }
       onActivity?.call();
       final head = page['seq'];
       if (head is num && head < _ringCursor) {
         // Ring reborn under our cursor (bridge restart with a young
-        // sequence space): rewind to the oldest possible event so this
-        // turn's already-relayed frames are not skipped, and re-probe —
-        // /health may have renegotiated the transport for the next turn
-        // (the endpoint serves whoever asks, so riding out THIS turn on
-        // polls is safe even if poll is no longer advertised).
+        // sequence space): rewind to the oldest possible event so
+        // turns' already-relayed frames are not skipped, and re-probe
+        // — /health may have renegotiated the transport.
         log(
           'poll: ring reset (head $head < cursor $_ringCursor) '
           '— rewinding to 0',
@@ -228,53 +269,59 @@ class BridgeTransport {
                 ? f['data'] as Map<Object?, Object?>
                 : const <String, Object>{},
           );
-          final foreign =
-              (ev.isDone || ev.kind == 'error') &&
-              myTurn != 0 &&
-              ev.turn != 0 &&
-              ev.turn != myTurn;
-          if (foreign) {
-            // Someone else's funeral: the turn this prompt parked
-            // behind (or any farewell the lagging ring still carries).
-            // Honouring it would break the pump before our pickup,
-            // fossilise the pin and strand the flushed answer — skip
-            // it and keep polling; if the flush never comes the
-            // deadline below still says so, and a superseding press
-            // cancels this whole stream.
-            log(
-              'poll: ${ev.isDone ? 'done' : 'error'} of turn ${ev.turn} '
-              '(ours is $myTurn) — not ours, pump survives',
-            );
+          for (final sub in _subs.toList()) {
+            final foreign =
+                (ev.isDone || ev.kind == 'error') &&
+                sub.myTurn != 0 &&
+                ev.turn != 0 &&
+                ev.turn != sub.myTurn;
+            if (foreign) {
+              // Someone else's funeral: honouring it would break the
+              // pump before its pickup, fossilise the pin and strand
+              // the flushed answer — skip it; if the flush never
+              // comes the deadline below still says so.
+              log(
+                'poll: ${ev.isDone ? 'done' : 'error'} of turn ${ev.turn} '
+                '(ours is ${sub.myTurn}) — not ours, pump survives',
+              );
+              continue;
+            }
+            sub.emit(ev);
+            if (ev.isDone || ev.kind == 'error') _retire(sub);
+          }
+        }
+      }
+      for (final sub in _subs.toList()) {
+        if (_ringCursor > consumedBefore) {
+          // Progress on the wire (including the swallowed farewells):
+          // the deadline guards a SILENT ring, not a turn spanning a
+          // long prior tool — a parked prompt's window legitimately
+          // covers the whole of it.
+          sub.deadline = clock().add(pollDeadline);
+        }
+        if (clock().isAfter(sub.deadline)) {
+          if (sub.misses >= 8) {
+            // The wire, not the agent, owns this silence: extend the
+            // fuse and keep dialling.
+            sub.deadline = clock().add(pollDeadline);
             continue;
           }
-          yield ev;
-          if (ev.isDone || ev.kind == 'error') return;
+          sub.emit(
+            BridgeEvent.parse(
+              'error',
+              '{"error":"poll deadline — the turn never said done"}',
+            ),
+          );
+          _retire(sub);
         }
-      }
-      if (_ringCursor > consumedBefore) {
-        // Progress on the wire (including the swallowed farewells): the
-        // deadline guards against a SILENT ring, not against a turn
-        // that spans a long prior tool — and a parked prompt's window
-        // legitimately covers the whole of it.
-        deadline = clock().add(pollDeadline);
-      }
-      if (clock().isAfter(deadline)) {
-        if (misses >= 8) {
-          // The wire, not the agent, owns this silence: every poll in
-          // the window failed, so the ring says nothing about whether
-          // the turn ended. Don't declare the run complete — extend
-          // the fuse and keep dialling; the frames (or the bridge's
-          // own death rattle) will land when the wire does.
-          deadline = clock().add(pollDeadline);
-          continue;
-        }
-        yield BridgeEvent.parse(
-          'error',
-          '{"error":"poll deadline — the turn never said done"}',
-        );
-        return;
       }
     }
+    _loopLive = false;
+  }
+
+  void _retire(_RingSub sub) {
+    _subs.remove(sub);
+    if (!sub.ctl.isClosed) sub.ctl.close();
   }
 
   void Function()? onActivity;
@@ -283,5 +330,20 @@ class BridgeTransport {
     final c = Completer<void>();
     scheduler.after(pollInterval, () => c.complete());
     return c.future;
+  }
+}
+
+/// +311: one pump's subscription to the shared ring consumer — its
+/// reserved turn (null until the receipt arrives: pre-birth frames
+/// ride through except others' farewells, which cannot be ours), its
+/// own silence fuse, and its own dead-wire counter.
+final class _RingSub {
+  _RingSub(this.deadline, this.myTurn);
+  int myTurn;
+  DateTime deadline;
+  int misses = 0;
+  final ctl = StreamController<BridgeEvent>();
+  void emit(BridgeEvent ev) {
+    if (!ctl.isClosed) ctl.add(ev);
   }
 }

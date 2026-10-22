@@ -289,3 +289,25 @@ phone already held a receipt for.
   lives on disk under the bridge's roof gets its record rebuilt,
   and is never told 'unknown session' for the restart's amnesia.
   `/stop?sid=` resolves through the same finder.
+
+## One event consumer (+311)
+
+Migration step 3 (the phone's half; the ring itself was always a
+single multiplexed stream with a single cursor — the PROBLEM was one
+poll loop per turn competing to advance it).
+
+The transport now runs ONE ring consumer: one GET /poll per tick,
+the cursor advanced exactly once, and every frame delivered to every
+watchful pump. Turns subscribe (before the POST, so a pickup notice
+that rings between the receipt and the first tick cannot be consumed
+for a stranger alone) and retire when their farewell lands. The
+per-turn laws rode the move UNCHANGED: non-terminal disconnect at
+eight dead polls, deadline error on a silent ring (with the fuse
+extended while the wire itself is down), the young-ring rewind, the
+foreign-funeral skip, and the pre-POST cursor catch-up — which now
+applies only while the consumer is COLD (a live loop is advancing
+the cursor honestly; skipping could eat the new turn's birth
+frames).
+
+The consumer retires when nobody watches: no ring traffic behind an
+idle screen.
