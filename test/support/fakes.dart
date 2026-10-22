@@ -158,6 +158,11 @@ class FakeHarness implements HarnessGateway {
   final List<List<int>> heardBatches = [];
   bool heardOk = true;
 
+  /// +315: the ORDER the phone knocked — 'heard' (POST /heard) and
+  /// 'health' (GET /health) — so a law like 'the ack lands before the
+  /// probe reads it' is pinned, not wished.
+  final List<String> apiOrder = [];
+
   @override
   Stream<BridgeEvent> talk(
     String text, {
@@ -195,6 +200,10 @@ class FakeHarness implements HarnessGateway {
   Future<bool> heard(List<int> mids) async {
     if (mids.isEmpty) return true;
     heardBatches.add(List.of(mids));
+    // +315: the ORDER log speaks only of acks that LANDED — a failed
+    // attempt must not satisfy an ordering law (batches still record
+    // every try for the retry-path tests).
+    if (heardOk) apiOrder.add('heard:${mids.join(',')}');
     return heardOk;
   }
 
@@ -251,6 +260,7 @@ class FakeHarness implements HarnessGateway {
   @override
   Future<Map<String, Object>?> healthInfo() async {
     final h = healthState;
+    apiOrder.add('health${h == null ? ':unreachable' : ''}');
     if (h == null) return null;
     final m = h.containsKey('turnOpen')
         ? h

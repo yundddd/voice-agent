@@ -205,7 +205,7 @@ class VoiceAssistant extends ChangeNotifier {
       onAudible: _onChunkAudible,
     );
     _mic = MicPipeline(
-      source: micSource ?? RecordMicSource(),
+      source: micSource ?? RecordMicSource(log: _logDebug),
       scheduler: _scheduler,
       clock: _clock,
       log: _logDebug,
@@ -2203,6 +2203,16 @@ class VoiceAssistant extends ChangeNotifier {
   /// silently file) the report when one is streaming.
   Future<void> _bgWake() async {
     if (!_anyWorkOwed) return;
+    // +315: the +164 law of the strand verdict, extended to THIS /health
+    // probe — flush heard-acks IN FLIGHT before asking. The field tape:
+    // the press's answer was mid-sentence when the beat read `missed=2`
+    // — two frames this phone had already TAKEN, their POST /heard a
+    // few milliseconds from landing — so the beat called ATTACH on a
+    // phantom debt and the chain's stopPlayback cut 7 seconds of
+    // paragraph at 0.6 (the text sat in the chat, the voice died:
+    // 'your response after a background kickoff does not go through
+    // TTS'). An ack racing its own probe must never arm a drain.
+    await _heard.retry();
     final h = await _gateway?.healthInfo();
     if (h == null) return;
     final det = h['detached'];
@@ -2246,11 +2256,23 @@ class VoiceAssistant extends ChangeNotifier {
         !_benchBusy &&
         _ptt.pointers == 0 &&
         !owed.chain.armed) {
-      owed.chain.start(
-        gen: owed.turn.generation,
-        seq: owed.turn.seq,
-        firstProbe: Duration.zero,
-      );
+      // +315: +124's park-to-the-natural-end applies to THIS arm of the
+      // chain too — an ATTACH opens with stopPlayback, and the replay
+      // that follows can never re-voice a paragraph the ledger already
+      // took: cutting on-air audio here kills it for good (text in the
+      // chat, silence in the speaker). Park the wake instead; the beat
+      // re-arms below and every guard re-checks once the speaker is
+      // honestly silent.
+      if (_reply.playing) {
+        _logDebug('bg wake: audio on air — the ATTACH waits for the '
+            'natural end');
+      } else {
+        owed.chain.start(
+          gen: owed.turn.generation,
+          seq: owed.turn.seq,
+          firstProbe: Duration.zero,
+        );
+      }
     }
     // +278: the user SITTING on the owed conversation deserves to be
     // TOLD, not to ask: at home the beat tightens to 2 s (the sleep-

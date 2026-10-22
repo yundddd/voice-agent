@@ -282,6 +282,86 @@ void main() {
       );
     });
 
+    test('+315: the bg wake never cuts the on-air paragraph — the ack '
+        'outranks the probe and the ATTACH waits for the natural end',
+    () async {
+      // The build-kickoff field tape, second by second: the answer to
+      // THIS press was mid-sentence when the heartbeat read missed=2 —
+      // frames this phone had already TAKEN, their POST /heard still in
+      // flight — called ATTACH on that phantom debt, and the chain's
+      // stopPlayback killed 7 seconds of paragraph at 0.6 (32498: 'reply
+      // tail dropped'; 'ran 0.6s of 7.6s'). The text sat in the chat,
+      // the voice died, and every background-era response came up mute
+      // until the finished receipt settled the ledger. Two laws, one
+      // beat: flush the acks BEFORE asking (/health reads the truth),
+      // and never arm a drain whose first act is silence while audio
+      // is honestly on air (+124's park, extended).
+      await withBridge();
+      harness.healthState = {
+        'ok': true,
+        'claudeUp': true,
+        'turnOpen': false,
+        'queued': false,
+        'missed': 2, // the bridge has not SEEN the phone's takes yet
+        'detached': 1, // the build shell itself — the banner holds
+      };
+      harness.heardOk = false; // the take-time ack rides a flaky wire
+      unawaited(a.runQuickCommand('kick off the build'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'backgrounded',
+          detail: 'Bash flutter build apk',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'Building now — I will verify the split when it lands.',
+          mid: 44,
+        ),
+      );
+      await settle();
+      expect(out.playing, isTrue, reason: 'the paragraph is on air');
+      harness.heardOk = true; // the wire recovers before the beat
+      final orderBefore = harness.apiOrder.length;
+      harness.emit(const BridgeEvent.forTest('done'));
+      await settle();
+      time.advance(const Duration(seconds: 4, milliseconds: 100));
+      // the beat the 'backgrounded' frame armed (armBgProbe, 4 s) rides
+      // the fake clock — the same wake the field tape caught
+      await settle();
+      final beat = harness.apiOrder.sublist(orderBefore);
+      expect(
+        beat,
+        contains('heard:44'),
+        reason:
+            'the wake flushes the in-flight ack on its way to /health '
+            '(a stale missed must not arm the drain)',
+      );
+      expect(
+        beat.indexOf('heard:44'),
+        lessThan(beat.lastIndexOf('health')),
+        reason: 'the wake\'s /health is read only AFTER the ack landed',
+      );
+      expect(
+        a.debugLog.any((l) => l.contains('bg wake: audio on air')),
+        isTrue,
+        reason: 'the ATTACH parked at the natural end instead of cutting',
+      );
+      expect(
+        out.stopCount,
+        0,
+        reason: 'the on-air paragraph survived the wake',
+      );
+      expect(
+        harness.attachCount,
+        0,
+        reason: 'no attach was stolen mid-sentence',
+      );
+    });
+
     test('a press behind an open DETACHED tool shows in the flow (the pin '
         'protects only in-ear answers, +126); the line survives on the '
         'badge and the pickup ack retires it', () async {
