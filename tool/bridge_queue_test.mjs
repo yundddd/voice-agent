@@ -34,6 +34,8 @@ const PORT11 = PORT1 + 30;
 const PORT12 = PORT1 + 31;
 // +182: the sibling-not-murdered port.
 const PORT18 = PORT1 + 32;
+// +301: the /stop funeral-wording port.
+const PORT30 = PORT1 + 40;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -206,6 +208,42 @@ test('an interrupted turn dies without a done of its own (+106)', async () => {
     await stopBridge(proc);
   }
 });
+
+// +301: the /stop cut's funeral says INTERRUPTED — never the provider's
+// abort diagnostic. Field tape: the STOP chip cut a Bash-sleep turn; the
+// CLI's error_during_execution carried
+// '[ede_diagnostic] result_type=user last_content_type=n/a
+// stop_reason=tool_use'; the phone filed that string as an error card
+// six minutes later (on resume, from the backlog) in the user's chat
+// window. The bridge knows the cut was its own; it owes the honest word.
+test('a /stop cut closes with an honest farewell, not an internal (+301)',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT30, {
+      STUB_TOOL: 'sleep 20', STUB_TOOL_START_MS: '100', STUB_EDE: '1',
+    });
+    try {
+      await up(PORT30);
+      const a = await call(PORT30, `/talk?token=${TOKEN}`,
+        { body: 'a long sleep', method: 'POST' });
+      await until('tool step', async () => a.text.includes('"name":"Bash"'));
+      const s = await call(PORT30, `/stop?token=${TOKEN}`,
+        { method: 'POST' });
+      assert.equal(s.text.trim(), 'ok');
+      await until('the cut result lands',
+        async () => a.text.includes('event: done'));
+      assert.ok(!a.text.includes('ede_diagnostic'),
+        'the provider abort-diagnostic rode the wire as the error text');
+      assert.ok(a.text.includes('"error":"interrupted"'),
+        'the farewell carries the honest word');
+      await until('turn closed', async () =>
+        (await health(PORT30)).turnOpen === false);
+      assert.deepEqual(seen(stubLog), ['a long sleep']);
+    } finally {
+      await stopBridge(proc);
+    }
+  });
 
 test('a polite queue on a live stream flushes to its own socket', async () => {
   const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')), 'stub.log');

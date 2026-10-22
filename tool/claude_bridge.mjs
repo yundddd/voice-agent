@@ -2111,6 +2111,22 @@ function handleEvent(line) {
         .map((v) => typeof v === 'string' ? v
           : (v && (v.message ?? v.msg)) || JSON.stringify(v))
         .filter(Boolean).join('; ').slice(0, 300) || null;
+      // +301: a cut the bridge itself dealt SPEAKS through this
+      // result — interruptTurn's own comment (above, and the note at
+      // the /stop route) says the is_error flag is the interrupt's
+      // signature, not a fault. The provider's abort diagnostic for
+      // the killed tool round ('[ede_diagnostic] result_type=user
+      // last_content_type=n/a stop_reason=tool_use' on claude 2.1.x)
+      // nonetheless rode the wire as the error text, and the field
+      // tape (17:26:00 #23309) filed it as an error card SIX MINUTES
+      // after the STOP, in the user's chat window, where nobody can
+      // read 'result_type' as anything but a crash. The phone knows
+      // its own press; the honest word is the word it already uses.
+      // The provider's line stays in the journal, printed above.
+      // (The +106 skip still silences the WHOLE farewell when a
+      // prompt replaced the cut — this is the /stop cut, whose view
+      // needs its funeral, just not the provider's mumbo-jumbo.)
+      if (cutForPrompt) errText = 'interrupted';
       // +250: the oversized-conversation verdict, in the one wording
       // the ear deserves (the API's 'Prompt is too long' blames the
       // prompt; the fix is a compaction or a new session, and THAT is

@@ -195,7 +195,14 @@ process.stdin.on('data', (b) => {
       out({
         type: 'result', subtype: 'error_during_execution',
         session_id: SESSION, is_error: true, total_cost_usd: 0,
-        errors: ['interrupted by user'],
+        // STUB_EDE=1 re-enacts the CLAUDE 2.1.x shape the +301 tape
+        // caught: the abort diagnostic of the killed tool round, a
+        // machine-internal string no user should ever read in a chat
+        // window. Default keeps the plain words.
+        errors: process.env.STUB_EDE === '1'
+          ? ['[ede_diagnostic] result_type=user ' +
+             'last_content_type=n/a stop_reason=tool_use']
+          : ['interrupted by user'],
       });
       return;
     }
