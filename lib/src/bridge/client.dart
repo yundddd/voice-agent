@@ -78,21 +78,49 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
+  bool _targeted = false;
+  int _cmdSeq = 0;
+  String _commandId() =>
+      '${DateTime.now().millisecondsSinceEpoch}-${_cmdSeq++}';
+
+  /// +306: the URL an execution verb takes on THIS bridge: named when
+  /// the bridge declares the capability, legacy-route otherwise. The
+  /// name is never invented here — a null id rides the old route,
+  /// honestly focus-bound, on a bridge too old to be told otherwise.
+  String _verb(String? sessionId, String verb) =>
+      sessionId == null ? '/$verb' : '/sessions/$sessionId/$verb';
+
   @override
   Stream<BridgeEvent> talk(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
     void Function()? onActivity,
   }) => _sse((client) async {
+    final targeted = _targeted && sessionId != null;
     final req = await client.postUrl(
-      _u('/talk', {
-        'interrupt': interrupt ? '1' : '0',
-        if (cutTool && !interrupt) 'cuttool': '1',
+      _u(targeted ? _verb(sessionId, 'prompts') : '/talk', {
+        if (!targeted) 'interrupt': interrupt ? '1' : '0',
+        if (!targeted && cutTool && !interrupt) 'cuttool': '1',
       }),
     );
-    req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
-    req.add(utf8.encode(text));
+    if (targeted) {
+      req.headers.contentType = ContentType('application', 'json');
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'commandId': _commandId(),
+            'text': text,
+            'interrupt': interrupt,
+            if (cutTool && !interrupt) 'cutTool': true,
+          }),
+        ),
+      );
+    } else {
+      req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
+      req.add(utf8.encode(text));
+    }
     return req;
   }, onActivity);
 
@@ -103,20 +131,40 @@ class BridgeClient extends HarnessGateway {
   @override
   Future<int> talkPoll(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
   }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
+      final targeted = _targeted && sessionId != null;
       final req = await client.postUrl(
-        _u('/talk', {
-          'interrupt': interrupt ? '1' : '0',
-          if (cutTool && !interrupt) 'cuttool': '1',
+        _u(targeted ? _verb(sessionId, 'prompts') : '/talk', {
+          if (!targeted) 'interrupt': interrupt ? '1' : '0',
+          if (!targeted && cutTool && !interrupt) 'cuttool': '1',
           'poll': '1',
         }),
       );
-      req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
-      req.add(utf8.encode(text));
+      if (targeted) {
+        req.headers.contentType = ContentType('application', 'json');
+        req.add(
+          utf8.encode(
+            jsonEncode({
+              'commandId': _commandId(),
+              'text': text,
+              'interrupt': interrupt,
+              if (cutTool && !interrupt) 'cutTool': true,
+            }),
+          ),
+        );
+      } else {
+        req.headers.contentType = ContentType(
+          'text',
+          'plain',
+          charset: 'utf-8',
+        );
+        req.add(utf8.encode(text));
+      }
       final res = await req.close();
       final body = await res.transform(utf8.decoder).join();
       if (res.statusCode != 200) {
@@ -172,11 +220,18 @@ class BridgeClient extends HarnessGateway {
   }
 
   @override
-  Future<void> stop({String? sid}) =>
-      _post(sid == null ? '/stop' : '/stop?sid=${Uri.encodeComponent(sid)}');
+  Future<void> stop({String? sid}) => _post(
+    sid == null
+        ? '/stop'
+        : _targeted
+        ? _verb(sid, 'stop')
+        : '/stop?sid=${Uri.encodeComponent(sid)}',
+  );
 
   @override
-  Future<void> reset() => _post('/new');
+  Future<void> reset({String? sessionId}) => _post(
+    sessionId != null && _targeted ? _verb(sessionId, 'reset') : '/new',
+  );
 
   @override
   Future<String?> health() async {
@@ -354,10 +409,14 @@ class BridgeClient extends HarnessGateway {
   /// bridge's one-line reason (an off-menu id is refused at the
   /// bridge's own gate, before the harness ever sees it).
   @override
-  Future<String?> setModel(String id) async {
+  Future<String?> setModel(String id, {String? sessionId}) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
-      final req = await client.postUrl(_u('/model'));
+      final req = await client.postUrl(
+        _u(
+          sessionId != null && _targeted ? _verb(sessionId, 'model') : '/model',
+        ),
+      );
       req.headers.contentType = ContentType.json;
       req.add(utf8.encode(jsonEncode({'id': id})));
       final res = await req.close();
@@ -438,7 +497,13 @@ class BridgeClient extends HarnessGateway {
       }
       final j = BridgeEvent.tryJson(text);
       if (j is! Map) return (body: null, why: 'unexpected reply: $text');
-      return (body: j.cast<String, Object>(), why: null);
+      final body = j.cast<String, Object>();
+      // +306: the capability flag rides every glance: a bridge that
+      // declares `targeted` gets EVERY execution verb by name
+      // (/sessions/:id/…); one that does not keeps the old
+      // focus-routes — the fallback is a route, never a substitution.
+      _targeted = body['targeted'] == true;
+      return (body: body, why: null);
     } on Object catch (e) {
       return (body: null, why: '$e');
     }

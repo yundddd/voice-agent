@@ -348,6 +348,39 @@ void main() {
       },
     );
 
+    // +306: the phone speaks its own name on every execution verb.
+    // The seat-then-talk two-step let the world's focus move under a
+    // prompt in flight; the fix is on the phone too: the prompt, the
+    // /new reset, and the model pick all carry the TAB's uuid, not
+    // 'whatever the bridge is sitting on'.
+    test('+306: every verb names its own tab', () async {
+      await a.createSession(harness: 'opencode', dir: '/proj-x');
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-306'};
+      await a.setBridgeDir('/proj-x'); // the glance names the tab
+      await settle();
+      const uuid = 'ses-306';
+      unawaited(a.runQuickCommand('named prompt'));
+      await settle();
+      expect(
+        harness.talkSids.last,
+        uuid,
+        reason: 'the prompt names the seated tab, not the world\'s seat',
+      );
+      await a.setBridgeModel('sonnet');
+      expect(
+        harness.modelSids.last,
+        uuid,
+        reason: 'the model pick is FOR this conversation',
+      );
+      await a.bridgeControl('/new');
+      await settle();
+      expect(
+        harness.resetSids.last,
+        uuid,
+        reason: 'the /new chip resets ITS tab\'s record by name',
+      );
+    });
+
     test(
       '/new replaces the CURRENT tab and leaves every other tab alone',
       () async {

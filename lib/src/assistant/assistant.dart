@@ -2547,7 +2547,7 @@ class VoiceAssistant extends ChangeNotifier {
   Future<String?> setBridgeModel(String id) async {
     final g = _gateway;
     if (g == null) return 'bridge not configured';
-    final err = await g.setModel(id);
+    final err = await g.setModel(id, sessionId: _sessionId);
     if (err != null &&
         err.contains('not in --models') &&
         _bridgeHarness != null &&
@@ -2868,6 +2868,11 @@ class VoiceAssistant extends ChangeNotifier {
             gateway,
             utterance,
             interrupt,
+            // +306: the prompt names ITS conversation — the pump is
+            // born at an address (+299) and the wire honours the name
+            // even if the world's seat moves before the POST lands
+            // (the +303 corrective re-seat, a retry, a sibling).
+            sessionId: _chan.sessionId,
             cutTool: cutTool && !interrupt,
             onActivity: _lease.markAlive,
           ),
@@ -3307,7 +3312,10 @@ class VoiceAssistant extends ChangeNotifier {
         ack: 'Starting a new conversation.',
         events: () {
           _logDebug('bridge: new session');
-          unawaited(_gateway?.reset());
+          // +306: the /new chip resets ITS tab's record by name —
+          // 'the CURRENT seat' was whoever the last request left,
+          // which after any race was not necessarily this tab.
+          unawaited(_gateway?.reset(sessionId: _sessionId));
           // The phone forgets too: the app's chat log is the other half
           // of a fresh start (the spoken ack stays brief; the wipe speaks
           // for itself on screen). Wipe memory and disk

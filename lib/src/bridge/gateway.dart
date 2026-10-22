@@ -34,8 +34,16 @@ abstract class HarnessGateway {
   /// [onActivity] fires for every raw chunk the connection delivers —
   /// event frames AND keep-alive pings — the liveness signal behind the
   /// quiet-wire watchdog ([WireLease]).
+  /// +306: [sessionId] NAMES the conversation the prompt is for.
+  /// The two-step (/seat then /talk) had a race in the seam: any
+  /// other request could move the bridge's shared focus between the
+  /// POSTs, and the words fed the wrong process — a response stamp
+  /// cannot repair that. Bridges that declare `targeted` on /health
+  /// route by the name (/sessions/:id/prompts); bridges that do not
+  /// get the old focus path (never silently — the route says so).
   Stream<BridgeEvent> talk(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
     void Function()? onActivity,
@@ -47,6 +55,7 @@ abstract class HarnessGateway {
   /// this prompt (0 only if the receipt was unreadable: proto drift).
   Future<int> talkPoll(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
   });
@@ -74,7 +83,10 @@ abstract class HarnessGateway {
   Future<void> stop({String? sid});
 
   /// Forget the conversation (fresh session on the next utterance).
-  Future<void> reset();
+  /// +306: [sessionId] names WHICH — the /new chip speaks for its own
+  /// tab, and a bridge that lost that record rejects rather than
+  /// resetting whoever happens to be seated.
+  Future<void> reset({String? sessionId});
 
   /// Health as a one-line reason: null when alive and healthy.
   Future<String?> health();
@@ -112,7 +124,7 @@ abstract class HarnessGateway {
   /// set_model control frame, opencode over the session-model API —
   /// the bridge translates; the phone never learns which dialect ran.
   /// Returns the failure reason, null on success/unsupported.
-  Future<String?> setModel(String id) async => null;
+  Future<String?> setModel(String id, {String? sessionId}) async => null;
 
   /// +230: move the bridge's single seat to this tab's
   /// (harness, folder, conversation) in ONE atomic request

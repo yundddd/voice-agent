@@ -127,6 +127,9 @@ class FakeHarness implements HarnessGateway {
   bool attachDetached = false;
   int talkCount = 0;
   int talkPollCount = 0;
+  final talkSids = <String?>[];
+  final resetSids = <String?>[];
+  final modelSids = <String?>[];
   int attachCount = 0;
   int stops = 0;
   int resets = 0;
@@ -158,11 +161,13 @@ class FakeHarness implements HarnessGateway {
   @override
   Stream<BridgeEvent> talk(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
     void Function()? onActivity,
   }) {
     talkCount++;
+    talkSids.add(sessionId); // +306: the law asserts the NAME
     lastInterrupt = interrupt;
     lastCutTool = cutTool;
     turnOpenOnServer = true; // the harness holds the floor until done
@@ -175,10 +180,12 @@ class FakeHarness implements HarnessGateway {
   @override
   Future<int> talkPoll(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
   }) async {
     talkPollCount++;
+    talkSids.add(sessionId);
     lastInterrupt = interrupt;
     lastCutTool = cutTool;
     return reserveTurn();
@@ -225,8 +232,9 @@ class FakeHarness implements HarnessGateway {
   /// session, so /health stops naming one until the next turn births
   /// it. The fake drops the scripted id the same way (resetCount
   /// still records the call).
-  Future<void> reset() async {
+  Future<void> reset({String? sessionId}) async {
     resets++;
+    resetSids.add(sessionId);
     final h = healthState;
     if (h != null) healthState = {...h}..remove('sessionId');
   }
@@ -347,8 +355,9 @@ class FakeHarness implements HarnessGateway {
   }
 
   @override
-  Future<String?> setModel(String id) async {
+  Future<String?> setModel(String id, {String? sessionId}) async {
     modelPicks.add(id);
+    modelSids.add(sessionId); // +306: the law asserts the NAME
     if (setModelError == null && modelSetsHealth && healthState != null) {
       healthState = {...healthState!, 'model': id as Object?};
     }

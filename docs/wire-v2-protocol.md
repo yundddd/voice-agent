@@ -221,3 +221,50 @@ The review that ends the inference era, in one rule each:
   and can no longer wipe a quiet conversation's history. (Single-
   session and all-null logs — offline mode, legacy migrations —
   behave exactly as the old FIFO, bucket by bucket.)
+
+## Targeted verbs (+309): the prompt names its session
+
+The seat-then-talk two-step — `/seat(A)` moves the shared focus,
+`/talk(text)` runs wherever the focus now sits — carries a race in
+its seam: any other request (the +303 corrective re-seat, a retried
+POST, a sibling app touching the seat) can move the focus between
+the two POSTs, and the prompt feeds the WRONG PROCESS. Response
+stamps cannot repair that; the turn was born in the wrong runtime.
+
+Execution verbs now carry their target at command time:
+
+```
+POST /sessions/:id/prompts  {commandId, text, interrupt, cutTool}
+POST /sessions/:id/stop
+POST /sessions/:id/reset
+POST /sessions/:id/model    {id}
+```
+
+* Unknown ids REJECT (404 `unknown session`). The seat never stands
+  in for a name the router cannot find — the phone's uuid is its
+  truth. (`/stop?sid=` lost its focus-fallback for the same reason.)
+* `commandId` receipts fold a retried POST into ONE turn: the
+  duplicate answers `{ok, turn, commandId, duplicate:true}` with the
+  original's turn id. Step-1 scope: per-record, in-memory, last 32
+  (durable command objects are the migration's next step).
+* `/health` declares `targeted: true`; the capability decides the
+  client's route (learned on every glance; default = legacy routes
+  against old bridges — the fallback is a route, never a
+  substitution).
+* `/seat` keeps its duties — pointer, backlog custody, the census's
+  live row — but it is PRESENTATION now: what you look at, not what
+  runs your words. The legacy `/talk` route keeps the old law for
+  phones that predate the flag.
+
+The phone threads the name from the pump's own channel (+299's law,
+now honoured on the wire): the prompt, the /new chip's reset, and
+the model pick all speak their tab's uuid; the queue test and the
+rig each pin a moved-seat race proving the name, not the seat,
+decides who runs.
+
+Migration order (Tim's plan): EXPLICIT TARGETS (this) → durable
+command objects → ONE event consumer per connection (the per-turn
+poll loops must stop competing for the ring cursor) → owned client
+reducers (callbacks capturing lifecycle generations, never
+resolving owners from current state). The transport (SSE + poll +
+ring) stays; nothing else rewritten here.

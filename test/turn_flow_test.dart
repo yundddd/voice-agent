@@ -3262,7 +3262,9 @@ void main() {
       );
       transport.noteHealth(h.healthState?.cast<String, Object>());
       final seen = <BridgeEvent>[];
-      unawaited(transport.turn(h, 'go', false).forEach(seen.add));
+      unawaited(
+        transport.turn(h, 'go', false, sessionId: null).forEach(seen.add),
+      );
       await settle();
       expect(seen.first.kind, 'turn', reason: 'the receipt names our turn');
 

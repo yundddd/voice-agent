@@ -124,6 +124,7 @@ class BridgeTransport {
     String text,
     bool interrupt, {
     bool cutTool = false,
+    required String? sessionId,
     void Function()? onActivity,
   }) {
     _prevTurnViaPoll = _turnViaPoll; // what the LAST turn consumed with
@@ -132,13 +133,14 @@ class BridgeTransport {
       _turnViaPoll = false;
       return gw.talk(
         text,
+        sessionId: sessionId,
         interrupt: interrupt,
         cutTool: cutTool,
         onActivity: onActivity,
       );
     }
     _turnViaPoll = true;
-    return _pollTurn(gw, text, interrupt, cutTool);
+    return _pollTurn(gw, text, interrupt, cutTool, sessionId);
   }
 
   Stream<BridgeEvent> _pollTurn(
@@ -146,6 +148,7 @@ class BridgeTransport {
     String text,
     bool interrupt,
     bool cutTool,
+    String? sessionId,
   ) async* {
     // Cursor hygiene, the duplicate-bubble killer: if the LAST turn rode
     // the PUSH stream, the ring still holds a copy of every frame that
@@ -166,6 +169,7 @@ class BridgeTransport {
     // learns it from the same event the other transports get first.
     final myTurn = await gw.talkPoll(
       text,
+      sessionId: sessionId,
       interrupt: interrupt,
       cutTool: cutTool,
     );

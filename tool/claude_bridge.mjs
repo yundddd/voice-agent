@@ -2808,7 +2808,8 @@ function flushPending() {
 // modes survive, plain foreground waits may end with the turn; the
 // phone's notice words stay honest either way, and /stop remains the
 // hard flavour it always was.
-function talk(text, res, interrupt = true, poll = false, cutTool = false) {
+function talk(text, res, interrupt = true, poll = false, cutTool = false,
+               commandId = null) {
   // SSE comment pinger + quiet-token heartbeat (see startKeep): a
   // 3-minute gradle build emits nothing, and idle-detection on the link
   // (NAT, tailscale, Dart clients — including the app's 24 s quiet-wire
@@ -2918,7 +2919,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // opens by naming its turn, then carries the notice in-band.
     if (poll) {
       res.writeHead(200, {'content-type': 'application/json'});
-      try { res.end(JSON.stringify({ok: true, turn: t})); } catch {}
+      try { res.end(JSON.stringify({ok: true, turn: t,
+        ...(commandId ? {commandId} : {})})); } catch {}
     } else {
       sse(res, 'turn', {turn: t, queued: true});
       sse(res, 'tool', note);
@@ -2953,7 +2955,8 @@ function talk(text, res, interrupt = true, poll = false, cutTool = false) {
     // threw them away: the marker died with the view — +157's lost
     // birth certificate started right here.)
     res.writeHead(200, {'content-type': 'application/json'});
-    try { res.end(JSON.stringify({ok: true, turn: t})); } catch {}
+    try { res.end(JSON.stringify({ok: true, turn: t,
+        ...(commandId ? {commandId} : {})})); } catch {}
     endKeep({keep});
     beginTurn(text, {write: () => true, end: () => {}, on: () => {}},
       0, undefined, t);
@@ -3209,6 +3212,9 @@ const server = http.createServer((req, res) => {
       sessionId: (focus && focus.uuid) || sessionId || null,
       backendSid: sessionId || null,
       uuidAtBirth: true,
+      // +306: execution verbs by name: /sessions/:id/prompts|stop|
+      // reset|model — unknown ids reject, the seat is presentation.
+      targeted: true,
       harness,
       // +214: who held the pen WHEN — the phone's one-time chat
       // migration matches each legacy bubble's timestamp into an era
@@ -3464,7 +3470,80 @@ const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => body += c);
   req.on('end', () => {
-    if (url.pathname === '/talk') {
+    const mSess = /^\/sessions\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(prompts|stop|reset|model)$/.exec(url.pathname);
+    if (mSess) {
+      // +306: EVERY execution verb by NAME. The /seat-then-talk
+      // two-step carried a race in its seam: any other request (a
+      // corrective re-seat, a retry, a sibling app) could move the
+      // shared focus between the POSTs, and the words fed the wrong
+      // PROCESS — no response stamp can repair that. Here the target
+      // is decided AT COMMAND TIME: an unknown name REJECTS (the
+      // phone's uuid is its truth; the seat never stands in), and a
+      // commandId receipt folds a retried POST into one turn. The
+      // legacy routes stay for phones too old to declare the
+      // capability — /health's `targeted` is the flag the phone
+      // routes by.
+      const sid = decodeURIComponent(mSess[1]);
+      const verb = mSess[2];
+      const rec = sessions.get(sid) ?? recBySid(sid);
+      if (!rec) {
+        res.writeHead(404, {'content-type': 'application/json'})
+          .end(JSON.stringify({ok: false, error: 'unknown session'}) + '\n');
+      } else {
+        swapFocus(rec); // the named record's runtime takes the globals
+        if (verb === 'stop') {
+          if (turnOpen) interruptTurn();
+          res.writeHead(200).end('ok\n');
+        } else if (verb === 'reset') {
+          rmPointer(harness, dir);
+          resetConversation();
+          res.writeHead(200).end('ok\n');
+        } else if (verb === 'model') {
+          let j = null; try { j = JSON.parse(body); } catch {}
+          const id = typeof j?.id === 'string' && j.id ? j.id : null;
+          if (!id) {
+            res.writeHead(400).end('{"message":"expected {id}"}\n');
+          } else {
+            applyModel(id).then((now) => {
+              res.writeHead(200, {'content-type': 'application/json'})
+                .end(JSON.stringify({ok: true, harness, id: now}));
+            }).catch((e) => {
+              res.writeHead(400).end('could not set the model: ' +
+                (e?.message ?? e) + '\n');
+            });
+          }
+        } else { // prompts
+          let j = null; try { j = JSON.parse(body); } catch {}
+          const text = typeof j?.text === 'string' ? j.text.trim() : '';
+          const cid = typeof j?.commandId === 'string' && j.commandId
+            ? j.commandId : null;
+          rec.recentCmds ??= new Map();
+          if (cid && rec.recentCmds.has(cid)) {
+            res.writeHead(200, {'content-type': 'application/json'})
+              .end(JSON.stringify({ok: true, turn: rec.recentCmds.get(cid),
+                commandId: cid, duplicate: true}) + '\n');
+          } else if (!text) {
+            res.writeHead(400, {'content-type': 'application/json'})
+              .end(JSON.stringify({ok: false,
+                error: 'prompt text required'}) + '\n');
+          } else {
+            if (url.searchParams.get('poll') !== '1' && j?.poll !== true) {
+              res.writeHead(200, {'content-type': 'text/event-stream',
+                'cache-control': 'no-cache', connection: 'keep-alive'});
+            }
+            talk(text, res, j?.interrupt !== false,
+              url.searchParams.get('poll') === '1' || j?.poll === true,
+              j?.cutTool === true, cid);
+            if (cid) {
+              rec.recentCmds.set(cid, nextTurnId);
+              if (rec.recentCmds.size > 32) {
+                rec.recentCmds.delete(rec.recentCmds.keys().next().value);
+              }
+            }
+          }
+        }
+      }
+    } else if (url.pathname === '/talk') {
       // v2: pushed turns open an SSE stream right here; polled POSTs
       // answer with a JSON receipt the transport writes itself.
       if (url.searchParams.get('poll') !== '1') {
@@ -3530,9 +3609,19 @@ const server = http.createServer((req, res) => {
       // phone's Stop chip rides a view that may belong to a
       // BACKGROUNDED conversation; without the param, the seated one.
       const stopSid = url.searchParams.get('sid');
-      const stopRec = stopSid
-        ? (sessions.get(stopSid) ?? recBySid(stopSid) ?? focus) : focus;
-      withConv(stopRec ?? focus, () => { if (turnOpen) interruptTurn(); });
+      let stopRec = focus;
+      if (stopSid) {
+        stopRec = sessions.get(stopSid) ?? recBySid(stopSid);
+        if (!stopRec) {
+          // +306: the phone's name is its truth — the seat may not
+          // stand in for a conversation the router cannot find.
+          res.writeHead(404, {'content-type': 'application/json'})
+            .end(JSON.stringify({ok: false, error: 'unknown session'})
+              + '\n');
+          return;
+        }
+      }
+      withConv(stopRec, () => { if (turnOpen) interruptTurn(); });
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
       rmPointer(harness, dir);

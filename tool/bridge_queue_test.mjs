@@ -37,6 +37,7 @@ const PORT18 = PORT1 + 32;
 // +301: the /stop funeral-wording port.
 const PORT30 = PORT1 + 40;
 const PORT31 = PORT1 + 41;
+const PORT32 = PORT1 + 42;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -1636,6 +1637,94 @@ test('+304: /seat drops a model the menu does not know', async () => {
     const m = await call(PORT31, `/model?token=${TOKEN}`,
       { body: JSON.stringify({ id: 'flash-next' }), method: 'POST' });
     assert.match(m.text, /not in --models/, '/model keeps its 400 voice');
+  } finally {
+    await stopBridge(proc);
+  }
+});
+
+// +306: THE PROMPT NAMES ITS SESSION. The seat-then-talk two-step
+// let any other request — the +303 corrective re-seat, a retry, a
+// sibling — move the shared focus between the two POSTs, and the
+// words landed in the wrong process; no response stamp can repair a
+// prompt fed to the wrong child. /sessions/:id/prompts decides the
+// target AT COMMAND TIME: unknown ids reject (the phone's name is
+// its truth, focus may not stand in), and commandId receipts dedup
+// a retried POST into one turn.
+test('+306: a named prompt ignores a moved seat; unknown rejects; ' +
+  'commandId dedups', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+    'stub.log');
+  const proc = startBridge(stubLog, PORT32, {
+    STUB_TOOL: 'sleep 20', STUB_TOOL_START_MS: '100',
+  });
+  try {
+    await up(PORT32);
+    // A exists (one turn, clean).
+    await call(PORT32, `/talk?token=${TOKEN}&poll=1`,
+      { body: 'first words', method: 'POST' });
+    await until('A closed', async () => !(await health(PORT32))
+      .sessions[0].turnOpen);
+    const uuidA = (await health(PORT32)).sessions[0].sid;
+    // The seat moves away: B takes it.
+    await call(PORT32, `/seat?token=${TOKEN}`,
+      { body: JSON.stringify({ sessionId: 'ses-306-b' }),
+        method: 'POST' });
+    // A prompt for A lands while the world sits on B.
+    const r = await call(PORT32, `/sessions/${uuidA}/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({
+          commandId: 'cmd-1', text: 'named target', interrupt: true }),
+        method: 'POST', headers: { 'content-type': 'application/json' } });
+    const j = JSON.parse(r.text);
+    assert.equal(j.ok, true, 'the named session took the prompt');
+    assert.equal(j.commandId, 'cmd-1', 'the receipt names the command');
+    const h = await health(PORT32);
+    const rowA = h.sessions.find((x) => x.sid === uuidA);
+    assert.ok(rowA?.turnOpen, 'A runs — the prompt went WHERE IT SAID');
+    assert.ok(!h.sessions.find((x) => x.sid !== uuidA)?.turnOpen,
+        'B holds its floor, untouched');
+    // A retry of the SAME command is one turn, not two.
+    const r2 = await call(PORT32, `/sessions/${uuidA}/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({
+          commandId: 'cmd-1', text: 'named target', interrupt: true }),
+        method: 'POST', headers: { 'content-type': 'application/json' } });
+    const j2 = JSON.parse(r2.text);
+    assert.equal(j2.turn, j.turn, 'the duplicate rides the same receipt');
+    assert.equal(j2.duplicate, true);
+    // Unknown ids REJECT — and the seat does not move on the way out.
+    const before = (await health(PORT32)).sessionId;
+    const bad = await call(PORT32, `/sessions/never-was/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({ text: 'orphan' }), method: 'POST',
+        headers: { 'content-type': 'application/json' } });
+    assert.match(bad.text, /unknown session/);
+    assert.equal((await health(PORT32)).sessionId, before,
+        'a rejected prompt may not substitute the seat either');
+    // The sibling verbs honour the name too: stop A by name. (The
+    // prompt turn holds an open tool — a mere result race cannot
+    // close it; the cut must.)
+    await call(PORT32, `/sessions/${uuidA}/stop?token=${TOKEN}`,
+      { method: 'POST', body: '' });
+    let hs = await health(PORT32);
+    assert.ok(hs.sessions.find((x) => x.sid === uuidA)?.turnOpen,
+        'the tool holds the floor for the cut to bite');
+    await until('A cut by name', async () => {
+      hs = await health(PORT32);
+      return !hs.sessions.find((x) => x.sid === uuidA)?.turnOpen;
+    });
+    assert.ok(hs.sessions.find((x) => x.sid !== uuidA),
+        'and the OTHER conversation was the one untouched by the cut');
+    // Reset A by name: fresh on the next word, same identity.
+    await call(PORT32, `/sessions/${uuidA}/reset?token=${TOKEN}`,
+      { method: 'POST', body: '' });
+    const hr = await health(PORT32);
+    assert.ok(hr.sessions.find((x) => x.sid === uuidA),
+        'the record lives on under its uuid');
+    // Model by name while resting: rides that record's tape.
+    await call(PORT32, `/sessions/${uuidA}/model?token=${TOKEN}`,
+      { body: JSON.stringify({ id: 'sonnet' }), method: 'POST',
+        headers: { 'content-type': 'application/json' } });
+    const hm = await health(PORT32);
+    assert.equal(hm.sessions.find((x) => x.sid === uuidA)?.model,
+        'sonnet', 'the choice belongs to the NAMED conversation');
   } finally {
     await stopBridge(proc);
   }

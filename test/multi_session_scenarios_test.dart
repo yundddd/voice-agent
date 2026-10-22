@@ -477,6 +477,37 @@ void main() {
     // zero delay — and the coalescing guard (a beat already pending)
     // swallowed the urgency: a slow timer standing is treated like
     // a fast one. Urgency must be able to PRE-EMPT a pending beat.
+    // +306: THE PROMPT NAMES ITS SESSION. /seat-then-talk was a
+    // two-step with a race in the seam: the +303 corrective re-seat,
+    // a retry, or any sibling request could move the bridge's shared
+    // focus between the POSTs, and the words fed the wrong process
+    // (no response stamp can repair that). The rig enacts the new
+    // law the same way the wire does: a prompt carries its
+    // conversation's id, and the fake honours the name — the seat is
+    // presentation only.
+    test('a prompt names its own conversation, seat moved or not '
+        '(+306)', () async {
+      final x = await tab('/proj-x');
+      final y = await tab('/proj-y');
+      expect(await a.switchSession(0), isNull); // seat X
+      await pump();
+      // The race, forced: the world's seat slips to Y while X's tab
+      // composes its prompt (a corrective re-seat, a retry, a
+      // sibling app — any of them).
+      bridge.seat(sessionId: y.uuid);
+      await pump();
+      unawaited(a.runQuickCommand('this one is for X'));
+      await pump();
+      expect(
+        bridge.conv(x.uuid).turnOpen,
+        isTrue,
+        reason:
+            'the prompt named X and X took it — the moved seat '
+            'is presentation',
+      );
+      expect(bridge.conv(y.uuid).turnOpen, isFalse);
+    });
+
     test('the return to owed words may not wait out the pending '
         'heartbeat (+305)', () async {
       final x = await tab('/proj-x');

@@ -292,8 +292,16 @@ final class ScenarioBridge implements HarnessGateway {
     }
   }
 
-  int _begin(String text, bool interrupt, bool cutTool) {
-    final r = convs[focusSid]!;
+  int _begin(String text, bool interrupt, bool cutTool, String? sessionId) {
+    // +306: THE PROMPT NAMES ITS SESSION. A spoken name resolves by
+    // the registry (unknown REJECTS — the phone's uuid is its truth,
+    // the seat may not stand in); only a nameless caller (a bridge
+    // without the capability) rides the seat, like the real route.
+    final r = sessionId == null
+        ? convs[focusSid]!
+        : convs[sessionId] ??
+              (throw BridgeException('unknown session: $sessionId'));
+    focusSid = r.uuid; // a targeted command seats its record
     lastInterrupt = interrupt;
     lastCutTool = cutTool;
     final id = ++_turn;
@@ -334,12 +342,13 @@ final class ScenarioBridge implements HarnessGateway {
   @override
   Stream<BridgeEvent> talk(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
     void Function()? onActivity,
   }) {
     final from = ring.length;
-    _begin(text, interrupt, cutTool);
+    _begin(text, interrupt, cutTool, sessionId);
     final ctl = StreamController<BridgeEvent>();
     _tails.add(ctl);
     for (final f in ring.sublist(from)) {
@@ -351,9 +360,10 @@ final class ScenarioBridge implements HarnessGateway {
   @override
   Future<int> talkPoll(
     String text, {
+    required String? sessionId,
     bool interrupt = true,
     bool cutTool = false,
-  }) async => _begin(text, interrupt, cutTool);
+  }) async => _begin(text, interrupt, cutTool, sessionId);
 
   @override
   Future<bool> heard(List<int> mids) async {
@@ -419,11 +429,12 @@ final class ScenarioBridge implements HarnessGateway {
   }
 
   @override
-  Future<void> reset() async {
+  Future<void> reset({String? sessionId}) async {
     // /new FORGETS but the identity holds (+295): the record keeps
-    // its uuid; the floor and ledgers wipe.
+    // its uuid; the floor and ledgers wipe. +306: by NAME — an
+    // unknown name resets no one (the real route 404s).
     resets++;
-    final r = convs[focusSid];
+    final r = sessionId == null ? convs[focusSid] : convs[sessionId];
     if (r == null) return;
     r.turnOpen = false;
     r.parkedText = null;
@@ -463,6 +474,8 @@ final class ScenarioBridge implements HarnessGateway {
       // the phone's law reads it and may not learn names from the
       // global sessionId line any more.
       'uuidAtBirth': true,
+      // +306: the targeted-verbs declaration; the rig IS the wire.
+      'targeted': true,
       'harness': 'claude',
       'poll': {'ring': _seq}, // the handshake that arms the transport
       'sessionId': f?.uuid,
@@ -505,7 +518,7 @@ final class ScenarioBridge implements HarnessGateway {
   };
 
   @override
-  Future<String?> setModel(String id) async {
+  Future<String?> setModel(String id, {String? sessionId}) async {
     model = id;
     return null;
   }
