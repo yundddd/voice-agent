@@ -373,6 +373,7 @@ class BridgeTurn {
   /// the stream alive, and this is what that stream may now do with a
   /// paragraph: land in the thread, never interrupt the tab on screen.
   String? _viewSid;
+  bool _streamNamed = false; // +299: has the stream named itself yet?
 
   bool get isLive => origin != BridgeTurnOrigin.attach;
   bool get isAttach => origin == BridgeTurnOrigin.attach;
@@ -575,11 +576,39 @@ class BridgeTurn {
       // left' even for streams that opened nameless.
       if (ev.ctxSession != null) {
         final nameless = _viewSid == null;
-        _viewSid = ev.ctxSession;
-        // +257: the same stamp teaches the COORDINATOR whose turn the
-        // machine holds — the seat marker signs THAT, not whichever
-        // tab is looking.
-        turn.noteWorkOwner(ev.ctxSession!);
+        // +299: which names may teach this pump? A TALK pump was
+        // BORN AT AN ADDRESS (the POST's seat — the conversation it
+        // serves is decided by the prompt); an ATTACH pump is born
+        // at whatever the eye happened to be on, and the stream's
+        // FIRST word is its true identity (+259's walk: the seat-
+        // born name must fall to the drained conversation's stamp).
+        // After one stream-word, later contradictions are strangers
+        // riding the shared ring, not lessons: that was the leak.
+        final firstWord = !_streamNamed;
+        _streamNamed = true;
+        final teachable =
+            nameless || (isAttach && firstWord) || _viewSid == ev.ctxSession;
+        // +299: the lesson is for NAMELESS BIRTHS only. +253 wrote
+        // this when one conversation could ever speak into a pump;
+        // since the router era the ring is shared, and the field
+        // tape (16:51:35.794 → #22628) shows what a late lesson
+        // costs: voice-agent's report-turn context frame rode into
+        // xray's still-open pump, the pump RE-LEARNED its identity
+        // to ad47…, its own say gate then read that say's stamp as
+        // home, and voice-agent's 'One of the two 20-second sleeps
+        // has finished…' filed itself into xray's open bubble. A
+        // birth learns its name from the first stamp; a named pump
+        // treats a contradicting stamp as the stranger it is —
+        // foreign frames carry their own verdict below, unchanged.
+        if (teachable) {
+          _viewSid = ev.ctxSession;
+          // +257: the same stamp teaches the COORDINATOR whose turn
+          // the machine holds — the seat marker signs THAT, not
+          // whichever tab is looking. Only an OWNED name claims
+          // (+299: the leak reached the workOwner too, poisoning
+          // the badge's home with a stranger's id).
+          turn.noteWorkOwner(ev.ctxSession!);
+        }
         // +275 ISOLATION: the wire just answered WHOSE bubbles these
         // are. Everything this pump filed under the nameless-birth
         // sentinel takes THIS name — and only these. The old

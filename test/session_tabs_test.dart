@@ -564,6 +564,83 @@ void main() {
       );
     });
 
+    test('+299: a context frame stamped for a stranger is not a '
+        'renaming — the xray pump may not become voice-agent', () async {
+      // The field tape (16:51:35.794 → #22628): xray works mid-turn
+      // (a foreground sleep); voice-agent's PROACTIVE report-turn
+      // context frame, stamped ad47…, rides the shared ring into
+      // xray's open /talk pump — and the +253 learning re-took the
+      // pump's identity from it. Its say then read its own stamp as
+      // NOT foreign, was taken and acked, and appended voice-agent's
+      // sentence — 'One of the two 20-second sleeps has finished…' —
+      // INTO xray's open bubble: the visible cross-session leak.
+      // The +253 law was written when one conversation could ever
+      // speak into a pump: birth learns its name from the first
+      // stamp; a named pump treats a contradicting stamp as the
+      // stranger it is.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x'); // name the seat (+256)
+      await settle();
+      unawaited(a.runQuickCommand('foreground sleep please'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'sleep 20',
+          session: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(
+        a.debugLog.any((l) => l.contains('assistant bubble open')),
+        isTrue,
+        reason: 'xray\'s own turn bubble is open on its thread',
+      );
+      // The stranger's report glances in: context first, then the
+      // say it carries (the exact tape order).
+      harness.emit(
+        const BridgeEvent.forTest(
+          'context',
+          inputTokens: 23572,
+          contextWindow: 1000000,
+          ctxSession: 'ses-OTHER',
+        ),
+      );
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'One of the two sleeps has finished',
+          mid: 77,
+          session: 'ses-OTHER',
+        ),
+      );
+      await settle();
+      expect(
+        a.debugLog.any(
+          (l) =>
+              l.contains('foreign conversation: say left unheard'),
+        ),
+        isTrue,
+        reason:
+            '+299: the pump keeps the identity it was born with — '
+            'the contradicting stamp is foreign, not a renaming',
+      );
+      expect(
+        a.view.chat.any(
+          (e) => e.blocks.contains('One of the two sleeps has finished'),
+        ),
+        isFalse,
+        reason:
+            'voice-agent\'s sentence may not squat in xray\'s '
+            'bubble — the backlog keeps it for its owner\'s drain',
+      );
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+    });
+
     test('+298: the pending slot adopts its name — naming moves the '
         'label, never the life', () async {
       // The ChatStore law for bubbles, now for the whole turn slice:

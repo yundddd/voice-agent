@@ -192,6 +192,19 @@ The review that ends the inference era, in one rule each:
   bridge's memory lost is ADOPTED onto the pointer's thread (the phone
   owns its tab names across restarts). Pointer v2: line 1 = backend
   sid, line 2 = app uuid; v1 files still read.
+- **The pump's name is learned once (+299).** Stamps name frames;
+  the pump's own identity comes from its BIRTH: a /talk pump is born
+  at an address (the POST's seat), an /attach pump at whatever the
+  eye was on and learns its true conversation from its stream's
+  FIRST named frame — never again. The field tape (16:51:35.794 →
+  #22628): a proactive report's context frame, stamped for its own
+  conversation, rode the shared ring into another conversation's
+  open pump and the +253 learning re-named it; its following say
+  then read as home and filed its sentence into the wrong thread's
+  open bubble. A contradicting stamp after the first word is a
+  stranger riding the ring, judged by the +274 verdict — and the
+  same gate keeps +257's workOwner claim honest, so a stranger's
+  report cannot move the badge's home either.
 - **Transport failure ≠ agent failure.** Eight dead polls used to
   yield a terminal `error` frame — the same event an agent failure
   rides — which marked the turn cleanly ended for the recovery logic
