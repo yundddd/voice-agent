@@ -268,3 +268,24 @@ poll loops must stop competing for the ring cursor) → owned client
 reducers (callbacks capturing lifecycle generations, never
 resolving owners from current state). The transport (SSE + poll +
 ring) stays; nothing else rewritten here.
+
+## Durable command objects (+310)
+
+Migration step 2. A retried POST can cross a bridge restart, and
+the +309 dedup window died with the process: the retry became a
+second turn, and a reseeded turn counter could even re-mint an id a
+phone already held a receipt for.
+
+* The receipt file lives beside the pointer it describes —
+  `<pointer>.cmds` holding `{uuid, nextTurn, cmds:[[commandId,
+  turn]]}`, last 64. Loading it FLOORS `nextTurnId`: turn ids are
+  monotonic across the STATE's life, not the process's. The file is
+  written before the answer is sent — a POST whose response dies on
+  the socket still finds its dedup on the retry.
+* Pointer files v2 carry the work dir as a third line (the file is
+  keyed by a hash; a wake-by-name needs the key's other half).
+  `findRecord(sid)` answers in three steps: live registry, backend
+  alias, then the POINTER WAKE — a request speaking a uuid that
+  lives on disk under the bridge's roof gets its record rebuilt,
+  and is never told 'unknown session' for the restart's amnesia.
+  `/stop?sid=` resolves through the same finder.

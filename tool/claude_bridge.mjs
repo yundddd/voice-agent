@@ -743,7 +743,11 @@ function readPtrFile(p) {
   try {
     const lines = readFileSync(p, 'utf8').split('\n');
     return { sid: (lines[0] || '').trim() || null,
-             uuid: (lines[1] || '').trim() || null };
+             uuid: (lines[1] || '').trim() || null,
+             // +310: the dir as line 3 — the file is keyed by a hash,
+             // so a wake-by-name needs the key's OTHER half written
+             // down. v1 files (two lines) simply never wake.
+             dir: (lines[2] || '').trim() || null };
   } catch { return null; }
 }
 function readPointer(h, d) {
@@ -763,11 +767,64 @@ function readPointer(h, d) {
   }
   return legacy ?? {};
 }
+// +310: FIND A RECORD BY NAME, WHEREVER THE NAME LIVES. The in-memory
+// registry is the fast path; the pointer files under the bridge's own
+// roof are the durable one — a restart that dropped a record's row
+// must not 404 a request that speaks its uuid correctly. The pointer
+// IS the wake material: sid, uuid, and (since v2, line 3) the dir.
+function findRecord(sid) {
+  const live = sessions.get(sid) ?? recBySid(sid);
+  if (live) return live;
+  try {
+    for (const f of readdirSync(POINTER_DIR)) {
+      if (!f.startsWith('claude-') && !f.startsWith('opencode-')) continue;
+      const p = readPtrFile(join(POINTER_DIR, f));
+      if (!p || p.uuid !== sid || !p.dir || !isDir(p.dir)) continue;
+      const rec = newConv({ harness: f.startsWith('opencode-')
+        ? 'opencode' : 'claude', dir: p.dir });
+      rec.uuid = sid;
+      rec.sid = p.sid;
+      return parkConv(rec);
+    }
+  } catch {}
+  return null;
+}
+// +310: DURABLE COMMAND RECEIPTS, next to the pointer they describe
+// (<pointer>.cmds: {uuid, nextTurn, cmds:[[commandId, turn]]}). A
+// retried POST can cross a restart; dedup that forgets at the process
+// boundary turns one command into two turns. Loading also FLOORS the
+// turn counter, so a restarted bridge never re-mints an id that a
+// phone already holds a receipt for (turn ids are monotonic across
+// the state's life, not just the process's).
+const cmdsPathOf = (h, d) => sidFilePath(h, d) + '.cmds';
+function loadCmds(rec) {
+  if (rec.recentCmds) return; // already loaded (or born this life)
+  rec.recentCmds = new Map();
+  try {
+    const j = JSON.parse(readFileSync(cmdsPathOf(rec.harness, rec.dir), 'utf8'));
+    if (j && j.uuid === rec.uuid) {
+      for (const [cid, t] of j.cmds ?? []) rec.recentCmds.set(cid, t);
+      if (typeof j.nextTurn === 'number' && j.nextTurn > nextTurnId) {
+        nextTurnId = j.nextTurn;
+      }
+    }
+  } catch {}
+}
+function saveCmds(rec) {
+  try {
+    mkdirSync(POINTER_DIR, { recursive: true });
+    writeFileSync(cmdsPathOf(rec.harness, rec.dir), JSON.stringify({
+      uuid: rec.uuid, nextTurn: nextTurnId,
+      cmds: [...rec.recentCmds.entries()].slice(-64),
+    }));
+  } catch {}
+}
 function writePointer(h, d, rec) {
   const sid = rec === focus ? sessionId : rec.sid;
   try {
     mkdirSync(POINTER_DIR, { recursive: true });
-    writeFileSync(sidFilePath(h, d), `${sid ?? ''}\n${rec.uuid}`);
+    writeFileSync(sidFilePath(h, d),
+      `${sid ?? ''}\n${rec.uuid}\n${(rec === focus ? dir : rec.dir) ?? ''}`);
     rmSync(legacyPointerPath(h, d), { force: true });
   } catch {}
 }
@@ -3485,7 +3542,9 @@ const server = http.createServer((req, res) => {
       // routes by.
       const sid = decodeURIComponent(mSess[1]);
       const verb = mSess[2];
-      const rec = sessions.get(sid) ?? recBySid(sid);
+      const rec = findRecord(sid); // +310: registry fast path,
+      // pointer wake behind it — the name may be older than this
+      // process, and that is not the phone's mistake to pay for.
       if (!rec) {
         res.writeHead(404, {'content-type': 'application/json'})
           .end(JSON.stringify({ok: false, error: 'unknown session'}) + '\n');
@@ -3517,7 +3576,7 @@ const server = http.createServer((req, res) => {
           const text = typeof j?.text === 'string' ? j.text.trim() : '';
           const cid = typeof j?.commandId === 'string' && j.commandId
             ? j.commandId : null;
-          rec.recentCmds ??= new Map();
+          loadCmds(rec); // +310: dedup that survives the process
           if (cid && rec.recentCmds.has(cid)) {
             res.writeHead(200, {'content-type': 'application/json'})
               .end(JSON.stringify({ok: true, turn: rec.recentCmds.get(cid),
@@ -3536,9 +3595,12 @@ const server = http.createServer((req, res) => {
               j?.cutTool === true, cid);
             if (cid) {
               rec.recentCmds.set(cid, nextTurnId);
-              if (rec.recentCmds.size > 32) {
+              if (rec.recentCmds.size > 64) {
                 rec.recentCmds.delete(rec.recentCmds.keys().next().value);
               }
+              saveCmds(rec); // +310: the receipt is written BEFORE the
+              // answer — a POST whose response is lost to a dead socket
+              // must still find its dedup on the retry
             }
           }
         }
@@ -3611,7 +3673,7 @@ const server = http.createServer((req, res) => {
       const stopSid = url.searchParams.get('sid');
       let stopRec = focus;
       if (stopSid) {
-        stopRec = sessions.get(stopSid) ?? recBySid(stopSid);
+        stopRec = findRecord(stopSid); // +310: names outrank uptime
         if (!stopRec) {
           // +306: the phone's name is its truth — the seat may not
           // stand in for a conversation the router cannot find.

@@ -38,6 +38,7 @@ const PORT18 = PORT1 + 32;
 const PORT30 = PORT1 + 40;
 const PORT31 = PORT1 + 41;
 const PORT32 = PORT1 + 42;
+const PORT33 = PORT1 + 43;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -45,6 +46,13 @@ function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   // ~/.claude-bridge, the harness choice, the era timeline) is the
   // test's own, never the developer's real home.
   const home = mkdtempSync(join(tmpdir(), 'bridge-qhome-'));
+  return startBridgeAt(stubLog, port, dir, home, extraEnv, extraArgs);
+}
+
+// +310: a bridge that RESTARTS into the SAME state needs the same
+// dir and HOME handed in — the scratch pair is the test's to keep.
+function startBridgeAt(stubLog, port, dir, home, extraEnv = {},
+                       extraArgs = []) {
   const proc = spawn(
     process.execPath,
     // extraArgs FIRST: arg() reads the first occurrence of a flag, so a
@@ -1729,3 +1737,59 @@ test('+306: a named prompt ignores a moved seat; unknown rejects; ' +
     await stopBridge(proc);
   }
 });
+
+// +310: THE RECEIPT OUTLIVES THE PROCESS. A commandId dedup that
+// lived only in the record's memory reset its whole story at every
+// restart: the retried POST became a SECOND turn, and the turn-id
+// counter, reseeded by Date.now(), could even re-mint an id a
+// stranger already holds a receipt for. The durable form lives with
+// the pointer it describes (<pointer>.cmds: {uuid, nextTurn, cmds}),
+// and a named record the restart dropped wakes from ITS OWN pointer
+// — which is why the pointer writes its work dir as a third line.
+test('+310: command receipts and the turn floor survive a restart',
+  async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+    'stub.log');
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
+  const home = mkdtempSync(join(tmpdir(), 'bridge-qhome-'));
+  let uuid, j;
+  let proc = startBridgeAt(stubLog, PORT33, dir, home);
+  try {
+    await up(PORT33);
+    await call(PORT33, `/talk?token=${TOKEN}&poll=1`,
+      { body: 'first words', method: 'POST' });
+    uuid = (await health(PORT33)).sessions[0].sid;
+    const r = await call(PORT33, `/sessions/${uuid}/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({ commandId: 'across-restart',
+        text: 'named word' }), method: 'POST',
+        headers: { 'content-type': 'application/json' } });
+    j = JSON.parse(r.text);
+    assert.equal(j.ok, true);
+    await until('closed', async () =>
+      !(await health(PORT33)).sessions[0].turnOpen);
+  } finally { await stopBridge(proc); }
+  // The same state, a new process.
+  proc = startBridgeAt(stubLog, PORT33, dir, home);
+  try {
+    await up(PORT33);
+    const r2 = await call(PORT33, `/sessions/${uuid}/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({ commandId: 'across-restart',
+        text: 'named word' }), method: 'POST',
+        headers: { 'content-type': 'application/json' } });
+    const j2 = JSON.parse(r2.text);
+    assert.equal(j2.duplicate, true,
+      'the receipt is the bridge\'s memory, not its uptime');
+    assert.equal(j2.turn, j.turn, 'one command, one turn, across the restart');
+    const r3 = await call(PORT33, `/sessions/${uuid}/prompts?poll=1&token=${TOKEN}`,
+      { body: JSON.stringify({ commandId: 'after-restart',
+        text: 'next word' }), method: 'POST',
+        headers: { 'content-type': 'application/json' } });
+    const j3 = JSON.parse(r3.text);
+    assert.equal(j3.duplicate, undefined);
+    assert.ok(j3.turn > j.turn,
+      'the turn floor persisted — a receipted id is never re-minted');
+    await until('closed again', async () =>
+      !(await health(PORT33)).sessions[0].turnOpen);
+  } finally { await stopBridge(proc); }
+});
+
