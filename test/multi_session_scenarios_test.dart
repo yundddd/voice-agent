@@ -468,5 +468,67 @@ void main() {
         reason: 'the recovered wire resumed AT the cursor — one copy',
       );
     });
+
+    test('a glance naming the neighbour may not rename the seat '
+        '(+303, the tape that re-crossed the sessions)', () async {
+      // The field tape: after the bridge restart and a /new, the
+      // xray-app tab's seat rows read 'conversation ad47b08b' —
+      // the VOICE-AGENT's uuid — and the two threads, routed by uuid
+      // through every +295/+298/+299 law, collapsed into one address
+      // and started showing each other's messages again. The vector
+      // is the +223 law outliving its world: /health's sessionId
+      // line describes the GLOBAL — the last-record the bridge sat
+      // at or talked to — and the old single-thread phone adopted
+      // whatever name it spoke for the seat it sat on. Under
+      // uuid-at-birth a name is born (createSession), worn at the
+      // landing (tab.currentId, echoed by /seat), or learned from
+      // ONE'S OWN stream (+299) — never from a neighbour's census
+      // line.
+      final x = await tab('/proj-x');
+      final y = await tab('/proj-y');
+      expect(await a.switchSession(0), isNull);
+      await pump();
+      unawaited(a.runQuickCommand('work for x'));
+      await pump();
+      expect(bridge.conv(x.uuid).turnOpen, isTrue);
+      // The field move: swipe away MID-TURN; the neighbour finishes
+      // behind you, and its own frames re-seated the bridge's focus
+      // (the real bridge swapFocuses for the record a talk names).
+      expect(await a.switchSession(1), isNull);
+      await pump();
+      bridge.say(x.uuid, 'X is done.');
+      bridge.focusSid = x.uuid; // what the neighbour's turn leaves
+      bridge.endTurn(x.uuid);
+      await pump();
+      // X's pump paid its turn-end housekeeping — a /health glance —
+      // while the eye sat on Y. The glance named X. The seat's name
+      // did not move.
+      expect(
+        a.view.tabs[1].currentId,
+        y.uuid,
+        reason:
+            'the seated tab keeps ITS uuid: /health\'s sessionId '
+            'is the global, information to file, never a rename for '
+            'the tab it does not describe',
+      );
+      expect(
+        a.view.chat.where((e) => e.blocks.contains('X is done.')).length,
+        lessThan(2),
+        reason:
+            'and filed exactly once — into X, not duplicated by '
+            'a renamed seat',
+      );
+      // The words that follow still land where the eye sits.
+      unawaited(a.runQuickCommand('hello from y'));
+      await pump();
+      expect(
+        bridge.conv(y.uuid).turnOpen,
+        isTrue,
+        reason:
+            'the prompt rode Y\'s uuid — the collapse would have '
+            'sent it to the neighbour\'s record',
+      );
+      expect(bridge.conv(x.uuid).turnOpen, isFalse);
+    });
   });
 }

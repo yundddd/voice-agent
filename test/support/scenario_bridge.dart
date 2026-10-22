@@ -459,6 +459,10 @@ final class ScenarioBridge implements HarnessGateway {
       'proto': 2,
       'now': _now, // the calibration the transport's guard expects
       'seat': true, // the +230 capability flag the tabs' law reads
+      // +303: the uuid-at-birth declaration (real bridge, /health) —
+      // the phone's law reads it and may not learn names from the
+      // global sessionId line any more.
+      'uuidAtBirth': true,
       'harness': 'claude',
       'poll': {'ring': _seq}, // the handshake that arms the transport
       'sessionId': f?.uuid,

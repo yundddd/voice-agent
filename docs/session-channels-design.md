@@ -245,3 +245,31 @@ swappable seat:
    a number only its ledger can interpret. The scenario rig walks
    it: /new blanks the screen, speaks its ack WHOLE, keeps the tab's
    uuid, and the next exchange lands on the same tab clean.
+
+## +303: /health's name is information, not a rename
+
+The tape re-crossed: after a bridge restart and a /new, the xray-app
+tab's OWN seat rows read `conversation ad47b08b` — voice-agent's
+uuid. Two threads, one address, and the +295/+298/+299 laws began
+faithfully routing each conversation's messages INTO the other.
+
+The vector was the +223 law outliving its world: `_refreshSession`
+adopted /health's `sessionId` unconditionally as the SEAT's name —
+correct when one phone, one thread, and one session were all the
+same word, wrong the moment tabs gave each record its own uuid.
+/health's sessionId line describes the GLOBAL (the last record the
+bridge sat or talked to), so glancing at it while the eye sits on a
+different tab re-names the seat after its neighbour, and every
+uuid-keyed law follows the wrong name home.
+
+Under the bridge's `uuidAtBirth: true` declaration the law inverts:
+
+* a mismatched glance may NOT rename the seat (names are born at
+  createSession, worn at the landing, learned from ONE'S OWN stream
+  per +299 — never from a census line);
+* the seat is what's stale, so the boot reconcile's corrective
+  re-seat POST (+230, previously fired once and retired) is taken
+  out of the one-shot and fires on EVERY mismatched glance, under
+  the same rest law — nothing mid-flight to disturb.
+* pre-birth bridges keep the old adoption untouched; the flag is
+  backward-compatible by ignorance.

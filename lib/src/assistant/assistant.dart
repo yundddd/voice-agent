@@ -1212,29 +1212,7 @@ class VoiceAssistant extends ChangeNotifier {
           eraNow != tab.harness ||
           h['dir'] != tab.dir ||
           (tab.currentId != null && sid != tab.currentId);
-      if (mismatch && _seatCap) {
-        unawaited(
-          _gateway
-              ?.seat(
-                harness: tab.harness,
-                dir: tab.dir,
-                model: tab.model,
-                sessionId: tab.currentId,
-                fresh: tab.currentId == null,
-              )
-              .then((r) {
-                if (r == null || r['ok'] != true) {
-                  _logDebug('tab re-seat failed: ${r?['error'] ?? 'no /seat'}');
-                  return;
-                }
-                _logDebug(
-                  'tab re-seat: back on '
-                  '${tab.harness} @ ${tab.dir} (${tab.currentId ?? 'fresh'})',
-                );
-                unawaited(_refreshSession());
-              }),
-        );
-      }
+      if (mismatch && _seatCap) unawaited(_reseatTab('boot reconcile'));
       _seatReconciled = true;
       return;
     }
@@ -1779,6 +1757,35 @@ class VoiceAssistant extends ChangeNotifier {
     if (moved) unawaited(_saveBridgePrefs());
   }
 
+  /// +303 (the boot reconcile's POST, +230, taken out of the one-shot):
+  /// the world's seat has drifted off THIS tab — put it back by
+  /// NAME. A re-seat of a named tab is a record swap, not a reset
+  /// (the +257 law): nothing of the neighbour's life is destroyed,
+  /// the globals simply describe the tab the eye is on. The
+  /// uuid-at-birth world needs this on EVERY mismatched glance, not
+  /// once at boot: the boot-only version is what let the field tape
+  /// settle into a mis-named seat.
+  Future<void> _reseatTab(String why) async {
+    final tab = _tab;
+    if (tab == null) return;
+    final r = await _gateway?.seat(
+      harness: tab.harness,
+      dir: tab.dir,
+      model: tab.model,
+      sessionId: tab.currentId,
+      fresh: tab.currentId == null,
+    );
+    if (r == null || r['ok'] != true) {
+      _logDebug('tab re-seat failed ($why): ${r?['error'] ?? 'no /seat'}');
+      return;
+    }
+    _logDebug(
+      'tab re-seat ($why): back on ${tab.harness} @ ${tab.dir} '
+      '(${tab.currentId ?? 'fresh'})',
+    );
+    unawaited(_refreshSession());
+  }
+
   Future<void> _refreshSession() async {
     final h = await _gateway?.healthInfo();
     // wire v2 housekeeping on every bridge glance: re-ack whatever the
@@ -1800,7 +1807,37 @@ class VoiceAssistant extends ChangeNotifier {
     // boot reconcile may re-home the seat (and asks for its own
     // re-read), and every id the active tab spoke gets filed.
     _tabsOnHealth(h, eraNow, s);
-    if (s != _sessionId) {
+    // +303: under the bridge's uuid-at-birth declaration the GLOBAL
+    // sessionId line is information, not a rename. It describes the
+    // record the bridge last sat at or talked to — when the eye sits
+    // on a different tab, adopting it re-names the seat after its
+    // neighbour (the field tape: the xray tab adopted voice-agent's
+    // uuid, two threads shared one address, and the +295 laws began
+    // faithfully routing cross-session messages). A name is born at
+    // createSession, worn at the landing, learned from ONE'S OWN
+    // stream (+299) — never from a census line. The field also
+    // covers the null: a bridge between records may not UN-name a
+    // living seat. Pre-birth bridges keep the +223 law untouched.
+    final atBirth = h?['uuidAtBirth'] == true;
+    if (atBirth &&
+        s != null &&
+        s != _sessionId &&
+        _tab?.currentId != null &&
+        _seatCap &&
+        h!['turnOpen'] != true &&
+        h['queued'] != true &&
+        ((h['missed'] as num?)?.toInt() ?? 0) == 0) {
+      // +303: THE NAMED-NEIGHBOUR CORRECTIVE. The glance speaks for
+      // the global (a restart's pointer, another tab's turn, a
+      // sibling app); the eye sits on a NAMED tab; nothing is
+      // mid-flight to be disturbed (the boot reconcile's rest law,
+      // honoured here too). The seat is stale, not the tab: re-post
+      // the seat by name. The old law's reflex — adopt the name —
+      // is what collapsed two threads into one address on the
+      // field tape; under uuid-at-birth only the seat moves.
+      unawaited(_reseatTab('glance named $s'));
+    }
+    if (!atBirth && s != _sessionId) {
       _setSessionId(s);
       if (s != null) {
         // +223: the id has a NAME now — every bubble born under the
