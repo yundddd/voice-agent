@@ -836,6 +836,83 @@ void main() {
       );
     });
 
+    // +314: the band cache rides the TAB OBJECT, not its index slot:
+    // a deletion used to require shifting every later key by hand
+    // (ten lines apologising for keying a conversation's presentation
+    // by its position). The observable law is the same — the line
+    // follows the thread — but it now holds by identity, and the
+    // doomed tab's line dies exactly with it. This walk pins the law
+    // across a deletion: three tabs earn distinctive lines, the first
+    // dies, and every survivor must resume on ITS OWN line at its
+    // NEW position — a mis-shift would put the wrong thread's
+    // command on the band.
+    test('+314: a band rides its tab, not its slot', () async {
+      Future<void> tabbed(String dir, String sid) async {
+        await a.createSession(harness: 'claude', dir: dir);
+        await settle();
+        // NAMED tabs: an unnamed switch RESETS, and a reset refuses a
+        // mid-turn move (+230's rest law) — that refusal is a law of
+        // its own, not this walk's subject.
+        harness.healthState = {...harness.healthState!, 'sessionId': sid};
+        await a.setBridgeDir(dir);
+        await settle();
+      }
+
+      await tabbed('/proj-a', 'ses-a');
+      await tabbed('/proj-b', 'ses-b');
+      await tabbed('/proj-c', 'ses-c');
+      Future<void> earn(int to, String job) async {
+        expect(await a.switchSession(to, force: true), isNull);
+        unawaited(a.runQuickCommand('job $job'));
+        await settle();
+        harness.emit(
+          BridgeEvent.forTest('tool', toolName: 'Bash', detail: 'job-$job'),
+        );
+        await settle();
+        // The floor is released WITHOUT a farewell frame: a done
+        // would stamp its own receipt line over the band we came to
+        // cache, and a parked second prompt would make every later
+        // switch a rest-law refusal — neither is this walk's subject.
+        harness.turnOpenOnServer = false;
+        await settle();
+      }
+
+      await earn(0, 'a');
+      expect(await a.switchSession(1), isNull);
+      a.settleBandOnLanding(0, 1); // A caches 'Bash job-a…'
+      await earn(1, 'b');
+      expect(await a.switchSession(2), isNull);
+      a.settleBandOnLanding(1, 2); // B caches 'Bash job-b…'
+      await earn(2, 'c');
+      expect(await a.switchSession(0), isNull);
+      a.settleBandOnLanding(2, 0); // C caches 'Bash job-c…'
+      await settle();
+      expect(
+        a.view.status,
+        'Bash job-a…',
+        reason: 'A resumes on its own line before the deletion',
+      );
+      // The first tab dies at the ✕ — everything after it shifts left.
+      expect(await a.removeSessionTab(0), isNull);
+      await settle();
+      expect(await a.switchSession(1), isNull); // C (now index 1)
+      a.settleBandOnLanding(0, 1);
+      await settle();
+      expect(
+        a.view.status,
+        'Bash job-c…',
+        reason: "C's line followed the OBJECT, not the old slot",
+      );
+      expect(await a.switchSession(0), isNull); // B (now index 0)
+      a.settleBandOnLanding(1, 0);
+      await settle();
+      expect(
+        a.view.status,
+        'Bash job-b…',
+        reason: "and B's followed too — the shift is structurally gone",
+      );
+    });
+
     test(
       '+259: a command that works in X never paints the band on Y',
       () async {

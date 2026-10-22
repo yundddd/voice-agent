@@ -301,3 +301,27 @@ finished receipt, foreign say, stranger's farewell — drained through
 a live turn on the surviving tab (an unread ring resurrects nobody):
 the channel stays gone, the banner stays buried, no heartbeat finds
 a ghost.
+
+## +314: the band cache is keyed by tab identity — and a death repaints the seat
+
+Two index-keyed relics went. The +313 list's band cache
+(`_bandByTab`) keyed presentation by the tab's POSITION, so every
+deletion needed ten lines of key-shift apology — and the shift,
+correct as far as it went, still left the old code one law short,
+which the pin walk caught RED:
+
+When the SEATED tab is deleted and a neighbour inherits the seat,
+the painted band was the departed thread's command line — and the
+next hand-off would cache that orphan OVER the inheriting tab's own
+cached line (the slide's from-tab cache has no way to know the
+'from' tab is a stranger wearing dead clothes). The band belongs to
+the thread; the thread is gone — so `removeSessionTab` now paints
+the landing itself (`settleBandOnSeat`): the new seat shows its own
+cached line or the at-rest line, never an orphan. (The landing law
+was split out of `settleBandOnLanding` intact, log lines verbatim —
+the slide hand-off and the death hand-off ride one implementation.)
+
+The cache itself is keyed by the SessionTab OBJECT — deletions and
+reorders are structurally free, the doomed tab's line dies exactly
+with it, and the map can no longer disagree with the tab list's
+shape the way a positional key always can.

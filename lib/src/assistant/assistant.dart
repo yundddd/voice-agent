@@ -1637,7 +1637,13 @@ class VoiceAssistant extends ChangeNotifier {
   /// map through [cacheAwayBand], so the cached line stays CURRENT
   /// while you are on another tab — coming home shows what the
   /// harness is doing NOW, not a snapshot of when you left.
-  final Map<int, Activity> _bandByTab = {};
+  /// +314: the band cache is keyed by the TAB OBJECT, not its index.
+  /// The +230-era index key forced a hand-shift on every deletion
+  /// (ten lines of 'everything after moves left') and made the cache
+  /// a second copy of the tab list's shape; object identity is that
+  /// shape's own key — deletions and reorders are structurally free,
+  /// and the doomed tab's line dies exactly with it.
+  final Map<SessionTab, Activity> _bands = {};
 
   /// +266: the band's sweep moved HERE out of the landing itself
   /// (+259's first home): a switch's slide gives the screen ~300 ms
@@ -1651,9 +1657,27 @@ class VoiceAssistant extends ChangeNotifier {
   /// path's watermark (+254) still lands at the landing proper: it
   /// is a law about frames, not about pixels.
   void settleBandOnLanding(int fromTab, int toTab) {
-    if (fromTab < 0 || fromTab == toTab) return; // first paint, or no move
-    _bandByTab[fromTab] = _activity;
-    final own = _bandByTab[toTab];
+    final tabs = _bridgePrefs.tabs;
+    if (fromTab >= 0 &&
+        fromTab != toTab &&
+        fromTab < tabs.length &&
+        toTab < tabs.length) {
+      _bands[tabs[fromTab]] = _activity; // the leaving tab keeps what
+      // was painted as it left — including the departed seat's at-
+      // rest line, which is truthfully its own (+314's pin walk
+      // caught the old code caching THAT over a survivor's cache).
+    }
+    if (toTab < 0 || toTab >= tabs.length) return;
+    _paintLandingBand(tabs[toTab], toTab);
+  }
+
+  /// +314: the landing half of the law, split out with its log lines
+  /// intact — the seat paints the line its OWN tab owns, or the
+  /// at-rest line, and never the orphan of whatever the seat wore
+  /// before. Split because a death re-homes the seat with no slide
+  /// hand-off to ride: the deletion must paint the landing itself.
+  void _paintLandingBand(SessionTab tab, int toTab) {
+    final own = _bands[tab];
     if (own != null) {
       _logDebug(
         'switch: band — tab $toTab resumes on its OWN cached line '
@@ -1677,14 +1701,24 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
+  /// The screen's call when a DEATH re-homes the seat (removeSessionTab):
+  /// paint the new seat's own line, orphans die with the tab.
+  void settleBandOnSeat() {
+    final tab = _tab;
+    if (tab != null) _paintLandingBand(tab, _activeTab);
+  }
+
   /// +266: the away-conversation's frames refresh ITS cache and
   /// leave the painted band alone (the +259 gate in the turn loop
   /// calls this at the same door it declined to paint): the line you
   /// come home to is the CURRENT command, not the one you left.
   void cacheAwayBand(String? sid, Activity act) {
     if (sid == null) return;
-    final i = _bridgePrefs.tabs.indexWhere((t) => t.sessionIds.contains(sid));
-    if (i >= 0 && i != _activeTab) _bandByTab[i] = act;
+    final t = _bridgePrefs.tabs.cast<SessionTab?>().firstWhere(
+      (x) => x!.sessionIds.contains(sid),
+      orElse: () => null,
+    );
+    if (t != null && t != _tab) _bands[t] = act;
   }
 
   /// +230: ✕ on the pill — FORGET A TAB. The tab's bubbles leave with
@@ -1710,20 +1744,10 @@ class VoiceAssistant extends ChangeNotifier {
       if (rest != null) return rest;
     }
     final doomed = prefs.tabs.removeAt(index);
-    // +277: band caches are keyed by tab INDEX — a deleted tab
-    // shifts every later tab's cached line onto its neighbour, and
-    // the doomed tab's own line is gone with it.
-    final shifted = <int, Activity>{};
-    _bandByTab.forEach((k, v) {
-      if (k < index) {
-        shifted[k] = v;
-      } else if (k > index) {
-        shifted[k - 1] = v;
-      }
-    });
-    _bandByTab
-      ..clear()
-      ..addAll(shifted);
+    // +314: the doomed tab's cached band rides OUT with the object —
+    // the index-shift this line replaces was a ten-line apology for
+    // keying a conversation's presentation by its position.
+    _bands.remove(doomed);
     // +276: a deleted conversation retires the banner IT owed —
     // nothing will ever report a backgrounded shell whose thread
     // the user threw away.
@@ -1744,6 +1768,12 @@ class VoiceAssistant extends ChangeNotifier {
       final dest = index == 0 ? 0 : index - 1;
       final err = await switchSession(dest, force: true);
       if (err != null) return err; // tab gone; the move's reason rides back
+      // +314: the inherited seat paints the doomed tab's line OUT of
+      // existence — the band belongs to the thread, and the thread
+      // is gone. (The switch's own landing paint finds no slide
+      // hand-off here: the screen only calls settleBandOnLanding at
+      // a transition's flip, and a deletion is not one.)
+      settleBandOnSeat();
     }
     return null;
   }
@@ -1989,8 +2019,11 @@ class VoiceAssistant extends ChangeNotifier {
   /// no live turn holds the slot — a fresh command owns the band).
   void _clearOwnedBand(String? sid, {String? settledLabel}) {
     if (sid == null) return;
-    final i = _bridgePrefs.tabs.indexWhere((t) => t.sessionIds.contains(sid));
-    if (i >= 0) _bandByTab.remove(i);
+    // +314: the settled band dies with the TAB that wore it — the
+    // object the sid names, whatever position it currently holds.
+    for (final t in _bridgePrefs.tabs) {
+      if (t.sessionIds.contains(sid)) _bands.remove(t);
+    }
     if (sid == _sessionId) {
       final act = _activity;
       // +279.1→+282: the painted stale line ALWAYS goes when it
