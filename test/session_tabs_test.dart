@@ -619,8 +619,7 @@ void main() {
       await settle();
       expect(
         a.debugLog.any(
-          (l) =>
-              l.contains('foreign conversation: say left unheard'),
+          (l) => l.contains('foreign conversation: say left unheard'),
         ),
         isTrue,
         reason:

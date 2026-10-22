@@ -907,3 +907,25 @@ survives bridge and machine reboots too.
   is voice-driving a sandboxed scratch dir with `acceptEdits` enough?
 - Confirm the harness identity intended is Claude Code (not this
   OpenCode); `opencode serve` gives the same bridge for it.
+
+## Run the field tape without the phone (shipped +300)
+
+Five seasons of the same multi-session test — background sleep, swipe,
+receipt, proactive report, parked prompt — kept finding a new leak
+past a green unit suite (+297 meter, +297 pin, +298 marker, +299
+rename), because every rig HAND-AUTHORED its frame sequence: the
+bridge's behaviour (per-record queueing, the settled message farewell,
+the run_in_background lifecycle, the focus-scoped `missed`, the self-
+healing seat refusal) lived in prose, not in code.
+`test/support/scenario_bridge.dart` moves that behaviour into a
+relational fake — one ring, `_sess`/`_mid`/`_turn`/`_ts` stamped at
+relay, a turn-epoch guard on /stop, the backlog memory discharged only
+by the phone's own /heard — and `test/multi_session_scenarios_test.dart`
+speaks in conversation moves (prompt, toolStep, backgrounded,
+complete+report, park, pickup, blackout). The six walks replay the
+tapes that generated the laws: receipts paying across the seat, the
+foreign report that must not rent a thread, +296's park through the
+settled verdict, the +254 unheard-words refusal and its self-healing
+second swipe, the addressed /stop and the late cancelled receipt, and
+the dead carrier that is not a verdict. When a field report arrives,
+the reproduction is now a verb here, not a phone session.
