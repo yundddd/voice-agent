@@ -1264,8 +1264,13 @@ test('POST /send relays a file frame; GET /file streams it (Range included)',
 
     const send = await call(PORT14, `/send?token=${TOKEN}`,
       { body: JSON.stringify({ path: 'payload.bin' }), method: 'POST' });
-    assert.deepEqual(JSON.parse(send.text),
-      { ok: true, name: 'payload.bin', size: 1000 });
+    // +320: the response names the conversation the frame was STAMPED
+    // under — no sender name and no open turn here, so the seat's own
+    // uuid, which is the honest fallback (yesterday's silent guess).
+    const sbody = JSON.parse(send.text);
+    assert.deepEqual(sbody,
+      { ok: true, name: 'payload.bin', size: 1000, conv: sbody.conv });
+    assert.ok(sbody.conv, 'unnamed /send answered without naming its owner');
 
     // The frame rode the ring (permanent, like a say): name, path, size.
     const ring = JSON.parse(
@@ -1276,6 +1281,23 @@ test('POST /send relays a file frame; GET /file streams it (Range included)',
     assert.equal(f.data.path, 'payload.bin');
     assert.equal(f.data.size, 1000);
     assert.ok(f.data._mid > 0, 'file frame lacks a _mid (ledger dedup)');
+    assert.equal(f.data._sess, sbody.conv,
+      'the ring stamp and the receipt name disagree');
+
+    // +320: a sender that SPEAKS its conversation gets its bubble
+    // there, seat or no seat; a name that matches nothing REJECTS
+    // (+306's law) instead of quietly filing under the stranger.
+    const named = await call(PORT14, `/send?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'payload.bin', sessionId: sbody.conv }),
+        method: 'POST' });
+    assert.equal(JSON.parse(named.text).conv, sbody.conv,
+      'a named send lost its owner');
+    const ghost = await call(PORT14, `/send?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'payload.bin',
+        sessionId: '00000000-0000-4000-8000-000000000000' }),
+        method: 'POST' });
+    assert.ok(ghost.text.startsWith('no conversation named'),
+      'unknown name did not reject: ' + ghost.text);
 
     // Full stream.
     const full = await fetch(`http://127.0.0.1:${PORT14}/file` +

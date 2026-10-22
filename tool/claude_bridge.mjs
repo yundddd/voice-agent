@@ -144,11 +144,17 @@
 //                the answer is a 400. /health's `dir` names the live one.
 //   GET  /dirs   the picker's listing: one folder level inside --dir-root
 //                (?in=relative). Skips dot-folders, node_modules, build.
-//   POST /send   {"path": …}: hand a FILE to the phone — relays a
-//                permanent `file` frame {name,path,size} (same allowlist);
-//                the app files it as a chat bubble and pulls the bytes
-//                from GET /file?path=… on tap (Range-honouring, so an
-//                interrupted APK download resumes where the wire died).
+//   POST /send   {"path": …, "sessionId"?}: hand a FILE to the phone —
+//                relays a permanent `file` frame {name,path,size} (same
+//                allowlist); the app files it as a chat bubble and pulls
+//                the bytes from GET /file?path=… on tap (Range-honouring,
+//                so an interrupted APK download resumes where the wire
+//                died). +320: the frame is stamped under the SENDER —
+//                pass `"sessionId":"$BRIDGE_CONV"` (the name every
+//                harness child is spawned with); unnamed, it follows the
+//                one open turn, and only with neither does it fall to
+//                the seat. An unknown name rejects: the seat never
+//                stands in for a name.
 //   GET  /health liveness + claude up? + turnOpen / backgrounded / queued
 //                / detached (the cut-tool receipts still owed a
 //                `finished`, + the agent's own run_in_background shells).
@@ -1244,6 +1250,13 @@ function spawnClaude(resume) {
   focus.child = spawn(claudeBin, args, { cwd: focus.dir, env: {
     ...process.env,
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
+    // +320: the child carries its conversation's NAME. POST /send fires
+    // from a Bash line inside a working harness, at a moment of the
+    // disk's choosing — by then the seat may have moved on (a swipe
+    // re-seats; +246 keeps the worker running). An agent that knows
+    // whose conversation it speaks in can say so; the bridge refuses
+    // the guess.
+    BRIDGE_CONV: focus.uuid || focus.sid || '',
   } });
   focus.childDead = false;
   // +257: the child is BOUND to the record that spawned it. Every
@@ -3846,14 +3859,38 @@ const server = http.createServer((req, res) => {
       if (!f || !isFile(f)) {
         res.writeHead(400)
           .end('not a file inside the bridge\'s --dir-root\n');
+      } else if (j?.sessionId && !findRecord(j.sessionId)) {
+        // +320: an unknown name REJECTS (+306's law) — the sender's
+        // uuid is its truth; the seat never stands in for a name that
+        // was spoken and silently ignored.
+        res.writeHead(400)
+          .end('no conversation named ' + j.sessionId + '\n');
       } else {
         const st = statSync(f);
-        relay('file', {
+        // +320: the file frame is stamped under its CONVERSATION, not
+        // under the seat. relay()'s 'relay-time identity is the FACT'
+        // holds for frames born under a record's door; /send is the
+        // agent's voice arriving through the plain HTTP door, at a
+        // moment of the disk's choosing — and a tab swipe in between
+        // used to move the bubble to the stranger's conversation
+        // (the phone's +286 foreign gate faithfully trusted the lie).
+        // The owner is, in order: the name the sender speaks (the
+        // BRIDGE_CONV the child was spawned with), the ONE record with
+        // a turn open — work is answering somewhere, that answer owns
+        // its files — and only then today's seat.
+        const named = j?.sessionId ? findRecord(j.sessionId) : null;
+        const openTurn = [...sessions.values()].filter((r) => r.turnOpen);
+        const owner = named ?? (openTurn.length === 1 ? openTurn[0] : focus);
+        withConv(owner, () => relay('file', {
           name: basename(f), path: relative(dirRoot, f), size: st.size,
-        });
-        console.error('  [send] ' + basename(f) + ' (' + st.size + ' B)');
+        }));
+        console.error('  [send] ' + basename(f) + ' (' + st.size + ' B)'
+          + ' conv=' + (owner?.uuid || 'seat'));
         res.writeHead(200, {'content-type': 'application/json'})
-          .end(JSON.stringify({ ok: true, name: basename(f), size: st.size }));
+          .end(JSON.stringify({
+            ok: true, name: basename(f), size: st.size,
+            conv: owner?.uuid || null,
+          }));
       }
     } else if (url.pathname === '/heard') {
       // v2: the phone's commit ack. A mid leaves the unheard backlog
