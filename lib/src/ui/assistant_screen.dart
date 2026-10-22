@@ -869,21 +869,34 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// 'speak' — so the window says it once, in the mode the phone is
   /// in, in the same words the status line already teaches. Quiet on
   /// purpose: an invitation, not a bubble — it is not logged, not
-  /// themed as news, and the first real entry buries it.
+  /// themed as news, and the first real entry buries it. +316.1 (Tim,
+  /// 'show some cute ASCII art of a dinosaur'): the instruction wears
+  /// a pet — a tiny wide-eyed raptor in a monospace face, drawn in
+  /// the same whisper ink, so the blank screen is not just worded but
+  /// charming its way into being waited in.
   Widget _emptyChatPrompt(AssistantView v, BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final ptt = v.mode == InteractionMode.pushToTalk;
+    const dino = r'''
+|\---/|
+| o_o |   rawr!
+ \_^_/
+''';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            ptt ? Icons.touch_app_outlined : Icons.forum_outlined,
-            size: 20,
-            color: scheme.onSurfaceVariant,
+          Text(
+            dino,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontFamily: 'monospace',
+              height: 1.2,
+              color: scheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(height: 12),
           Text(
             ptt
                 ? 'Hold the button and speak — your first bubble lands here.'
