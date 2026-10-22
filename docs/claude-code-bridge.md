@@ -950,3 +950,22 @@ word (`not in --models`): the law was right, the door was missing.
   remembers is the menu correcting the memory — the remembered id
   clears itself so sheets stop preselecting it. A refusal of some
   OTHER word leaves the memory standing (the +218 law unchanged).
+
+## +305: a pending heartbeat must not swallow an urgent wake
+
+The field report: a backgrounded sleep finished, but the status
+update reached the phone 5–10 s late (the tape: `wire+13235ms`).
+Nothing was wrong with the drain law or the ring — the report sat
+on the ring before the user even returned; the phone simply waited
+out the heartbeat it already had scheduled.
+
+`_scheduleBgProbe` coalesced on "a beat is already pending" and
+returned, so its three `every: Duration.zero` urgency callers (the
+landing on an owed thread, the hold-for-drain verdict, a turn closed
+with work still unpaid) were silently ignored when the *away* pace's
+10 s timer happened to be the one standing. Coalescing may slow a
+wake down; it may not slow an urgent one down. The beat now tracks
+its own pace and lets a FASTER request pre-empt it (a slower request
+never pushes an imminent beat out). The rig's ninth walk rings the
+report between beats and returns home, asserting the news lands
+inside the pending away-beat and the receipt pays.

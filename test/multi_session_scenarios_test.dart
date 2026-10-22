@@ -469,6 +469,62 @@ void main() {
       );
     });
 
+    // +305: the field tape's 13-second farewell. A backgrounded
+    // shell finished while the eye sat on another tab; the phone
+    // KNEW (missed=4 on the band at :50.7, on the return) yet the
+    // news waited the full heartbeat to :60.4 [wire+13235ms]. The
+    // three 'ask the bridge NOW' callers hand _scheduleBgProbe a
+    // zero delay — and the coalescing guard (a beat already pending)
+    // swallowed the urgency: a slow timer standing is treated like
+    // a fast one. Urgency must be able to PRE-EMPT a pending beat.
+    test('the return to owed words may not wait out the pending '
+        'heartbeat (+305)', () async {
+      final x = await tab('/proj-x');
+      await tab('/proj-y'); // both made while idle
+      expect(await a.switchSession(0), isNull);
+      unawaited(a.runQuickCommand('sleep 20 in the background'));
+      await pump();
+      bridge.backgrounded(x.uuid, 'Bash sleep 20');
+      bridge.say(x.uuid, 'Running it in the background.');
+      bridge.endTurn(x.uuid);
+      await pump();
+      expect(a.view.agentBusy, isTrue, reason: 'the shell is owed');
+      // Stand up BEFORE the report: away, the beat keeps its slow
+      // 10 s pace (a fast one would be an interrupting poller).
+      expect(await a.switchSession(1), isNull);
+      await pump();
+      // The shell finishes and the report OPENS AND CLOSES between
+      // the beats: nothing open, none detached, but the backlog
+      // holds the news (and the unpaid receipt).
+      bridge.complete(
+        x.uuid,
+        'Bash sleep 20',
+        report: ['The 20 second sleep has finished.'],
+      );
+      bridge.endTurn(x.uuid);
+      await pump();
+      // Come home. The landing sees owed words — the wake request
+      // must pre-empt the pending beat, not queue behind it.
+      expect(await a.switchSession(0), isNull);
+      await pump(beats: 4); // ~1.2 s — the beat's own due date is
+      // seconds away; only an URGENT wake can land this inside it.
+      expect(
+        a.view.chat.any(
+          (e) => e.blocks.contains('The 20 second sleep has finished.'),
+        ),
+        isTrue,
+        reason:
+            'the report was RINGED before the return — the '
+            'landing sees it; it must not be held for the slow '
+            'beat that happened to be pending',
+      );
+      expect(
+        a.channelForTest(x.uuid).turn.agentDebts,
+        isEmpty,
+        reason: 'and the receipt paid at home',
+      );
+    });
+
     test('a glance naming the neighbour may not rename the seat '
         '(+303, the tape that re-crossed the sessions)', () async {
       // The field tape: after the bridge restart and a /new, the

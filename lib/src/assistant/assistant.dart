@@ -2084,14 +2084,36 @@ class VoiceAssistant extends ChangeNotifier {
 
   /// Arm the bottom line's ask-again heartbeat — while the line is
   /// warranted, once is enough (the wake re-arms its own successor).
+  Duration _bgProbePace = const Duration(seconds: 10);
   void _scheduleBgProbe({Duration every = const Duration(seconds: 10)}) {
-    if (_bgProbe != null || !_anyWorkOwed || _gateway == null) {
+    if (!_anyWorkOwed || _gateway == null) return;
+    if (_bgProbe != null) {
+      // +305: urgency may PRE-EMPT a pending beat, it may not be
+      // swallowed by it. The three 'ask the bridge NOW' callers
+      // (the landing at an owed thread, the hold-for-drain verdict,
+      // the turn closed with work unpaid) hand a zero delay, and
+      // the old coalescing guard treated ANY pending timer as proof
+      // a beat is coming — while the beat that was coming was the
+      // AWAY pace's 10 s. The field tape: the shell finished at
+      // :47, the return saw missed=4 at :50.7, and the news waited
+      // the full beat to :60.4 ([wire+13235ms]) — 'it told me 5 to
+      // 10 seconds later'. Only ever faster: a slower request never
+      // pushes an imminent beat out.
+      if (every < _bgProbePace) {
+        _bgProbe!.cancel();
+        _bgProbe = _scheduler.after(every, () {
+          _bgProbe = null;
+          unawaited(_bgWake());
+        });
+        _bgProbePace = every;
+      }
       return;
     }
     _bgProbe = _scheduler.after(every, () {
       _bgProbe = null;
       unawaited(_bgWake());
     });
+    _bgProbePace = every;
   }
 
   /// The heartbeat firing: consult /health. Nothing open and nothing
