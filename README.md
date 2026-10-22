@@ -139,7 +139,14 @@ Silero ever sees it:
   bundled in the APK) watches for speech. An utterance is endpointed after
   ~1 s of silence (`minSilenceDuration` in `speech_worker.dart` — tune there)
   and answered. Starting to talk while the assistant speaks **mutes the TTS
-  immediately** (barge-in): the recorder uses the voice-communication source
+  immediately** (barge-in) — since +318 that mute is a *quick fade*: the
+  syllable on air rides a ~75 ms volume ramp down before the player stops
+  (tab-swipe cuts ride it too), so cuts end gracefully while every cut law
+  stands: the epoch ticks before the first await, the player is stopped at
+  the bottom, the next speaker owns it at once, and the lane climbs back
+  to full volume before the next chunk is handed over (a ramp never
+  leaves a silent speaker behind — the +118 signature).
+  The recorder uses the voice-communication source
   with platform AEC/AGC so the mic hears the user over the speaker; a
   word-overlap guard drops segments that are just the assistant hearing its
   own reply. Short breaths get a "say a bit more" nudge instead of a turn.

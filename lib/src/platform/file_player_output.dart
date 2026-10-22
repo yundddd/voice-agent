@@ -13,6 +13,12 @@
 /// negotiation happens once, inside silence no one hears — the output
 /// twin of the mic's warm-up drop (see record_mic_source.dart), and just
 /// as traceable: the declaration journals itself.
+///
+/// +318 (Tim: 'don't cut the TTS off — turn the volume down gradually,
+/// but make it quick'): a cut — barge-in, tab swipe, preview stop —
+/// rides a ~75 ms volume ramp into silence before the player stops.
+/// Every +289 cut law survives the courtesy; only the HOW of the death
+/// changed, from vanish to fade.
 library;
 
 import 'dart:async';
@@ -36,6 +42,9 @@ abstract interface class FilePlayerPlatform {
   /// +317: declare the playback lane — voice-communication, the same
   /// lane the mic rides — before the first source is handed over.
   Future<void> declareCommunicationLane();
+
+  /// +318: 0.0..1.0 — the ramp a cut rides down on (and back up on).
+  Future<void> setVolume(double volume);
   Future<void> play(Source source);
   Future<void> stop();
   Stream<void> get onPlayerComplete;
@@ -45,6 +54,9 @@ abstract interface class FilePlayerPlatform {
 class _AudioPlayerAdapter implements FilePlayerPlatform {
   _AudioPlayerAdapter(this._player);
   final AudioPlayer _player;
+
+  @override
+  Future<void> setVolume(double volume) => _player.setVolume(volume);
 
   @override
   Future<void> declareCommunicationLane() => _player.setAudioContext(
@@ -115,6 +127,18 @@ class FilePlayerAudioOutput implements AudioOutput {
   /// never mute one: a lane that will not take the declaration plays
   /// on the plugin default, and the next play re-asks.
   bool _laneDeclared = false;
+
+  /// +318 (Tim: 'rather than cutting off, turn the volume down
+  /// gradually — but make it quick'): does the player hold a live
+  /// audible source (so a cut's ramp means something), is a ramp in
+  /// flight, and is the volume's climb back to full still owed. Four
+  /// steps at 25 ms is ~75 ms of ramp plus platform round trips: one
+  /// syllable. Every cut law survives the courtesy.
+  bool _playing = false;
+  bool _restoreVolume = false;
+  Future<void>? _fading;
+  static const List<double> _fadeSteps = [0.7, 0.45, 0.2, 0.0];
+  static const Duration _fadeStep = Duration(milliseconds: 25);
 
   @override
   Future<void> play(Float32List samples, int sampleRate, {String? tag}) async {
@@ -198,6 +222,31 @@ class FilePlayerAudioOutput implements AudioOutput {
       discardCurrent();
       return;
     }
+    final fade = _fading;
+    if (fade != null) {
+      await fade; // +318: a chunk may not be handed to a player still
+      // ramping down — the fade's bottom stop would take it down
+      // unheard (the +289 law wearing a new door).
+      if (_cuts != cuts0) {
+        discardCurrent(); // another cut landed on the ramp's back
+        return;
+      }
+    }
+    if (_restoreVolume) {
+      // +318: a ramp may not leave the lane silent — if its own climb
+      // back died (a dispose caught mid-fade), the next chunk restores
+      // the level before it is handed over. A silent speaker with
+      // full-duration plays is the +118 signature; this is the door
+      // that keeps the fade from ever writing it.
+      _restoreVolume = false;
+      try {
+        await _player.setVolume(1.0);
+      } catch (_) {}
+      if (_cuts != cuts0) {
+        discardCurrent();
+        return;
+      }
+    }
     _listenOnce(minAge);
     _cutting = false;
     await _player.play(DeviceFileSource(file.path));
@@ -206,6 +255,10 @@ class FilePlayerAudioOutput implements AudioOutput {
       // platforms start the source past their own stop. Re-cut; the
       // completion event lands suppressed (_cutting).
       await stop();
+    } else {
+      _playing = true; // +318: there is now a live source for a cut's
+      // ramp to take down; a cut across this play's own hand-off stays
+      // the hard re-cut it always was.
     }
     // The round trip returned — anything past the async handoffs is
     // time the platform's main thread spent ON the player's behalf,
@@ -253,6 +306,8 @@ class FilePlayerAudioOutput implements AudioOutput {
       if (started.elapsed < minAge) return; // source-reset artifact, not
       // the end of this chunk: stay armed for the real one.
       sub.cancel();
+      _playing = false; // +318: the audio ran out — there is no live
+      // source left for a cut to be smooth about.
       _ended.add(null);
     });
     _pendingEnd = sub;
@@ -263,9 +318,54 @@ class FilePlayerAudioOutput implements AudioOutput {
     _cuts++; // +289: the clock ticks before anything else — a play
     // in flight reads the new number at its next await and dies.
     _cutting = true;
+    final running = _fading;
+    if (running != null) {
+      await running; // +318: a ramp already falling needs no second
+      // ramp — one fade per cut wave.
+      return;
+    }
+    if (!_playing) {
+      try {
+        await _player.stop();
+      } catch (_) {}
+      return; // nothing audible to be smooth about
+    }
+    _playing = false;
+    final fade = _fadeThenStop();
+    _fading = fade; // set synchronously: a second stop() finds it
+    // before the ramp's first await surrenders the turn.
+    try {
+      await fade;
+    } finally {
+      _fading = null;
+    }
+  }
+
+  /// +318: the cut's syllable rides ~75 ms of volume ramp into the
+  /// quiet instead of popping mid-word. The cut dies by every law that
+  /// matters: the epoch ticked in [stop] before the first await, the
+  /// completion event is suppressed as _cutting, the player is STOPPED
+  /// at the bottom of the ramp — whoever speaks next owns the speaker
+  /// immediately; only the tail of the audio already killed is allowed
+  /// to dim rather than vanish. Traced, per the drop law.
+  Future<void> _fadeThenStop() async {
+    _restoreVolume = true;
+    note?.call('audio cut: faded out (not popped) over ~0.1s');
+    for (final v in _fadeSteps) {
+      try {
+        await _player.setVolume(v);
+      } catch (_) {
+        break;
+      }
+      if (v > 0) await Future<void>.delayed(_fadeStep);
+    }
     try {
       await _player.stop();
     } catch (_) {}
+    try {
+      await _player.setVolume(1.0);
+      _restoreVolume = false;
+    } catch (_) {} // the flag stands; play()'s restore door takes it
   }
 
   @override
@@ -280,6 +380,15 @@ class FilePlayerAudioOutput implements AudioOutput {
   @override
   Future<void> dispose() async {
     await _pendingEnd?.cancel(); // +291: no landmine outlives the output
+    final fade = _fading;
+    if (fade != null) {
+      // +318: let an in-flight ramp finish its stop (and its climb
+      // back) before the player dies — a fade left running past
+      // dispose is how a silent-lane signature gets written.
+      try {
+        await fade;
+      } catch (_) {}
+    }
     await _player.dispose();
     await _ended.close();
   }

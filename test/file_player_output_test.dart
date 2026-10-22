@@ -198,6 +198,93 @@ void main() {
       reason: 'the abandoned chunk never even became a file',
     );
   });
+
+  test('+318: a cut on LIVE audio rides a quick ramp down, stops at the '
+      'bottom, and the lane climbs back — make it quick', () async {
+    final dir = await Directory.systemTemp.createTemp('fade_live');
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    final sw = Stopwatch()..start();
+    await out.play(Float32List(48000), 24000, tag: 'A'); // live now
+    await out.stop();
+    expect(
+      sw.elapsedMilliseconds,
+      lessThan(300),
+      reason: 'gradual, but a syllable — not a curtain',
+    );
+    expect(
+      platform.volumes,
+      [0.7, 0.45, 0.2, 0.0, 1.0],
+      reason: 'monotonic down, then the climb back — a ramp may not '
+          'leave the lane silent (the +118 signature)',
+    );
+    expect(
+      platform.apiOrder,
+      ['declare', 'play', 'vol 0.7', 'vol 0.45', 'vol 0.2', 'vol 0.0',
+      'stop', 'vol 1.0'],
+      reason: 'the stop lands at the bottom of the ramp, not before it',
+    );
+  });
+
+  test('+318: a cut with nothing audible spends no ramp — it just '
+      'stops, idempotent as ever', () async {
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => Directory.systemTemp,
+    );
+    await out.stop();
+    expect(platform.volumes, isEmpty, reason: 'nothing to be smooth about');
+    expect(platform.stops, 1);
+  });
+
+  test('+318: the next chunk waits for the in-flight fade — it never '
+      'talks under the old audio\'s tail, and one ramp serves the wave',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('fade_next');
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    await out.play(Float32List(48000), 24000, tag: 'A');
+    final cut = out.stop(); // unawaited: the fade is in flight
+    final next = out.play(Float32List(48000), 24000, tag: 'B');
+    await cut;
+    await next;
+    expect(
+      platform.apiOrder,
+      ['declare', 'play', 'vol 0.7', 'vol 0.45', 'vol 0.2', 'vol 0.0',
+      'stop', 'vol 1.0', 'play'],
+      reason: 'B was handed over only after A\'s ramp stopped and the '
+          'level came back — and the old fade\'s stop is the re-cut',
+    );
+    expect(platform.stops, 1);
+    expect(platform.declares, 1);
+  });
+
+  test('+318: a second cut on a falling ramp asks for no second ramp',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('fade_twice');
+    final platform = _FakePlatform();
+    final out = FilePlayerAudioOutput(
+      player: platform,
+      tempDir: () async => dir,
+    );
+    await out.play(Float32List(48000), 24000, tag: 'A');
+    final first = out.stop();
+    await out.stop(); // the tab-swipe lands on the barge-in's ramp
+    await first;
+    expect(
+      platform.volumes,
+      [0.7, 0.45, 0.2, 0.0, 1.0],
+      reason: 'one fade per cut wave',
+    );
+    expect(platform.stops, 1);
+  });
 }
 
 class _FakePlatform implements FilePlayerPlatform {
@@ -209,6 +296,9 @@ class _FakePlatform implements FilePlayerPlatform {
   /// lane is declared before the first source' is pinned, not wished —
   /// the same apiOrder trick as FakeHarness).
   final List<String> apiOrder = [];
+
+  /// Every level the fade handed the platform, in order (+318).
+  final List<double> volumes = [];
   Completer<void>? holdStart;
   Completer<void>? holdDeclare;
   bool failDeclare = false;
@@ -218,6 +308,12 @@ class _FakePlatform implements FilePlayerPlatform {
   /// artifact and the real end look identical from here — which is
   /// exactly the point the minAge guard and +291 adjudicate).
   void fireComplete() => _complete.add(null);
+
+  @override
+  Future<void> setVolume(double volume) async {
+    apiOrder.add('vol $volume');
+    volumes.add(volume);
+  }
 
   @override
   Future<void> declareCommunicationLane() async {
@@ -236,6 +332,7 @@ class _FakePlatform implements FilePlayerPlatform {
 
   @override
   Future<void> stop() async {
+    apiOrder.add('stop');
     stops++;
   }
 
