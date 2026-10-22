@@ -2526,6 +2526,20 @@ class VoiceAssistant extends ChangeNotifier {
     final g = _gateway;
     if (g == null) return 'bridge not configured';
     final err = await g.setModel(id);
+    if (err != null &&
+        err.contains('not in --models') &&
+        _bridgeHarness != null &&
+        _bridgePrefs.lastModels[_bridgeHarness] == id) {
+      // +304: a refusal of the REMEMBERED word is the menu correcting
+      // the memory (the field tape's 'flash-next': remembered,
+      // re-minted into every fresh /seat record, refused at every
+      // picker). The stale word goes; a refusal of some OTHER word
+      // leaves the memory standing (the +218 law above it).
+      _bridgePrefs.lastModels = {..._bridgePrefs.lastModels}
+        ..remove(_bridgeHarness);
+      unawaited(_saveBridgePrefs());
+      notifyListeners();
+    }
     if (err == null) {
       _syncTabFromSeat(model: id); // +230: the tab follows its seat
       final era = _bridgeHarness;

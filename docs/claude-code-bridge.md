@@ -929,3 +929,24 @@ settled verdict, the +254 unheard-words refusal and its self-healing
 second swipe, the addressed /stop and the late cancelled receipt, and
 the dead carrier that is not a verdict. When a field report arrives,
 the reproduction is now a verb here, not a phone session.
+
+## +304: the seat door and the model memory
+
+'Could not set the model' after recreating the tabs: the phone's
+remembered pick — `flash-next`, a name the CLI never knew — rode
+/seat's model field UNCHECKED into every fresh record (`model:
+model ?? 'default'`), so each spawn answered `--model` with
+`unrecognized_model` and silently ran the default while the picker
+echoed the ghost back. /model itself has always refused the same
+word (`not in --models`): the law was right, the door was missing.
+
+* `saneModel(model, where)` — the menu test — now stands at both
+  doors: /seat drops an unknown model (the tape names the drop; the
+  record is born clean, the refusal is a memory problem, not a
+  seat problem), and `bundleLoad` sweeps a record that went to sleep
+  on a ghost word so it WAKES clean (the record is fixed too, not
+  just the globals).
+* The phone's +304 law: a /model refusal of the VERY WORD the app
+  remembers is the menu correcting the memory — the remembered id
+  clears itself so sheets stop preselecting it. A refusal of some
+  OTHER word leaves the memory standing (the +218 law unchanged).

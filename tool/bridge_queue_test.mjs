@@ -36,6 +36,7 @@ const PORT12 = PORT1 + 31;
 const PORT18 = PORT1 + 32;
 // +301: the /stop funeral-wording port.
 const PORT30 = PORT1 + 40;
+const PORT31 = PORT1 + 41;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
@@ -1603,3 +1604,35 @@ test('+273 folded done waits for the steer run — no answer, no farewell',
       await stopBridge(proc);
     }
   });
+
+// +304: THE SEAT DOOR WAS UNWATCHED. The phone's model MEMORY (and
+// the creation sheet's preselect) rides /seat's model field; the field
+// tape: 'flash-next' — a name the CLI never knew — minted every fresh
+// record, so each spawn answered --model with unrecognized_model and
+// silently ran the default, while the picker's honest re-pick refused
+// through /model as 'not in --models: flash-next' ('could not set the
+// model' on the phone). One validation, every door.
+test('+304: /seat drops a model the menu does not know', async () => {
+  const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+    'stub.log');
+  const proc = startBridge(stubLog, PORT31);
+  try {
+    await up(PORT31);
+    const seat = await call(PORT31, `/seat?token=${TOKEN}`,
+      { body: JSON.stringify({
+          harness: 'claude', fresh: true, model: 'flash-next' }),
+        method: 'POST' });
+    const j = JSON.parse(seat.text);
+    assert.equal(j.ok, true, 'the seat lands; the poison does not');
+    assert.notEqual(j.model, 'flash-next',
+        'the response reports the record\'s REAL model');
+    const h = await health(PORT31);
+    assert.equal(h.model, 'default', 'the record is born clean');
+    // And the same word at the honest door still refuses loudly.
+    const m = await call(PORT31, `/model?token=${TOKEN}`,
+      { body: JSON.stringify({ id: 'flash-next' }), method: 'POST' });
+    assert.match(m.text, /not in --models/, '/model keeps its 400 voice');
+  } finally {
+    await stopBridge(proc);
+  }
+});

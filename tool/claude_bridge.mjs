@@ -402,6 +402,20 @@ function claudeCurrent(modelFlag, ran) {
   if (m !== 'default') return m;
   return ran ?? focus?.claudeRan ?? claudeRan ?? 'default';
 }
+// +304: ONE menu-truth test at EVERY door. /model refuses an id the
+// --models menu does not carry; the seat's model field (the phone's
+// MEMORY, the creation sheet's preselect) was trusted unchecked, so a
+// ghost word minted records whose every spawn the CLI answered with
+// unrecognized_model — silently running the default while the picker
+// echoed the ghost back. An unknown model is dropped at the door
+// (the tape names it); the record is born and wakes on the default.
+function saneModel(m, where) {
+  if (m && harness === 'claude' && !modelMenu.includes(m)) {
+    console.error(`  [model] ${where}: dropping '${m}' — not in the menu`);
+    return null;
+  }
+  return m;
+}
 function currentModel() {
   return harness === 'opencode' ? oc.model : claudeCurrent();
 }
@@ -787,7 +801,10 @@ function bundleLoad(r) {
   lastTextOpen = r.lastTextOpen; tokSentAt = r.tokSentAt; census = r.census;
   ctxWindow = r.ctxWindow; lastCtx = r.lastCtx; ctxOwner = r.ctxOwner;
   estIn = r.estIn; estSentIn = r.estSentIn;
-  harness = r.harness; dir = r.dir; claudeModel = r.claudeModel;
+  harness = r.harness; dir = r.dir;
+  // +304: a record that WENT to sleep on a ghost word wakes clean —
+  // the sweep fixes the record too, not just the globals.
+  r.claudeModel = claudeModel = saneModel(r.claudeModel, 'record load');
   openTools = r.openTools; detached = r.detached; bgTools = r.bgTools;
   agentTasks = r.agentTasks; spokenTools = r.spokenTools;
   spokenTexts = r.spokenTexts; heldFinished = r.heldFinished;
@@ -3507,8 +3524,9 @@ const server = http.createServer((req, res) => {
       const to = j?.harness === undefined ? harness
         : (j.harness === 'claude' || j.harness === 'opencode')
           ? j.harness : null;
-      const model = j?.model === undefined || j?.model === null ||
+      let model = j?.model === undefined || j?.model === null ||
         j.model === '' ? null : j.model;
+      model = saneModel(model, 'the seat'); // +304
       const fresh = j?.fresh === true || j?.sessionId === null;
       const wantSid = j?.sessionId === undefined ? undefined
         : (typeof j.sessionId === 'string' &&

@@ -603,6 +603,19 @@ void modelPickerTests() {
         'opus',
         reason: 'a REFUSED pick does not rewrite the memory',
       );
+      // +304: but refusing the VERY WORD the app remembers proves the
+      // memory stale — the field tape's 'flash-next' was remembered
+      // (and re-minted into every fresh /seat record) while the CLI
+      // never knew the name. The menu's refusal is the correction;
+      // the stale word goes, so sheets stop preselecting it.
+      harness.setModelError = 'not in --models: opus';
+      expect(await a.setBridgeModel('opus'), contains('not in --models'));
+      expect(
+        a.bridgeLastModel,
+        isNull,
+        reason: 'a refused pick of the REMEMBERED id clears it',
+      );
+      harness.setModelError = null;
     });
 
     test('+220: an error-done files its reason as a card in the '
