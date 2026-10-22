@@ -232,7 +232,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, existsSync, rmSync, statSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
@@ -494,13 +494,23 @@ const opencodeBin = arg('opencode', [
 let child = null;       // claude process
 let childDead = true;   // needs respawn?
 let sessionId = null;   // for --resume after a bridge restart
-// A function of the LIVE dir: each project remembers its own voice
-// session, and POST /dir moving the agent moves the pointer with it.
-// Each harness remembers its own conversation: a runtime switch never
+// Keyed on the LIVE dir: each project remembers its own voice session,
+// and POST /dir moving the agent moves the pointer with it. Each
+// harness remembers its own conversation: a runtime switch never
 // destroys the other harness's resume pointer.
-const sidFilePath = (h, d) => join(d, h === 'opencode'
+// +305: the pointer files live with the bridge's OWN state under HOME
+// (~/.claude-bridge/pointers), not in the user's repo. The dir is the
+// key, not the shelf: the work dir is hashed into the file name, so
+// every dir+harness pair keeps a private pointer exactly as the dotfile
+// in the repo did — and a project dir is never dirtied by a file it
+// must gitignore. A legacy <dir>/.<harness>_bridge_session is still
+// READ (one migration: read, re-mint under the new roof, delete).
+const POINTER_DIR = join(homedir(), '.claude-bridge', 'pointers');
+const dirKey = (d) => createHash('sha256').update(resolve(d)).digest('hex').slice(0, 16);
+const sidFilePath = (h, d) => join(POINTER_DIR,
+  `${h === 'opencode' ? 'opencode' : 'claude'}-${dirKey(d)}`);
+const legacyPointerPath = (h, d) => join(d, h === 'opencode'
   ? '.opencode_bridge_session' : '.claude_bridge_session');
-const sidFile = () => sidFilePath(harness, dir);
 let curRes = null;      // { res, keep, turnStart } — the ATTACHED (heard) turn
 let turnOpen = false;   // a claude turn is in flight, attached or backgrounded
 let proactiveTurn = false; // +133: this turn is the harness speaking
@@ -729,16 +739,42 @@ function recBySid(sid) {
 // line 2 = the app uuid (so a tab's identity survives a bridge
 // restart). A v1 file (bare sid) still reads: the uuid re-mints and
 // the next /seat answer re-adopts it wherever it is spoken.
-function readPointer(p) {
+function readPtrFile(p) {
   try {
     const lines = readFileSync(p, 'utf8').split('\n');
     return { sid: (lines[0] || '').trim() || null,
              uuid: (lines[1] || '').trim() || null };
-  } catch { return {}; }
+  } catch { return null; }
 }
-function writePointer(p, rec) {
+function readPointer(h, d) {
+  const cur = readPtrFile(sidFilePath(h, d));
+  if (cur) return cur;
+  const old = legacyPointerPath(h, d);
+  const legacy = readPtrFile(old);
+  if (legacy) {
+    // The one-time move: the memory comes under the bridge's own
+    // roof (v1's bare sid re-mints its uuid line empty, as before)
+    // and the project dir gets back a file it never asked for.
+    try {
+      mkdirSync(POINTER_DIR, { recursive: true });
+      writeFileSync(sidFilePath(h, d), `${legacy.sid ?? ''}\n${legacy.uuid ?? ''}`);
+      rmSync(old, { force: true });
+    } catch {}
+  }
+  return legacy ?? {};
+}
+function writePointer(h, d, rec) {
   const sid = rec === focus ? sessionId : rec.sid;
-  try { writeFileSync(p, `${sid ?? ''}\n${rec.uuid}`); } catch {}
+  try {
+    mkdirSync(POINTER_DIR, { recursive: true });
+    writeFileSync(sidFilePath(h, d), `${sid ?? ''}\n${rec.uuid}`);
+    rmSync(legacyPointerPath(h, d), { force: true });
+  } catch {}
+}
+function rmPointer(h, d) {
+  for (const p of [sidFilePath(h, d), legacyPointerPath(h, d)]) {
+    try { rmSync(p, { force: true }); } catch {}
+  }
 }
 const sessions = new Map(); // key -> record (key: the record's app uuid)
 const SESSIONS_CAP = 32;
@@ -2067,7 +2103,7 @@ function handleEvent(line) {
     // give the floor to a queued prompt.
     turnOpen = false;
     openTools.clear();
-    if (sessionId && focus) writePointer(sidFile(), focus);
+    if (sessionId && focus) writePointer(harness, dir, focus);
     // Post-turn context snapshot: the LAST API call's input already
     // carries the whole history (earlier outputs included), so the next
     // prompt's size is that input plus the final message's output. The
@@ -3463,7 +3499,7 @@ const server = http.createServer((req, res) => {
           noteHarnessEra(to); // the flip's instant is the era's start
           resetConversation();
           // The new harness resumes ITS OWN remembered conversation
-          sessionId = readPointer(sidFile()).sid ?? null;
+          sessionId = readPointer(harness, dir).sid ?? null;
         }
         console.error('  [harness] ' + harness);
         res.writeHead(200, {'content-type': 'application/json'})
@@ -3499,7 +3535,7 @@ const server = http.createServer((req, res) => {
       withConv(stopRec ?? focus, () => { if (turnOpen) interruptTurn(); });
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
-      try { rmSync(sidFile()); } catch {}
+      rmPointer(harness, dir);
       resetConversation();
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/seat') {
@@ -3594,9 +3630,8 @@ const server = http.createServer((req, res) => {
         const eraFlip = to !== harness;
         if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat
         bundleSave(leaving); // whatever the reset left, the record remembers
-        const pPath = sidFilePath(to, target);
-        const ptr = fresh ? {} : readPointer(pPath);
-        if (fresh) { try { rmSync(pPath); } catch {} }
+        const ptr = fresh ? {} : readPointer(to, target);
+        if (fresh) rmPointer(to, target);
         // +UUID: resolve the named conversation by its APP identity —
         // uuid first (the phone's tab name), backend sid as alias for
         // legacy ledgers and explicit --resume forks, the pointer
@@ -3654,11 +3689,11 @@ const server = http.createServer((req, res) => {
         bundleLoad(rec); focus = rec; parkConv(rec);
         if (eraFlip) { try { writeFileSync(harnessFile, to); } catch {} }
         if (fresh) {
-          try { rmSync(sidFile()); } catch {}
+          rmPointer(harness, dir);
           sessionId = null;
         } else {
           sessionId = rec.sid;
-          writePointer(sidFile(), rec); // v2: sid AND uuid, so both
+          writePointer(harness, dir, rec); // v2: sid AND uuid, so both
           // the resume and the tab name survive a restart
         }
         const settle = () => {
@@ -3700,7 +3735,7 @@ const server = http.createServer((req, res) => {
         // v2 pointer read (line 1 = backend sid); the destination's
         // remembered thread rides immediately, and the focused record
         // adopts its backend id as its own again.
-        sessionId = readPointer(sidFile()).sid ?? null;
+        sessionId = readPointer(harness, dir).sid ?? null;
         if (focus) { focus.sid = sessionId; parkConv(focus); }
         console.error('  [dir] moved the agent to ' + dir +
           ' (session ' + (sessionId ?? 'starts fresh on the next word') + ')');
@@ -3783,7 +3818,7 @@ if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
 // whatever record is focused, so the record must be the first thing
 // this file focuses.
 {
-  const pt = readPointer(sidFile());
+  const pt = readPointer(harness, dir);
   sessionId = pt.sid ?? null;
   const bootRec = newConv({ harness, dir, model: claudeModel });
   if (pt.uuid) bootRec.uuid = pt.uuid;

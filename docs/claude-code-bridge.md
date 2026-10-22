@@ -250,8 +250,13 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   instead of the box sitting on "Asking the bridge…" until the API
   proves the number (and the app's spinner line carries the
   best-known in-count even while frozen over a tool run).
-- Pointer file v2: `<dir>/.claude_bridge_session` (and the opencode
-  sibling) holds TWO lines — line 1 the harness session id (the
+- Pointer file v2 (+305): `~/.claude-bridge/pointers/claude-<hash>` —
+  the bridge's OWN shelf, keyed by the first 16 hex of the sha256 of
+  the resolved work dir, so every project+harness pair keeps a private
+  pointer and the project dir holds no file of the bridge's (+305
+  retired the old `<dir>/.claude_bridge_session` dotfile and its
+  gitignore; a legacy dotfile is read once, moved, and deleted). The
+  file holds TWO lines — line 1 the harness session id (the
   `--resume` material), line 2 the conversation's app uuid (so a tab
   wakes under the name the phone already speaks). A v1 file (bare id)
   still reads; its uuid re-mints and the next /seat re-adopts.
@@ -624,9 +629,10 @@ shared machinery, not a second implementation.
   the remembered model, labelled as memory, until /health names a
   current again.
 - **Per-harness memory.** Each harness keeps its own resume pointer
-  (`.claude_bridge_session` / `.opencode_bridge_session` in the work
-  dir; pointer v2 = sid line + app-uuid line): flipping away and back
-  resumes each conversation exactly where it stopped — under the SAME
+  (one file per work dir under `~/.claude-bridge/pointers`, named
+  `claude-`/`opencode-` plus the dir's hash; pointer v2 = sid line +
+  app-uuid line): flipping away and back resumes each conversation
+  exactly where it stopped — under the SAME
   app uuid, since the harness id is backend property and the tab's
   name never moves.
 - **Per-harness thread (+213, +214, phone side).** The app stamps every chat
@@ -895,7 +901,9 @@ the token in the app's Bridge screen.
     # journalctl --user -u claude-voice-bridge -f      # live claude stderr/EVT lines
 
 On restart the bridge re-`--resume`s the last session id automatically
-(saved to `<dir>/.claude_bridge_session`), so the voice conversation
+(saved to `~/.claude-bridge/pointers/`, one file per work dir and
+harness — since +305 the project dir keeps no bridge files of its own),
+so the voice conversation
 survives bridge and machine reboots too.
 
 ## Open questions for the user

@@ -52,8 +52,11 @@ app.*.map.json
 
 # Built by tool/build_neutts_pack.sh (shipped inside the voice pack)
 android/app/src/main/jniLibs/
+# LEGACY pointer dotfiles (+305 moved them to ~/.claude-bridge/pointers;
+# a running old-code bridge may still rewrite these until its next
+# restart, which migrates and deletes them — then this block can go)
 .claude_bridge_session
 .opencode_bridge_session
-# harness-local state (claude's worktree dir; the pointers above and
-# ~/.claude_bridge_harness carry the conversation memory instead)
+# harness-local state (claude's worktree dir; ~/.claude-bridge/pointers
+# and ~/.claude_bridge_harness carry the conversation memory instead)
 .claude/

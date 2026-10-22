@@ -40,6 +40,10 @@ const PORT31 = PORT1 + 41;
 
 function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-qtest-'));
+  // +305: scratch HOME too — the bridge's state (pointer files under
+  // ~/.claude-bridge, the harness choice, the era timeline) is the
+  // test's own, never the developer's real home.
+  const home = mkdtempSync(join(tmpdir(), 'bridge-qhome-'));
   const proc = spawn(
     process.execPath,
     // extraArgs FIRST: arg() reads the first occurrence of a flag, so a
@@ -47,7 +51,7 @@ function startBridge(stubLog, port, extraEnv = {}, extraArgs = []) {
     [join(HERE, 'claude_bridge.mjs'), ...extraArgs, '--token', TOKEN,
       '--port', String(port), '--claude', join(HERE, 'bridge_stub_claude.mjs'),
       '--dir', dir],
-    { env: { ...process.env, STUB_LOG: stubLog, STUB_RESULT_MS: '1500',
+    { env: { ...process.env, HOME: home, STUB_LOG: stubLog, STUB_RESULT_MS: '1500',
       ...extraEnv } },
   );
   proc.stderr.resume(); // keep the pipe draining; the test speaks over HTTP

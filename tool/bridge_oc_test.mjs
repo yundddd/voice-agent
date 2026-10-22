@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 
 const HERE = new URL('.', import.meta.url).pathname;
@@ -60,6 +61,11 @@ async function full(port, pathname, { body = null, method = 'GET' } = {}) {
   return { status: c.status, text: c.text };
 }
 const health = async (port) => JSON.parse((await full(port, '/health')).text);
+// +305: the pointer lives under the bridge's HOME, keyed by hash of the
+// work dir — the rig mirrors the bridge's own arithmetic, so a drift in
+// either shows up as a missing file, not a passing test.
+const ptrPath = (home, harnessName, dir) => join(home, '.claude-bridge', 'pointers',
+  `${harnessName === 'opencode' ? 'opencode' : 'claude'}-${createHash('sha256').update(resolve(dir)).digest('hex').slice(0, 16)}`);
 
 // A world: scratch HOME (so the persisted harness choice and the oc
 // state file live in the test), scratch dir (so the per-harness pointer
@@ -127,14 +133,18 @@ test('a spoken turn rides the bus: say frames, done, and the utterance on disk',
     assert.match(w.logs(), /^instructions voice You are a hands-free/m);
     // And the bridge learned its session id from the wire.
     await until('pointer written', async () =>
-      existsSync(join(w.dir, '.opencode_bridge_session')));
+      existsSync(ptrPath(w.home, 'opencode', w.dir)));
     // +UUID: pointer v2 — line 1 is the --resume material, line 2 the
     // conversation's app uuid (its tab name across a restart).
-    const ptr = readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').split('\n');
+    const ptr = readFileSync(ptrPath(w.home, 'opencode', w.dir), 'utf8').split('\n');
     assert.equal(ptr[0].trim(), 'soc-1');
     assert.match((ptr[1] ?? '').trim(), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'pointer line 2 is the app uuid');
-    assert.ok(!existsSync(join(w.dir, '.claude_bridge_session')),
+    assert.ok(!existsSync(ptrPath(w.home, 'claude', w.dir)),
       'the other harness\u2019s pointer was touched');
+    // +305: the pointer left no dotfile behind in the project dir.
+    assert.ok(!existsSync(join(w.dir, '.opencode_bridge_session')) &&
+      !existsSync(join(w.dir, '.claude_bridge_session')),
+      'a pointer dotfile was left in the project dir');
   } finally { w.stop(); }
 });
 
@@ -461,6 +471,12 @@ test('+223 moving folders carries the destination\u2019s remembered session', as
     assert.equal(dirAns.backendSid, 'ses-B');
     assert.match(dirAns.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     assert.equal((await health(port)).backendSid, 'ses-B');
+    // +305: the destination's LEGACY dotfile was read once, re-minted
+    // under ~/.claude-bridge/pointers, and deleted from the project.
+    assert.ok(existsSync(ptrPath(home, 'claude', b)),
+      'the legacy pointer was not migrated under the bridge roof');
+    assert.ok(!existsSync(join(b, '.claude_bridge_session')),
+      'the migrated pointer left the old dotfile in the project dir');
     // The remembered conversation is not merely REPORTED — the next
     // utterance RESUMES it: the pointer rides --resume into the CLI.
     const t = await call(port, `/talk?token=${TOKEN}`,
@@ -571,7 +587,7 @@ test('/seat moves harness, folder and conversation in one request', async () => 
     assert.equal(j2.backendSid, 'ses-HOME');
     assert.equal((await health(w.port)).sessionId, j2.sessionId);
     assert.equal((await health(w.port)).backendSid, 'ses-HOME');
-    const ptr2 = readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').split('\n');
+    const ptr2 = readFileSync(ptrPath(w.home, 'opencode', w.dir), 'utf8').split('\n');
     assert.equal(ptr2[0].trim(), 'ses-HOME',
       'the pointer did not follow the named seat');
     assert.equal(ptr2[1].trim(), j2.sessionId, 'pointer uuid follows the seat');
