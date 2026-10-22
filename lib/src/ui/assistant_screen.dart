@@ -864,6 +864,40 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// and the file slip (memory-only progress).
   final Map<ChatEntry, (int, ThemeData, Widget)> _bubbleCache = {};
 
+  /// +316: the voice of a blank conversation. A wiped log is exactly
+  /// the screen that needs the instruction — nothing else on it says
+  /// 'speak' — so the window says it once, in the mode the phone is
+  /// in, in the same words the status line already teaches. Quiet on
+  /// purpose: an invitation, not a bubble — it is not logged, not
+  /// themed as news, and the first real entry buries it.
+  Widget _emptyChatPrompt(AssistantView v, BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final ptt = v.mode == InteractionMode.pushToTalk;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            ptt ? Icons.touch_app_outlined : Icons.forum_outlined,
+            size: 20,
+            color: scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            ptt
+                ? 'Hold the button and speak — your first bubble lands here.'
+                : 'Just start talking — your first bubble lands here.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The channel's one bubble wrapper — key, fence, entrance, card —
   /// minted once per revision.
   Widget _bubbleFor(ChatEntry e, VoiceAssistant a, BuildContext context) {
@@ -1337,6 +1371,28 @@ class _AssistantScreenState extends State<AssistantScreen>
                                                       // slip IS the bubble.
                                                       e.isFile)
                                                     _bubbleFor(e, a, context),
+                                                // +316: the blank conversation
+                                                // is a body without an
+                                                // instruction. First launch,
+                                                // /new, a tab wipe — the log
+                                                // goes empty exactly when
+                                                // there is nothing on screen
+                                                // to teach the next take, so
+                                                // the window itself says the
+                                                // line the status bar already
+                                                // teaches, in the mode the
+                                                // phone is in. It stands only
+                                                // while nothing is renderable
+                                                // and no turn is in flight —
+                                                // the first bubble buries it.
+                                                if (v.chat.every(
+                                                      (e) =>
+                                                          !e.fromUser &&
+                                                          e.blocks.isEmpty &&
+                                                          !e.isFile,
+                                                    ) &&
+                                                    !v.bridgeBusy)
+                                                  _emptyChatPrompt(v, context),
                                               ],
                                             ),
                                           ),
