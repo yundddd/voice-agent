@@ -128,7 +128,11 @@ test('a spoken turn rides the bus: say frames, done, and the utterance on disk',
     // And the bridge learned its session id from the wire.
     await until('pointer written', async () =>
       existsSync(join(w.dir, '.opencode_bridge_session')));
-    assert.equal(readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').trim(), 'soc-1');
+    // +UUID: pointer v2 — line 1 is the --resume material, line 2 the
+    // conversation's app uuid (its tab name across a restart).
+    const ptr = readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').split('\n');
+    assert.equal(ptr[0].trim(), 'soc-1');
+    assert.match((ptr[1] ?? '').trim(), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'pointer line 2 is the app uuid');
     assert.ok(!existsSync(join(w.dir, '.claude_bridge_session')),
       'the other harness\u2019s pointer was touched');
   } finally { w.stop(); }
@@ -192,8 +196,10 @@ test('/harness flips both ways, persists, and each harness keeps its own pointer
     const h = await health(w.port);
     assert.equal(h.harness, 'opencode');
     // The flip-back resumed ITS OWN conversation, untouched by the
-    // detour through the other harness.
-    assert.equal(h.sessionId, 'soc-1');
+    // detour through the other harness — and +UUID names the resumption
+    // by its BACKEND property: the app uuid (sessionId) never moved.
+    assert.equal(h.backendSid, 'soc-1');
+    assert.match(h.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'the tab keeps its birth name across harness flips');
     // …and the timeline says so, in order, with the detour named.
     assert.deepEqual((await health(w.port)).harnessHistory.map(
       (x) => x.harness), ['opencode', 'claude', 'opencode']);
@@ -446,8 +452,15 @@ test('+223 moving folders carries the destination\u2019s remembered session', as
     const r = await full(port, `/dir?token=${TOKEN}`,
       { method: 'POST', body: JSON.stringify({path: b}) });
     assert.equal(r.status, 200);
-    assert.deepEqual(JSON.parse(r.text), {ok: true, dir: b, sessionId: 'ses-B'});
-    assert.equal((await health(port)).sessionId, 'ses-B');
+    const dirAns = JSON.parse(r.text);
+    assert.equal(dirAns.ok, true);
+    assert.equal(dirAns.dir, b);
+    // +UUID: the destination's remembered thread is BACKEND news
+    // ('ses-B' for --resume); the answer's sessionId is the seated
+    // record's app uuid.
+    assert.equal(dirAns.backendSid, 'ses-B');
+    assert.match(dirAns.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal((await health(port)).backendSid, 'ses-B');
     // The remembered conversation is not merely REPORTED — the next
     // utterance RESUMES it: the pointer rides --resume into the CLI.
     const t = await call(port, `/talk?token=${TOKEN}`,
@@ -530,25 +543,38 @@ test('/seat moves harness, folder and conversation in one request', async () => 
     assert.equal(r.status, 200);
     const j = JSON.parse(r.text);
     assert.equal(j.ok, true);
-    assert.equal(j.sessionId, null, 'fresh must answer no conversation');
+    // +UUID: 'fresh' is a conversation, unnamed at the BACKEND but
+    // born named at the APP — the answer is its uuid, and the pointer
+    // stays empty until a harness id exists.
+    assert.match(j.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'fresh answers with its birth uuid');
+    assert.equal(j.backendSid, null, 'fresh has no backend thread yet');
     assert.equal(j.harness, 'opencode');
-    assert.equal((await health(w.port)).sessionId, null);
+    assert.equal((await health(w.port)).sessionId, j.sessionId);
     // A turn names the session (the stub is always soc-1)…
     const a = await call(w.port, `/talk?token=${TOKEN}`,
       { method: 'POST', body: 'first words' });
     await until('done', async () => a.text.includes('event: done'));
-    assert.equal((await health(w.port)).sessionId, 'soc-1');
+    // the same record, now backend-named (the stub is always soc-1)…
+    assert.equal((await health(w.port)).backendSid, 'soc-1');
+    assert.equal((await health(w.port)).sessionId, j.sessionId,
+      'naming the backend thread never renames the conversation');
     // …and an explicit RESUME by name re-seats and REWRITES the
     // pointer, so a bridge restart wakes on the tab seated last —
     // the +223 pointer law, now callable with a chosen thread.
     const r2 = await full(w.port, `/seat?token=${TOKEN}`, {
       method: 'POST', body: '{"sessionId":"ses-HOME"}',
     });
-    assert.equal(JSON.parse(r2.text).sessionId, 'ses-HOME');
-    assert.equal((await health(w.port)).sessionId, 'ses-HOME');
-    assert.equal(
-      readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').trim(),
-      'ses-HOME', 'the pointer did not follow the named seat');
+    // A bare id is BACKEND news: the seat resolves/adopts it and
+    // answers in the app uuid; the pointer keeps both lines.
+    const j2 = JSON.parse(r2.text);
+    assert.match(j2.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(j2.backendSid, 'ses-HOME');
+    assert.equal((await health(w.port)).sessionId, j2.sessionId);
+    assert.equal((await health(w.port)).backendSid, 'ses-HOME');
+    const ptr2 = readFileSync(join(w.dir, '.opencode_bridge_session'), 'utf8').split('\n');
+    assert.equal(ptr2[0].trim(), 'ses-HOME',
+      'the pointer did not follow the named seat');
+    assert.equal(ptr2[1].trim(), j2.sessionId, 'pointer uuid follows the seat');
     // Harness in the SAME verb: the era timeline grows, and with no
     // sessionId named the claude side reads ITS pointer (none yet →
     // fresh on the next word).
@@ -557,7 +583,9 @@ test('/seat moves harness, folder and conversation in one request', async () => 
     });
     const j3 = JSON.parse(r3.text);
     assert.equal(j3.harness, 'claude');
-    assert.equal(j3.sessionId, null);
+    // +UUID: no claude pointer → a blank conversation, still born named.
+    assert.match(j3.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(j3.backendSid, null);
     const hist = (await health(w.port)).harnessHistory;
     assert.deepEqual(hist.map((x) => x.harness), ['opencode', 'claude']);
   } finally { w.stop(); }
@@ -624,7 +652,11 @@ test('+230 the claude seat resumes a NAMED conversation on respawn', async () =>
     const r = await full(port, `/seat?token=${TOKEN}`, {
       method: 'POST', body: '{"sessionId":"ses-TAB"}',
     });
-    assert.equal(JSON.parse(r.text).sessionId, 'ses-TAB');
+    // +UUID: the answer speaks the app uuid; the BACKEND line carries
+    // the named thread that --resume will ride.
+    const seatJ = JSON.parse(r.text);
+    assert.match(seatJ.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(seatJ.backendSid, 'ses-TAB');
     const t = await call(port, `/talk?token=${TOKEN}`,
       { method: 'POST', body: 'resumed thread' });
     await until('done', async () => t.text.includes('event: done'));

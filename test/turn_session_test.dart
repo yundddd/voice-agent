@@ -449,10 +449,16 @@ void main() {
       // no cross-payment).
       turn.noteAgentWork('Bash sleep 15', sid: 'ses-B');
       turn.payAgentDebt('Bash sleep 15', sid: 'ses-B');
-      expect(turn.bgWork, 'Bash sleep 20',
-          reason: 'the line re-labels to B\u2019s still-owed newest');
-      expect(turn.workOwner, 'ses-B',
-          reason: 'B still owes the 20 — the banner stays B\u2019s');
+      expect(
+        turn.bgWork,
+        'Bash sleep 20',
+        reason: 'the line re-labels to B\u2019s still-owed newest',
+      );
+      expect(
+        turn.workOwner,
+        'ses-B',
+        reason: 'B still owes the 20 — the banner stays B\u2019s',
+      );
       // A clean /health about B settles ALL of B's rows (A holds).
       final paid = turn.settleDebtsOwnedBy('ses-B');
       expect(paid.map((d) => d.label).toList(), ['Bash sleep 20']);
@@ -482,8 +488,11 @@ void main() {
       // turn. The 30 s the sleep has already run must survive it.
       t.becomeHeard();
       final row = t.debtFor('ses-A');
-      expect(row?.sinceMs, born?.millisecondsSinceEpoch,
-          reason: 'the ROW keeps its launch-time across the landing');
+      expect(
+        row?.sinceMs,
+        born?.millisecondsSinceEpoch,
+        reason: 'the ROW keeps its launch-time across the landing',
+      );
       // Only once the ledger is clear does the next heard turn
       // anchor fresh.
       t.settleDebtsOwnedBy('ses-A');

@@ -231,6 +231,66 @@ void main() {
     expect(lines.any((l) => l.startsWith('chunk ended cut: ran')), isTrue);
     reply.closeStream();
   });
+
+  test(
+    '+A: a switch-cut on the IDLE pipeline revokes the in-flight block',
+    () async {
+      // Review A: the switch cut early-returned when nothing was
+      // playing or queued — but a block STILL SYNTHESISING has
+      // neither, and its callback used to hand the finished audio
+      // to the tab the reader had just switched TO. The epoch door
+      // (invalidatePendingAudio) kills its pieces at the seam and
+      // cancels the worker's remaining pieces at the next boundary.
+      final gate = Completer<void>();
+      final (out, engine, reply) = rig();
+      engine.holdChunks = gate.future;
+      reply.startStream();
+      unawaited(reply.runPump(isStale: () => false));
+      final block = reply.speakBlock(
+        'a paragraph still in the renderer',
+        alive: () => true,
+        onAir: (_) {},
+      );
+      await settle();
+      expect(out.played, isEmpty, reason: 'still synthesising');
+      reply.invalidatePendingAudio(); // the switch's idle door
+      gate.complete();
+      final outcome = await block;
+      expect(outcome.onAir, isFalse);
+      expect(
+        out.played,
+        isEmpty,
+        reason: 'the in-flight block must not speak on the new tab',
+      );
+      expect(
+        reply.playSeconds,
+        0,
+        reason: 'a revoked block is not counted as played',
+      );
+    },
+  );
+
+  test(
+    '+A: stopPlayback revokes an in-flight synthesis too (second door)',
+    () async {
+      final (out, engine, reply) = rig();
+      final gate = Completer<void>();
+      engine.holdChunks = gate.future;
+      reply.startStream();
+      unawaited(reply.runPump(isStale: () => false));
+      final block = reply.speakBlock(
+        'cut before its first chunk',
+        alive: () => true,
+        onAir: (_) {},
+      );
+      await settle();
+      reply.stopPlayback(); // the press path's cut
+      gate.complete();
+      final outcome = await block;
+      expect(outcome.onAir, isFalse);
+      expect(out.played, isEmpty);
+    },
+  );
 }
 
 /// +289: a backend whose play() sits in flight (the real one encodes

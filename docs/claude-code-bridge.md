@@ -181,7 +181,18 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   wakes on the tab seated last — the +223 pointer law with a caller-
   chosen thread), and neither reads the pointer (the `/dir` arrival).
   One `resetConversation` regardless of how many fields move.
-  Answers `{"ok":true,"harness":…,"dir":…,"sessionId":…,"model":…}` —
+  +UUID (identity at birth): the conversation name the phone speaks
+  is the record's APP UUID, minted when the conversation is created
+  and never rewritten by resume, fork, or `/new`. A spoken uuid is
+  resolved first against the live registry, then against the pointer
+  file's uuid line (a restart re-ADOPTS the tab's name onto the
+  thread it names); a spoken non-uuid id is BACKEND news — the old
+  `--resume` law, and how legacy phone ledgers still find their
+  conversations (every backend id ever learned stays aliased to its
+  uuid). The answer always names the app uuid, so old clients adopt
+  the new name from the first /seat they make.
+  Answers `{"ok":true,"harness":…,"dir":…,"sessionId":<app uuid>,
+  "backendSid":<harness id or null>,"model":…}` —
   the settled seat, from the same fields `/health` will report; `400
   {"ok":false,"error":…}` names the refusal (bad harness name, folder
   outside the root, malformed id — ids must match `[A-Za-z0-9]`
@@ -201,7 +212,7 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   pointer is then loaded, so the next utterance RESUMES that project's
   remembered conversation (first visit starts fresh and names itself
   into the folder). The response carries `{"ok":true,"dir":abs,
-  "sessionId":…}` so the app's session-threaded chat can flip windows
+  "sessionId":<app uuid>,"backendSid":…}` so the app's session-threaded chat can flip windows
   in the same breath. `400 not a folder…` if the path is outside `--dir-root`,
   missing, or not a directory. The initial `--dir` is never policed
   (an operator can start anywhere); only moves are.
@@ -239,8 +250,11 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   instead of the box sitting on "Asking the bridge…" until the API
   proves the number (and the app's spinner line carries the
   best-known in-count even while frozen over a tool run).
-- Session id persists to `<dir>/.claude_bridge_session`, so a bridge
-  restart resumes the same voice conversation.
+- Pointer file v2: `<dir>/.claude_bridge_session` (and the opencode
+  sibling) holds TWO lines — line 1 the harness session id (the
+  `--resume` material), line 2 the conversation's app uuid (so a tab
+  wakes under the name the phone already speaks). A v1 file (bare id)
+  still reads; its uuid re-mints and the next /seat re-adopts.
 
 Verified end-to-end on this machine:
 - two utterances, one process, second answered in-context (secret word);
@@ -314,11 +328,15 @@ with one thread, a coin toss with two (field tape: two sessions
 streaming at once, the visible chat "mixed with responses from
 different sessions, a complete mess").
 
-`relay()` now stamps `_sess` — the owning conversation's sid at relay
+`relay()` now stamps `_sess` — the owning conversation's name at relay
 time — into EVERY frame (the ring copy, the backlog copy and the live
 view all share the data object, so replayed frames carry their birth
-owner). A nameless birth stays unstamped and falls through to the
-+253 inference, exactly as before; an old bridge changes nothing on
+owner). +UUID made that name the record's APP UUID, born with the
+conversation: every frame of a uuid-at-birth bridge (`uuidAtBirth:
+true` in /health) is born named, and no gate ever again infers
+ownership from a missing stamp. A nameless birth (an older bridge)
+stays unstamped and falls through to the +253 inference, exactly as
+before; an old bridge changes nothing on
 the phone.
 
 Phone law (`_onSay`/`_onTool`): a frame stamped for a conversation
@@ -607,8 +625,10 @@ shared machinery, not a second implementation.
   current again.
 - **Per-harness memory.** Each harness keeps its own resume pointer
   (`.claude_bridge_session` / `.opencode_bridge_session` in the work
-  dir): flipping away and back resumes each conversation exactly where
-  it stopped.
+  dir; pointer v2 = sid line + app-uuid line): flipping away and back
+  resumes each conversation exactly where it stopped — under the SAME
+  app uuid, since the harness id is backend property and the tab's
+  name never moves.
 - **Per-harness thread (+213, +214, phone side).** The app stamps every chat
   bubble with the era `/health` reported at its birth and shows only
   the current era's bubbles (plus un-era history, which belongs to

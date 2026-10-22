@@ -203,6 +203,7 @@ class FakeBackends extends WorkerBackends {
     this.ttsChunkSamples = 800,
     this.ttsSampleRate = 24000,
     this.ttsNumSpeakers = 1,
+    this.ttsSpinMicros = 0,
   });
 
   final List<String> transcripts;
@@ -212,6 +213,7 @@ class FakeBackends extends WorkerBackends {
   final int ttsChunkSamples;
   final int ttsSampleRate;
   final int ttsNumSpeakers;
+  final int ttsSpinMicros;
 
   @override
   Future<AsrBackend> buildAsr(ModelPaths p) async =>
@@ -226,6 +228,7 @@ class FakeBackends extends WorkerBackends {
     chunkSamples: ttsChunkSamples,
     sampleRate: ttsSampleRate,
     numSpeakersValue: ttsNumSpeakers,
+    spinMicros: ttsSpinMicros,
   );
 }
 
@@ -578,10 +581,16 @@ class FakeTts implements TtsBackend {
     required this.chunkSamples,
     required this.sampleRate,
     this.numSpeakersValue = 1,
+    this.spinMicros = 0,
   });
   final int chunkSamples;
   final int sampleRate;
   final int numSpeakersValue;
+
+  /// Synchronous busy-work per generate, standing in for real model
+  /// seconds: a piece this slow makes the worker loop hold its message
+  /// queue between pieces — the window the +B cancel rides.
+  final int spinMicros;
   final List<String> texts = [];
   @override
   int get numSpeakers => numSpeakersValue;
@@ -599,6 +608,10 @@ class FakeTts implements TtsBackend {
     // the test side (the fake runs on the isolate). Decode:
     // (v * 100000) % 250 -> sid; floor(v * 400) -> length % 100 + 1.
     final v = ((text.length % 100) + 1) / 400.0 + sid / 100000.0;
+    if (spinMicros > 0) {
+      final sw = Stopwatch()..start();
+      while (sw.elapsedMicroseconds < spinMicros) {}
+    }
     return (Float32List.fromList(List.filled(chunkSamples, v)), sampleRate);
   }
 

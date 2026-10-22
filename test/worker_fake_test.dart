@@ -47,6 +47,7 @@ void main() {
     int vadEndsAt = 4,
     int ttsChunkSamples = 600,
     int ttsNumSpeakers = 1,
+    int ttsSpinMicros = 0,
     void Function(SpeechEvent)? onEvent,
     TtsSpec? tts,
   }) => SpeechWorker.start(
@@ -64,6 +65,7 @@ void main() {
       vadEndsAt: vadEndsAt,
       ttsChunkSamples: ttsChunkSamples,
       ttsNumSpeakers: ttsNumSpeakers,
+      ttsSpinMicros: ttsSpinMicros,
     ),
   );
 
@@ -366,5 +368,74 @@ void main() {
       w.dispose();
       await expectLater(job, throwsA(isA<StateError>()));
     });
+
+    test(
+      '+B: cancelling a streamed synthesis abandons the remaining pieces',
+      () async {
+        // Review B: the synthesize job used to render EVERY piece in a
+        // synchronous loop — a switched-away reply kept burning the
+        // speech isolate (and delaying the mic) for its whole length,
+        // and stale guards only discarded the audio after the fact.
+        // Pieces now pump one per port event, and a cancelTts cut
+        // stops the queue at the next piece boundary: the future
+        // resolves with the prefix that already rendered — no hang,
+        // no error, no further compute.
+        final w = await startFake(
+          tts: const TtsSpec.titl(
+            titlModels: '',
+            titlVocabs: '',
+            lexiconPaths: '',
+          ),
+          // ~12 ms of synchronous model-work per piece: the cut's
+          // round trip lands BETWEEN pieces (which is exactly the
+          // law under test), and a loaded CI box cannot render the
+          // whole reply before the cancel is even sent.
+          ttsSpinMicros: 12000,
+        );
+        addTearDown(w.dispose);
+        const text =
+            'Alpha bravo charlie delta echo foxtrot one. '
+            'Alpha bravo charlie delta echo foxtrot two. '
+            'Alpha bravo charlie delta echo foxtrot three. '
+            'Alpha bravo charlie delta echo foxtrot four. '
+            'Alpha bravo charlie delta echo foxtrot five. '
+            'Alpha bravo charlie delta echo foxtrot six.';
+        final pieces = splitForTts(text);
+        expect(pieces.length, greaterThan(3));
+
+        final chunkLens = <int>[];
+        void Function()? cancel;
+        final (audio, rate) = await w.synthesizeStream(
+          text,
+          onCancel: (c) => cancel = c,
+          onChunk: (chunk, r) {
+            chunkLens.add(chunk.length);
+            if (chunkLens.length == 1) cancel?.call(); // cut at the seam
+          },
+        );
+        expect(
+          chunkLens.length,
+          lessThan(pieces.length),
+          reason: 'the queue died at the cut — the rest was never rendered',
+        );
+        expect(
+          audio.length,
+          chunkLens.reduce((a, b) => a + b),
+          reason: 'the future resolves with the rendered prefix',
+        );
+        expect(rate, 24000);
+
+        // The worker is healthy afterwards: a fresh full stream runs.
+        final (again, _) = await w.synthesizeStream(
+          'Alpha bravo charlie delta echo foxtrot one. '
+          'Alpha bravo charlie delta echo foxtrot two. '
+          'Alpha bravo charlie delta echo foxtrot three. '
+          'Alpha bravo charlie delta echo foxtrot four. '
+          'Alpha bravo charlie delta echo foxtrot five. '
+          'Alpha bravo charlie delta echo foxtrot six.',
+        );
+        expect(again, isNotEmpty);
+      },
+    );
   });
 }

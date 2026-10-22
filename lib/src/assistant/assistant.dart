@@ -1448,7 +1448,15 @@ class VoiceAssistant extends ChangeNotifier {
   /// — the moment the verb is sent — because the landing turned out
   /// to be two round trips late.
   void _cutEarOnSwitch() {
-    if (!(_reply.playing || _reply.queuedCount > 0)) return;
+    if (!(_reply.playing || _reply.queuedCount > 0)) {
+      // The idle-switch hole (review A): a block STILL synthesising has
+      // neither playing audio nor a queued chunk, so the old early
+      // return let it finish and land on the tab the reader switched
+      // TO. Revoke its claim on the ear anyway — the pipeline's epoch
+      // gate kills its pieces, and the cancel releases the worker.
+      _reply.invalidatePendingAudio();
+      return;
+    }
     _logDebug(
       'switch: ear let go — ${_reply.queuedCount} queued '
       'block(s) dropped unheard',

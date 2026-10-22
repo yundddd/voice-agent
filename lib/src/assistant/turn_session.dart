@@ -193,6 +193,7 @@ final class TurnCoordinator {
   // last sharing bug: a mail fetch on the wrong tab lit the box for
   // someone else's thoughts).
   String? _workOwner;
+
   /// +279: an OWED DEBT answers for itself (its own sid); with the
   /// ledger dark, the machine's stamped owner (the badge's or the
   /// last stream's) is all the history there is.
@@ -258,7 +259,8 @@ final class TurnCoordinator {
   /// another conversation's owed shell keeps it lit, out of sight on
   /// this tab, at home on that one.
   List<({String? sid, String label, int sinceMs})> settleDebtsOwnedBy(
-      String? sid) {
+    String? sid,
+  ) {
     final paid = _agentDebts
         .where((d) => d.sid == sid || d.sid == null)
         .toList(growable: false);
@@ -310,8 +312,7 @@ final class TurnCoordinator {
   // read the shared _since as 'the second session shows the count
   // from the first session on the banner' — the age belongs to the
   // launch, row by row.
-  final List<({String? sid, String label, int sinceMs})> _agentDebts =
-      [];
+  final List<({String? sid, String label, int sinceMs})> _agentDebts = [];
   // (the started marker's kind='background'): the line keeps naming its
   // step even after the pickup made this turn heard, until the tool's
   // own 'finished' receipt pays the promise (behaviours 2/4).

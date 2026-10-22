@@ -545,6 +545,52 @@ void main() {
       await settle();
     });
 
+    test('+C: a nameless home is NO VERDICT at the band gate — a stamped '
+        'step paints on a view that has not learned its name', () async {
+      // +290 stated the law ('nameless = no-verdict, not foreignness')
+      // for the say and file gates; the tool/band gate was left behind
+      // (review C): with NEITHER the seat nor this view named — the
+      // fresh resume probe whose /health name the phone has not worn,
+      // the nameless birth — an otherwise-ordinary stamped frame of
+      // THIS conversation classified foreign on the coin toss of the
+      // missing local ids, and the fresh tab showed no status and no
+      // step ledger for its own work. The mirror of _onSay's clause:
+      // without a POSITIVE home to contradict, there is no stranger
+      // to point at; the stamp is the only truth on the table.
+      mkTurn(origin: BridgeTurnOrigin.attach); // seatedNow null, no
+      // context frame claimed: both local identities unnamed
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'flutter test',
+          session: 'ses-first',
+        ),
+      );
+      await settle();
+      expect(
+        probe.statuses.whereType<StepLine>(),
+        isNotEmpty,
+        reason: 'an uncontradicted stamp paints, it does not silence',
+      );
+      expect(
+        probe.awayBands,
+        isEmpty,
+        reason: 'nothing files away — no home was contradicted',
+      );
+      expect(
+        turn.lastToolStep,
+        'Bash flutter test…',
+        reason: 'the pump\'s own ledger learns its own turn\'s step',
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      out.complete();
+      await settle();
+    });
+
     test('+259: unstamped views paint the band on trust, as ever', () async {
       // An old bridge that cannot name sessions: no subject for the
       // gate, so the single-thread behaviour stands untouched.

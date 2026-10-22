@@ -690,11 +690,47 @@ let ctxOwner = null;
 // another conversation is mid-thinking about — the queue slot is per
 // conversation now, and two children can stream at once because every
 // line is parsed under the bundle of the record that spawned it.
-const sessions = new Map(); // key -> record (key: sid once named)
+// +UUID: identity at birth (review §4 / fix C at the root). Every
+// record mints its OWN app uuid when it is created — before any
+// harness exists to name it, and never rewritten by resume, fork or
+// /new. That uuid is the ONLY conversation name the wire and the
+// phone ever see (`_sess`, /health's sessionId + sessions rows, the
+// /seat verb). The harness's session id becomes BACKEND property: it
+// exists for --resume, it lives in the pointer file, and no gate may
+// infer ownership from its presence or absence again — the nameless-
+// birth era whose 'no positive home to contradict' clauses (+274 →
+// +290) had to be patched into ten gates is over: frames are always
+// born named.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const sidAlias = new Map(); // backend sid -> app uuid (old phones that
+// still speak harness ids, and every --resume lookup, come in here)
+function recBySid(sid) {
+  if (!sid) return null;
+  const byAlias = sidAlias.get(sid);
+  if (byAlias) return sessions.get(byAlias) ?? null;
+  for (const r of sessions.values()) if (r.sid === sid) return r;
+  return null;
+}
+// Pointer file v2: line 1 = backend sid (the --resume material),
+// line 2 = the app uuid (so a tab's identity survives a bridge
+// restart). A v1 file (bare sid) still reads: the uuid re-mints and
+// the next /seat answer re-adopts it wherever it is spoken.
+function readPointer(p) {
+  try {
+    const lines = readFileSync(p, 'utf8').split('\n');
+    return { sid: (lines[0] || '').trim() || null,
+             uuid: (lines[1] || '').trim() || null };
+  } catch { return {}; }
+}
+function writePointer(p, rec) {
+  const sid = rec === focus ? sessionId : rec.sid;
+  try { writeFileSync(p, `${sid ?? ''}\n${rec.uuid}`); } catch {}
+}
+const sessions = new Map(); // key -> record (key: the record's app uuid)
 const SESSIONS_CAP = 32;
-const placeholderKey = (h, d) => '\u0000' + h + ' ' + d;
 function newConv(seed) {
   return {
+    uuid: randomUUID(), // the app identity: minted once, never moved
     sid: null, key: null,
     harness: seed?.harness ?? harness, dir: seed?.dir ?? dir,
     claudeModel: seed?.model ?? claudeModel,
@@ -790,13 +826,18 @@ function swapFocus(rec) {
   bundleLoad(rec); focus = rec;
 }
 function parkConv(rec) { // ensure the record is (re)keyed and filed
-  const key = rec.sid ?? placeholderKey(rec.harness, rec.dir);
+  const key = rec.uuid; // identity at birth: the key never moves
+  if (rec.sid) sidAlias.set(rec.sid, rec.uuid);
   if (rec.key && rec.key !== key) sessions.delete(rec.key);
   // Cap: evict the oldest resting record — never the focus, never one
   // with a live turn or a queued prompt.
   if (!sessions.has(key) && sessions.size >= SESSIONS_CAP) {
     for (const [k, v] of sessions) {
-      if (v !== focus && !v.turnOpen && !v.pending) { sessions.delete(k); break; }
+      if (v !== focus && !v.turnOpen && !v.pending) {
+        for (const [sk, sv] of sidAlias) if (sv === v.uuid) sidAlias.delete(sk);
+        sessions.delete(k);
+        break;
+      }
     }
   }
   rec.key = key;
@@ -809,7 +850,12 @@ function parkConv(rec) { // ensure the record is (re)keyed and filed
 function convRow(r) {
   const live = r === focus;
   return {
-    sid: live ? sessionId : r.sid,
+    sid: r.uuid, // identity at birth: the phone's name for this
+    // conversation, stable for its whole life (live rows report the
+    // same uuid the globals describe — it never moved)
+    backendSid: (live ? sessionId : r.sid) || null, // --resume
+    // material, kept as a SEPARATE backend property (review §4): the
+    // harness may rename it all it likes; the tab's name never moves.
     harness: live ? harness : r.harness,
     dir: live ? dir : r.dir,
     // +282: a resting record's 'default' resolves by ITS OWN tape (what
@@ -939,7 +985,11 @@ const relay = (ev, data) => {
   // the chat mixed threads. The relay-time sid is the fact, not an
   // inference; a nameless birth stays unstamped (the phone's context
   // learning still covers it, exactly as before).
-  data._sess ??= sessionId || '';
+  // The relay-time identity is the FACT, not an inference: every
+  // frame is born under its record's bundle, so the record's own app
+  // uuid is the stamp (no nameless window any more — a phone never
+  // has to guess whose frame this is from age, order or hope).
+  data._sess ??= (focus && focus.uuid) || sessionId || '';
   // ??=, never =: a re-relayed receipt (heldFinished rides two turns)
   // keeps the identity it was born with — one message, one id.
   data._mid ??= ++msgSeq;
@@ -1706,7 +1756,7 @@ function handleEvent(line) {
       // shows tokens with no fill). The exact number also ends any
       // preview run: the estimate grows from here on, not from there.
       estIn = tokIn; estSentIn = tokIn;
-      ctxOwner = sessionId;
+      ctxOwner = (focus && focus.uuid) || sessionId;
       relay('context', { in: tokIn, window: ctxWindow, session: ctxOwner });
     } else if (e.type === 'content_block_start') {
       const b = e.content_block ?? {};
@@ -2000,7 +2050,7 @@ function handleEvent(line) {
     // give the floor to a queued prompt.
     turnOpen = false;
     openTools.clear();
-    if (sessionId) { try { writeFileSync(sidFile(), sessionId); } catch {} }
+    if (sessionId && focus) writePointer(sidFile(), focus);
     // Post-turn context snapshot: the LAST API call's input already
     // carries the whole history (earlier outputs included), so the next
     // prompt's size is that input plus the final message's output. The
@@ -2014,7 +2064,8 @@ function handleEvent(line) {
     const win = Object.values(m.modelUsage ?? {})
         .reduce((a, x) => Math.max(a, x?.contextWindow ?? 0), 0);
     if (win) ctxWindow = win;
-    if (used) { lastCtx = { in: used, window: ctxWindow }; ctxOwner = sessionId; }
+    if (used) { lastCtx = { in: used, window: ctxWindow };
+      ctxOwner = (focus && focus.uuid) || sessionId; }
     if (lastCtx.in) {
       relay('context', { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
@@ -2986,6 +3037,7 @@ function resetConversation() {
     // back to nameless; the record lives on as the focus bundle under
     // its placeholder — its last sizes are history the map no longer
     // vouches for, and a re-seat must not resurrect them).
+    for (const [k, v] of sidAlias) if (v === focus.uuid) sidAlias.delete(k);
     focus.sid = null;
     parkConv(focus);
   }
@@ -3081,7 +3133,14 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      ok: true, claudeUp: !childDead, sessionId, harness,
+      ok: true, claudeUp: !childDead,
+      // The conversation NAME the phone speaks: the seated record's
+      // app uuid. backendSid rides alongside for the diagnostics
+      // screen — the --resume material, never an identity again.
+      sessionId: (focus && focus.uuid) || sessionId || null,
+      backendSid: sessionId || null,
+      uuidAtBirth: true,
+      harness,
       // +214: who held the pen WHEN — the phone's one-time chat
       // migration matches each legacy bubble's timestamp into an era
       // with this instead of guessing one label for the whole past.
@@ -3142,7 +3201,7 @@ const server = http.createServer((req, res) => {
       // +249 owner gate: the seated conversation's size, or honest
       // zero (the phone reads 0 → 'measuring…') while a foreign
       // conversation holds the pen.
-      context: { in: ctxOwner === sessionId ? lastCtx.in : 0,
+      context: { in: ctxOwner === ((focus && focus.uuid) || sessionId) ? lastCtx.in : 0,
                  window: ctxWindow },
       // +257: the conversation registry, live. One row per
       // conversation this bridge holds — backgrounded turns included,
@@ -3152,7 +3211,7 @@ const server = http.createServer((req, res) => {
       // to a resting record STARTS there instead of queueing behind
       // a stranger). The focused row is read off the live globals.
       sessions: convPublic(),
-      turnSid: sessionId, // the conversation the globals describe
+      turnSid: (focus && focus.uuid) || sessionId || null, // the conversation the globals describe
       // Pull transport available: GET /poll?since=N drains the ring from
       // the caller's cursor. {ring: newest seq, min: oldest retained} —
       // a client whose cursor rolled off jumps to min, not to zero.
@@ -3323,7 +3382,7 @@ const server = http.createServer((req, res) => {
     // size RE-PRESENTED the moment it takes the view — the foreground
     // law for the bar: come back and the numbers are where you left
     // them, without waiting for the next message_start.
-    if (ctxOwner === sessionId && lastCtx.in) {
+    if (ctxOwner === ((focus && focus.uuid) || sessionId) && lastCtx.in) {
       sse(res, 'context',
         { in: lastCtx.in, window: ctxWindow, session: ctxOwner });
     }
@@ -3371,7 +3430,7 @@ const server = http.createServer((req, res) => {
           noteHarnessEra(to); // the flip's instant is the era's start
           resetConversation();
           // The new harness resumes ITS OWN remembered conversation
-          try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
+          sessionId = readPointer(sidFile()).sid ?? null;
         }
         console.error('  [harness] ' + harness);
         res.writeHead(200, {'content-type': 'application/json'})
@@ -3401,8 +3460,9 @@ const server = http.createServer((req, res) => {
       // +257: ?sid= names the conversation whose turn to cut — the
       // phone's Stop chip rides a view that may belong to a
       // BACKGROUNDED conversation; without the param, the seated one.
-      const stopRec = url.searchParams.get('sid')
-        ? sessions.get(url.searchParams.get('sid')) : focus;
+      const stopSid = url.searchParams.get('sid');
+      const stopRec = stopSid
+        ? (sessions.get(stopSid) ?? recBySid(stopSid) ?? focus) : focus;
       withConv(stopRec ?? focus, () => { if (turnOpen) interruptTurn(); });
       res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/new') {
@@ -3501,36 +3561,81 @@ const server = http.createServer((req, res) => {
         if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat
         bundleSave(leaving); // whatever the reset left, the record remembers
         const pPath = sidFilePath(to, target);
-        let destKey = null;
+        const ptr = fresh ? {} : readPointer(pPath);
         if (fresh) { try { rmSync(pPath); } catch {} }
-        else if (wantSid !== undefined) {
-          destKey = wantSid;
-          try { writeFileSync(pPath, wantSid); } catch {}
-        } else { try { destKey = readFileSync(pPath, 'utf8').trim() || null; }
-          catch { destKey = null; } }
-        let rec = fresh ? null
-          : (destKey ? sessions.get(destKey) : null)
-            ?? sessions.get(placeholderKey(to, target));
-        if (!rec) rec = newConv({ harness: to, dir: target,
-          model: model ?? 'default' });
+        // +UUID: resolve the named conversation by its APP identity —
+        // uuid first (the phone's tab name), backend sid as alias for
+        // legacy ledgers and explicit --resume forks, the pointer
+        // file as the project's own memory. Unknown sessions never
+        // fall back to the selected tab: an unfindable conversation
+        // ADOPTS the spoken name (the phone owns its tabs across a
+        // bridge restart) or mints blank wearing it — it does not
+        // silently land on whoever is seated.
+        const spokenUuid = wantSid !== undefined && UUID_RE.test(wantSid)
+          ? wantSid : null;
+        const spokenSid = wantSid !== undefined && !UUID_RE.test(wantSid)
+          ? wantSid : null;
+        // The old precedence law holds: an explicit id RESUMES (or
+        // forks) THAT conversation even where a pointer says
+        // otherwise; the pointer is read only when the caller named
+        // nothing. A spoken uuid whose record this bridge's memory
+        // lost joins the law: the pointer binds that exact tab to a
+        // backend thread, so the conversation wakes under the phone's
+        // name rather than forking a duplicate.
+        let rec = null;
+        if (!fresh) {
+          rec = (spokenUuid && sessions.get(spokenUuid))
+            || (spokenSid && recBySid(spokenSid)) || null;
+          if (!rec && wantSid === undefined) {
+            rec = (ptr.sid && recBySid(ptr.sid))
+              || (ptr.uuid && sessions.get(ptr.uuid)) || null;
+          }
+          if (!rec && !spokenSid && ptr.uuid === spokenUuid) {
+            rec = newConv({ harness: to, dir: target,
+              model: model ?? 'default' });
+            rec.uuid = spokenUuid;
+            rec.sid = ptr.sid ?? null; // pointer-resume, born named
+          }
+        }
+        if (rec) {
+          // --resume material: an explicit backend id wins (the old
+          // fork law), then the record's own truth, then the pointer.
+          rec.sid = spokenSid ?? rec.sid ?? ptr.sid ?? null;
+          if (spokenUuid && rec.uuid !== spokenUuid) {
+            // ADOPTION: the tab's name is older than this bridge's
+            // memory. The conversation wears the name its seat
+            // speaks — identity never came from the process lifetime
+            // — and keeps the backend sid it just resolved for
+            // --resume.
+            if (rec.key) sessions.delete(rec.key);
+            rec.uuid = spokenUuid;
+          }
+        } else {
+          rec = newConv({ harness: to, dir: target,
+            model: model ?? 'default' });
+          if (spokenUuid) rec.uuid = spokenUuid; // mint blank, born named
+          rec.sid = spokenSid ?? ptr.sid ?? null;
+        }
         rec.harness = to; rec.dir = target; // the seat's words are the row's truth
-        if (destKey) rec.sid = destKey;
         bundleLoad(rec); focus = rec; parkConv(rec);
         if (eraFlip) { try { writeFileSync(harnessFile, to); } catch {} }
         if (fresh) {
           try { rmSync(sidFile()); } catch {}
           sessionId = null;
-        } else if (wantSid !== undefined) {
-          sessionId = wantSid;
-          try { writeFileSync(sidFile(), sessionId); } catch {}
+        } else {
+          sessionId = rec.sid;
+          writePointer(sidFile(), rec); // v2: sid AND uuid, so both
+          // the resume and the tab name survive a restart
         }
         const settle = () => {
           console.error('  [seat] ' + harness + ' @ ' + dir +
-            ' (session ' + (sessionId ?? 'starts fresh on the next word') +
+            ' (conversation ' + rec.uuid +
+            (sessionId ? ', backend ' + sessionId : ', starts fresh on the next word') +
             (model ? ', model ' + model : '') + ')');
           res.writeHead(200, {'content-type': 'application/json'})
             .end(JSON.stringify({
-              ok: true, harness, dir, sessionId, model: currentModel(),
+              ok: true, harness, dir, sessionId: rec.uuid,
+              backendSid: sessionId, model: currentModel(),
             }));
         };
         if (model) applyModel(model).then(settle).catch((e) => {
@@ -3558,12 +3663,17 @@ const server = http.createServer((req, res) => {
       } else {
         resetConversation(); // kills the child: claudeUp false till next talk
         dir = target;
-        try { sessionId = readFileSync(sidFile(), 'utf8').trim() || null; }
-        catch { sessionId = null; }
+        // v2 pointer read (line 1 = backend sid); the destination's
+        // remembered thread rides immediately, and the focused record
+        // adopts its backend id as its own again.
+        sessionId = readPointer(sidFile()).sid ?? null;
+        if (focus) { focus.sid = sessionId; parkConv(focus); }
         console.error('  [dir] moved the agent to ' + dir +
           ' (session ' + (sessionId ?? 'starts fresh on the next word') + ')');
         res.writeHead(200, {'content-type': 'application/json'})
-          .end(JSON.stringify({ok: true, dir, sessionId}));
+          .end(JSON.stringify({ok: true, dir,
+            sessionId: (focus && focus.uuid) || sessionId || null,
+            backendSid: sessionId || null}));
       }
     } else if (url.pathname === '/send') {
       // The agent's file-out (the fresh APK, a report, anything): the
@@ -3631,14 +3741,18 @@ const server = http.createServer((req, res) => {
 // no claude yet until first spawn
 if (harness === 'claude' && !existsSync(claudeBin)) { console.error(`no claude at ${claudeBin}`); process.exit(1); }
 if (!token) { console.error('set --token or BRIDGE_TOKEN'); process.exit(1); }
-try { sessionId = readFileSync(sidFile(), 'utf8').trim(); } catch {}
-// +257: the first record — the seat the flags describe, unnamed
-// until a harness frame says whose it is (then parkConv rekeys it).
+// +257 +UUID: the first record — the seat the flags describe — is
+// BORN NAMED: its app uuid comes off the pointer file when one
+// speaks (the phone's tab wakes under the name it already uses),
+// and the harness sid on line 1 is --resume material, not identity.
 // BEFORE the boot child spawns: the spawn binds its stdout/exit to
 // whatever record is focused, so the record must be the first thing
 // this file focuses.
 {
+  const pt = readPointer(sidFile());
+  sessionId = pt.sid ?? null;
   const bootRec = newConv({ harness, dir, model: claudeModel });
+  if (pt.uuid) bootRec.uuid = pt.uuid;
   bootRec.sid = sessionId;
   bundleLoad(bootRec); focus = bootRec; parkConv(bootRec);
 }

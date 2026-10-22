@@ -100,6 +100,19 @@ class ReplyPipeline {
   bool Function()? _pumpIsStale; // the live pump's producer test (+270)
   DateTime _startedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  // The audio epoch: bumped by every door that kills audio THIS ear
+  // may never hear again — stopPlayback, clearAndClose, and the
+  // switch-cut's invalidatePendingAudio (which fires even with the
+  // pipeline idle, the hole the in-flight block used to escape). A
+  // synthesis call captures the epoch at its start and re-checks it
+  // when pieces land and before any accounting: +289's _cuts clock
+  // guards the PLAYER hand-off, this guards the SYNTH hand-off —
+  // the same law, one seam earlier, exactly one block deep.
+  int _audioEpoch = 0;
+  // The in-flight streamed synthesis's cancel door (worker CPU), set
+  // by speakBlock while its job is live.
+  void Function()? _ttsCancel;
+
   // ── Debug replay state (see [replayDebug]) ──
   bool _debugPlaying = false;
   Completer<void>? _debugDone;
@@ -154,6 +167,10 @@ class ReplyPipeline {
   /// attention.
   void startStream() {
     _noteQueueDeath('a new reply begins');
+    _audioEpoch++; // a successor's stream also revokes any block still
+    // in the renderer from the last one (same law, fourth door)
+    _ttsCancel?.call();
+    _ttsCancel = null;
     _queue.clear();
     _streamDone = false;
     _playedRecently = false; // a new utterance re-arms the first-chunk
@@ -172,8 +189,23 @@ class ReplyPipeline {
   /// fresh [startStream] set after this call).
   void clearAndClose() {
     _noteQueueDeath('turn abandoned (clearAndClose)');
+    _audioEpoch++;
+    _ttsCancel?.call();
+    _ttsCancel = null;
     _queue.clear();
     closeStream();
+  }
+
+  /// The switch-cut's idle door (see [_cutEarOnSwitch] assistant-side):
+  /// nothing plays and nothing is queued, but a block may STILL be
+  /// synthesising — and its callback would hand it to the tab the
+  /// reader just left. Invalidate pending audio unconditionally: the
+  /// epoch bump kills its pieces at the seam, and the cancel closes
+  /// the worker's CPU debt at the next piece boundary.
+  void invalidatePendingAudio() {
+    _audioEpoch++;
+    _ttsCancel?.call();
+    _ttsCancel = null;
   }
 
   /// +288 (Tim, 'your previous response is missing the last segment
@@ -243,10 +275,23 @@ class ReplyPipeline {
     final w = worker();
     if (w == null) throw StateError('Models are still loading.');
     final sw = Stopwatch()..start();
+    final epoch = _audioEpoch; // the block's birth certificate (see
+    // _audioEpoch): any cut while it synthesises revokes its claim on
+    // this ear — and hands the cancel back to the worker.
+    late final void Function() myCancel;
     var onAirDone = false;
     final (audio, rate) = await w.synthesizeStream(
       text,
+      onCancel: (cancel) {
+        myCancel = cancel;
+        if (epoch == _audioEpoch) {
+          _ttsCancel = cancel;
+        } else {
+          cancel(); // cut mid-await of the CALLER: never even starts
+        }
+      },
       onChunk: (chunk, sampleRate) {
+        if (epoch != _audioEpoch) return; // cut while synthesising (A)
         if (!alive()) return;
         if (drop != null && drop()) return; // hide cut this paragraph
         final ms = sw.elapsedMilliseconds;
@@ -272,6 +317,14 @@ class ReplyPipeline {
       },
     );
     sw.stop();
+    if (identical(_ttsCancel, myCancel)) _ttsCancel = null; // this block's
+    // CPU debt is paid; stop the cancel door from pointing at a corpse.
+    if (epoch != _audioEpoch) {
+      // The cut landed while this block was still in the renderer:
+      // silent, uncounted, and the pump's per-block caller proceeds —
+      // the answer's NEXT block rides the focus law, not this one.
+      return const SpeakOutcome(onAir: false, durationSeconds: 0);
+    }
     // No cumulative synth sum anymore: the strip's tts number is the
     // first-word latency, stamped on the first chunk above, where the
     // pause the user actually feels lives.
@@ -476,7 +529,13 @@ class ReplyPipeline {
     // left the surviving turn's EVERY later paragraph synthesising
     // into a readerless queue: silent forever, however many times
     // you came back. Flush is the point; hearing audio is optional.
-    if (!_playing && _queue.isEmpty) return; // nothing audible, nothing queued
+    if (!_playing && _queue.isEmpty && _ttsCancel == null) {
+      return; // nothing audible, nothing queued, nothing synthesising
+    }
+    _audioEpoch++; // +A: even the doors that carry no queue kill the
+    // in-flight block's claim on the ear (and on the worker's CPU).
+    _ttsCancel?.call();
+    _ttsCancel = null;
     _playing = false;
     _playedRecently = false;
     gatePin(false);

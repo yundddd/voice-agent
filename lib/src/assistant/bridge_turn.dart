@@ -600,6 +600,10 @@ class BridgeTurn {
         // fallback only when an old bridge sent the flag alone.
         env.noteHarnessError(ev.text.isEmpty ? null : ev.text, _viewSid);
       }
+    } else if (ev.kind == 'disconnect') {
+      // The wire speaks, the turn does not: journalled for the tape,
+      // and the pump keeps its badge — recovery rides the cursor.
+      env.log('transport: ${ev.text}');
     } else if (ev.kind == 'error') {
       // a relayed bridge error IS the turn's end
       env.fail('Bridge: ${ev.text}');
@@ -888,10 +892,19 @@ class BridgeTurn {
     // return), and none of this view's ledgers take a word of it:
     // the step line, the backgrounded row's label, the journal — all
     // belong to the drain that speaks it.
+    // +290's law, stated for the band gate too (review C): the stamp
+    // verdict needs a POSITIVE home to contradict. With neither the
+    // seat nor this view named, there is no stranger to point at —
+    // the frame's own stamp cannot make a nameless tab look foreign,
+    // or every status line of a fresh seat is suppressed exactly when
+    // the reader most needs it. The say/file gates got this clause at
+    // +290; this gate had been left behind.
+    final homeUnproven = seatedForBand == null && _viewSid == null;
     final foreign =
         ev.session != null &&
         ev.session != seatedForBand &&
-        ev.session != _viewSid;
+        ev.session != _viewSid &&
+        !homeUnproven;
     final bandHome =
         !foreign &&
         (_viewSid == null ||

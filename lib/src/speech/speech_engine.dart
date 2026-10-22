@@ -148,10 +148,18 @@ abstract interface class SpeechEngine {
   /// AS IT IS RENDERED — a later sentence is still synthesising while an
   /// earlier one already plays. The returned future resolves with the
   /// concatenation once the whole reply is done.
+  ///
+  /// [onCancel] is invoked once, synchronously, right after the job
+  /// reaches the worker, handing the caller a closure that ABANDONS the
+  /// remaining pieces: queued synthesis is dropped and the future
+  /// resolves with whatever already rendered. Stale audio must not keep
+  /// the speech isolate from the mic — cancelling is the ear-cut's CPU
+  /// half.
   Future<(Float32List samples, int sampleRate)> synthesizeStream(
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
     int? sid,
+    void Function(void Function() cancel)? onCancel,
   });
 
   /// Offline cleanup for a finished push-to-talk clip (high-pass + frame

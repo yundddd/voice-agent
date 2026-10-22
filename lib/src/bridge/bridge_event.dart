@@ -162,10 +162,9 @@ class BridgeEvent {
           : BridgeEvent._('error', text: dataJson, isError: true);
     }
     final data = decoded.cast<String, Object>();
-    final sess =
-        data['_sess'] is String && (data['_sess'] as String).isNotEmpty
-            ? data['_sess'] as String
-            : null;
+    final sess = data['_sess'] is String && (data['_sess'] as String).isNotEmpty
+        ? data['_sess'] as String
+        : null;
     switch (event) {
       case 'say':
         return BridgeEvent._(
@@ -224,6 +223,19 @@ class BridgeEvent {
         // — it IS the turn). Every later frame the pump sees may
         // finally be attributed; see BridgeTransport and BridgeTurn.
         return BridgeEvent._('turn', turn: _int(data['turn']));
+      case 'disconnect':
+        // A transport truth, not a turn verdict: the wire is down and
+        // the pump is retrying (see BridgeTransport._pollTurn). Never
+        // terminal — the loop that consumes this stream must not close
+        // the turn over it.
+        return BridgeEvent._(
+          'disconnect',
+          text: '${data['error'] ?? 'bridge unreachable'}',
+          wireMs: _int(data['_ts']),
+          session: sess,
+          mid: _int(data['_mid']),
+          turn: _int(data['_turn']),
+        );
       case 'done':
         return BridgeEvent._(
           'done',

@@ -40,6 +40,42 @@ void main() {
       expect(store.entries.first.blocks.single, 'u2');
     });
 
+    test('+E: retention is PER SESSION — a busy tab cannot wipe a quiet one',
+      () {
+        // Review E: one shared cap trimmed oldest-first across ALL
+        // conversations, so a chatty session evicted a quiet one's
+        // whole history. The law now: the victim is the oldest entry
+        // of the LARGEST session bucket — pressure thins whoever is
+        // making it, not whoever happens to be old.
+        String? seated = 'ses-B';
+        final s = ChatStore(
+          persist: (_) async {},
+          repaint: () {},
+          cap: 6,
+          session: () => seated,
+        );
+        s.addUser('quiet-1'); // the whole memory of a resting tab
+        seated = 'ses-A';
+        for (var i = 0; i < 7; i++) {
+          s.addUser('u$i');
+        }
+        expect(s.entries, hasLength(6), reason: 'the cap still binds');
+        expect(
+          s.entries.where((e) => e.session == 'ses-B'),
+          hasLength(1),
+          reason: 'the quiet conversation keeps its ONE memory while A floods',
+        );
+        final aKept =
+            s.entries.where((e) => e.session == 'ses-A').toList();
+        expect(aKept, hasLength(5));
+        expect(
+          aKept.first.blocks.single,
+          'u2',
+          reason: 'A thins its OWN oldest words first',
+        );
+      },
+    );
+
     test('one pin at a time: a newer press outranks the old (+91 rules)', () {
       store.addUser('first parked', queued: true);
       expect(store.queuedText, 'first parked');

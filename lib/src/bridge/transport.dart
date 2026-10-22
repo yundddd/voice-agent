@@ -176,9 +176,19 @@ class BridgeTransport {
       await _tick();
       final page = await gw.poll(_ringCursor);
       if (page == null) {
-        if (++misses >= 8) {
-          yield BridgeEvent.parse('error', '{"error":"poll unreachable"}');
-          return;
+        if (++misses == 8) {
+          // Transport failure is NOT agent failure. Eight dead polls
+          // say the WIRE is down; the bridge may still be running this
+          // turn. The old terminal `error` frame marked the turn as
+          // cleanly ended for the recovery logic and suppressed the
+          // reattach branch while the agent kept working. A non-
+          // terminal `disconnect` names the wire instead: the pump
+          // survives, keeps polling on its cursor, and a recovered
+          // wire resumes the stream at the exact frame it missed.
+          yield BridgeEvent.parse(
+            'disconnect',
+            '{"error":"bridge unreachable — retrying"}',
+          );
         }
         continue;
       }
@@ -245,6 +255,15 @@ class BridgeTransport {
         deadline = clock().add(pollDeadline);
       }
       if (clock().isAfter(deadline)) {
+        if (misses >= 8) {
+          // The wire, not the agent, owns this silence: every poll in
+          // the window failed, so the ring says nothing about whether
+          // the turn ended. Don't declare the run complete — extend
+          // the fuse and keep dialling; the frames (or the bridge's
+          // own death rattle) will land when the wire does.
+          deadline = clock().add(pollDeadline);
+          continue;
+        }
         yield BridgeEvent.parse(
           'error',
           '{"error":"poll deadline — the turn never said done"}',

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_agent/src/assistant/assistant.dart';
+import 'package:voice_agent/src/bridge/transport.dart';
 import 'package:voice_agent/src/common/sinks.dart';
 import 'package:voice_agent/src/platform/audio_output.dart';
 
@@ -3134,6 +3135,82 @@ void main() {
         reason:
             'just /stop — the bridge interrupts and flushes the '
             'parked prompt; the queued view stays listening',
+      );
+    });
+  });
+
+  group('the poll transport\'s wire truths', () {
+    test('+D: a dead wire says DISCONNECT, not agent error — the cursor '
+        'survives and the recovered ring resumes the stream', () async {
+      // Review D: eight failed polls used to yield a terminal `error`
+      // frame — the SAME event an agent failure rides — which marked
+      // the turn cleanly ended for the recovery logic and suppressed
+      // the reattach branch while the bridge agent kept running. A
+      // transport failure now speaks as itself: the pump survives,
+      // the cursor holds its place, and the recovered wire delivers
+      // the farewell the turn was always going to get.
+      final t = FakeScheduler(DateTime(2026, 1, 1, 12));
+      final h = FakeHarness();
+      h.healthState = {
+        'ok': true,
+        'now': t.now.millisecondsSinceEpoch, // the skew anchor: without
+        // it noteHealth ignores the snapshot (and the poll transport
+        // never negotiates)
+        'poll': {'ring': 100, 'min': 90},
+      };
+      final transport = BridgeTransport(
+        scheduler: t,
+        clock: () => t.now,
+        log: (_) {},
+      );
+      transport.noteHealth(h.healthState?.cast<String, Object>());
+      final seen = <BridgeEvent>[];
+      unawaited(transport.turn(h, 'go', false).forEach(seen.add));
+      await settle();
+      expect(seen.first.kind, 'turn', reason: 'the receipt names our turn');
+
+      // The wire goes dark: ten dead polls (the old terminal window
+      // was eight).
+      h.healthState = null;
+      for (var i = 0; i < 10; i++) {
+        h.pollPages.add(null);
+        t.advance(const Duration(milliseconds: 300));
+        await settle();
+      }
+      expect(
+        seen.where((e) => e.kind == 'disconnect'),
+        hasLength(1),
+        reason: 'ONE honest transport event per blackout, not one per poll',
+      );
+      expect(
+        seen.where((e) => e.kind == 'error'),
+        isEmpty,
+        reason: 'no terminal frame — the turn is not declared over',
+      );
+
+      // Wire back: the ring answers from OUR cursor; the done (still
+      // owed by the still-running agent) closes the pump for real.
+      h.healthState = {
+        'ok': true,
+        'now': t.now.millisecondsSinceEpoch,
+        'poll': {'ring': 101, 'min': 90},
+      };
+      h.pollPages.add(
+        FakeHarness.page(101, [
+          BridgeEvent.forTest('done', turn: h.lastTurnId),
+        ], first: 101),
+      );
+      t.advance(const Duration(milliseconds: 300));
+      await settle();
+      expect(
+        h.lastPollSince,
+        100,
+        reason: 'the cursor never moved while the wire was dark',
+      );
+      expect(
+        seen.last.isDone,
+        isTrue,
+        reason: 'the farewell lands on the surviving pump',
       );
     });
   });

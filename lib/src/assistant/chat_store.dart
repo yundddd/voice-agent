@@ -83,8 +83,7 @@ class ChatStore {
   int adoptPending(String id, {bool userOnly = false}) {
     var n = 0;
     for (final e in _entries) {
-      if (e.session == pendingSession &&
-          (!userOnly || e.fromUser)) {
+      if (e.session == pendingSession && (!userOnly || e.fromUser)) {
         e.session = id;
         n++;
       }
@@ -194,8 +193,7 @@ class ChatStore {
   /// conversation holds plain null, and holds it alone.
   bool _ownsPin(ChatEntry e, String? session) {
     final want = session ?? _sessionOwner ?? pendingSession;
-    return e.session == want ||
-        (want == pendingSession && e.session == null);
+    return e.session == want || (want == pendingSession && e.session == null);
   }
 
   ChatEntry? get queuedBubble => queuedFor(_sessionOwner);
@@ -541,13 +539,40 @@ class ChatStore {
 
   /// Cap, re-version, persist, repaint — the single mutation tail every
   /// change funnels through.
+  ///
+  /// +E: retention is PER SESSION, not a shared FIFO across everyone's
+  /// memory. When the total exceeds the cap, the victim is the OLDEST
+  /// entry of the session holding the MOST entries (ties go to the
+  /// longer-standing bucket, which keeps the old single-conversation
+  /// behaviour — including the null bucket: an all-shared log, offline
+  /// or legacy, still evicts exactly as it did). A chatty tab can now
+  /// thin its own history under pressure, but it can no longer wipe a
+  /// quiet conversation's memory down to nothing: the review's
+  /// 'a busy session evicts another session's history' ends here.
   void touch() {
     while (_entries.length > cap) {
-      _entries.removeAt(0);
+      _evictOne();
     }
     _version++;
     unawaited(persist(List<ChatEntry>.from(_entries)));
     repaint();
+  }
+
+  void _evictOne() {
+    final counts = <String?, int>{};
+    for (final e in _entries) {
+      counts[e.session] = (counts[e.session] ?? 0) + 1;
+    }
+    var biggest = counts.keys.first;
+    for (final k in counts.keys) {
+      if (counts[k]! > counts[biggest]!) biggest = k;
+    }
+    for (final e in _entries) {
+      if (e.session == biggest) {
+        _entries.remove(e); // the list is append-ordered: this is the
+        return; // bucket's oldest word
+      }
+    }
   }
 
   /// The first-heard line for a turn's bubble, with the round trip back

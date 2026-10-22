@@ -21,8 +21,8 @@ const double _ln10 = 2.302585092994046;
 class _Job {
   final int id; // -1 for fire-and-forget ops
   final String op;
-  // 'audio' | 'resetVad' | 'transcribe' | 'synthesize' | 'playing' | 'denoise'
-  // | 'useTts'
+  // 'audio' | 'resetVad' | 'transcribe' | 'synthesize' | 'cancelTts' |
+  // 'playing' | 'denoise' | 'useTts' | 'step' (worker self-pump)
   final String? text;
   final Float32List? samples;
   final int? sampleRate;
@@ -61,6 +61,23 @@ class _Job {
       sampleRate = null,
       op = 'synthesize',
       spec = null;
+  // Self-injected pump step (worker side only): one synthesized piece per
+  // port event, so queued mic audio and a cancelTts cut interleave.
+  const _Job.step()
+    : id = -1,
+      op = 'step',
+      samples = null,
+      text = null,
+      sampleRate = null,
+      spec = null,
+      sid = null;
+  const _Job.cancelTts(this.id)
+    : op = 'cancelTts',
+      samples = null,
+      text = null,
+      sampleRate = null,
+      spec = null,
+      sid = null;
   const _Job.denoise(this.id, this.samples)
     : text = null,
       sampleRate = null,
@@ -175,10 +192,15 @@ class SpeechWorker implements SpeechEngine {
       controlPort.listen((message) {
         if (message is _JobResult) {
           if (message.isChunk) {
-            worker._chunkFans[message.id]?.call(
-              message.audio!,
-              message.sampleRate!,
-            );
+            // A cancelled stream's farewell chunk is EMPTY: it closes
+            // the pending job below but never reaches the fan — no
+            // caller should ever see a zero-length "piece".
+            if (message.audio!.isNotEmpty) {
+              worker._chunkFans[message.id]?.call(
+                message.audio!,
+                message.sampleRate!,
+              );
+            }
             if (message.lastChunk) {
               worker._chunkFans.remove(message.id);
               worker._pending.remove(message.id)?.complete(message);
@@ -274,6 +296,7 @@ class SpeechWorker implements SpeechEngine {
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
     int? sid,
+    void Function(void Function() cancel)? onCancel,
   }) async {
     final id = ++_nextId;
     final parts = <Float32List>[];
@@ -284,6 +307,10 @@ class SpeechWorker implements SpeechEngine {
     };
     _pending[id] = completer;
     _toWorker!.send(_Job.synthesize(id, text, sid));
+    // The cancel door: dropping the queued pieces, not just the ear.
+    // A late cancel (job already finished) is inert — the worker's
+    // farewell chunk finds no pending entry and vanishes.
+    onCancel?.call(() => _toWorker?.send(_Job.cancelTts(id)));
     final result = await completer.future;
     _chunkFans.remove(id);
     if (result.error != null) throw StateError(result.error!);
@@ -425,6 +452,39 @@ Future<void> _runWorker(
   // roster (Kokoro: 54) before the user ever calls useTts.
   toParent.send('ready:${tts?.numSpeakers ?? 0}');
 
+  // The synthesis stream in flight: (job id, sentence pieces, next
+  // index, speaker). One piece renders per port event ('step'
+  // self-injection), so nothing else the worker does — the mic gate,
+  // the VAD, a cancel — queues behind a whole reply. See 'synthesize'.
+  ({int id, List<String> pieces, int i, int sid})? synthQueue;
+  void stepSynth() {
+    final q = synthQueue;
+    if (q == null) return; // a cancel ate the queue mid-step: inert step
+    final engine = tts;
+    if (engine == null) {
+      synthQueue = null;
+      toParent.send(_JobResult.error(q.id, 'TTS engine unloaded mid-reply.'));
+      return;
+    }
+    final (samples, sampleRate) = engine.generate(
+      text: q.pieces[q.i],
+      sid: q.sid,
+      speed: 1.0,
+    );
+    final isLast = q.i == q.pieces.length - 1;
+    var data = samples;
+    if (!isLast) {
+      data = Float32List(samples.length + sampleRate ~/ 16)
+        ..setRange(0, samples.length, samples);
+    }
+    // Advance (or close) BEFORE the hand-off: a fan callback on the
+    // parent side that immediately cancels finds an already-cut queue.
+    synthQueue = isLast
+        ? null
+        : (id: q.id, pieces: q.pieces, i: q.i + 1, sid: q.sid);
+    toParent.send(_JobResult.chunk(q.id, data, sampleRate, isLast));
+  }
+
   await for (final message in port) {
     if (message is! _Job) continue;
     try {
@@ -549,6 +609,13 @@ Future<void> _runWorker(
           // the assistant can start playing the first sentence while the
           // rest is still rendering. Non-final pieces get a ~62 ms silent
           // tail: a natural sentence gap that hides the seam.
+          //
+          // The pieces are pumped ONE PER PORT EVENT (the 'step'
+          // self-injection below), not in a synchronous for-loop: an
+          // in-flight answer must not monopolise the isolate — queued
+          // mic frames, VAD work and a cancelTts cut all interleave
+          // between pieces, and a switched-away reply can stop costing
+          // CPU at the next piece boundary instead of at the end.
           if (tts == null || spec == null) {
             toParent.send(
               _JobResult.error(
@@ -567,23 +634,23 @@ Future<void> _runWorker(
                   message.sid! < tts.numSpeakers
               ? message.sid!
               : spec.sid;
-          for (var i = 0; i < pieces.length; i++) {
-            final piece = pieces[i];
-            final isLast = i == pieces.length - 1;
-            final (samples, sampleRate) = tts.generate(
-              text: piece,
-              sid: sid,
-              speed: 1.0,
-            );
-            var data = samples;
-            if (!isLast) {
-              data = Float32List(samples.length + sampleRate ~/ 16)
-                ..setRange(0, samples.length, samples);
-            }
-            toParent.send(
-              _JobResult.chunk(message.id, data, sampleRate, isLast),
-            );
+          synthQueue = (id: message.id, pieces: pieces, i: 0, sid: sid);
+          stepSynth();
+          if (synthQueue != null) port.sendPort.send(const _Job.step());
+        case 'step':
+          stepSynth();
+          if (synthQueue != null) port.sendPort.send(const _Job.step());
+        case 'cancelTts':
+          // The queued pieces die here; the stream closes with an EMPTY
+          // farewell chunk (the parent skips empty chunks on the fan),
+          // so the awaiting synthesizeStream resolves with whatever had
+          // already rendered — never an error, never a hang.
+          if (synthQueue != null && synthQueue!.id == message.id) {
+            synthQueue = null;
           }
+          toParent.send(
+            _JobResult.chunk(message.id, Float32List(0), 24000, true),
+          );
       }
     } catch (e, s) {
       toParent.send(_JobResult.error(message.id, '$e\n$s'));

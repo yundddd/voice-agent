@@ -965,10 +965,16 @@ test('GET /dirs lists only folders inside --dir-root, /dir moves the agent there
     // line 2). The answer names the destination's remembered thread
     // (+223): beta was never visited, so its pointer is blank and
     // the conversation starts fresh on the next word.
-    const mv = await call(PORT13, `/dir?token=${TOKEN}`,
-      { body: JSON.stringify({ path: 'beta' }), method: 'POST' });
-    assert.deepEqual(JSON.parse(mv.text),
-      { ok: true, dir: resolve(join(root, 'beta')), sessionId: null });
+    const mv = JSON.parse((await call(PORT13, `/dir?token=${TOKEN}`,
+      { body: JSON.stringify({ path: 'beta' }), method: 'POST' })).text);
+    // +UUID: the move answers in APP names — the seated record's uuid
+    // as sessionId, the blank --resume material as backendSid (beta
+    // was never visited: no pointer, nothing to resume).
+    assert.equal(mv.ok, true);
+    assert.equal(mv.dir, resolve(join(root, 'beta')));
+    assert.match(mv.sessionId,
+      /^[0-9a-f-]{36}$/, 'the moved-to seat answers under its app uuid');
+    assert.equal(mv.backendSid, null, 'an unvisited folder has no backend id');
     await until('the move lands in health', async () => {
       const h = await health(PORT13);
       return h.dir === resolve(join(root, 'beta')) && h.claudeUp === false;
@@ -1351,10 +1357,17 @@ test('two conversations work at once, each with its own row (+257)',
       // Wait for the NAME, not just the flag: the stub answers under
       // 'stub-session' when not resumed, adoption is a frame deep, and
       // a row still wearing the boot placeholder is not yet a row.
+      // +UUID: 'named' is the BIRTH naming — the row answers under its
+      // app uuid from the first instant, and the stub's session id
+      // lands beside it as backend--resume material.
+      let uuidA = null;
       await until('A open and named', async () => {
         const h = await health(PORT20);
-        return h.turnOpen === true && h.turnSid === 'stub-session';
+        uuidA = h.turnSid;
+        return h.turnOpen === true && h.turnSid === (h.sessions[0]?.sid) &&
+          h.sessions[0]?.backendSid === 'stub-session';
       });
+      assert.match(uuidA, /^[0-9a-f-]{36}$/, 'born named: an app uuid');
       const hMidA = await health(PORT20);
       assert.equal(hMidA.sessions.length, 1, 'one conversation: one row');
 
@@ -1366,7 +1379,10 @@ test('two conversations work at once, each with its own row (+257)',
           method: 'POST' });
       assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
       const bg = await health(PORT20);
-      const rowA = bg.sessions.find((r) => r.sid === 'stub-session');
+      const uuidB = JSON.parse(seat.text).sessionId; // the app uuid the
+      // seat mints for the named stranger (backend sid: its --resume id)
+      assert.match(uuidB, /^[0-9a-f-]{36}$/, '+UUID: /seat answers in app names');
+      const rowA = bg.sessions.find((r) => r.sid === uuidA);
       assert.ok(rowA?.turnOpen, 'A\'s turn lives on, backgrounded');
 
       // B speaks: it must START (no queue notice — B has no turn of
@@ -1375,7 +1391,7 @@ test('two conversations work at once, each with its own row (+257)',
         { body: 'registry second', method: 'POST' });
       await until('B running immediately', async () => {
         const t = (await health(PORT20)).turnSid;
-        return t === 'ses-registry-b';
+        return t === uuidB;
       });
       assert.ok(!b.text.includes('"name":"queued"'),
         'a prompt to an idle conversation queued behind a stranger');
@@ -1389,10 +1405,12 @@ test('two conversations work at once, each with its own row (+257)',
         return rows.length === 2 && rows.every((r) => r.turnOpen === false);
       });
       const rows = (await health(PORT20)).sessions;
-      const rA = rows.find((r) => r.sid === 'stub-session');
-      const rB = rows.find((r) => r.sid === 'ses-registry-b');
+      const rA = rows.find((r) => r.sid === uuidA);
+      const rB = rows.find((r) => r.sid === uuidB);
       assert.ok(rA && !rA.turnOpen, 'A rests at home with its history');
-      assert.ok(rB && !rB.turnOpen, 'B rests under the name it was seated with');
+      assert.ok(rB && !rB.turnOpen, 'B rests under its birth uuid');
+      assert.equal(rB.backendSid, 'ses-registry-b',
+        'the backend sid the caller named rides as BACKEND property');
       assert.ok(rA.ctx.in > 0 && rB.ctx.in > 0, 'each row kept its OWN sizes');
       assert.deepEqual(seen(stubLog), ['registry first', 'registry second'],
         'both prompts reached the harness under their own children');
@@ -1450,12 +1468,19 @@ test('+278 seat move inside the debt window: the shell survives, the receipt lan
         { body: JSON.stringify({ sessionId: 'walk278-b' }),
           method: 'POST' });
       assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
-      // And straight back — the pointer still names A's session.
+      // And straight back — the pointer still names A's session, and
+      // +UUID: a phone that still speaks the BACKEND id is answered in
+      // the app uuid its alias resolves to (the ledger adopts once the
+      // response names it).
+      const uuidA = (await health(PORT22)).sessions.find(
+        (r) => r.backendSid === 'stub-session')?.sid;
+      assert.match(uuidA ?? '', /^[0-9a-f-]{36}$/,
+        'A wears its birth uuid in the registry');
       const home = await call(PORT22, `/seat?token=${TOKEN}`,
         { body: JSON.stringify({ sessionId: 'stub-session' }),
           method: 'POST' });
       assert.equal(
-        JSON.parse(home.text).sessionId, 'stub-session',
+        JSON.parse(home.text).sessionId, uuidA,
         'the return re-seated the conversation that owes the work');
 
       // The receipt the SIGTERMed child could never send: the named
@@ -1473,8 +1498,10 @@ test('+278 seat move inside the debt window: the shell survives, the receipt lan
       // The pre-fix signature: resetConversation would have logged a
       // child death here and the ring would carry no receipt at all.
       const rows = (await health(PORT22)).sessions;
-      assert.ok(rows.find((r) => r.sid === 'stub-session'),
-        'the conversation that held the shell still has its row');
+      assert.ok(rows.find((r) => r.sid === uuidA &&
+        r.backendSid === 'stub-session'),
+        'the conversation that held the shell still has its row — and ' +
+        'keeps its birth uuid while the seat moves and the receipt lands');
     } finally {
       await stopBridge(proc);
     }

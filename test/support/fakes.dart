@@ -82,12 +82,20 @@ class FakeSpeechEngine implements SpeechEngine {
     String text, {
     void Function(Float32List chunk, int sampleRate)? onChunk,
     int? sid,
+    void Function(void Function() cancel)? onCancel,
   }) async {
     if (failNext != null) throw failNext!;
     synthesized.add(text);
     synthesizedSids.add(sid);
+    var cancelled = false;
+    onCancel?.call(() => cancelled = true);
     await holdChunks; // the synth-to-speaker gap the ledger must not
     // have to survive
+    if (cancelled) {
+      // A real cancelled worker resolves with the pieces already
+      // rendered — the fake renders none after the cut.
+      return (Float32List(0), 24000);
+    }
     final chunk = Float32List(2400); // 100 ms at 24 kHz
     onChunk?.call(chunk, 24000);
     return (chunk, 24000);

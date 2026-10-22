@@ -36,6 +36,14 @@ Every relayed event's data gains two fields, stamped inside `relay()`:
   (a queue notice and its prompt's `started` marker carry the id their turn
   *will* have), so a frame's ownership is decidable at arrival, forever.
   `done`/`error` carry the id of the turn they close.
+- `_sess` — the conversation's name. On a +UUID bridge (`uuidAtBirth: true`
+  in /health) this is the record's **app uuid**: minted when the
+  conversation is created, never rewritten by resume, fork or `/new`, and
+  the same string `/health` reports as `sessionId`/`turnSid`, the registry
+  rows report as `sid`, and `/seat` answers with. The harness's own session
+  id is backend property only (`backendSid`), never an identity. Frames
+  from an older bridge carry the backend sid, or nothing at all (nameless
+  birth) — the phone's inference gates survive solely for that case.
 
 ### Endpoints
 - `POST /talk` — unchanged shape; gains an echo of the reserved turn id:
@@ -168,3 +176,35 @@ mids per POST and re-sends its small pending-ack list after a network miss
 - **Age rule kept** — one condition, not a matrix: ancient-but-never-heard
   text is shown silently. If it ever misfires, it degrades to "one old
   paragraph unvoiced after a week offline", not a wrong bubble.
+
+## +UUID — identity at birth, and the wire's two honest states
+
+The review that ends the inference era, in one rule each:
+
+- **Identity at birth.** Every conversation mints an app uuid when its
+  record is created — before any harness exists to name it — and that
+  uuid is the ONLY name on the wire (`_sess`), in /health
+  (`sessionId`, `turnSid`, the `sessions` rows' `sid`), and in the
+  /seat verb. The harness session id is BACKEND property (`backendSid`,
+  pointer-file line 1, `--resume` material): resume, fork and `/new`
+  may rewrite it all they like; the app identity never moves. Unknown
+  sessions never fall back to the selected tab — a spoken uuid the
+  bridge's memory lost is ADOPTED onto the pointer's thread (the phone
+  owns its tab names across restarts). Pointer v2: line 1 = backend
+  sid, line 2 = app uuid; v1 files still read.
+- **Transport failure ≠ agent failure.** Eight dead polls used to
+  yield a terminal `error` frame — the same event an agent failure
+  rides — which marked the turn cleanly ended for the recovery logic
+  and suppressed the reattach branch while the bridge agent kept
+  running. The pump now emits a NON-TERMINAL `disconnect` event
+  (`event: disconnect`, once per blackout, not per poll): the turn
+  stays open, the ring cursor holds its place, and the recovered wire
+  resumes at the exact frame it missed. The silent-ring deadline
+  stays the agent-side verdict; while the wire itself is down the
+  fuse extends instead of declaring the run complete.
+- **Retention is per session.** The chat store's cap no longer trims
+  the global oldest: the victim is the oldest entry of the LARGEST
+  session bucket. A chatty tab thins its own memory under pressure
+  and can no longer wipe a quiet conversation's history. (Single-
+  session and all-null logs — offline mode, legacy migrations —
+  behave exactly as the old FIFO, bucket by bucket.)
