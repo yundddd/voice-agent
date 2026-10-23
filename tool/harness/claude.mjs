@@ -34,6 +34,11 @@ import { HarnessEvent, harnessEvent, HarnessSession } from './interface.mjs';
 export function translateClaudeFrame(m) {
   const out = [];
   const sid = (typeof m.session_id === 'string' && m.session_id) || null;
+  // The id rides NEARLY every real frame (stream_event lines carry it
+  // too): rekey first, so the record is named before any of the frame's
+  // own facts are handled — the old handleEvent order, exactly.
+  if (sid && m.type !== 'control_response')
+    out.push(harnessEvent(HarnessEvent.SessionId, m.type, { sid }));
   if (m.type === 'control_response') {
     const r = m.response ?? {};
     out.push(harnessEvent(HarnessEvent.ModelAck, 'control_response',
@@ -45,7 +50,6 @@ export function translateClaudeFrame(m) {
   // modelUsage the authoritative afterword. Either settles the operator's
   // 'default' into a name the phone can print.
   if (m.type === 'system' && m.subtype === 'init') {
-    if (sid) out.push(harnessEvent(HarnessEvent.SessionId, 'init', { sid }));
     if (typeof m.model === 'string' && m.model)
       out.push(harnessEvent(HarnessEvent.ModelRan, 'init', { model: m.model }));
     return out;
@@ -84,7 +88,6 @@ export function translateClaudeFrame(m) {
     return out;
   }
   if (m.type === 'assistant' || m.type === 'user') {
-    if (sid) out.push(harnessEvent(HarnessEvent.SessionId, m.type, { sid }));
     out.push(snapshotOf(m.type, m));
     return out;
   }
@@ -95,7 +98,6 @@ export function translateClaudeFrame(m) {
     // production carrier puts the text at TOP level (no message.content)
     // — the frame itself is the haystack, exactly as the old
     // `m.message?.content ?? m` read it.
-    if (sid) out.push(harnessEvent(HarnessEvent.SessionId, 'task_notification', { sid }));
     out.push(snapshotOf('task', m));
     return out;
   }
@@ -124,7 +126,6 @@ export function translateClaudeFrame(m) {
     return out;
   }
   if (m.type === 'result') {
-    if (sid) out.push(harnessEvent(HarnessEvent.SessionId, 'result', { sid }));
     const ran = Object.keys(m.modelUsage ?? {}).slice(-1)[0];
     if (ran) out.push(harnessEvent(HarnessEvent.ModelRan, 'result', { model: ran }));
     out.push(harnessEvent(HarnessEvent.TurnEnd, 'result', {
@@ -188,13 +189,24 @@ export class ClaudeSession extends HarnessSession {
     // fell to the backlog unheard, field-proven by +216's wire test).
     // The bridge's guard (`focus.child !== this`) covers it; we just
     // forward the verdict exactly once.
-    this.child.on('exit', (code, sig) => this.emit('exit', code, sig));
+    this.child.on('exit', (code, sig) => this._gone(code, sig));
+    this.child.on('error', (e) => {
+      // A missing or un-executable bin is loud, never a silent dead
+      // child: the turn's result still closes via 'exit' below.
+      console.error('  [claude] spawn failed: ' + e.message);
+      process.nextTick(() => this._gone(1, null));
+    });
     this.child.stdin.on('error', () => {}); // a dead pipe is not a crash
   }
   // Slash commands must arrive as PLAIN STRING content: the CLI only runs
   // them as commands then — a block array like [{text:"/compact"}] goes to
   // the model as literal text (it just rambles about the word), verified on
   // 2.1.296. Everything else keeps the structured shape.
+  _gone(code, sig) {
+    if (this._exited) return;
+    this._exited = true;
+    this.emit('exit', code, sig);
+  }
   prompt(text) {
     const msg = text.startsWith('/')
       ? { type: 'user', message: { role: 'user', content: text } }

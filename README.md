@@ -951,6 +951,71 @@ pack + `vocos_24khz.onnx` sit under `/tmp/opencode` — see the k2-fsa
 Needs `clang cmake ninja-build pkg-config libgtk-3-dev`. GStreamer plugins
 for audioplayers, PipeWire/Pulse for `record`.
 
+## Test lab: fakes at every boundary, interleavings by generator (the +328 plan)
+
+Handwritten scenarios only cover the interleavings we thought of — which is
+how this repo ended up with a long patch history. The doctrine, in five
+points (implemented under `tool/testlab/`):
+
+1. **Fake every boundary, drive every step.** The core turn/session
+   machine sits between injected boundaries: a fake ASR that is a plain
+   text injector (no mic, no device), a fake TTS that RECORDS what was
+   "played" (so "no audio from an off-screen session" is a plain
+   assertion), a fault proxy on the transport, and a scripted harness
+   stub that speaks the real wire formats. The stubs are STEP-DRIVEN:
+   the test calls `stub.emit(...)` and nothing happens until it does —
+   no wall-clock scripting. A virtual clock is injected everywhere, so
+   timeouts, heartbeats, and the hold timers fire only when the test
+   ticks. Lifecycle is simulated honestly: an SSE link drop closes the
+   pipe; an Android-style kill drops the connection and restarts the
+   core from its persisted state.
+2. **Keep the stub honest with record-tapes.** The turn-id bug (+325)
+   slipped because the Dart fake behaved BETTER than the real bridge.
+   So: record real harness output once — `claude -p
+   --output-format stream-json` and a real `opencode serve`, each fed a
+   few scripted prompts (plain answer, tool call, interrupt, resume,
+   long context) — and commit the captures as golden tapes
+   (`tool/testlab/tapes/`). The stub replays tape fragments, so its
+   frames are real frames. Re-record on CLI upgrade; a diff in the
+   tapes means the protocol changed — check the adapters. Contract
+   tests run the SAME scenario suite against the fake and against the
+   real bridge plus stub: if they disagree, one of them is wrong.
+3. **Generate the interleavings (model-based property test).** No
+   handwritten switch-during-tool-call cases; a seeded generator draws
+   random action sequences over: `prompt`, `switchTo`, `interrupt`,
+   `newSession`, `closeSession`, `stubEmit`, `stubFinish`, `stubCrash`,
+   `dropConnection`, `reconnect`, `tick` — plus the fault-proxy verbs.
+   After EVERY step, the live world is checked against a tiny
+   reference model (a plain map of session id to expected state).
+   Invariants: every frame appears only in its owner session's chat;
+   every turn ends with exactly ONE done and no frame of that turn
+   arrives after it; a done closes only the turn it NAMES (by id);
+   TTS plays only the focused session's text and falls silent within
+   10 ms of a switchTo; no session stays busy forever after its
+   harness finished; eventually drained, given ticks; nothing grows
+   unbounded (subscriptions, timers, backlog size, session count);
+   after a reconnect every unheard say is delivered exactly once —
+   not lost, not doubled. On failure the framework SHRINKS the
+   sequence to the smallest that still fails, and that trace is the
+   regression test (e.g. prompt, stubEmit, switchTo, prompt, stubFinish
+   → "B's turn closed early").
+4. **Fault injection on the transport.** A proxy between app and
+   harness that can drop, delay, duplicate, reorder, or CUT frames on
+   command — exposed to the generator as actions too. It works over
+   HTTP and SSE, and wraps the stdio pipe as a small relay, hunting
+   the zombie-socket and replay-loop class of bugs this repo kept
+   finding in the field.
+5. **Cheap enough to run on every change.** The core session map,
+   turn state, and routing have no UI and no audio inputs, so the runs
+   take milliseconds. One seed replays exactly; a failing run locks
+   its seed into the repo.
+
+    # the generator (seeded; --seed locks a failure; failures land in
+    # tool/testlab/failures/ with their shrunk trace)
+    node tool/testlab/proptest.mjs --runs 20 --steps 20
+    # re-record the golden tapes after a harness upgrade
+    node tool/testlab/record_tapes.mjs
+
 ## Next steps
 
 - Streaming partial ASR (Moonshine/streaming zipformer) for lower first-response latency.

@@ -1,0 +1,44 @@
+{
+  "recorded": "2026-10-23T18:01:53.764Z",
+  "versions": {
+    "claude": "2.1.296 (Claude Code)"
+  },
+  "tapes": [
+    {
+      "tape": "claude-plain.jsonl",
+      "frames": 27
+    },
+    {
+      "tape": "claude-tool.jsonl",
+      "frames": 63
+    },
+    {
+      "tape": "claude-interrupt.jsonl",
+      "frames": 47
+    },
+    {
+      "tape": "claude-resume.jsonl",
+      "frames": 26
+    },
+    {
+      "tape": "claude-longcontext.jsonl",
+      "frames": 108
+    },
+    {
+      "tape": "opencode-plain.busl",
+      "frames": 11
+    },
+    {
+      "tape": "opencode-tool.busl",
+      "frames": 26
+    },
+    {
+      "tape": "opencode-longcontext.busl",
+      "frames": 9
+    },
+    {
+      "tape": "opencode-interrupt.busl",
+      "frames": 30
+    }
+  ]
+}

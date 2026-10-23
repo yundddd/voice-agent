@@ -332,12 +332,25 @@ const permMode = arg('permission-mode', 'bypassPermissions');
 // on disk and the diff names the volatile bytes — no more theorizing.
 const dumpDir = arg('dump-requests', null);
 
+// ── the test lab's clock hook (+328) --------------------------------------
+// With --test-clock (or BRIDGE_TEST_CLOCK=1) the process runs on a
+// VIRTUAL clock: Date.now and the timer globals are patched at boot, so
+// timeouts, heartbeats, and the +229 stop-hold fire only when the test
+// says — through POST /test/tick {ms}. One tick replays exactly. Real
+// I/O stays real (bytes arrive on the event loop as always); what dies
+// is TIME ITSELF as a source of flakiness.
+let testClock = null;
+if (argv.includes('--test-clock') || process.env.BRIDGE_TEST_CLOCK === '1') {
+  const { VirtualClock } = await import('./testlab/clock.mjs');
+  testClock = new VirtualClock(Date.now()).install();
+}
+
 // ── harness: claude (default) or opencode --------------------------------
-// The bridge was written as one adapter — speak stream-json, relay voice
-// events — so the second harness rides the SAME machinery: every opencode
-// service event is TRANSLATED into a claude stream-json line and fed to
-// handleEvent, so the sentence splitter, the census, the receipts, and
-// the queue behave identically whichever harness spoke. Chosen at boot
+// Both harnesses ride the SAME machinery since +327: each adapter
+// (tool/harness/) translates its native wire into the app's normalized
+// HarnessEvent set before handleEvent sees a byte, so the sentence
+// splitter, the census, the receipts, and the queue behave identically
+// whichever harness spoke. Chosen at boot
 // (--harness opencode) or at runtime (POST /harness, below); the choice
 // PERSISTS in ~/.claude_bridge_harness so the trial survives a restart
 // and a rollback is one POST, not an edit to the unit file.
@@ -2788,6 +2801,28 @@ const server = http.createServer((req, res) => {
             res.end(mirror(String(e))); // push mirror under a note
           } else res.writeHead(502).end(`phone unreachable: ${e}\n`);
         });
+    return;
+  }
+  if (url.pathname === '/test/tick' && req.method === 'POST') {
+    // +328 test lab: fire every timer due within {ms}. The body is
+    // read inline; without a virtual clock installed this door honest-
+    // ly refuses (a wall-clock bridge cannot be ticked).
+    let b = '';
+    req.on('data', (c) => b += c);
+    req.on('end', () => {
+      if (!testClock) { res.writeHead(400).end('no test clock\n'); return; }
+      let ms = 1000; try { ms = Number(JSON.parse(b).ms) || 0; } catch {}
+      const fired = testClock.advance(ms);
+      res.writeHead(200, {'content-type': 'application/json'});
+      res.end(JSON.stringify({now: testClock.now, pending: testClock.pending(),
+        fired}));
+    });
+    return;
+  }
+  if (url.pathname === '/test/clock' && req.method === 'GET') {
+    if (!testClock) { res.writeHead(400).end('no test clock\n'); return; }
+    res.writeHead(200, {'content-type': 'application/json'});
+    res.end(JSON.stringify({now: testClock.now, pending: testClock.pending()}));
     return;
   }
   if (req.method === 'GET' && url.pathname === '/health') {
