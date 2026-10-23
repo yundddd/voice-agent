@@ -524,10 +524,18 @@ class BridgeTurn {
       // stamped for the phone's own (unnamed) conversation must not
       // be read as foreign because the phone forgot its seat; that
       // amnesia is the reader's, not the frame's.
+      // +334 (the tape, 14:19:30): the say gate's +331 re-arming lands
+      // here too. The /send step's band frame REFUSED this delivery
+      // ('unfocused conversation … not painted') while the relay gate
+      // still let any stamp matching WHOEVER THE SEAT CURRENTLY WEARS
+      // walk in — the file was born under xray, the eye had just moved
+      // to xray, and the bubble filed into a voice-agent pump anyway.
+      // The seat is an accident of attention; this pump's home is the
+      // address its prompt was POSTed to. The seat proves belonging
+      // only for a pump born NAMELESS.
       final fileForeign =
           ev.session != null &&
-          ev.session != seatedForFile &&
-          ev.session != _viewSid &&
+          ev.session != (_viewSid ?? seatedForFile) &&
           !(seatedForFile == null && _viewSid == null);
       if (fileForeign) {
         env.log(

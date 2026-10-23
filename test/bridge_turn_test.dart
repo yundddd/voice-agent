@@ -1622,6 +1622,47 @@ void main() {
         reason: 'the refusal is journalled, like the say law',
       );
     });
+
+    test('+334: a file matching the MOVED seat stays foreign to a named '
+        'pump (the tape, 14:19:30)', () async {
+      // The +331 shape caught by the file relay's own gate: my voice-agent
+      // pump sat open, the eye swiped to xray, and xray's /send delivery
+      // filed its bubble HERE — the band frame refused ('not painted')
+      // one millisecond before the relay gate let the same conversation's
+      // file walk in because the SEAT happened to wear its name.
+      probe.seatedNow = 'ses-va';
+      mkTurn(); // pump born named for the voice-agent conversation
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      probe.seatedNow = 'ses-xray'; // the eye moves while the pump is open
+      wire.add(
+        BridgeEvent.forTest(
+          'file',
+          fileName: 'xray-app.apk',
+          filePath: 'Downloads/xray-app.apk',
+          fileSize: 369051482,
+          mid: 80,
+          session: 'ses-xray', // born under the tab the seat now wears
+        ),
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r;
+      await settle();
+      expect(
+        chat.entries.any((e) => e.isFile),
+        isFalse,
+        reason: 'the seat is an accident of attention, not an address',
+      );
+      expect(
+        probe.took,
+        isNot(contains(80)),
+        reason: 'un-acked: xray\'s own drain serves its bubble',
+      );
+      expect(
+        probe.logs.any((l) => l.contains('foreign conversation: file')),
+        isTrue,
+      );
+    });
   });
 }
 
