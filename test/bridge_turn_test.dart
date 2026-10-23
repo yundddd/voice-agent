@@ -1326,7 +1326,7 @@ void main() {
       expect(outcome.closedWithoutDone, isTrue);
       expect(engine.synthesized, ['Starting a new conversation.']);
       expect(probe.arms, isEmpty, reason: 'the /new carve-out');
-      expect(probe.logs.first, 'CONTROL stream open (no /talk): go');
+      expect(probe.logs.first, 'CONTROL stream open (no prompt stream): go');
     });
 
     test('a done frame carrying the harness error flags the turn', () async {

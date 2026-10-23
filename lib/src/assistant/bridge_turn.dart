@@ -432,7 +432,8 @@ class BridgeTurn {
     BridgeTurnOrigin.talk =>
       'TALK open: gen=$gen interrupt=${interrupt ? 1 : 0} '
           '"${_trunc(utterance, 40)}"',
-    BridgeTurnOrigin.control => 'CONTROL stream open (no /talk): $utterance',
+    BridgeTurnOrigin.control =>
+      'CONTROL stream open (no prompt stream): $utterance',
     BridgeTurnOrigin.attach =>
       'ATTACH stream open: gen=$gen backlog replay, then live',
   };

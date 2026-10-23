@@ -78,17 +78,30 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
-  bool _targeted = false;
   int _cmdSeq = 0;
   String _commandId() =>
       '${DateTime.now().millisecondsSinceEpoch}-${_cmdSeq++}';
 
-  /// +306: the URL an execution verb takes on THIS bridge: named when
-  /// the bridge declares the capability, legacy-route otherwise. The
-  /// name is never invented here — a null id rides the old route,
-  /// honestly focus-bound, on a bridge too old to be told otherwise.
-  String _verb(String? sessionId, String verb) =>
-      sessionId == null ? '/$verb' : '/sessions/$sessionId/$verb';
+  /// +306→+322: every execution verb is NAMED — the /sessions/:id/…
+  /// door is the only one; the bridge retired the mute twins (/talk,
+  /// /stop, /new, /model answer 410 there now). The name is never invented
+  /// here: a call that arrives without one asks the bridge WHO is
+  /// seated and speaks as that name (a fresh birth naming itself from
+  /// the seat's own report, not a mute press); no name on the wire
+  /// then fails honest, not guessed.
+  String _verb(String sessionId, String verb) =>
+      '/sessions/$sessionId/$verb';
+
+  Future<String> _namedAs(String? sessionId) async {
+    if (sessionId != null) return sessionId;
+    final h = await _healthRaw();
+    final sid = h.body?['sessionId'];
+    if (sid is String && sid.isNotEmpty) return sid;
+    throw BridgeException(
+      'the bridge named no conversation to speak as'
+      '${h.why == null ? '' : ': ${h.why}'}',
+    );
+  }
 
   @override
   Stream<BridgeEvent> talk(
@@ -98,29 +111,19 @@ class BridgeClient extends HarnessGateway {
     bool cutTool = false,
     void Function()? onActivity,
   }) => _sse((client) async {
-    final targeted = _targeted && sessionId != null;
-    final req = await client.postUrl(
-      _u(targeted ? _verb(sessionId, 'prompts') : '/talk', {
-        if (!targeted) 'interrupt': interrupt ? '1' : '0',
-        if (!targeted && cutTool && !interrupt) 'cuttool': '1',
-      }),
+    final req = await client.postUrl(_u(_verb(await _namedAs(sessionId),
+        'prompts')));
+    req.headers.contentType = ContentType('application', 'json');
+    req.add(
+      utf8.encode(
+        jsonEncode({
+          'commandId': _commandId(),
+          'text': text,
+          'interrupt': interrupt,
+          if (cutTool && !interrupt) 'cutTool': true,
+        }),
+      ),
     );
-    if (targeted) {
-      req.headers.contentType = ContentType('application', 'json');
-      req.add(
-        utf8.encode(
-          jsonEncode({
-            'commandId': _commandId(),
-            'text': text,
-            'interrupt': interrupt,
-            if (cutTool && !interrupt) 'cutTool': true,
-          }),
-        ),
-      );
-    } else {
-      req.headers.contentType = ContentType('text', 'plain', charset: 'utf-8');
-      req.add(utf8.encode(text));
-    }
     return req;
   }, onActivity);
 
@@ -137,34 +140,24 @@ class BridgeClient extends HarnessGateway {
   }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
-      final targeted = _targeted && sessionId != null;
+      // +322: named, same law as talk() — the polled press speaks its
+      // conversation's name too; poll:true rides the body the bridge
+      // already reads there.
       final req = await client.postUrl(
-        _u(targeted ? _verb(sessionId, 'prompts') : '/talk', {
-          if (!targeted) 'interrupt': interrupt ? '1' : '0',
-          if (!targeted && cutTool && !interrupt) 'cuttool': '1',
-          'poll': '1',
-        }),
+        _u(_verb(await _namedAs(sessionId), 'prompts')),
       );
-      if (targeted) {
-        req.headers.contentType = ContentType('application', 'json');
-        req.add(
-          utf8.encode(
-            jsonEncode({
-              'commandId': _commandId(),
-              'text': text,
-              'interrupt': interrupt,
-              if (cutTool && !interrupt) 'cutTool': true,
-            }),
-          ),
-        );
-      } else {
-        req.headers.contentType = ContentType(
-          'text',
-          'plain',
-          charset: 'utf-8',
-        );
-        req.add(utf8.encode(text));
-      }
+      req.headers.contentType = ContentType('application', 'json');
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'commandId': _commandId(),
+            'text': text,
+            'interrupt': interrupt,
+            'poll': true,
+            if (cutTool && !interrupt) 'cutTool': true,
+          }),
+        ),
+      );
       final res = await req.close();
       final body = await res.transform(utf8.decoder).join();
       if (res.statusCode != 200) {
@@ -220,18 +213,23 @@ class BridgeClient extends HarnessGateway {
   }
 
   @override
-  Future<void> stop({String? sid}) => _post(
-    sid == null
-        ? '/stop'
-        : _targeted
-        ? _verb(sid, 'stop')
-        : '/stop?sid=${Uri.encodeComponent(sid)}',
-  );
+  Future<void> stop({String? sid}) async {
+    try {
+      await _post(_verb(await _namedAs(sid), 'stop'));
+    } on Object {
+      /* best effort, same swallow as _post: a chip that cannot cut
+      still shows the truth the next /health brings */
+    }
+  }
 
   @override
-  Future<void> reset({String? sessionId}) => _post(
-    sessionId != null && _targeted ? _verb(sessionId, 'reset') : '/new',
-  );
+  Future<void> reset({String? sessionId}) async {
+    try {
+      await _post(_verb(await _namedAs(sessionId), 'reset'));
+    } on Object {
+      /* best effort — the next /health says whether the name moved */
+    }
+  }
 
   @override
   Future<String?> health() async {
@@ -405,7 +403,8 @@ class BridgeClient extends HarnessGateway {
     }
   }
 
-  /// Apply a model pick (POST /model). Any non-2xx comes back as the
+  /// Apply a model pick — by NAME (+322: the mute /model is a 410).
+  /// Any non-2xx comes back as the
   /// bridge's one-line reason (an off-menu id is refused at the
   /// bridge's own gate, before the harness ever sees it).
   @override
@@ -413,9 +412,7 @@ class BridgeClient extends HarnessGateway {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
       final req = await client.postUrl(
-        _u(
-          sessionId != null && _targeted ? _verb(sessionId, 'model') : '/model',
-        ),
+        _u(_verb(await _namedAs(sessionId), 'model')),
       );
       req.headers.contentType = ContentType.json;
       req.add(utf8.encode(jsonEncode({'id': id})));
@@ -498,11 +495,10 @@ class BridgeClient extends HarnessGateway {
       final j = BridgeEvent.tryJson(text);
       if (j is! Map) return (body: null, why: 'unexpected reply: $text');
       final body = j.cast<String, Object>();
-      // +306: the capability flag rides every glance: a bridge that
-      // declares `targeted` gets EVERY execution verb by name
-      // (/sessions/:id/…); one that does not keeps the old
-      // focus-routes — the fallback is a route, never a substitution.
-      _targeted = body['targeted'] == true;
+      // +306→+322: the `targeted` flag is a courtesy the bridge still
+      // pays — every verb is named here regardless, and a bridge
+      // without the named doors answers the mute presses with a 410
+      // that names its replacement.
       return (body: body, why: null);
     } on Object catch (e) {
       return (body: null, why: '$e');

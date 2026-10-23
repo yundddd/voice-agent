@@ -5185,8 +5185,13 @@ class VoiceAssistant extends ChangeNotifier {
         // thinking turn so the new prompt starts in a heartbeat.
         _turn.detach(TurnTrigger.newUtterance, polite: !interrupt);
         _logDebug(
-          '→ harness: bubble added, POSTing /talk (interrupt=$interrupt '
-          'cutTool=$cutTool)',
+          // +321: the line used to name /talk whether or not that was
+          // the route — triage read it as proof the press rode the
+          // seat when it was named all along. The route's own truth
+          // is the sid (or its absence) and the bridge's journal.
+          '→ harness: bubble added, prompt POSTed '
+          '${_sessionId == null ? '(unnamed — the seat answers)' : '(named)'} '
+          '(interrupt=$interrupt cutTool=$cutTool)',
         );
         unawaited(
           runQuickCommand(

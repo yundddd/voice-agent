@@ -61,6 +61,35 @@ async function full(port, pathname, { body = null, method = 'GET' } = {}) {
   return { status: c.status, text: c.text };
 }
 const health = async (port) => JSON.parse((await full(port, '/health')).text);
+// +322: the named verbs are the ONLY execution doors (the bridge
+// retired /talk, /stop, /new and /model to 410). Tests press the seat
+// through these helpers — the phone's own shape, speaking a name.
+const seatSid = async (port) => (await health(port)).sessionId;
+async function say(port, text, opts = {}) {
+  const target = opts.sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/prompts?token=${TOKEN}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        interrupt: opts.interrupt !== false,
+        ...(opts.cuttool ? { cutTool: true } : {}),
+        ...(opts.poll ? { poll: true } : {}),
+      }),
+    });
+}
+async function stopTurn(port, sid) {
+  const target = sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/stop?token=${TOKEN}`,
+    { body: '', method: 'POST' });
+}
+async function resetConv(port, sid) {
+  const target = sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/reset?token=${TOKEN}`,
+    { body: '', method: 'POST' });
+}
 // +305: the pointer lives under the bridge's HOME, keyed by hash of the
 // work dir — the rig mirrors the bridge's own arithmetic, so a drift in
 // either shows up as a missing file, not a passing test.
@@ -107,8 +136,7 @@ test('a spoken turn rides the bus: say frames, done, and the utterance on disk',
   const w = await world({
     stubEnv: { STUB_OC_SAYS: 'One sentence here.\nAnd the second.' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'hello phone' });
+    const a = await say(w.port, 'hello phone');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(a.text.includes('event: say'), 'no say frames relayed');
     assert.ok(a.text.includes('One sentence here.'), 'first sentence missing');
@@ -151,8 +179,7 @@ test('a spoken turn rides the bus: say frames, done, and the utterance on disk',
 test('a permission ask is answered with a legal decision, not swallowed', async () => {
   const w = await world({ stubEnv: { STUB_OC_PERMISSION: '1' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'do the thing' });
+    const a = await say(w.port, 'do the thing');
     await until('done', async () => a.text.includes('event: done'));
     // A {response} body (the old bug) would be a 400 the bridge's
     // catch swallowed and this line would never exist — the real
@@ -165,11 +192,10 @@ test('a permission ask is answered with a legal decision, not swallowed', async 
 test('/stop cuts an open opencode turn through the service interrupt', async () => {
   const w = await world({ stubEnv: { STUB_OC_STALL: '1' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'start something long' });
+    const a = await say(w.port, 'start something long');
     await until('answer airing', async () => a.text.includes('event: say'));
     assert.equal((await health(w.port)).turnOpen, true);
-    await call(w.port, `/stop?token=${TOKEN}`, { method: 'POST' });
+    await stopTurn(w.port);
     await until('interrupt recorded', async () =>
       w.logs().includes('interrupt'));
     await until('turn closed', async () =>
@@ -182,8 +208,7 @@ test('/harness flips both ways, persists, and each harness keeps its own pointer
   try {
     assert.equal((await health(w.port)).harness, 'opencode');
     // Give the opencode side a remembered conversation first.
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'one for the road' });
+    const a = await say(w.port, 'one for the road');
     await until('done', async () => a.text.includes('event: done'));
 
     const r1 = await full(w.port, `/harness?token=${TOKEN}`,
@@ -243,8 +268,7 @@ test('a persisted opencode choice does not hijack an explicitly named --claude',
       try { return (await health(port)).ok; } catch { return false; }
     });
     assert.equal((await health(port)).harness, 'claude');
-    const a = await call(port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'still claude' });
+    const a = await say(port, 'still claude');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(readFileSync(stubLog, 'utf8').includes('still claude'));
   } finally { bridge.kill(); }
@@ -261,19 +285,18 @@ test('the opencode picker lists the service catalog and moves the session', asyn
       { id: 'acme/beta', label: 'Acme Beta' },
       { id: 'other/gamma', label: 'other/gamma' }, // no name: id stands in
     ]);
-    const r = await full(w.port, `/model?token=${TOKEN}`,
+    const r = await full(w.port, `/sessions/${await seatSid(w.port)}/model?token=${TOKEN}`,
       { method: 'POST', body: '{"id":"acme/beta"}' });
     assert.equal(r.status, 200);
     assert.equal((await health(w.port)).model, 'acme/beta');
     // No session yet: the pick must PARK and ride the session's
     // CREATION, or the first turn would answer in the wrong voice.
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'who answers' });
+    const a = await say(w.port, 'who answers');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(w.logs().includes('model-create acme/beta'),
       'the pick never rode the session creation');
     // With the session ALIVE, the next pick goes straight to its API…
-    const r2 = await full(w.port, `/model?token=${TOKEN}`,
+    const r2 = await full(w.port, `/sessions/${await seatSid(w.port)}/model?token=${TOKEN}`,
       { method: 'POST', body: '{"id":"other/gamma"}' });
     assert.equal(r2.status, 200);
     await until('the session-model call lands', async () =>
@@ -306,7 +329,7 @@ test('the claude picker serves the menu, the control frame, and the respawn carr
       { id: 'default', label: 'default' },
       { id: 'opus', label: 'opus' },
     ]);
-    const r = await full(port, `/model?token=${TOKEN}`,
+    const r = await full(port, `/sessions/${await seatSid(port)}/model?token=${TOKEN}`,
       { method: 'POST', body: '{"id":"opus"}' });
     assert.equal(r.status, 200);
     // The 200 is the WRITE's word; the pipe's word is the next read.
@@ -314,16 +337,15 @@ test('the claude picker serves the menu, the control frame, and the respawn carr
       readFileSync(stubLog, 'utf8').includes('set-model opus'));
     assert.equal((await health(port)).model, 'opus');
     // Off-menu is refused at the BRIDGE gate (never the CLI's).
-    const bad = await full(port, `/model?token=${TOKEN}`,
+    const bad = await full(port, `/sessions/${await seatSid(port)}/model?token=${TOKEN}`,
       { method: 'POST', body: '{"id":"pi"}' });
     assert.equal(bad.status, 400);
     assert.ok(bad.text.includes('not in --models'));
     assert.equal((await health(port)).model, 'opus');
     // The pick survives the child: /new + a fresh talk respawns WITH
     // --model in the CLI's face.
-    await full(port, `/new?token=${TOKEN}`, { method: 'POST' });
-    const a = await call(port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'fresh child same model' });
+    await resetConv(port);
+    const a = await say(port, 'fresh child same model');
     await until('done', async () => a.text.includes('event: done'));
     // A pick is not hostage to the child's lifespan: the respawn line
     // carries --model (no session to API, so the flag is the carry).
@@ -350,7 +372,7 @@ test('a refused set_model rolls the current back', async () => {
     await until('bridge up', async () => {
       try { return (await health(port)).ok; } catch { return false; }
     });
-    const r = await full(port, `/model?token=${TOKEN}`,
+    const r = await full(port, `/sessions/${await seatSid(port)}/model?token=${TOKEN}`,
       { method: 'POST', body: '{"id":"opus"}' });
     assert.equal(r.status, 200); // the WRITE happened…
     await until('the refusal lands', async () =>
@@ -361,8 +383,7 @@ test('a refused set_model rolls the current back', async () => {
 test('+219 a failed turn carries the provider\u2019s reason to the phone', async () => {
   const w = await world({ stubEnv: { STUB_OC_FAIL: '1' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'answer me' });
+    const a = await say(w.port, 'answer me');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(a.text.includes('"isError":true'),
       'the done frame lost the error flag');
@@ -395,8 +416,7 @@ test('a claude api_retry surfaces as retry progress, not a frozen spinner', asyn
     await until('bridge up', async () => {
       try { return (await health(port)).ok; } catch { return false; }
     });
-    const a = await call(port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'go' });
+    const a = await say(port, 'go');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(a.text.includes('"name":"retry"'),
       'the api_retry frame never reached the wire');
@@ -410,8 +430,7 @@ test('a claude api_retry surfaces as retry progress, not a frozen spinner', asyn
 test('an opencode step failure says RETRYING while the turn lives', async () => {
   const w = await world({ stubEnv: { STUB_OC_RETRY: '1' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'go' });
+    const a = await say(w.port, 'go');
     await until('done', async () => a.text.includes('event: done'));
     assert.ok(a.text.includes('"name":"retry"') &&
       a.text.includes('Too many requests.'),
@@ -426,8 +445,7 @@ test('an opencode step failure says RETRYING while the turn lives', async () => 
 test('a dropped event bus mid-turn says reconnecting and loses nothing', async () => {
   const w = await world({ stubEnv: { STUB_OC_DROP: '1', STUB_OC_MS: '200' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'go' });
+    const a = await say(w.port, 'go');
     await until('done', async () => a.text.includes('event: done'), 8000);
     assert.ok(a.text.includes('reconnecting'),
       'the phone deserved to know the wire blipped');
@@ -479,8 +497,7 @@ test('+223 moving folders carries the destination\u2019s remembered session', as
       'the migrated pointer left the old dotfile in the project dir');
     // The remembered conversation is not merely REPORTED — the next
     // utterance RESUMES it: the pointer rides --resume into the CLI.
-    const t = await call(port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'resume me' });
+    const t = await say(port, 'resume me');
     await until('done', async () => t.text.includes('event: done'));
     assert.ok(readFileSync(argsLog, 'utf8').includes('--resume ses-B'),
       'the moved-to session was not resumed');
@@ -496,13 +513,11 @@ test('the context bar reads per-call usage, not the session\u2019s lifetime sum'
   // subtract, or every step re-presents the whole past as new.
   const w = await world();
   try {
-    const t1 = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'one' });
+    const t1 = await say(w.port, 'one');
     await until('first done', async () => t1.text.includes('event: done'));
     // Turn one closes with the call's own usage: 1234 in + 42 out.
     assert.equal((await health(w.port)).context.in, 1276);
-    const t2 = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'two' });
+    const t2 = await say(w.port, 'two');
     await until('second done', async () => t2.text.includes('event: done'));
     // The second call's message_start carries THIS call's context —
     // the pre-bug wire said 2468 (the cumulative total).
@@ -523,8 +538,7 @@ test('a tool round-trip inside a turn does not blink the spinner off', async () 
   // turn has ONE boundary; the settled verdict may speak only at it.
   const w = await world({ stubEnv: { STUB_OC_TOOL: '1' } });
   try {
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'run the suite' });
+    const a = await say(w.port, 'run the suite');
     await until('done', async () => a.text.includes('event: done'));
     // Both sentences of the two-step turn arrived, exactly once.
     assert.ok(a.text.includes('Running a check.'), 'step one missing');
@@ -567,8 +581,7 @@ test('/seat moves harness, folder and conversation in one request', async () => 
     assert.equal(j.harness, 'opencode');
     assert.equal((await health(w.port)).sessionId, j.sessionId);
     // A turn names the session (the stub is always soc-1)…
-    const a = await call(w.port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'first words' });
+    const a = await say(w.port, 'first words');
     await until('done', async () => a.text.includes('event: done'));
     // the same record, now backend-named (the stub is always soc-1)…
     assert.equal((await health(w.port)).backendSid, 'soc-1');
@@ -673,8 +686,7 @@ test('+230 the claude seat resumes a NAMED conversation on respawn', async () =>
     const seatJ = JSON.parse(r.text);
     assert.match(seatJ.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     assert.equal(seatJ.backendSid, 'ses-TAB');
-    const t = await call(port, `/talk?token=${TOKEN}`,
-      { method: 'POST', body: 'resumed thread' });
+    const t = await say(port, 'resumed thread');
     await until('done', async () => t.text.includes('event: done'));
     // The lazy respawn carried --resume with the NAMED id, not a
     // pointer's guess: that name IS the tab's conversation.

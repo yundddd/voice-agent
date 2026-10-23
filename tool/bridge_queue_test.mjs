@@ -91,6 +91,39 @@ function call(port, pathname, { body = null, method = 'GET' } = {}) {
 
 const health = async (port) => JSON.parse((await call(port, '/health')).text);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// ── +322: the named verbs are the ONLY execution doors (the bridge
+// retired /talk, /stop, /new and /model to 410). Tests press on the
+// SEAT by default — exactly what the phone does — through these two
+// helpers, so every walk speaks its conversation's name like the law
+// demands. opts: {interrupt:false} polite queue, {cuttool:true}
+// queue-with-backgrounding, {poll:true} pull transport, {sid} speak
+// as a named record while another holds the seat.
+const seatSid = async (port) => (await health(port)).sessionId;
+async function say(port, text, opts = {}) {
+  const target = opts.sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/prompts?token=${TOKEN}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        interrupt: opts.interrupt !== false,
+        ...(opts.cuttool ? { cutTool: true } : {}),
+        ...(opts.poll ? { poll: true } : {}),
+      }),
+    });
+}
+async function stopTurn(port, sid) {
+  const target = sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/stop?token=${TOKEN}`,
+    { body: '', method: 'POST' });
+}
+async function resetConv(port, sid) {
+  const target = sid ?? await seatSid(port);
+  return call(port,
+    `/sessions/${encodeURIComponent(target)}/reset?token=${TOKEN}`,
+    { body: '', method: 'POST' });
+}
 async function until(what, cond, ms = 6000) {
   const t0 = Date.now();
   for (;;) {
@@ -144,13 +177,11 @@ test('a polite queue whose phone stream died still gets its turn (+104)', async 
     await up(PORT1);
 
     // Turn A, heard: the stub holds it open for 1.5 s.
-    const a = await call(PORT1, `/talk?token=${TOKEN}`,
-      { body: 'first turn', method: 'POST' });
+    const a = await say(PORT1, 'first turn');
     await until('turn A open', async () => (await health(PORT1)).turnOpen === true);
 
     // Turn B parks behind it politely and reads its notice…
-    const b = await call(PORT1, `/talk?token=${TOKEN}&interrupt=0`,
-      { body: 'second queued message', method: 'POST' });
+    const b = await say(PORT1, 'second queued message', { interrupt: false });
     await until('B queued notice', async () => b.text.includes('"name":"queued"'));
     // B must NOT have reached the harness yet (the polite promise). Not
     // an equality on the log: the stub process is still booting here,
@@ -193,11 +224,9 @@ test('an interrupted turn dies without a done of its own (+106)', async () => {
   const proc = startBridge(stubLog, PORT3);
   try {
     await up(PORT3);
-    const a = await call(PORT3, `/talk?token=${TOKEN}`,
-      { body: 'first turn', method: 'POST' });
+    const a = await say(PORT3, 'first turn');
     await until('turn A open', async () => (await health(PORT3)).turnOpen === true);
-    const b = await call(PORT3, `/talk?token=${TOKEN}&interrupt=1`,
-      { body: 'interrupting prompt', method: 'POST' });
+    const b = await say(PORT3, 'interrupting prompt');
     await until('B queued notice', async () => b.text.includes('"name":"queued"'));
 
     // A's timer-fired result closes the aborted turn while B is pending:
@@ -239,11 +268,9 @@ test('a /stop cut closes with an honest farewell, not an internal (+301)',
     });
     try {
       await up(PORT30);
-      const a = await call(PORT30, `/talk?token=${TOKEN}`,
-        { body: 'a long sleep', method: 'POST' });
+      const a = await say(PORT30, 'a long sleep');
       await until('tool step', async () => a.text.includes('"name":"Bash"'));
-      const s = await call(PORT30, `/stop?token=${TOKEN}`,
-        { method: 'POST' });
+      const s = await stopTurn(PORT30);
       assert.equal(s.text.trim(), 'ok');
       await until('the cut result lands',
         async () => a.text.includes('event: done'));
@@ -264,11 +291,9 @@ test('a polite queue on a live stream flushes to its own socket', async () => {
   const proc = startBridge(stubLog, PORT2);
   try {
     await up(PORT2);
-    const a = await call(PORT2, `/talk?token=${TOKEN}`,
-      { body: 'first turn', method: 'POST' });
+    const a = await say(PORT2, 'first turn');
     await until('turn A open', async () => (await health(PORT2)).turnOpen === true);
-    const b = await call(PORT2, `/talk?token=${TOKEN}&interrupt=0`,
-      { body: 'second queued message', method: 'POST' });
+    const b = await say(PORT2, 'second queued message', { interrupt: false });
     await until('B queued notice', async () => b.text.includes('"name":"queued"'));
 
     // The live path (beginTurn onto the waiting response): when A's result
@@ -299,8 +324,7 @@ test('every relayed sentence keeps one replayable copy, never two (+114)',
     });
     try {
       await up(PORT4);
-      const a = await call(PORT4, `/talk?token=${TOKEN}`,
-        { body: 'tell me something', method: 'POST' });
+      const a = await say(PORT4, 'tell me something');
       await until('turn open', async () => (await health(PORT4)).turnOpen === true);
 
       // The phone LISTENS all the way (no kill this time): the say
@@ -353,13 +377,11 @@ test('a queue press over a running tool backgrounds it and frees the agent ' +
   try {
     await up(PORT6);
     // Turn A: a long build, heard live — the tool step proves it is open.
-    const a = await call(PORT6, `/talk?token=${TOKEN}`,
-      { body: 'run the suite', method: 'POST' });
+    const a = await say(PORT6, 'run the suite');
     await until('Bash step relayed', async () => a.text.includes('"name":"Bash"'));
 
     // Queue politely-with-backgrounding over the open tool:
-    const b = await call(PORT6, `/talk?token=${TOKEN}&interrupt=0&cuttool=1`,
-      { body: 'status please', method: 'POST' });
+    const b = await say(PORT6, 'status please', { interrupt: false, cuttool: true });
     await until('notice announces the cut', async () =>
       b.text.includes('"name":"queued"') &&
       b.text.includes('the running call was interrupted'));
@@ -418,12 +440,10 @@ test('a cut tool\u2019s cancelled receipt follows its backgrounding notice ' +
   });
   try {
     await up(PORT6B);
-    const a = await call(PORT6B, `/talk?token=${TOKEN}`,
-      { body: 'sleep please', method: 'POST' });
+    const a = await say(PORT6B, 'sleep please');
     await until('tool open', async () =>
       a.text.includes('"name":"Bash"'));
-    const b = await call(PORT6B, `/talk?token=${TOKEN}&interrupt=0&cuttool=1`,
-      { body: 'new message', method: 'POST' });
+    const b = await say(PORT6B, 'new message', { interrupt: false, cuttool: true });
 
     // The ring is the phone's eye (both transports feed it; the pull
     // loop reads it): assert the STORY ORDER on the single sequence.
@@ -470,14 +490,12 @@ test('the pickup marker survives the flush’s backlog wipe — /attach ' +
   const proc = startBridge(stubLog, PORT7);
   try {
     await up(PORT7);
-    const a = await call(PORT7, `/talk?token=${TOKEN}`,
-      { body: 'first turn', method: 'POST' });
+    const a = await say(PORT7, 'first turn');
     await until('turn A open', async () => (await health(PORT7)).turnOpen === true);
 
     // A POLL-transport queue press: parked, notice on the ring, socket
     // closed at enqueue exactly like the phone does it.
-    await call(PORT7, `/talk?token=${TOKEN}&interrupt=0&poll=1`,
-      { body: 'polled queue', method: 'POST' });
+    await say(PORT7, 'polled queue', { interrupt: false, poll: true });
     await until('queue flushed', async () => (await health(PORT7)).queued === false);
 
     // Now the drained phone arrives: /attach replays the unheard backlog,
@@ -507,8 +525,7 @@ test('a backgrounded turn ends with a finished receipt before its done',
     const proc = startBridge(stubLog, PORT7);
     try {
       await up(PORT7);
-      const a = await call(PORT7, `/talk?token=${TOKEN}`,
-        { body: 'long working turn', method: 'POST' });
+      const a = await say(PORT7, 'long working turn');
       await until('turn open', async () => (await health(PORT7)).turnOpen === true);
 
       // The phone hangs up mid-turn: the turn runs BACKGROUND. Its
@@ -549,8 +566,7 @@ test('a heard turn closes with its done alone — no finished marker',
     const proc = startBridge(stubLog, PORT7 + 1);
     try {
       await up(PORT7 + 1);
-      const a = await call(PORT7 + 1, `/talk?token=${TOKEN}`,
-        { body: 'short heard turn', method: 'POST' });
+      const a = await say(PORT7 + 1, 'short heard turn');
       await until('turn done', async () => a.text.includes('event: done'));
       assert.ok(!a.text.includes('"name":"finished"'),
         'a heard turn must not carry a finished marker — its done is the ' +
@@ -582,8 +598,7 @@ test('the harness backgrounding its own shell reports in unprompted (+133)',
     });
     try {
       await up(PORT8);
-      await call(PORT8, `/talk?token=${TOKEN}&poll=1`,
-        { body: 'run bash sleep', method: 'POST' });
+      await say(PORT8, 'run bash sleep', { poll: true });
       // The poll transport closes its /talk response early: the launch
       // frames are read where they actually ride — the ring.
       await until('launch receipt frames on the ring', async () => {
@@ -611,8 +626,7 @@ test('the harness backgrounding its own shell reports in unprompted (+133)',
       // in it must QUEUE (the agent is mid-sentence about its news).
       await until('report turn opens unprompted', async () =>
         (await health(PORT8)).turnOpen === true);
-      const b = await call(PORT8, `/talk?token=${TOKEN}&poll=1&interrupt=0`,
-        { body: 'queued behind the report', method: 'POST' });
+      const b = await say(PORT8, 'queued behind the report', { interrupt: false, poll: true });
       // v2: the polled receipt NAMES the reserved turn; the notice
       // itself rides the ring (where the pull transport reads all of
       // its frames anyway).
@@ -670,8 +684,7 @@ test('an idle bridge announces the pickup of the turn it starts now (+155)', asy
   const proc = startBridge(stubLog, PORT9);
   try {
     await up(PORT9);
-    await call(PORT9, `/talk?token=${TOKEN}&poll=1`,
-      { body: 'sleep again please', method: 'POST' });
+    await say(PORT9, 'sleep again please', { poll: true });
     await until('started marker on the ring', async () => {
       const ring = JSON.parse((await call(PORT9, `/poll?token=${TOKEN}&since=0`)).text);
       return ring.events.some((e) =>
@@ -708,15 +721,13 @@ test('wire v2: reserved turn ids, done carries its owner, /heard trims',
       assert.equal((await health(PORT10)).proto, 2,
         'the health page names the protocol');
       // Turn A, heard and slow (1.5 s): the farewell we must not confuse.
-      const a = await call(PORT10, `/talk?token=${TOKEN}`,
-        {body: 'hold the floor', method: 'POST'});
+      const a = await say(PORT10, 'hold the floor');
       await until('turn A open', async () =>
         (await health(PORT10)).turnOpen === true);
       const tA = (await health(PORT10)).turn;
 
       // Polled queue press: the receipt names the turn B will own.
-      const b = await call(PORT10, `/talk?token=${TOKEN}&poll=1`,
-        {body: 'my answer please', method: 'POST'});
+      const b = await say(PORT10, 'my answer please', { poll: true });
       await sleep(120);
       const receipt = JSON.parse(b.text);
       assert.equal(receipt.ok, true);
@@ -739,13 +750,13 @@ test('wire v2: reserved turn ids, done carries its owner, /heard trims',
       const note = evs.find((e) => e.data?.name === 'queued');
       const marker = evs.find((e) => e.data?.name === 'started' &&
         e.data?.detail === 'my answer please');
-      const say = evs.find((e) => e.ev === 'say');
-      assert.ok(note && marker && say, 'story frames missing');
+      const sayFrame = evs.find((e) => e.ev === 'say');
+      assert.ok(note && marker && sayFrame, 'story frames missing');
       assert.equal(note.data._turn, receipt.turn,
         'the queue notice belongs to the reserved turn');
       assert.equal(marker.data._turn, receipt.turn,
         'the pickup marker belongs to the reserved turn');
-      assert.equal(say.data._turn, receipt.turn,
+      assert.equal(sayFrame.data._turn, receipt.turn,
         'the answer belongs to the turn the receipt promised');
       // The +106 cut leaked A's farewell, so the ring's dones are
       // either the flush turn's own (correctly stamped) or a heard
@@ -757,9 +768,9 @@ test('wire v2: reserved turn ids, done carries its owner, /heard trims',
         'every done names the turn it closes');
       assert.ok(Number.isFinite(note.data._mid) &&
         Number.isFinite(marker.data._mid) &&
-        Number.isFinite(say.data._mid));
+        Number.isFinite(sayFrame.data._mid));
       assert.ok(marker.data._mid > note.data._mid &&
-        say.data._mid > marker.data._mid, 'ids march forward');
+        sayFrame.data._mid > marker.data._mid, 'ids march forward');
 
       // The drain: replay everything unheard, and prove the replay
       // consumed nothing…
@@ -768,13 +779,13 @@ test('wire v2: reserved turn ids, done carries its owner, /heard trims',
       const replay = sseEvents(at.text);
       const replayedSay = replay.find((e) => e.ev === 'say');
       assert.ok(replayedSay, 'the unheard answer did not ride /attach');
-      assert.equal(replayedSay.data._mid, say.data._mid,
+      assert.equal(replayedSay.data._mid, sayFrame.data._mid,
         'the replayed copy carries the SAME id — one message, one id');
       assert.ok((await health(PORT10)).missed > 0,
         '/attach consumed the backlog again — only /heard may trim it');
       // …then acking the answer trims it and the next replay is silent.
       await call(PORT10, `/heard?token=${TOKEN}`, {method: 'POST',
-        body: JSON.stringify({mids: [say.data._mid]})});
+        body: JSON.stringify({mids: [sayFrame.data._mid]})});
       const at2 = await call(PORT10, `/attach?token=${TOKEN}`);
       await sleep(200);
       assert.ok(!sseEvents(at2.text).some((e) => e.ev === 'say' &&
@@ -808,8 +819,7 @@ test('a background task notification pays the agent’s background debt ' +
   });
   try {
     await up(PORT11);
-    const a = await call(PORT11, `/talk?token=${TOKEN}`,
-      { body: 'launch it', method: 'POST' });
+    const a = await say(PORT11, 'launch it');
     await until('launch turn closes', async () =>
       (await health(PORT11)).turnOpen === false);
     // The shell is a tracked, OWED debt — and decisively not paid by
@@ -860,8 +870,7 @@ test('two shells owed; one report pays only its own (+182)', async () => {
   });
   try {
     await up(PORT18);
-    const a = await call(PORT18, `/talk?token=${TOKEN}`,
-      { body: 'launch both', method: 'POST' });
+    const a = await say(PORT18, 'launch both');
     await until('launch turn closes', async () =>
       (await health(PORT18)).turnOpen === false);
     assert.equal((await health(PORT18)).detached, 2,
@@ -923,8 +932,7 @@ test('an unheard turn backs up memory, never counters (+159)', async () => {
     ['--tok-heartbeat', '200']);
   try {
     await up(PORT12);
-    const a = await call(PORT12, `/talk?token=${TOKEN}`,
-      { body: 'build it', method: 'POST' });
+    const a = await say(PORT12, 'build it');
     await until('tool step lands', async () =>
       a.text.includes('"name":"Bash"'));
     a.kill(); // the phone hangs up mid-turn: everything after is out of earshot
@@ -1031,8 +1039,7 @@ test('GET /dirs lists only folders inside --dir-root, /dir moves the agent there
       const h = await health(PORT13);
       return h.dir === resolve(join(root, 'beta')) && h.claudeUp === false;
     });
-    await call(PORT13, `/talk?token=${TOKEN}`,
-      { body: 'where are we', method: 'POST' });
+    await say(PORT13, 'where are we');
     await until('respawn inside beta', async () => {
       try {
         return readFileSync(cwdLog, 'utf8').trim().split('\n').at(-1) ===
@@ -1072,8 +1079,7 @@ test('a politely parked prompt folds into the running turn at the next ' +
   const proc = startBridge(stubLog, PORT15, FOLD_ENV);
   try {
     await up(PORT15);
-    const a = await call(PORT15, `/talk?token=${TOKEN}`,
-      { body: 'the first ask', method: 'POST' });
+    const a = await say(PORT15, 'the first ask');
     await until('host turn open', async () =>
       (await health(PORT15)).turnOpen === true);
     await until('tool 1 is open', async () =>
@@ -1081,8 +1087,7 @@ test('a politely parked prompt folds into the running turn at the next ' +
 
     // Park politely WHILE the first tool is open, before tool 2 gives
     // the turn its first boundary.
-    const b = await call(PORT15, `/talk?token=${TOKEN}&interrupt=0`,
-      { body: 'the steer', method: 'POST' });
+    const b = await say(PORT15, 'the steer', { interrupt: false });
     await until('b queued notice', async () =>
       b.text.includes('"name":"queued"'));
     assert.ok(b.text.includes('steer the turn'),
@@ -1144,8 +1149,7 @@ test('a queued /compact folds without ever holding a stream (+171)',
   const proc = startBridge(stubLog, PORT17, FOLD_ENV);
   try {
     await up(PORT17);
-    const a = await call(PORT17, `/talk?token=${TOKEN}`,
-      { body: 'the host ask', method: 'POST' });
+    const a = await say(PORT17, 'the host ask');
     await until('host turn open', async () =>
       (await health(PORT17)).turnOpen === true);
     await until('tool 1 is open', async () =>
@@ -1156,9 +1160,13 @@ test('a queued /compact folds without ever holding a stream (+171)',
     // boundary at 1200 ms, its result at 4000 ms — 1000 ms here can
     // only mean 'closed at the notice').
     const bT0 = Date.now();
+    const bSeat = await seatSid(PORT17); // +322: the curl-shaped caller
+    // still exists (this is the agent's own housekeeping wire) — it
+    // just speaks its name now, JSON through the /sessions door.
     const b = await new Promise((resolve, reject) => {
       const rq = http.request(
-        `http://127.0.0.1:${PORT17}/talk?token=${TOKEN}&interrupt=0`,
+        `http://127.0.0.1:${PORT17}/sessions/${bSeat}/prompts`
+          + `?token=${TOKEN}`,
         { method: 'POST' }, (rs) => {
         let t = '';
         rs.setEncoding('utf8');
@@ -1166,7 +1174,7 @@ test('a queued /compact folds without ever holding a stream (+171)',
         rs.on('end', () => resolve({ ms: Date.now() - bT0, text: t }));
       });
       rq.on('error', reject);
-      rq.write('/compact');
+      rq.write(JSON.stringify({ text: '/compact', interrupt: false }));
       rq.end();
     });
     assert.ok(b.ms < 1000,
@@ -1210,8 +1218,7 @@ test('a park after the last boundary waits for the flush — the old law ' +
   const proc = startBridge(stubLog, PORT16, FOLD_ENV);
   try {
     await up(PORT16);
-    await call(PORT16, `/talk?token=${TOKEN}`,
-      { body: 'the first ask', method: 'POST' });
+    await say(PORT16, 'the first ask');
     await until('host turn open', async () =>
       (await health(PORT16)).turnOpen === true);
     // Park AFTER tool 2 closed (1330 ms) — no boundary remains before
@@ -1220,8 +1227,7 @@ test('a park after the last boundary waits for the flush — the old law ' +
     // learns is that the turn settles first: delivery falls through to
     // the old law, never later.)
     await sleep(1800);
-    const b = await call(PORT16, `/talk?token=${TOKEN}&interrupt=0`,
-      { body: 'too late to steer', method: 'POST' });
+    const b = await say(PORT16, 'too late to steer', { interrupt: false });
     await until('b queued notice', async () =>
       b.text.includes('"name":"queued"'));
     await sleep(600); // past where a tool-2 boundary would have folded it
@@ -1354,8 +1360,7 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
       const MSG = 'Context window exceeded. Please compact or create a new session.';
 
       // Turn 1: the oversized turn — echo AND done both reworded.
-      const a = await call(PORT19, `/talk?token=${TOKEN}`,
-        { body: 'hello', method: 'POST' });
+      const a = await say(PORT19, 'hello');
       await until('turn 1 done', async () =>
         sseEvents(a.text).some((e) => e.ev === 'done'));
       const evsA = sseEvents(a.text);
@@ -1368,8 +1373,7 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
       // Turn 2: refused AT HOME — frames land before an upstream call
       // could even clear the loopback, and the stub never hears of it.
       const t0 = Date.now();
-      const b = await call(PORT19, `/talk?token=${TOKEN}`,
-        { body: 'hello again', method: 'POST' });
+      const b = await say(PORT19, 'hello again');
       await until('refusal done', async () =>
         sseEvents(b.text).some((e) => e.ev === 'done'), 1500);
       assert.ok(Date.now() - t0 < 1400, 'refusal was not instant');
@@ -1385,8 +1389,7 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
       // watches the work: the CLI's early status frame becomes a live
       // 'auto-compacting' line, the boundary is the proof that lifts
       // the verdict, and the turn closes clean.
-      const c = await call(PORT19, `/talk?token=${TOKEN}`,
-        { body: '/compact', method: 'POST' });
+      const c = await say(PORT19, '/compact');
       await until('compact done', async () =>
         sseEvents(c.text).some((e) => e.ev === 'done'));
       const evsC = sseEvents(c.text);
@@ -1400,8 +1403,7 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
 
       // Turn 4: spoken prompts flow again — the verdict lifted on
       // proof, not on hope.
-      const d = await call(PORT19, `/talk?token=${TOKEN}`,
-        { body: 'are we back?', method: 'POST' });
+      const d = await say(PORT19, 'are we back?');
       await until('recovered done', async () =>
         sseEvents(d.text).some((e) => e.ev === 'done'));
       assert.ok(sseEvents(d.text).some((e) =>
@@ -1426,8 +1428,7 @@ test('two conversations work at once, each with its own row (+257)',
     try {
       await up(PORT20);
       // Conversation A: an unnamed birth turn, mid-answer.
-      const a = await call(PORT20, `/talk?token=${TOKEN}`,
-        { body: 'registry first', method: 'POST' });
+      const a = await say(PORT20, 'registry first');
       // Wait for the NAME, not just the flag: the stub answers under
       // 'stub-session' when not resumed, adoption is a frame deep, and
       // a row still wearing the boot placeholder is not yet a row.
@@ -1461,8 +1462,7 @@ test('two conversations work at once, each with its own row (+257)',
 
       // B speaks: it must START (no queue notice — B has no turn of
       // its own, and a stranger\'s open turn is no one\'s floor now).
-      const b = await call(PORT20, `/talk?token=${TOKEN}`,
-        { body: 'registry second', method: 'POST' });
+      const b = await say(PORT20, 'registry second');
       await until('B running immediately', async () => {
         const t = (await health(PORT20)).turnSid;
         return t === uuidB;
@@ -1493,6 +1493,66 @@ test('two conversations work at once, each with its own row (+257)',
     }
   });
 
+// ── +322: the mute routes are GONE (410), every verb speaks its name ────
+// Field tape (08:39): the app restarted and, in the beat before its tab
+// re-learned its id, a press rode the legacy /talk route — the question
+// meant for the voice-agent conversation resumed into the /home/tim
+// backend's child and its answer came back as a foreign say. +306 named
+// every verb; the mute twins survived only for phones too old to know
+// their own conversation's name, and a press that cannot say WHICH
+// agent must answer it has no business picking. The 410 names the door
+// that replaced each one.
+
+const PORT29 = PORT1 + 70;
+test('+322 the retired four answer 410 with the named door; a named ' +
+  'press feeds its own record while a stranger holds the seat',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT29);
+    try {
+      await up(PORT29);
+      // The four mute doors all answer GONE, each pointing at its verb.
+      for (const [gone, verb] of [['talk', 'prompts'], ['stop', 'stop'],
+        ['new', 'reset'], ['model', 'model']]) {
+        const r = await fetch(`http://127.0.0.1:${PORT29}/`
+          + `${gone}?token=${TOKEN}`,
+          { method: 'POST', body: JSON.stringify({ text: 'press' }) });
+        assert.equal(r.status, 410, `/${gone} is gone, honestly`);
+        const j = await r.json();
+        assert.equal(j.gone, '/' + gone);
+        assert.match(j.use, new RegExp('/sessions/.+/' + verb),
+          'the 410 names the door that replaced it');
+      }
+      // A is born through the seat's own name (the app's first press).
+      await say(PORT29, 'A birth turn');
+      let uuidA = null;
+      await until('A named', async () => {
+        const h = await health(PORT29);
+        uuidA = h.sessions[0]?.sid;
+        return h.turnOpen === true &&
+          /^[0-9a-f-]{36}$/.test(uuidA || '');
+      });
+      await until('A rests', async () =>
+        (await health(PORT29)).sessions.every((r) => !r.turnOpen));
+      // The seat moves to B — A rests, and the SEAT now wears B.
+      const seat = await call(PORT29, `/seat?token=${TOKEN}`,
+        { body: JSON.stringify({ sessionId: 'ses-sidtalk-b' }),
+          method: 'POST' });
+      assert.equal(JSON.parse(seat.text).ok, true, 'the seat moved');
+      // A press FOR A, named: it feeds A's record though B holds the
+      // seat — the 08:39 crossing pinned the other way.
+      await say(PORT29, 'press for A', { sid: uuidA });
+      await until('A speaks, not the seat', async () =>
+        (await health(PORT29)).turnSid === uuidA);
+      await until('A done', async () =>
+        seen(stubLog).includes('press for A') &&
+        (await health(PORT29)).sessions.every((r) => !r.turnOpen));
+    } finally {
+      await stopBridge(proc);
+    }
+  });
+
 // ── +278: a seat move never executes a living shell ─────────────────────
 // Field tape (twice): 'do a 15 second sleep in the background' — the
 // launch receipt lit the banner, the turn closed politely, the user
@@ -1516,8 +1576,7 @@ test('+278 seat move inside the debt window: the shell survives, the receipt lan
     });
     try {
       await up(PORT22);
-      await call(PORT22, `/talk?token=${TOKEN}&poll=1`,
-        { body: 'bg for me', method: 'POST' });
+      await say(PORT22, 'bg for me', { poll: true });
       // The poll transport closes its /talk response early: the launch
       // frames are read where they actually ride — the ring.
       await until('launch receipt frames on the ring', async () => {
@@ -1604,13 +1663,11 @@ test('+273 folded done waits for the steer run — no answer, no farewell',
     try {
       await up(PORT21);
       // A: the host turn (opens a tool round, answers nothing after).
-      const a = await call(PORT21, `/talk?token=${TOKEN}`,
-        { body: 'host work', method: 'POST' });
+      const a = await say(PORT21, 'host work');
       await until('host turn open', async () =>
         (await health(PORT21)).turnOpen === true);
       // B: the polite park — it must steer, not queue behind.
-      const b = await call(PORT21, `/talk?token=${TOKEN}&interrupt=0`,
-        { body: 'my steered word', method: 'POST' });
+      const b = await say(PORT21, 'my steered word', { interrupt: false });
       await until('B folded', async () =>
         b.text.includes('"kind":"steered"'));
       const turnB = JSON.parse(/data: (\{.*?\})/.exec(b.text)[1]).turn;
@@ -1663,10 +1720,12 @@ test('+304: /seat drops a model the menu does not know', async () => {
         'the response reports the record\'s REAL model');
     const h = await health(PORT31);
     assert.equal(h.model, 'default', 'the record is born clean');
-    // And the same word at the honest door still refuses loudly.
-    const m = await call(PORT31, `/model?token=${TOKEN}`,
+    // And the same word at the honest door still refuses loudly
+    // (+322: through the named verb — the mute /model is a 410 now).
+    const m = await call(PORT31,
+      `/sessions/${await seatSid(PORT31)}/model?token=${TOKEN}`,
       { body: JSON.stringify({ id: 'flash-next' }), method: 'POST' });
-    assert.match(m.text, /not in --models/, '/model keeps its 400 voice');
+    assert.match(m.text, /not in --models/, 'the named model door keeps its 400 voice');
   } finally {
     await stopBridge(proc);
   }
@@ -1690,8 +1749,7 @@ test('+306: a named prompt ignores a moved seat; unknown rejects; ' +
   try {
     await up(PORT32);
     // A exists (one turn, clean).
-    await call(PORT32, `/talk?token=${TOKEN}&poll=1`,
-      { body: 'first words', method: 'POST' });
+    await say(PORT32, 'first words', { poll: true });
     await until('A closed', async () => !(await health(PORT32))
       .sessions[0].turnOpen);
     const uuidA = (await health(PORT32)).sessions[0].sid;
@@ -1778,8 +1836,7 @@ test('+310: command receipts and the turn floor survive a restart',
   let proc = startBridgeAt(stubLog, PORT33, dir, home);
   try {
     await up(PORT33);
-    await call(PORT33, `/talk?token=${TOKEN}&poll=1`,
-      { body: 'first words', method: 'POST' });
+    await say(PORT33, 'first words', { poll: true });
     uuid = (await health(PORT33)).sessions[0].sid;
     const r = await call(PORT33, `/sessions/${uuid}/prompts?poll=1&token=${TOKEN}`,
       { body: JSON.stringify({ commandId: 'across-restart',

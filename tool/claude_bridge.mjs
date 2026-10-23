@@ -7,7 +7,13 @@
 //   node tool/claude_bridge.mjs --dir ~/some-project --token SECRET
 //
 // Endpoints (all except /health require ?token=):
-//   POST /talk   body: plain text utterance -> SSE stream of voice events
+//                +322: every EXECUTION verb is named — /sessions/<id>/
+//                prompts|stop|reset|model (the +306 law, and the 08:39
+//                tape proved why). The seat-bound twins /talk, /stop,
+//                /new and /model are RETIRED: they answer 410 with a
+//                pointer to their named verb.
+//   POST /sessions/<id>/prompts   body: {text, interrupt, cutTool, poll,
+//                commandId} -> SSE stream of voice events
 //                (event: say / tool / progress / done / error).
 //                Transient harness pain is its own tool vocabulary
 //                (+221): {name:'retry'} (a failed API call / step the
@@ -118,9 +124,11 @@
 //                into the activity kind, so a long test reads 'Bash
 //                flutter test · …' on the phone instead of 'Thinking…'
 //                over a frozen counter.
-//   POST /stop   interrupt the OPEN turn (attached or backgrounded) via
+//   POST /sessions/:id/stop
+//                interrupt the OPEN turn (attached or backgrounded) via
 //                the CLI's control protocol; context survives, the
-//                PROCESS stays alive. No-op while idle.
+//                PROCESS stays alive. No-op while idle. (+322: named —
+//                the mute /stop answers 410.)
 //   POST /harness switch harness at runtime (to=claude|opencode; an
 //                honest /new at the switch; persisted in
 //                ~/.claude_bridge_harness so the trial survives restarts)
@@ -129,15 +137,19 @@
 //                control exists in the CLI), opencode asks the service
 //                what it resolves for this dir. Both answer
 //                {harness, current, models:[{id,label}]}.
-//   POST /model  {"id":…} applies a pick: claude over the CLI's
+//   POST /sessions/:id/model  {"id":…} applies a pick (+322: named;
+//                the mute /model answers 410): claude over the CLI's
 //                set_model control frame (and the --model flag rides a
 //                respawn); opencode over the session model API (a
 //                pick before any session rides that session's
 //                creation). /health.model carries the current either
 //                way — opencode's goes PROVEN when a step names its
 //                model.
-//   POST /new    start a fresh session (kills + respawns claude, clears
-//                background turn and queued prompt)
+//   POST /sessions/:id/reset
+//                start a fresh session (kills + respawns claude, clears
+//                background turn and queued prompt). +322: named — the
+//                mute /new answers 410. The phrase 'an honest /new' in
+//                older comments names THIS law, wherever it is done.
 //   POST /dir    {"path": …}: move the working folder — an honest /new at
 //                the destination. The path must be a directory inside
 //                --dir-root (default: the user's home tree); outside it
@@ -3152,9 +3164,13 @@ const server = http.createServer((req, res) => {
   // masquerade as the phone. Peer = this connection's source address:
   // the exact route the turn rides, so the return leg needs no DNS, no
   // static lease, no hole-punching.
-  if (url.searchParams.has('logport') &&
-      ['/health', '/talk', '/attach', '/stop', '/new', '/applog']
-          .includes(url.pathname)) {
+  // +322: the named verbs replace the retired four in this list —
+  // the app rides logport on EVERY request, so the journal peer must
+  // be learnable from any of them.
+  if (url.searchParams.has('logport') && (
+      ['/health', '/attach', '/applog'].includes(url.pathname) ||
+      /^\/sessions\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\/(prompts|stop|reset|model)$/
+          .test(url.pathname))) {
     noteAppPeer(req, url);
   }
   if (req.method === 'GET' && url.pathname === '/applogs') {
@@ -3554,23 +3570,21 @@ const server = http.createServer((req, res) => {
           }
         }
       }
-    } else if (url.pathname === '/talk') {
-      // v2: pushed turns open an SSE stream right here; polled POSTs
-      // answer with a JSON receipt the transport writes itself.
-      if (url.searchParams.get('poll') !== '1') {
-        res.writeHead(200, { 'content-type': 'text/event-stream',
-          'cache-control': 'no-cache', connection: 'keep-alive' });
-      }
-      // ?interrupt=0 = the polite queue (PTT slide-right): let the turn
-      // in flight finish instead of interrupting a thinking-only one.
-      // ?cuttool=1 = the queue-with-backgrounding (behaviour 2, the
-      // app's Queue button): polite towards thinking, but a RUNNING
-      // tool is backgrounded so the agent is freed for this prompt.
-      // ?poll=1 = pull transport: the response carries the first frames
-      // and closes; the rest of the turn rides the ring to GET /poll.
-      talk(body.trim(), res, url.searchParams.get('interrupt') !== '0',
-        url.searchParams.get('poll') === '1',
-        url.searchParams.get('cuttool') === '1');
+    } else if (/^\/(talk|stop|new|model)$/.test(url.pathname)) {
+      // +322: RETIRED. These four were the same four verbs mute about
+      // which conversation they fed; +306 named each one, and the
+      // 08:39 tape collected the last evidence the mute seam ever
+      // needed: an app restart put a press on this route with no name
+      // to speak, and the question meant for the voice-agent
+      // conversation resumed into the /home/tim backend's child.
+      // A phone too old to name its conversation has no business
+      // picking WHICH agent answers it, so the mute route is gone and
+      // the answer says where the verb moved to.
+      const verb = {talk: 'prompts', stop: 'stop', new: 'reset',
+        model: 'model'}[url.pathname.slice(1)];
+      res.writeHead(410, {'content-type': 'application/json'})
+        .end(JSON.stringify({ok: false, gone: url.pathname,
+          use: '/sessions/<id>/' + verb}) + '\n');
     } else if (url.pathname === '/harness') {
       // Switch harnesses at runtime (the claude↔opencode trial lever):
       // an honest /new at the switch — the pointer files are per
@@ -3595,49 +3609,6 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, {'content-type': 'application/json'})
           .end(JSON.stringify({ ok: true, harness: focus.harness }));
       }
-    } else if (url.pathname === '/model') {
-      let j = null;
-      try { j = JSON.parse(body); } catch {}
-      const id = typeof j?.id === 'string' && j.id ? j.id : null;
-      if (!id) {
-        res.writeHead(400).end('{"message":"expected {id}"}\n');
-      } else {
-        applyModel(id).then((now) => {
-          res.writeHead(200, {'content-type': 'application/json'})
-            .end(JSON.stringify({ ok: true, harness: focus.harness, id: now }));
-        }).catch((e) => {
-          res.writeHead(400).end('could not set the model: ' +
-            (e?.message ?? e) + '\n');
-        });
-      }
-    } else if (url.pathname === '/stop') {
-      // Hard stop (tap-Stop): an in-band interrupt ends the turn whether
-      // the phone is still listening to it or backgrounded it. Context
-      // survives, the PROCESS survives (no kill → no --resume → no cold
-      // prefill), and a queued prompt flushes on the resulting `result`
-      // event. Only fires while a turn is OPEN.
-      // +257: ?sid= names the conversation whose turn to cut — the
-      // phone's Stop chip rides a view that may belong to a
-      // BACKGROUNDED conversation; without the param, the seated one.
-      const stopSid = url.searchParams.get('sid');
-      let stopRec = focus;
-      if (stopSid) {
-        stopRec = findRecord(stopSid); // +310: names outrank uptime
-        if (!stopRec) {
-          // +306: the phone's name is its truth — the seat may not
-          // stand in for a conversation the router cannot find.
-          res.writeHead(404, {'content-type': 'application/json'})
-            .end(JSON.stringify({ok: false, error: 'unknown session'})
-              + '\n');
-          return;
-        }
-      }
-      withConv(stopRec, () => { if (focus.turnOpen) interruptTurn(); });
-      res.writeHead(200).end('ok\n');
-    } else if (url.pathname === '/new') {
-      rmPointer(focus.harness, focus.dir);
-      resetConversation();
-      res.writeHead(200).end('ok\n');
     } else if (url.pathname === '/seat') {
       // +230: move the bridge's ONE seat to a named (harness, folder,
       // conversation) — the session tabs' single atomic verb. Every

@@ -30,14 +30,19 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
 
     node tool/claude_bridge.mjs --dir ~/some-project --token SECRET [--port 8732] [--dir-root ~]
 
-- `POST /talk?token=…&interrupt=1` — body = the utterance text → SSE
+- `POST /sessions/:id/prompts?token=…` — body = JSON
+  `{text, interrupt, cutTool?, poll?, commandId?}` → SSE
   stream: `say` {text} (a complete assistant message, speak it), `tool`
   {name,detail} (the harness is running something — speak a short
   progress line or ignore), `done` {isError} (turn over), `error`.
-  Detaching mid-turn (closing the SSE without `/stop`) does NOT cancel
+  (+322: every execution verb is NAMED. The mute twins `/talk`, `/stop`,
+  `/new`, `/model` answer 410 with the door that replaced them; where
+  older notes below say `/talk` or `/new` they name the same LAW, now
+  spoken through the named door.)
+  Detaching mid-turn (closing the SSE without a `/stop`) does NOT cancel
   the work: the turn goes BACKGROUND — the harness finishes, output is
   dropped, and the session's next `result` frees the slot. The next
-  `/talk` while a turn is in flight (heard or backgrounded) is QUEUED
+  prompt while a turn is in flight (heard or backgrounded) is QUEUED
   (never refused): it gets a `tool queued` progress line, then its turn
   arrives. If it was only thinking, the `interrupt` flag decides: `1`
   (the default — typed text, spoken barge-in, push-to-talk slide-UP)
@@ -152,7 +157,7 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   moved, so they never stutter over a live ticker; the phone treats the
   frame's number as authoritative including the 0 that opens a turn
   (one turn's tally can never bleed into the next).
-- `POST /stop` — in-band interrupt (`control_request` on the CLI's
+- `POST /sessions/:id/stop` — in-band interrupt (`control_request` on the CLI's
   stdin control protocol) while any turn is OPEN. The turn ends (its
   `result` arrives with `is_error: true` — an interrupted turn's
   "error" IS the interrupt, and the bridge now logs `[result-error]`
@@ -163,7 +168,7 @@ Zero-dependency Node bridge (no npm install): holds one long-lived
   from disk (slower to first token than an in-band cut, and the
   rebuilt request misses the prefix cache like every other cross-turn
   request from this CLI — see the latency bullet).
-- `POST /new` — forget the conversation (also clears a background turn,
+- `POST /sessions/:id/reset` — forget the conversation (also clears a background turn,
   a queued prompt, AND the replay backlog — a later attach must not
   resurrect a discarded conversation's tail). +230: under the app's
   session tabs this REPLACES THE CURRENT TAB — the phone keeps the
@@ -615,7 +620,8 @@ shared machinery, not a second implementation.
   model-list control — verified against 2.1.296 — only the
   `set_model` control frame), the opencode side is the service's
   catalog (`GET /api/model` for the working directory; ids are
-  `providerID/modelID`). `POST /model {"id":…}` applies: claude over
+  `providerID/modelID`). `POST /sessions/:id/model {"id":…}` applies
+  (+322: named): claude over
   the control frame (a refused `control_response` rolls the current
   back; the choice rides `--model` across respawns; a pick while the
   child is down rides the same flag), opencode over the session model
