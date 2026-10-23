@@ -1,7 +1,7 @@
 name: voice_agent
 description: "On-device voice assistant prototype: speech -> text -> speech, fully offline."
 publish_to: 'none'
-version: 0.1.0+343
+version: 0.1.0+344
 
 environment:
   sdk: ^3.10.0

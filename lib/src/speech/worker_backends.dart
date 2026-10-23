@@ -65,6 +65,12 @@ abstract class TtsBackend {
   int get numSpeakers;
   (Float32List, int) generate({required String text, int sid, double speed});
   void free();
+
+  /// +344: what the LAST generate fed the graph, phonemes and all —
+  /// non-empty only for engines that read a text front end (the
+  /// student). The worker rides it on the note channel to the journal;
+  /// every other arm stays silent by this default.
+  String get lastFeed => '';
 }
 
 /// Which stack the worker builds its models on. Sendable as plain data.
@@ -419,6 +425,8 @@ class SherpaVad implements VadBackend {
 }
 
 class SherpaTts implements TtsBackend {
+  @override
+  String get lastFeed => ''; // no text front end: nothing to journal
   final sherpa_onnx.OfflineTts _tts;
   SherpaTts(this._tts);
   @override
@@ -460,6 +468,8 @@ class SherpaTts implements TtsBackend {
 /// with the patched native lib ([bosBeforeVoice]) the whole prefix/trim
 /// half retires — only the device-ramp silence lead remains.
 class PocketTts implements TtsBackend {
+  @override
+  String get lastFeed => ''; // raw text in, no phoneme front end
   PocketTts(
     this._tts, {
     required this.refs,
@@ -674,8 +684,14 @@ class TitlTts implements TtsBackend {
         engine.vocab.keys.toSet(),
       );
     }
-    return (engine.synth(phonemes, speed: speed), TitlEngine.sampleRate);
+    final audio = engine.synth(phonemes, speed: speed);
+    _feed = engine.lastPhonemes; // +344: the journal rides this
+    return (audio, TitlEngine.sampleRate);
   }
+
+  String _feed = '';
+  @override
+  String get lastFeed => _feed;
 
   @override
   void free() {
@@ -772,6 +788,8 @@ class FakeVad implements VadBackend {
 /// then encode exactly which piece the splitter produced, and the seam
 /// silence the worker appends shows up as a length delta.
 class FakeTts implements TtsBackend {
+  @override
+  String get lastFeed => '';
   FakeTts({
     required this.chunkSamples,
     required this.sampleRate,

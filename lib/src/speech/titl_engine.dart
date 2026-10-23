@@ -97,6 +97,12 @@ class TitlEngine {
   final Pointer _session;
   final Pointer _memInfo;
   final Map<String, int> vocab;
+
+  /// The post-fold phoneme string of the most recent [synth] ('' before
+  /// the first). Read by TitlTts.lastFeed for the 'titl fed:' journal
+  /// note (+344) — the field report it answers: 'I still hear no
+  /// pause; what did the graph get?'
+  String lastPhonemes = '';
   bool disposed = false;
 
   TitlEngine._(this._api, this._env, this._session, this._memInfo, this.vocab);
@@ -284,6 +290,11 @@ class TitlEngine {
   Float32List synth(String phonemes, {double speed = 1.0}) {
     if (disposed) throw TitlException('engine freed');
     phonemes = breathe(phonemes); // +343: rare breaths become trained ones
+    // +344: the graph's own last meal, folded and truncated — the
+    // worker ships it on the 'titl fed:' note channel so the phone's
+    // journal can answer 'what did the student actually read?' when
+    // the ear says a breath is missing.
+    lastPhonemes = phonemes.length <= 220 ? phonemes : '${phonemes.substring(0, 220)}…';
     final tensor = _apiSlot(_api, _CreateTensorWithDataAsOrtValue)
         .cast<
           NativeFunction<

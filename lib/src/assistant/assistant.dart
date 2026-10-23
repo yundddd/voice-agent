@@ -5100,6 +5100,11 @@ class VoiceAssistant extends ChangeNotifier {
       if (event.note!.startsWith('partial:')) {
         _onTranscriptPartial(event.note!.substring(8));
       }
+      // +344: the student's graph feed, journalled — 'what did the
+      // engine read' stops being a rebuild question.
+      if (event.note!.startsWith('titl fed: ')) {
+        _logDebug(event.note!);
+      }
       return;
     }
     if (_reply.debugPlaying) {

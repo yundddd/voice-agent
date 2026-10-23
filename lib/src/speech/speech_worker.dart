@@ -471,6 +471,12 @@ Future<void> _runWorker(
       sid: q.sid,
       speed: 1.0,
     );
+    // +344: the student tells the journal what it read. One note per
+    // synthesized piece, only for engines with a text front end.
+    final feed = engine.lastFeed;
+    if (feed.isNotEmpty) {
+      toParent.send(_Event.note('titl fed: $feed'));
+    }
     final isLast = q.i == q.pieces.length - 1;
     var data = samples;
     if (!isLast) {
