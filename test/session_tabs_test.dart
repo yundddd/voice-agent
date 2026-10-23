@@ -677,6 +677,70 @@ void main() {
       await settle();
     });
 
+    test('+331: a named pump\'s home is its ADDRESS — the seat moving '
+        'onto a stranger may not adopt the stranger\'s say', () async {
+      // The tape (13:37:47, the leak reported by voice): MY pump
+      // ('Let\'s commit and push first', born named for this
+      // conversation) was still open when the phone re-seated the
+      // bridge to X-RAY. X-RAY's 'Hi again! What can I do for you?'
+      // rode the shared ring into my pump — and the say gate called it
+      // HOME, because the SEAT wore its name at that instant: the
+      // `!= seatedNow` clause admitted it and it filed into my open
+      // bubble. +299 had closed the CONTEXT-frame renaming; this is
+      // the sibling hole — the seat is wherever the eye last moved,
+      // the pump\'s address was decided by the prompt. The seat proves
+      // belonging only for a pump born nameless.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-X'};
+      await a.setBridgeDir('/proj-x');
+      await settle();
+      unawaited(a.runQuickCommand('push the commits'));
+      await settle();
+      harness.emit(
+        const BridgeEvent.forTest(
+          'tool',
+          toolName: 'Bash',
+          detail: 'git push',
+          session: 'ses-X',
+        ),
+      );
+      await settle();
+      // The eye moves: the seat re-keys to the OTHER conversation.
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await settle();
+      // X-RAY answers — into MY open pump, over the shared ring.
+      harness.emit(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'Hi again! What can I do for you?',
+          mid: 91,
+          session: 'ses-Y',
+        ),
+      );
+      await settle();
+      expect(
+        a.debugLog.any(
+          (l) => l.contains('foreign conversation: say left unheard'),
+        ),
+        isTrue,
+        reason:
+            '+331: the seat\'s name is not this pump\'s name — a '
+            'named pump treats the seated stranger\'s say as foreign',
+      );
+      expect(
+        a.view.chat.any(
+          (e) => e.blocks.contains('Hi again! What can I do for you?'),
+        ),
+        isFalse,
+        reason:
+            'X-RAY\'s greeting may not squat in my bubble — its own '
+            'thread\'s drain serves it the law it was written for',
+      );
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle();
+    });
+
     test('+298: the pending slot adopts its name — naming moves the '
         'label, never the life', () async {
       // The ChatStore law for bubbles, now for the whole turn slice:

@@ -690,10 +690,18 @@ class BridgeTurn {
     // the age law below still file archaeology mute, which is what a
     // hidden app's answer honestly is by the time it surfaces.
     final homeUnproven = seatedNow == null && _viewSid == null;
+    // +331 (the tape, 13:37:47): the seat clause admitted a stranger.
+    // My pump ('Let's commit and push first', born named for this
+    // conversation) was open when the phone re-seated the bridge to
+    // X-RAY — and X-RAY's 'Hi again!' say, riding the shared ring
+    // through this pump, read as HOME because the SEAT happened to
+    // wear its name at that instant. The seat is wherever the eye
+    // last moved; a pump's home is the address its prompt was POSTed
+    // to — decided at birth, +299's own lesson. The seat proves
+    // belonging only for a pump born NAMELESS (the fallback arm).
     final foreign =
         ev.session != null &&
-        ev.session != seatedNow &&
-        ev.session != _viewSid &&
+        ev.session != (_viewSid ?? seatedNow) &&
         !homeUnproven;
     if (foreign) {
       env.log(
@@ -841,10 +849,11 @@ class BridgeTurn {
     // ticker nor the step freeze.
     final seatedForBand = env.seatedSession?.call();
     final homeUnproven = seatedForBand == null && _viewSid == null;
+    // +331: same law as the say gate — a named pump's home is its
+    // address; the seat's name only speaks for nameless births.
     final foreign =
         ev.session != null &&
-        ev.session != seatedForBand &&
-        ev.session != _viewSid &&
+        ev.session != (_viewSid ?? seatedForBand) &&
         !homeUnproven;
     if (ev.toolName == 'finished') {
       // The bridge's receipt that the out-of-earshot work is OVER —
