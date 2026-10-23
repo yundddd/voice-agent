@@ -116,5 +116,43 @@ void main() {
       // survives, and nothing is mapped to a nearby trained sound.
       expect(EspeakExec.phonemesFromIpa('œ ø ɛ', {'ɛ', ' ', '.', 'ˈ'}), 'ɛ.');
     });
+
+    test('+345: breath marks are segmented and welded back, espeak or no espeak', () {
+      // The phone journal's confession: espeak's IPA carried NO
+      // punctuation, so every comma/semicolon/dash died at the front
+      // end. segmentsForBreath hands each piece plus the pause char
+      // the graph knows: terminators '.', clause marks ','.
+      expect(
+        EspeakExec.segmentsForBreath(
+          'commas pause normally; semicolons should too — right about now.',
+        ),
+        [
+          ('commas pause normally', ','),
+          ('semicolons should too', ','),
+          ('right about now', '.'),
+        ],
+      );
+      // Numbers keep their guts: with no whitespace after them, the
+      // dot of '3.14' and the comma of '1,000' never look like breaths.
+      expect(
+        EspeakExec.segmentsForBreath('it costs 3.14 not 1,000 dollars.'),
+        [('it costs 3.14 not 1,000 dollars', '.')],
+      );
+      // A comma AFTER a finished number is a real breath, though.
+      expect(EspeakExec.segmentsForBreath('it costs 3.14, not 1,000 dollars'),
+          [('it costs 3.14', ','), ('not 1,000 dollars', '')]);
+      // Closers ride the run; the ellipsis's '.' still ends the piece.
+      expect(
+        EspeakExec.segmentsForBreath('Wait...) then go.'),
+        [('Wait', '.'), ('then go', '.')],
+      );
+      // A true ellipsis char is a breath; three dots are dots.
+      expect(EspeakExec.segmentsForBreath('wait… go'), [
+        ('wait', ','),
+        ('go', ''),
+      ]);
+      // Bangs and quests weld '.' like the period.
+      expect(EspeakExec.segmentsForBreath('Stop! Run?')[1], ('Run', '.'));
+    });
   });
 }

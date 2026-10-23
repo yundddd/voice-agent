@@ -167,6 +167,56 @@ class EspeakExec {
     return (r.stdout as String).replaceAll('\n', ' ').trim();
   }
 
+  /// +345: espeak's IPA carries NO punctuation — every breath the prose
+  /// marks died at this front-end boundary (the phone's 'titl fed:'
+  /// journal lines proved it: a trial sentence arrived breathless,
+  /// commas and semicolons and dashes all swallowed). So we segment at
+  /// the breath marks ourselves, phonemize each piece, and weld the
+  /// pause back as the two characters the graph knows best: a
+  /// terminator run becomes '.', a clause run becomes ','. In-number
+  /// dots and commas are safe: the lookahead demands whitespace after
+  /// a mark, and '3.14' or '1,000' never have any. Pure; no binary
+  /// needed to test.
+  static List<(String, String)> segmentsForBreath(String text) {
+    final out = <(String, String)>[];
+    // The whitespace lookahead IS the digit guard: '3.14' and '1,000'
+    // have no space after their mark, so they never match; a comma
+    // that ends a spelled number ('…3.14, not…') is a real breath and
+    // cuts like one.
+    final breath = RegExp(r'([.!?…,;:—–]+["’\)\]]*)(?=[ \n]|$)');
+    var start = 0;
+    for (final m in breath.allMatches(text)) {
+      final run = m.group(1)!;
+      final seg = text.substring(start, m.start).trim();
+      // '…' is a breath, not a stop: only .!? weld '.'.
+      final term = run.contains('.') || run.contains('!') || run.contains('?');
+      // A run of ONLY '.' + ',' with digit-flanked guard already passed
+      // above; '.' mid-run (…end.) still ends the sentence.
+      out.add((seg, term ? '.' : ','));
+      start = m.end;
+      while (start < text.length && (text[start] == ' ' || text[start] == '\n')) {
+        start += 1;
+      }
+    }
+    if (start < text.length) out.add((text.substring(start), ''));
+    return out;
+  }
+
+  /// [ipa] once per breath-delimited piece, pauses welded back.
+  String ipaWithBreaths(String text) {
+    final parts = <String>[];
+    for (final (seg, pause) in segmentsForBreath(text)) {
+      if (seg.trim().isEmpty) {
+        if (pause.isNotEmpty && parts.isNotEmpty) {
+          parts[parts.length - 1] += pause; // stray mark: keep its breath
+        }
+        continue;
+      }
+      parts.add(ipa(seg) + pause);
+    }
+    return parts.join(' ');
+  }
+
   /// IPA string → synth-ready phonemes (fold, alias, vocab-filter,
   /// stop). Pure; pinned against the cross-build's real stdout.
   static String phonemesFromIpa(String ipa, Set<String> vocab) {

@@ -671,8 +671,12 @@ class TitlTts implements TtsBackend {
     );
     final String phonemes;
     if (es.usable) {
+      // +345: ipaWithBreaths, not ipa — espeak's IPA drops every
+      // punctuation mark on the floor, and the phone's journal caught
+      // it handing the student breathless text. Segment, phonemize,
+      // weld the pauses back.
       phonemes = EspeakExec.phonemesFromIpa(
-        es.ipa(text),
+        es.ipaWithBreaths(text),
         engine.vocab.keys.toSet(),
       );
     } else {
