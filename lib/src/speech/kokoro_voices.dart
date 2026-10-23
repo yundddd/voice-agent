@@ -107,9 +107,11 @@ const List<KokoroSpeaker> titlRoster = [
 
 /// Pocket's roster (`TtsVoice` id 'pocket'): sid = index into the pack's
 /// reference wavs — slider order must match TtsVoice.pocketRefs, which
-/// must match the voices/ files of tool/build_pocket_pack.sh. All six
-/// are kyutai/tts-voices presets (CC-BY-4.0); the engine can clone any
-/// of them further from a recording later, one small UI step away.
+/// must match the voices/ files of tool/build_pocket_pack.sh. The v4
+/// lineup is sixteen curated kyutai/tts-voices presets (CC-BY-4.0),
+/// 8 female / 8 male, genders measured from median F0; sids 0–5 frozen
+/// from the v2/v3 six. The engine can clone any of them further from a
+/// recording later, one small UI step away.
 const List<KokoroSpeaker> pocketRoster = [
   KokoroSpeaker(
     sid: 0,
@@ -145,6 +147,66 @@ const List<KokoroSpeaker> pocketRoster = [
     sid: 5,
     name: 'Bill Boerst',
     description: 'American English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 6,
+    name: 'Azelma',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 7,
+    name: 'Eve',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 8,
+    name: 'Fantine',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 9,
+    name: 'Mary',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 10,
+    name: 'Vera',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 11,
+    name: 'Marius',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 12,
+    name: 'Charles',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 13,
+    name: 'George',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 14,
+    name: 'Javert',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 15,
+    name: 'Paul',
+    description: 'English · male',
     english: true,
   ),
 ];

@@ -56,7 +56,11 @@ class TtsVoice {
 
   /// Pocket TTS preset references (`voices/<name>.wav` in the pack, in
   /// slider order — the same order as the pack script's ORDER list and
-  /// pocketRoster above; sid indexes this list).
+  /// pocketRoster above; sid indexes this list). Sids 0–5 are frozen (a
+  /// v2/v3 install's picked voice must keep pointing at the same person);
+  /// the v4 lineup appends ten more with the references padded to end on
+  /// silence. Genders were measured from median F0, not read off the
+  /// names — marius is female, george male.
   static const pocketRefs = [
     'jane',
     'anna',
@@ -64,6 +68,16 @@ class TtsVoice {
     'michael',
     'alba',
     'bill_boerst',
+    'azelma',
+    'eve',
+    'fantine',
+    'mary',
+    'vera',
+    'marius',
+    'charles',
+    'george',
+    'javert',
+    'paul',
   ];
 
   /// Absolute-path job spec for the speech worker. Three engines live
@@ -71,13 +85,23 @@ class TtsVoice {
   /// engines were retired when Kokoro won the A/B on sound), the
   /// teacher-in-the-loop students — 8M single-voice distillations run
   /// on the same onnxruntime sherpa ships — and Pocket (Kyutai's
-  /// zero-shot cloner, back by popular demand: six presets ride the
+  /// zero-shot cloner, back by popular demand: sixteen presets ride the
   /// same slider and the engine was already inside sherpa). For the
   /// students, [sid] indexes the parallel pack lists; for Kokoro it is
   /// the style id inside the one loaded graph; for Pocket it picks a
   /// reference wav.
   Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
     if (id == 'pocket') {
+      // Only the references THIS platform's pack actually carries (iOS
+      // serves the six-voice v2 pack, Android/desktop the sixteen-voice
+      // v4 one) — the slider reports what can speak. A pack that hasn't
+      // downloaded yet (or a test's bare /models) keeps the full list,
+      // so the roster never collapses before the files land.
+      final paths = [
+        for (final ref in pocketRefs)
+          _f(modelsDir, dirName, 'voices/$ref.wav'),
+      ];
+      final there = paths.where((f) => File(f).existsSync()).toList();
       return TtsSpec.pocket(
         pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.onnx'),
         pocketLmMain: _f(modelsDir, dirName, 'lm_main.onnx'),
@@ -86,10 +110,7 @@ class TtsVoice {
         pocketTextConditioner: _f(modelsDir, dirName, 'text_conditioner.onnx'),
         pocketVocabJson: _f(modelsDir, dirName, 'vocab.json'),
         pocketTokenScoresJson: _f(modelsDir, dirName, 'token_scores.json'),
-        pocketRefs: [
-          for (final ref in pocketRefs)
-            _f(modelsDir, dirName, 'voices/$ref.wav'),
-        ],
+        pocketRefs: there.isEmpty ? paths : there,
         sid: sid,
       );
     }
@@ -218,7 +239,7 @@ const _ourPacks =
 /// Voices on offer, in display order. The students (TITL) are the
 /// default and download on first run: 9 MB per style versus Kokoro's
 /// 334 MB, at a quality the A/B on the same int8 graph called close.
-const ttsVoices = <TtsVoice>[
+final ttsVoices = <TtsVoice>[
   TtsVoice(
     id: 'titl',
     label: 'Students (8M)',
@@ -262,26 +283,40 @@ const ttsVoices = <TtsVoice>[
       ),
     ],
   ),
+  // The pairing rule ENFORCED IN CODE: the BOS-npy pack (v3+) requires
+  // the patched libsherpa-onnx-c-api.so — vendored for Android via
+  // tool/sherpa-bos and first on LD_LIBRARY_PATH for desktop — but iOS
+  // has no patched xcframework yet, so iOS keeps the v2 pack: no npy,
+  // the Dart growl ritual stays on, nothing regresses. The references
+  // filter (specIn) follows the same split: v2 ships six, v4 ships
+  // sixteen.
   TtsVoice(
     id: 'pocket',
     label: 'Pocket TTS',
     note:
-        'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
-        'Michael/Alba/Bill) once loaded; any one of them also clones from a '
-        'recording later. v3 pack: the english_2026-04 graphs from '
+        'Kyutai 100M zero-shot model — sixteen preset voices (8 female / 8 '
+        'male) once loaded; any one of them also clones from a '
+        'recording later. The english_2026-04 graphs from '
         'KevinAHM’s ONNX export plus the learned BOS-before-voice '
         'embedding our patched sherpa-onnx feeds before the voice (see '
         'tool/sherpa-bos/) — the cold-start growl is gone and the text '
         'opens with the model’s own breath, not a workaround. Runs on '
         'the shared sherpa-onnx engine.',
-    sizeLabel: '~180 MB',
+    sizeLabel: Platform.isIOS ? '~205 MB' : '~105 MB',
     packs: [
-      ModelPack(
-        label: 'voice: Pocket TTS (engine + voices)',
-        url: '$_ourPacks/pocket-tts-v3.zip',
-        dirName: 'pocket-tts',
-        markerFile: 'pack-v3.ok', // sentinel: bump to force pack re-download
-      ),
+      Platform.isIOS
+          ? const ModelPack(
+              label: 'voice: Pocket TTS (engine + voices)',
+              url: '$_ourPacks/pocket-tts-v2.zip',
+              dirName: 'pocket-tts',
+              markerFile: 'pack-v2.ok',
+            )
+          : const ModelPack(
+              label: 'voice: Pocket TTS (engine + voices)',
+              url: '$_ourPacks/pocket-tts-v4.zip',
+              dirName: 'pocket-tts',
+              markerFile: 'pack-v4.ok',
+            ),
     ],
   ),
 ];

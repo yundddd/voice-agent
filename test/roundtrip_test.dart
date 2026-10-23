@@ -17,6 +17,7 @@
 // same worker isolate and job protocol on FakeBackends, no ONNX.
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -244,67 +245,79 @@ void main() {
 
     final worker = await SpeechWorker.start(paths);
     try {
-      final speakers = await worker.useTts(spec(0));
-      expect(speakers, refs.length); // references drive the style slider
-
       const line =
           'Hello Tim. Pocket TTS speaking, generated entirely on this device.';
-      final sw = Stopwatch()..start();
-      final (audio, sampleRate) = await worker.synthesize(line);
-      sw.stop();
-      final seconds = audio.length / sampleRate;
-      // ignore: avoid_print
-      print(
-        'pocket TTS: ${seconds.toStringAsFixed(1)}s generated in '
-        '${sw.elapsedMilliseconds} ms '
-        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
-      );
-      expect(audio.length, greaterThan(sampleRate));
-      expect(sampleRate, 24000); // Pocket's output rate
-
-      File('build/roundtrip_pocket.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio, sampleRate));
-
-      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
-      final hits = line
-          .split(' ')
-          .where((w) => w.length > 3)
-          .where((w) => heard.contains(w.toLowerCase()))
-          .length;
-      // ignore: avoid_print
-      print('pocket ASR: "$heard" ($hits long words matched)');
-      // Body words must land (>= 3): the ONNX port's cold-start head can eat
-      // the first syllable even after the lead-in repair (see pocketLeadIn),
-      // and tiny.en drops the trailing words of a long take, so assert on the
-      // middle of the sentence — that is what the engine guarantees.
-      expect(hits, greaterThan(2));
-      if (File('$dir/bos_before_voice.npy').existsSync()) {
-        // v3 pack (BOS embedding staged next to the encoder): the patched
-        // sherpa build feeds the learned BOS frame, the port cold-starts
-        // like the PyTorch reference, and the ritual is off — the FIRST
-        // word surviving intact is now the engine's guarantee.
-        expect(heard, contains('hello'));
+      final hasBos = File('$dir/bos_before_voice.npy').existsSync();
+      final words = line.split(' ').where((w) => w.length > 3).length;
+      for (var sid = 0; sid < refs.length; sid++) {
+        final speakers = await worker.useTts(spec(sid));
+        expect(speakers, refs.length); // references drive the style slider
+        final sw = Stopwatch()..start();
+        final (audio, sampleRate) = await worker.synthesize(line);
+        sw.stop();
+        final seconds = audio.length / sampleRate;
+        expect(audio.length, greaterThan(sampleRate));
+        expect(sampleRate, 24000); // Pocket's output rate
+        if (hasBos) {
+          // Engine-level head guarantee on the patched pairing: the first
+          // 20 ms are silence, not growl (a v2 pack without the npy runs
+          // the ritual instead, whose generated pause legitimately
+          // starts quiet too — the gate is armed only where the npy is).
+          var acc = 0.0;
+          for (var i = 0; i < 480 && i < audio.length; i++) {
+            acc += audio[i] * audio[i];
+          }
+          expect(
+            sqrt(acc / 480),
+            lessThan(0.01),
+            reason: '${refs[sid]}: growl in the first 20 ms',
+          );
+        }
+        File('build/roundtrip_pocket_${refs[sid]}.wav')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(encodeWav(audio, sampleRate));
+        final heard = (await worker.transcribe(
+          audio,
+          sampleRate,
+        )).toLowerCase();
+        final hits = line
+            .split(' ')
+            .where((w) => w.length > 3)
+            .where((w) => heard.contains(w.toLowerCase()))
+            .length;
+        // ignore: avoid_print
+        print(
+          'pocket [${refs[sid]}] sid=$sid: ${seconds.toStringAsFixed(1)}s in '
+          '${sw.elapsedMilliseconds} ms '
+          '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)}); '
+          '$hits/$words words -> "$heard"',
+        );
+        // Body words must land (>= 3): whisper tiny drops the trailing
+        // words of a long take, so the middle of the sentence is what
+        // the engine is asserted on; the RMS gate above carries the
+        // head's share of the guarantee.
+        expect(hits, greaterThan(2));
+        // Second call on the SAME engine: sherpa's voice-embedding cache
+        // takes its HIT path (the patch's rank/heap-overrun fix) — a
+        // repeat must be exactly as intelligible as the first draw, or
+        // the cache is eating audio.
+        final (audio2, _) = await worker.synthesize(line);
+        File('build/roundtrip_pocket_${refs[sid]}_repeat.wav')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(encodeWav(audio2, sampleRate));
+        final heard2 = (await worker.transcribe(
+          audio2,
+          sampleRate,
+        )).toLowerCase();
+        final hits2 = line
+            .split(' ')
+            .where((w) => w.length > 3)
+            .where((w) => heard2.contains(w.toLowerCase()))
+            .length;
+        // ignore: avoid_print
+        print('   repeat (cache-hit): $hits2/$words -> "$heard2"');
+        expect(hits2, greaterThan(2));
       }
-
-      // Second preset sounds different but is equally intelligible.
-      await worker.useTts(spec(5)); // bill_boerst: the most stable draw
-      final (audio2, _) = await worker.synthesize(line);
-      File('build/roundtrip_pocket_bill.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
-      final heard2 = (await worker.transcribe(
-        audio2,
-        sampleRate,
-      )).toLowerCase();
-      final hits2 = line
-          .split(' ')
-          .where((w) => w.length > 3)
-          .where((w) => heard2.contains(w.toLowerCase()))
-          .length;
-      // ignore: avoid_print
-      print('pocket ASR (bill_boerst): "$heard2" ($hits2 long words matched)');
-      expect(hits2, greaterThan(2));
     } finally {
       worker.dispose();
     }

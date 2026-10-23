@@ -19,7 +19,7 @@ import 'dart:typed_data';
 /// 0.10): ORT's int8 kernels lose to plain fp32 at this model size). The
 /// Piper/VITS and ZipVoice/NeuTTS engines stayed retired when Kokoro won
 /// the A/B; Pocket came back on the strength of its zero-shot cloning and
-/// its voice diversity (six presets from the same ONNX pack the app has
+/// its voice diversity (sixteen presets from the same ONNX pack the app has
 /// always mirrored). No cold-start ritual, no codec bottleneck for Kokoro:
 /// one forward pass, clean heads, so it rides the generic OfflineTts synth
 /// arm. [sid] indexes the 54-voice roster (reported by the model itself,

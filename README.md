@@ -255,9 +255,12 @@ The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart
   `tool/build_pocket_pack.sh` mirrors the public ONNX export of
   `kyutai/pocket-tts` (the HF repo itself is gated behind a terms click —
   one-time, login + acknowledge on the model page; the export is not) and
-  six reference wavs from the ungated `kyutai/tts-voices` repo (Jane,
-  Anna, Jean, Michael, Alba, Bill Boerst — CC-BY-4.0), zipped with a
-  `pack-v3.ok` sentinel and uploaded to our GitHub release; the app
+  sixteen reference wavs from the ungated `kyutai/tts-voices` repo
+  (CC-BY-4.0; every one trimmed to 9.5 s + 0.7 s silence so the
+  conditioning prompt ends on a pause — without the pad the model
+  legitimately starts at sample 0 and the first word rides its own
+  attack), zipped with a
+  `pack-v4.ok` sentinel and uploaded to our GitHub release; the app
   again only ever downloads anonymously. Pack history: v1 int8 at
   ~105 MB; v2 fp32 graphs (~205 MB, the listening A/B preferred them
   over int8 on that checkpoint); **v3** moves to KevinAHM's
@@ -265,7 +268,11 @@ The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart
   int8 measured clean; fp32 mimi codec side) plus
   **`bos_before_voice.npy`**, the learned BOS-before-voice embedding
   our patched sherpa-onnx feeds before the voice conditioning
-  (`tool/sherpa-bos/`, one header, ~90 lines, v1.13.8-pinned). With the
+  (`tool/sherpa-bos/`, one header, ~90 lines, v1.13.8-pinned); **v4**
+  keeps the v3 graphs and grows the lineup from six presets to sixteen
+  (8 female / 8 male, sids 0–5 frozen so no one's saved pick moves;
+  genders measured from median F0, not read off names — marius is
+  female, george male). With the
   patch the port cold-starts like the PyTorch reference — measured
   first-20 ms RMS 0.0020 and the full first sentence through whisper
   re-transcription — so the growl workaround below is conditional:
@@ -277,7 +284,7 @@ The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart
   on a patched library (vendor the `.so`, see the tool/sherpa-bos
   README); iOS keeps the v2 line until its xcframework is rebuilt, and
   on v2 the fallback keeps every engine sounding as it did before.
-  The six
+  The sixteen
   voices ride the speaker slider (`useTts` returns the reference count);
   the native layer resamples each reference to 24 kHz and caps it at 10 s,
   so presets of any upstream rate are fine. Output is 24 kHz, generated
@@ -938,13 +945,21 @@ LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x
   dart run tool/onset_probe.dart      # asserts the first word survives endpointing
 
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
-  dart run tool/pocket_probe.dart     # Pocket TTS presets + Whisper intelligibility check
+  flutter test test/roundtrip_test.dart   # the Pocket leg sweeps all 16 presets
+                                          # (RTF, Whisper intelligibility, the
+                                          # first-20ms RMS head gate, and the
+                                          # voice-embedding cache-hit repeat)
 ```
 
-(`tool/build_pocket_pack.sh` stages the Pocket voice pack from the public
-k2-fsa ONNX export + ungated kyutai/tts-voices wavs and, with the `upload`
-argument, publishes it to the same GitHub release; re-run it before
-`pocket_probe.dart` if `/tmp/opencode/pocket-pack` is gone.)
+(`tool/build_pocket_pack.sh` stages the Pocket voice pack from KevinAHM's
+ONNX bundle + ungated kyutai/tts-voices wavs (padded to end on silence)
+and, with the `upload` argument, publishes it to the same GitHub release;
+re-run it before the round-trip Pocket leg if `/tmp/opencode/pocket-pack`
+is gone, and point `POCKET_DIR` at the staged directory — with the patched
+library on `LD_LIBRARY_PATH` first, that leg is the full pairing audit.
+The old `tool/pocket_probe.dart` retired here: `+238` pulled
+`package:flutter` into the worker import chain, so `dart run` could no
+longer compile it, and the sweep belongs in `flutter test` anyway.)
 
 ### Linux desktop (full app with mic)
 

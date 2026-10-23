@@ -3,7 +3,7 @@
 # GitHub release so the app downloads the pack anonymously (same CDN story as
 # every other pack: nothing here is gated).
 #
-# v3 layout (the no-growl pack):
+# v4 layout (the no-growl pack, sixteen voices):
 #   - the FLOW LM graphs move from the k2-fsa 2026-01 export (checkpoint
 #     english_2026-01, which has NO bos_before_voice embedding at all) to
 #     KevinAHM's per-language bundle of checkpoint english_2026-04 —
@@ -40,7 +40,10 @@ TTS_VOICES=https://huggingface.co/kyutai/tts-voices/resolve/main   # ungated
 
 # Preset voices -> upstream paths (kyutai.org/pocket-tts voice list). Names
 # must stay in sync with TtsVoice.pocketRefs in lib/src/speech/tts_voices.dart
-# and pocketRoster in kokoro_voices.dart.
+# and pocketRoster in kokoro_voices.dart. Sids 0-5 are FROZEN (ships user
+# prefs); the v4 lineup appends ten more, 8 female / 8 male (genders
+# measured from the references' median F0, not assumed from names —
+# marius is female, george male).
 declare -A REFS=(
   [jane]=vctk/p339_023_enhanced.wav                 # f, conversation
   [anna]=vctk/p228_023_enhanced.wav                 # f, conversation
@@ -48,9 +51,21 @@ declare -A REFS=(
   [michael]=vctk/p360_023_enhanced.wav              # m, conversation
   [alba]=alba-mackenna/casual.wav                   # m, reading
   [bill_boerst]=voice-zero/bill_boerst.wav          # m, reading
+  [azelma]=vctk/p303_023_enhanced.wav               # f
+  [eve]=vctk/p361_023_enhanced.wav                  # f
+  [fantine]=vctk/p244_023_enhanced.wav              # f
+  [mary]=vctk/p333_023_enhanced.wav                 # f
+  [vera]=vctk/p229_023_enhanced.wav                 # f
+  [marius]=voice-donations/Selfie.wav               # f
+  [charles]=vctk/p254_023_enhanced.wav              # m
+  [george]=vctk/p315_023_enhanced.wav               # m
+  [javert]=voice-donations/Butter.wav               # m
+  [paul]=vctk/p259_023_enhanced.wav                 # m
 )
 # Slider order (sid index == position in this list):
-ORDER=(jane anna jean michael alba bill_boerst)
+ORDER=(jane anna jean michael alba bill_boerst
+       azelma eve fantine mary vera marius
+       charles george javert paul)
 
 cd "$(dirname "$0")/.."
 
@@ -90,17 +105,26 @@ for f in lm_flow.onnx lm_main.onnx encoder.onnx decoder.onnx \
   [ -s "$STAGE/$f" ] || { echo "missing $STAGE/$f" >&2; exit 1; }
 done
 
-# 3. Reference voices (mono PCM16/PCM_F32, 10-13 s; sherpa resamples to
-#    24 kHz and caps the prompt at 10 s itself, so upstream rates are fine).
+# 3. Reference voices: downloaded, then ALWAYS repacked to end on silence
+#    (first 9.5 s + 0.7 s pad). Conditioning stops at 10 s (sherpa's
+#    max_reference_audio_len), so the pad is what makes the prompt's last
+#    frame a pause — without it the model legitimately starts speaking at
+#    sample 0 and the first word rides its own attack (measured on the
+#    raw vctk cut: RMS@20ms 0.026 vs 0.001 padded; the BOS patch fixed
+#    the cold start, the pad fixes the prompt). Mono PCM16 at the
+#    upstream rate; sherpa resamples to 24 kHz itself.
 for v in "${ORDER[@]}"; do
-  [ -s "$STAGE/voices/$v.wav" ] ||
-    curl -sfL -o "$STAGE/voices/$v.wav" "$TTS_VOICES/${REFS[$v]}"
+  rm -f "$STAGE/voices/$v.wav"     # always re-pad: one provenance for all refs
+  curl -sfL -o "$STAGE/voices/$v.raw.wav" "$TTS_VOICES/${REFS[$v]}"
+  ffmpeg -loglevel error -y -i "$STAGE/voices/$v.raw.wav" \
+    -af "atrim=0:9.5,apad=pad_dur=0.7" -ac 1 -c:a pcm_s16le \
+    "$STAGE/voices/$v.wav" && rm -f "$STAGE/voices/$v.raw.wav"
 done
 
 # 4. Attribution note for the mirrored files (license: CC-BY-4.0, shipped
 #    verbatim as LICENSE; this records provenance for the onnx export step).
 cat > "$STAGE/NOTICE" <<EOF
-pocket-tts pack (v3, $PRECISION LM/flow graphs + learned BOS-before-voice)
+pocket-tts pack (v4, $PRECISION LM/flow graphs + learned BOS-before-voice + sixteen padded reference voices)
   model:  kyutai/pocket-tts (CC-BY-4.0, https://huggingface.co/kyutai/pocket-tts)
           bundle '$KEVIN_LANG' (checkpoint english_2026-04) exported to ONNX by
           KevinAHM/pocket-tts-onnx (https://huggingface.co/KevinAHM/pocket-tts-onnx)
@@ -117,30 +141,37 @@ pocket-tts pack (v3, $PRECISION LM/flow graphs + learned BOS-before-voice)
   voices: reference wavs from https://huggingface.co/kyutai/tts-voices
           (jane -> vctk/p339, anna -> vctk/p228, jean -> ears/p010,
           michael -> vctk/p360, alba -> alba-mackenna/casual,
-          bill_boerst -> voice-zero/bill_boerst)
+          bill_boerst -> voice-zero/bill_boerst, azelma -> vctk/p303,
+          eve -> vctk/p361, fantine -> vctk/p244, mary -> vctk/p333,
+          vera -> vctk/p229, marius -> voice-donations/Selfie,
+          charles -> vctk/p254, george -> vctk/p315,
+          javert -> voice-donations/Butter, paul -> vctk/p259);
+          every one trimmed to 9.5 s + 0.7 s silence so the
+          conditioning prompt ends on a pause (see the pack script)
 EOF
 
 # 5. Sentinel: bump the name when the pack layout changes — the app's
 #    presence check keys on this file (see lib/src/models/model_unpack.dart).
 #    v2 was the fp32 2026-01 graphs; v3 swaps in the english_2026-04 bundle
 #    + bos_before_voice.npy (the unpacker clears the old directory on
-#    marker-bump re-downloads). THE PAIRING RULE: Dart flips the ritual off
+#    marker-bump re-downloads). v4 = sixteen padded reference voices (the
+#    graphs and the npy are unchanged from v3). THE PAIRING RULE: Dart flips the ritual off
 #    when the npy exists, and the native side must actually feed it — a v3
 #    pack on an UNPATCHED runtime re-opens the growl (worse: the prefix that
 #    used to absorb it is gone). The patched .so therefore ships in the same
 #    APK as this pack: tool/sherpa-bos/README.md is the build-and-vendor
 #    note, and the round-trip bench's contains('hello') leg is the tripwire.
-touch "$STAGE/pack-v3.ok"
+touch "$STAGE/pack-v4.ok"
 
 # 6. Zip with one top-level dir (stripped on unpack, see model_unpack.dart):
 #    the app's streaming zip path keeps phone RAM flat during unpack.
-(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v3.zip && zip -qry9 \
-  pocket-tts-v3.zip "$(basename "$STAGE")")
-echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v3.zip" | cut -f1)"
+(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v4.zip && zip -qry9 \
+  pocket-tts-v4.zip "$(basename "$STAGE")")
+echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v4.zip" | cut -f1)"
 
 # 7. Publish alongside the ASR/TTS packs.
 if [ "${1:-}" = upload ]; then
-  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v3.zip" \
+  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v4.zip" \
     --clobber -R "$REPO"
   echo "uploaded to $REPO releases (tag models-v1)"
 fi

@@ -506,7 +506,7 @@ class PocketTts implements TtsBackend {
         numSteps: numSteps,
         silenceScale: 1.0,
         // ~1 frame per char is the measured speech rate (0.94-1.2 across
-        // the six presets); grant 1.35 frames/char + 30 frames of slack,
+        // the presets); grant 1.35 frames/char + 30 frames of slack,
         // clamped at the model's own 500-frame (40 s) ceiling. A clamp
         // hit trims trailing silence, never mid-word content.
         extra: {'max_frames': (text.length * 135 ~/ 100 + 30).clamp(60, 500)},
