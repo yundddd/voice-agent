@@ -602,9 +602,24 @@ folded prompt's arrival does not restart it).
 The bridge can speak to the OpenCode v2 service instead of a `claude -p`
 child — same HTTP surface, same voice events, one swapped adapter. The
 phone cannot tell which harness spoke: every bus event is TRANSLATED
-into a claude stream-json frame and fed to the same `handleEvent`, so
-the sentence splitter, the census, the receipts, and the queue are
-shared machinery, not a second implementation.
+into the app's own normalized event set and fed to the same
+`handleEvent`, so the sentence splitter, the census, the receipts, and
+the queue are shared machinery, not a second implementation.
+
+- **The harness session interface (+327).** Since the first backend the
+  internal protocol had been "claude's stream-json, and the other
+  harness imitates it". No more: `tool/harness/interface.mjs` defines
+  OUR event enum (`HarnessEvent`: identity/model truths, the stream
+  (CallStart/BlockStart/BlockDelta/Usage/MessageStop/BlockStop), whole
+  snapshots, notices, retries, the turn's `TurnEnd`) and the session
+  VERB surface (`prompt`, `interrupt`, `setModel`, `kill`, resume via
+  construction). `tool/harness/claude.mjs` is the only code that reads
+  the Claude Agent SDK's stream-json; `tool/harness/opencode.mjs` is
+  the only code that reads the opencode bus. Each adapter emits
+  normalized events; the bridge's turn machine never sees a native
+  frame. The content-block layout inside snapshots
+  (`text`/`thinking`/`tool_use`/`tool_result`) is now OUR normalized
+  block shape, not a Claude frame leaking through.
 
 - **Resolution.** `--harness claude|opencode` pins at boot; otherwise a
   runtime `POST /harness {"to":"…"}` flips the live bridge and persists
@@ -667,12 +682,14 @@ shared machinery, not a second implementation.
   deduped by event id — a resubscribe must not re-speak a turn.
 - **Verified live** against 2.0.18 (routes from the service's own
   `/openapi.json`; event names and payload shapes from a capture of a
-  real turn): `session.step.started` → `message_start`,
+  real turn): `session.step.started` → `CallStart` (census label
+  `message_start`, so the [census] line measures the same thing on
+  either harness),
   `session.reasoning.*` → thinking blocks, `session.text.*` → text
   blocks (the `text.ended` snapshot dedupes against the live watermark
   exactly like the CLI's own snapshots), `session.tool.*` → tool_use /
-  tool_result, `session.usage.updated` → `message_delta` + census
-  usage, `session.execution.succeeded|interrupted` → the `result` that
+  tool_result, `session.usage.updated` → `Usage` + census
+  usage, `session.execution.succeeded|interrupted` → the `TurnEnd` that
   closes the turn. Interrupt is `POST …/interrupt`; `/compact` maps to
   `POST …/compact` plus a `compact_boundary` for the chip.
 - **Tests**: `node --test tool/bridge_oc_test.mjs` runs the real bridge
