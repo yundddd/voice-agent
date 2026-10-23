@@ -355,7 +355,7 @@ class _FakePlatform implements FilePlayerPlatform {
   }
 
   @override
-  Future<void> declareCommunicationLane() async {
+  Future<void> declarePlaybackLane() async {
     apiOrder.add('declare');
     declares++;
     await holdDeclare?.future;

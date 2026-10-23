@@ -9,10 +9,19 @@
 /// UNDECLARED media stream flips it to the media (A2DP) route UNDER the
 /// still-playing first utterance. The fix is one declared lane: the very
 /// first play (always the launch silent warm-up) declares the player's
-/// stream voice-communication, the SAME lane the capture rides, so route
-/// negotiation happens once, inside silence no one hears — the output
-/// twin of the mic's warm-up drop (see record_mic_source.dart), and just
-/// as traceable: the declaration journals itself.
+/// lane, so route negotiation happens once, inside silence no one hears —
+/// the output twin of the mic's warm-up drop (see record_mic_source.dart),
+/// and just as traceable: the declaration journals itself.
+///
+/// +321 (Tim: '让 Voice Agent 通过音乐音量放出来，通话音量声音太小了'):
+/// the declared lane is MEDIA, not voice-communication. The +317 lane
+/// won one-lane routing on Bluetooth but cost the volume keys — with a
+/// voice-communication stream alive, Android retargets them to the call
+/// stream, and a call volume sitting near zero silenced an entire
+/// session while this file's own journal recorded full-duration plays
+/// ('chunk play 19.0s', 'audio seam … of say' — the +118 silent-speaker
+/// signature with a new cause). On the media lane the user's volume keys
+/// are the phone's own mixer for the voice, which is where Tim wants it.
 ///
 /// +318 (Tim: 'don't cut the TTS off — turn the volume down gradually,
 /// but make it quick'): a cut — barge-in, tab swipe, preview stop —
@@ -39,9 +48,9 @@ import 'audio_output.dart';
 /// constructed; the fake wants nothing). One production
 /// implementation: [_AudioPlayerAdapter].
 abstract interface class FilePlayerPlatform {
-  /// +317: declare the playback lane — voice-communication, the same
-  /// lane the mic rides — before the first source is handed over.
-  Future<void> declareCommunicationLane();
+  /// +317/+321: declare the playback lane — media, the lane the user's
+  /// music (volume) speaks on — before the first source is handed over.
+  Future<void> declarePlaybackLane();
 
   /// +318: 0.0..1.0 — the ramp a cut rides down on (and back up on).
   Future<void> setVolume(double volume);
@@ -78,17 +87,21 @@ class _AudioPlayerAdapter implements FilePlayerPlatform {
       );
 
   @override
-  Future<void> declareCommunicationLane() => _player.setAudioContext(
-    // usage=VOICE_COMMUNICATION, content=SPEECH: the stream joins the
-    // call lane the record plugin already holds while the mic runs, so
-    // no mid-utterance SCO→A2DP renegotiation remains to hear. Deliberately
-    // NOT forcing audioMode or the speakerphone flag: those globals are
-    // exactly what the record plugin juggles (see record_mic_source.dart's
-    // header), and a per-player attribute must not revoke them under it.
+  Future<void> declarePlaybackLane() => _player.setAudioContext(
+    // +321 (Tim: 'can the Voice Agent come out through the music
+    // volume? the call volume is too quiet'): usage=MEDIA, content=MUSIC
+    // — the reply rides STREAM_MUSIC, so the volume keys the user presses
+    // over the speaking app are the ones that raise its voice. The +317
+    // voice-communication lane bought one-lane routing on Bluetooth but
+    // made Android retarget the keys to the call stream, and a call
+    // volume parked near zero silenced a whole session while the app
+    // journalled full-duration plays (the +118 signature wearing a new
+    // cause). The explicit declaration stands: a lane named in the
+    // journal beats a lane inherited from the plugin's default.
     AudioContext(
       android: const AudioContextAndroid(
-        usageType: AndroidUsageType.voiceCommunication,
-        contentType: AndroidContentType.speech,
+        usageType: AndroidUsageType.media,
+        contentType: AndroidContentType.music,
       ),
     ),
   );
@@ -169,19 +182,26 @@ class FilePlayerAudioOutput implements AudioOutput {
     // stay; the route question gets re-earned with data, not guesses.
     // +317 re-earned it: the assistant lane died and the field tape
     // (BT speaker, first reply thin-then-full mid-sentence) named the
-    // media lane's route flip as the survivor — the player now declares
-    // voice-communication, the mic's own lane, once, on the silent
-    // warm-up, so the switch costs a heard nothing. Watch the journal:
-    // a silent speaker with full-duration plays again is the +118
-    // signature and this declaration goes back to the drawer with it.
+    // media lane's route flip as the survivor — the player declares its
+    // lane once, on the silent warm-up, so the switch costs a heard
+    // nothing. +321 moves that declaration to the MEDIA lane (usage
+    // media/content music): the voice-communication lane made Android
+    // hand the volume keys to the call stream, and the field answer
+    // (whole session silent, keys moving the phone-volume, Tim: 'the
+    // call volume is too quiet') says the user's ear belongs to the
+    // music stream. Watch the journal: a silent speaker with
+    // full-duration plays again is the +118 signature and this
+    // declaration goes back to the drawer with it; the +317 BT
+    // first-reply tape may return too, and gets re-earned on that
+    // device, not pre-paid on every one.
     if (!_laneDeclared) {
       final cutsAtDoor = _cuts;
       try {
-        await _player.declareCommunicationLane();
+        await _player.declarePlaybackLane();
         _laneDeclared = true;
         note?.call(
-          'audio lane: playback declared voice-communication '
-          '(one lane with the mic; the route switch lands in silence)',
+          'audio lane: playback declared media '
+          "(the user's music volume speaks; the route switch lands in silence)",
         );
       } catch (_) {}
       if (_cuts != cutsAtDoor) return; // +289: the cut crossed the
