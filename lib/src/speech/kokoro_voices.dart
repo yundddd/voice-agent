@@ -105,6 +105,50 @@ const List<KokoroSpeaker> titlRoster = [
   ),
 ];
 
+/// Pocket's roster (`TtsVoice` id 'pocket'): sid = index into the pack's
+/// reference wavs — slider order must match TtsVoice.pocketRefs, which
+/// must match the voices/ files of tool/build_pocket_pack.sh. All six
+/// are kyutai/tts-voices presets (CC-BY-4.0); the engine can clone any
+/// of them further from a recording later, one small UI step away.
+const List<KokoroSpeaker> pocketRoster = [
+  KokoroSpeaker(
+    sid: 0,
+    name: 'Jane',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 1,
+    name: 'Anna',
+    description: 'English · female',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 2,
+    name: 'Jean',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 3,
+    name: 'Michael',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 4,
+    name: 'Alba',
+    description: 'English · male',
+    english: true,
+  ),
+  KokoroSpeaker(
+    sid: 5,
+    name: 'Bill Boerst',
+    description: 'American English · male',
+    english: true,
+  ),
+];
+
 /// Prefix → (language, gender) as the Kokoro naming scheme defines it.
 const Map<String, (String, String, bool)> _prefixes = {
   'af': ('American English', 'female', true),

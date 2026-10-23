@@ -197,3 +197,52 @@ bool _endsAtBreath(String t, (int, int) word) {
 }
 
 bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
+
+/// Pocket-specific chunk merge over [splitForTts] output. Two reasons it
+/// exists, and the second one is why the rules changed:
+/// 1. a Generate call with very few text tokens misbehaves in this model
+///    (kyutai's own guards: pad short prompts, ignore EOS for 6 frames,
+///    split_into_best_sentences). In the ONNX port a 2-word piece reliably
+///    garbles the first syllable, and a voice that never emits EOS decodes
+///    up to max_frames — 40 s of babble measured. Merging neighbours to
+///    >= 30 chars matches sherpa's internal min_char_in_sentence so C++'s
+///    own sentence pass never sees a runt either.
+/// 2. EVERY separate Generate call re-pays the cold-start ritual (the
+///    '....' pause, the growl region trimmed by pocketLeadIn, the inserted
+///    lead silence, plus one more player prepare seam). Long answers split
+///    sentence-by-sentence into short pieces therefore "broke up"
+///    audibly — measured seams of 0.3-0.7 s of silence per sentence. So
+///    pieces now merge up to 400 chars regardless of runt status: a
+///    whole typical assistant answer becomes ONE call, and the model's
+///    own punctuation-driven pauses (kept whole by silenceScale 1.0)
+///    provide natural paragraph flow instead of our splice points.
+List<String> mergePocketChunks(List<String> pieces) {
+  const minChars = 30; // runt floor: below this a piece garbles
+  // Speech runs ~0.94-1.2 frames/char (all six preset voices measured, and
+  // a full 373-char answer rendered at 321 frames); one frame = 80 ms and
+  // the per-call frame guard in PocketTts.generate grants ~1.35 frames/char
+  // + 30 of slack against the model's 500-frame (40 s) ceiling. At 400
+  // chars the guard clamps to that ceiling, which measured ~18 s of margin
+  // on the slowest realistic delivery — a clamp hit trims trailing
+  // silence, never words, and only in a pathological EOS miss.
+  const maxChars = 400;
+  final out = <String>[];
+  for (final p in pieces) {
+    if (out.isNotEmpty &&
+        (out.last.length < minChars ||
+            p.length < minChars ||
+            out.last.length + p.length + 1 <= maxChars)) {
+      out.last = '${out.last} $p';
+    } else {
+      out.add(p);
+    }
+  }
+  if (out.length > 1 && out.last.length < minChars) {
+    // Folding the tail runt in can overshoot the ideal cap a little (a
+    // few chars of extra allowance is covered by the guard's +30 slack;
+    // a clamp hit only trims trailing silence, never mid-word content at
+    // this size).
+    out[out.length - 2] = '${out[out.length - 2]} ${out.removeLast()}';
+  }
+  return out;
+}

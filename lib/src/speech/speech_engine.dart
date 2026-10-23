@@ -16,18 +16,20 @@ import 'dart:typed_data';
 ///
 /// Kokoro-82M v1.0 (the k2-fsa kokoro-multi-lang-v1_0 pack, fp32 — our A/B
 /// measured the int8 build audible-muted AND ~4x slower on CPU (RTF 0.37 vs
-/// 0.10): ORT's int8 kernels lose to plain fp32 at this model size). The app
-/// ships this one engine only — the Piper/VITS, Pocket, ZipVoice and NeuTTS
-/// engines were removed when Kokoro proved the best-sounding by a wide
-/// margin. No cold-start ritual, no codec bottleneck: one forward pass,
-/// clean heads, so it rides the generic OfflineTts synth arm. [sid] indexes
-/// the 54-voice roster (reported by the model itself, so the voice screen's
-/// style slider picks it up). [kokoroLexicon] is a comma-joined list of
-/// absolute lexicon paths; zh would additionally need the jieba dict, which
-/// the Dart binding does not plumb (dictDir is dropped), so we wire English
-/// only. espeak-ng under [kokoroDataDir] backs out-of-lexicon words.
+/// 0.10): ORT's int8 kernels lose to plain fp32 at this model size). The
+/// Piper/VITS and ZipVoice/NeuTTS engines stayed retired when Kokoro won
+/// the A/B; Pocket came back on the strength of its zero-shot cloning and
+/// its voice diversity (six presets from the same ONNX pack the app has
+/// always mirrored). No cold-start ritual, no codec bottleneck for Kokoro:
+/// one forward pass, clean heads, so it rides the generic OfflineTts synth
+/// arm. [sid] indexes the 54-voice roster (reported by the model itself,
+/// so the voice screen's style slider picks it up). [kokoroLexicon] is a
+/// comma-joined list of absolute lexicon paths; zh would additionally need
+/// the jieba dict, which the Dart binding does not plumb (dictDir is
+/// dropped), so we wire English only. espeak-ng under [kokoroDataDir]
+/// backs out-of-lexicon words.
 class TtsSpec {
-  final String engine; // 'kokoro' | 'titl'
+  final String engine; // 'kokoro' | 'titl' | 'pocket'
   final String kokoroModel, kokoroVoices, kokoroTokens, kokoroDataDir;
   final String kokoroLexicon;
   // Teacher-in-the-loop: the 8M student graph + Kokoro phoneme vocab;
@@ -56,6 +58,23 @@ class TtsSpec {
   final String espeakBin, espeakDataDir;
   final int sid;
 
+  // Pocket (Kyutai 100M, sherpa-onnx ONNX export): the five graphs + the
+  // SentencePiece data of the export (no espeak — Pocket tokenises the
+  // raw characters). [pocketRefs] are the preset voices' wav paths, in
+  // slider order; [sid] picks one and the backend resamples/conditions
+  // from it (sherpa caps the prompt at 10 s internally). [pocketNumSteps]
+  // is the flow-matching step count — Kyutai distilled the decoder to
+  // one step and 2 measures clean, so that is the shipped default.
+  final String pocketLmFlow,
+      pocketLmMain,
+      pocketEncoder,
+      pocketDecoder,
+      pocketTextConditioner,
+      pocketVocabJson,
+      pocketTokenScoresJson;
+  final List<String> pocketRefs;
+  final int pocketNumSteps;
+
   const TtsSpec.kokoro({
     required this.kokoroModel,
     required this.kokoroVoices,
@@ -68,7 +87,16 @@ class TtsSpec {
        titlVocabs = '',
        lexiconPaths = '',
        espeakBin = '',
-       espeakDataDir = '';
+       espeakDataDir = '',
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
 
   const TtsSpec.titl({
     required this.titlModels,
@@ -82,7 +110,39 @@ class TtsSpec {
        kokoroVoices = '',
        kokoroTokens = '',
        kokoroDataDir = '',
-       kokoroLexicon = '';
+       kokoroLexicon = '',
+       pocketLmFlow = '',
+       pocketLmMain = '',
+       pocketEncoder = '',
+       pocketDecoder = '',
+       pocketTextConditioner = '',
+       pocketVocabJson = '',
+       pocketTokenScoresJson = '',
+       pocketRefs = const [],
+       pocketNumSteps = 0;
+
+  const TtsSpec.pocket({
+    required this.pocketLmFlow,
+    required this.pocketLmMain,
+    required this.pocketEncoder,
+    required this.pocketDecoder,
+    required this.pocketTextConditioner,
+    required this.pocketVocabJson,
+    required this.pocketTokenScoresJson,
+    required this.pocketRefs,
+    this.pocketNumSteps = 2,
+    this.sid = 0,
+  }) : engine = 'pocket',
+       kokoroModel = '',
+       kokoroVoices = '',
+       kokoroTokens = '',
+       kokoroDataDir = '',
+       kokoroLexicon = '',
+       titlModels = '',
+       titlVocabs = '',
+       lexiconPaths = '',
+       espeakBin = '',
+       espeakDataDir = '';
 }
 
 /// One-way speech pipeline notification.

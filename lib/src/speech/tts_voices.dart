@@ -48,16 +48,51 @@ class TtsVoice {
   /// Speaker-style names for this voice's engine, or null when the
   /// engine's roster comes from the device (Kokoro reports its own
   /// speaker count; the styles are its names).
-  List<KokoroSpeaker>? get staticRoster => id == 'titl' ? titlRoster : null;
+  List<KokoroSpeaker>? get staticRoster => switch (id) {
+    'titl' => titlRoster,
+    'pocket' => pocketRoster,
+    _ => null,
+  };
 
-  /// Absolute-path job spec for the speech worker. Two engines live
-  /// here: Kokoro (the teacher; the Piper/VITS, Pocket, ZipVoice and
-  /// NeuTTS engines were retired when Kokoro won the A/B on sound) and
-  /// the teacher-in-the-loop students — 8M single-voice distillations
-  /// run on the same onnxruntime sherpa ships. For the students, [sid]
-  /// indexes the parallel pack lists; for Kokoro it is the style id
-  /// inside the one loaded graph.
+  /// Pocket TTS preset references (`voices/<name>.wav` in the pack, in
+  /// slider order — the same order as the pack script's ORDER list and
+  /// pocketRoster above; sid indexes this list).
+  static const pocketRefs = [
+    'jane',
+    'anna',
+    'jean',
+    'michael',
+    'alba',
+    'bill_boerst',
+  ];
+
+  /// Absolute-path job spec for the speech worker. Three engines live
+  /// here: Kokoro (the teacher; the Piper/VITS, ZipVoice and NeuTTS
+  /// engines were retired when Kokoro won the A/B on sound), the
+  /// teacher-in-the-loop students — 8M single-voice distillations run
+  /// on the same onnxruntime sherpa ships — and Pocket (Kyutai's
+  /// zero-shot cloner, back by popular demand: six presets ride the
+  /// same slider and the engine was already inside sherpa). For the
+  /// students, [sid] indexes the parallel pack lists; for Kokoro it is
+  /// the style id inside the one loaded graph; for Pocket it picks a
+  /// reference wav.
   Future<TtsSpec> specIn(String modelsDir, {int sid = 0}) async {
+    if (id == 'pocket') {
+      return TtsSpec.pocket(
+        pocketLmFlow: _f(modelsDir, dirName, 'lm_flow.onnx'),
+        pocketLmMain: _f(modelsDir, dirName, 'lm_main.onnx'),
+        pocketEncoder: _f(modelsDir, dirName, 'encoder.onnx'),
+        pocketDecoder: _f(modelsDir, dirName, 'decoder.onnx'),
+        pocketTextConditioner: _f(modelsDir, dirName, 'text_conditioner.onnx'),
+        pocketVocabJson: _f(modelsDir, dirName, 'vocab.json'),
+        pocketTokenScoresJson: _f(modelsDir, dirName, 'token_scores.json'),
+        pocketRefs: [
+          for (final ref in pocketRefs)
+            _f(modelsDir, dirName, 'voices/$ref.wav'),
+        ],
+        sid: sid,
+      );
+    }
     if (id == 'titl') {
       // +238: the students' PRIMARY front-end is espeak-ng as a child
       // process — GPL at arm's length, letter names for APK and TTS
@@ -224,6 +259,26 @@ const ttsVoices = <TtsVoice>[
         url: '$_ourPacks/kokoro-multi-lang-v1_0.zip',
         dirName: 'kokoro-multi-lang-v1_0',
         markerFile: 'model.onnx',
+      ),
+    ],
+  ),
+  TtsVoice(
+    id: 'pocket',
+    label: 'Pocket TTS',
+    note:
+        'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
+        'Michael/Alba/Bill) once loaded; any one of them also clones from a '
+        'recording later. Full-precision graphs: subjective A/B on our '
+        'renders preferred them over the int8 quantized ones (the ~10 kHz '
+        'Mimi-codec ceiling is shared, but the int8 AR path measured a '
+        'drier, less reliable head). Runs on the shared sherpa-onnx engine.',
+    sizeLabel: '~205 MB',
+    packs: [
+      ModelPack(
+        label: 'voice: Pocket TTS (engine + voices)',
+        url: '$_ourPacks/pocket-tts-v2.zip',
+        dirName: 'pocket-tts',
+        markerFile: 'pack-v2.ok', // sentinel: bump to force pack re-download
       ),
     ],
   ),

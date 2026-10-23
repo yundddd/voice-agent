@@ -13,10 +13,12 @@
 /// isolate as plain data and is rebuilt there.
 library;
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
+import '../audio/audio_io.dart' show decodeWav;
 import '../models/model_paths.dart';
 import 'asr_chunk.dart';
 import 'espeak_exec.dart';
@@ -198,6 +200,34 @@ class RealBackends extends WorkerBackends {
       // to report it loudly, as before).
       t.warm(s.sid);
       return t;
+    }
+    if (s.engine == 'pocket') {
+      return PocketTts(
+        sherpa_onnx.OfflineTts(
+          sherpa_onnx.OfflineTtsConfig(
+            model: sherpa_onnx.OfflineTtsModelConfig(
+              pocket: sherpa_onnx.OfflineTtsPocketModelConfig(
+                lmFlow: s.pocketLmFlow,
+                lmMain: s.pocketLmMain,
+                encoder: s.pocketEncoder,
+                decoder: s.pocketDecoder,
+                textConditioner: s.pocketTextConditioner,
+                vocabJson: s.pocketVocabJson,
+                tokenScoresJson: s.pocketTokenScoresJson,
+              ),
+              // 4 threads: Pocket is a 100M AR model with a flow
+              // sampler per frame — desktop RTF ~0.16 fp32 at this
+              // width (voice-screen round-trip bench).
+              numThreads: 4,
+              debug: false,
+              provider: 'cpu',
+            ),
+            maxNumSenetences: 4,
+          ),
+        ),
+        refs: s.pocketRefs,
+        numSteps: s.pocketNumSteps > 0 ? s.pocketNumSteps : 2,
+      );
     }
     return SherpaTts(
       sherpa_onnx.OfflineTts(
@@ -404,6 +434,98 @@ class SherpaTts implements TtsBackend {
 
   @override
   void free() => _tts.free();
+}
+
+/// Kyutai Pocket TTS (sherpa-onnx's PocketTTS arm of the same OfflineTts
+/// the Kokoro voice uses — the pack is plain model data, no new native
+/// stack). [numSpeakers] is the preset count: [generate] takes the
+/// speaker as an index into [refs], decodes that wav once, and rides
+/// sherpa's referenceAudio conditioning (no transcript needed — Pocket
+/// clones from audio alone; the presets are curated kyutai voices).
+///
+/// The synth carries the cold-start ritual this ONNX port needs and
+/// Kokoro does not (see docs/pocket-head-upstream-issue.md — filed
+/// upstream): every call's text gets a `'.... '` prefix so the MODEL
+/// itself opens with a generated pause (kyutai's own FAQ answer, issue
+/// #6), and the port's growl-corrupted first 250 ms of that pause is
+/// dropped by [pocketLeadIn] before the audio leaves the backend.
+/// silenceScale 1.0 keeps that pause (and every punctuation breath)
+/// whole — the Dart default 0.2 squashes all silence to 20%. The
+/// per-call max_frames scales with the merged piece (see
+/// [mergePocketChunks] in tts_split.dart: runts garble and every extra
+/// call re-pays the whole ritual, so answers ship as few pieces as
+/// possible): a missed EOS self-limits inside the text's own length
+/// instead of babbling to the model's 500-frame ceiling.
+class PocketTts implements TtsBackend {
+  PocketTts(this._tts, {required this.refs, required this.numSteps})
+    : assert(refs.isNotEmpty, 'pocket spec needs at least one preset');
+
+  final sherpa_onnx.OfflineTts _tts;
+  final List<String> refs;
+  final int numSteps;
+  final Map<int, (Float32List, int)> _decoded = {};
+
+  @override
+  int get numSpeakers => refs.length;
+
+  @override
+  (Float32List, int) generate({
+    required String text,
+    int sid = 0,
+    double speed = 1.0,
+  }) {
+    final at = sid % refs.length;
+    // Preset wavs are tiny; decode once per style, not per reply.
+    final (reference, sampleRate) = _decoded.putIfAbsent(
+      at,
+      () => decodeWav(File(refs[at]).readAsBytesSync()),
+    );
+    final audio = _tts.generateWithConfig(
+      text: '.... $text',
+      config: sherpa_onnx.OfflineTtsGenerationConfig(
+        referenceAudio: reference,
+        referenceSampleRate: sampleRate,
+        numSteps: numSteps,
+        silenceScale: 1.0,
+        // ~1 frame per char is the measured speech rate (0.94-1.2 across
+        // the six presets); grant 1.35 frames/char + 30 frames of slack,
+        // clamped at the model's own 500-frame (40 s) ceiling. A clamp
+        // hit trims trailing silence, never mid-word content.
+        extra: {'max_frames': (text.length * 135 ~/ 100 + 30).clamp(60, 500)},
+      ),
+    );
+    return (pocketLeadIn(audio.samples), audio.sampleRate);
+  }
+
+  @override
+  void free() => _tts.free();
+}
+
+/// Lead-in repair for one Pocket Generate output. Paired with the '....'
+/// text prefix in [PocketTts.generate]: the model itself opens with a
+/// generated pause — the port decodes the first frames of that pause as
+/// a low growl instead of silence (its NaN/zeros cold start, not the
+/// reference's BOS-primed prompt-tail state), and the pause absorbs it.
+/// Drop the first 250 ms (growl + pause head), ramp the cut in over 30 ms
+/// so the splice adds no click, and prepend a short silence so the phone's
+/// post-capture output ramp (measured ~150 ms, plus mic-teardown mute on
+/// PTT) also lands inside silence, not speech — the generated pause behind
+/// it (~0.5-0.9 s after the drop) carries the protection the 800 ms lead
+/// used to provide alone. Measured with the prefix: 10/10 head hits across
+/// presets (whisper-tiny re-transcription, first phrase intact in 10/10).
+Float32List pocketLeadIn(Float32List s) {
+  const rate = 24000; // Pocket is fixed at 24 kHz.
+  const drop = rate * 250 ~/ 1000;
+  const lead = rate * 3 ~/ 10;
+  if (s.length <= drop) return s;
+  final fade = rate * 30 ~/ 1000;
+  final out = Float32List(s.length - drop + lead);
+  for (var i = 0; i < s.length - drop; i++) {
+    var v = s[i + drop];
+    if (i < fade) v *= i / fade;
+    out[i + lead] = v;
+  }
+  return out;
 }
 
 /// The 8M students: Kokoro's own lexicon files through the

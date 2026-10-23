@@ -24,6 +24,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 import 'package:voice_agent/src/audio/audio_io.dart';
 import 'package:voice_agent/src/models/model_paths.dart';
 import 'package:voice_agent/src/speech/speech_worker.dart';
+import 'package:voice_agent/src/speech/tts_voices.dart';
 
 void main() {
   final asrDir = Directory('models/sherpa-onnx-whisper-tiny.en').absolute.path;
@@ -208,6 +209,95 @@ void main() {
         expect(hits, greaterThan(2));
         expect(heard, contains('quick'));
       }
+    } finally {
+      worker.dispose();
+    }
+  }, timeout: const Timeout(Duration(minutes: 8)));
+
+  // Pocket TTS leg: hot-swaps to the sherpa-onnx PocketTTS engine (Kyutai
+  // ONNX export) and verifies the preset references clone through Whisper.
+  // Skipped until the pack is staged: run tool/build_pocket_pack.sh (assets
+  // land under POCKET_DIR, default /tmp/opencode/pocket-pack/pocket-tts).
+  test('TTS voice swap: Kokoro -> Pocket TTS speaks preset voices', () async {
+    final dir =
+        Platform.environment['POCKET_DIR'] ??
+        '/tmp/opencode/pocket-pack/pocket-tts';
+    final refs = TtsVoice.pocketRefs;
+    TtsSpec spec(int sid) => TtsSpec.pocket(
+      pocketLmFlow: '$dir/lm_flow.onnx',
+      pocketLmMain: '$dir/lm_main.onnx',
+      pocketEncoder: '$dir/encoder.onnx',
+      pocketDecoder: '$dir/decoder.onnx',
+      pocketTextConditioner: '$dir/text_conditioner.onnx',
+      pocketVocabJson: '$dir/vocab.json',
+      pocketTokenScoresJson: '$dir/token_scores.json',
+      pocketRefs: [for (final r in refs) '$dir/voices/$r.wav'],
+      sid: sid,
+    );
+    if (!await ready('Pocket TTS') ||
+        !File('$dir/lm_main.onnx').existsSync() ||
+        !File('$dir/voices/${refs.first}.wav').existsSync()) {
+      // ignore: avoid_print
+      print('SKIPPED: Pocket TTS assets not staged under $dir');
+      return;
+    }
+
+    final worker = await SpeechWorker.start(paths);
+    try {
+      final speakers = await worker.useTts(spec(0));
+      expect(speakers, refs.length); // references drive the style slider
+
+      const line =
+          'Hello Tim. Pocket TTS speaking, generated entirely on this device.';
+      final sw = Stopwatch()..start();
+      final (audio, sampleRate) = await worker.synthesize(line);
+      sw.stop();
+      final seconds = audio.length / sampleRate;
+      // ignore: avoid_print
+      print(
+        'pocket TTS: ${seconds.toStringAsFixed(1)}s generated in '
+        '${sw.elapsedMilliseconds} ms '
+        '(RTF ${(sw.elapsedMilliseconds / 1000 / seconds).toStringAsFixed(2)})',
+      );
+      expect(audio.length, greaterThan(sampleRate));
+      expect(sampleRate, 24000); // Pocket's output rate
+
+      File('build/roundtrip_pocket.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio, sampleRate));
+
+      final heard = (await worker.transcribe(audio, sampleRate)).toLowerCase();
+      final hits = line
+          .split(' ')
+          .where((w) => w.length > 3)
+          .where((w) => heard.contains(w.toLowerCase()))
+          .length;
+      // ignore: avoid_print
+      print('pocket ASR: "$heard" ($hits long words matched)');
+      // Body words must land (>= 3): the ONNX port's cold-start head can eat
+      // the first syllable even after the lead-in repair (see pocketLeadIn),
+      // and tiny.en drops the trailing words of a long take, so assert on the
+      // middle of the sentence — that is what the engine guarantees.
+      expect(hits, greaterThan(2));
+
+      // Second preset sounds different but is equally intelligible.
+      await worker.useTts(spec(5)); // bill_boerst: the most stable draw
+      final (audio2, _) = await worker.synthesize(line);
+      File('build/roundtrip_pocket_bill.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(encodeWav(audio2, sampleRate));
+      final heard2 = (await worker.transcribe(
+        audio2,
+        sampleRate,
+      )).toLowerCase();
+      final hits2 = line
+          .split(' ')
+          .where((w) => w.length > 3)
+          .where((w) => heard2.contains(w.toLowerCase()))
+          .length;
+      // ignore: avoid_print
+      print('pocket ASR (bill_boerst): "$heard2" ($hits2 long words matched)');
+      expect(hits2, greaterThan(2));
     } finally {
       worker.dispose();
     }

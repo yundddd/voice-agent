@@ -92,4 +92,59 @@ void main() {
       // 'installed' must not pretend a half-download is a working voice.
     });
   });
+
+  group('pocket voice (six preset references, one pack)', () {
+    final pocket = voiceById('pocket')!;
+
+    test('one pack, six named styles, sentinel-marked', () {
+      expect(pocket.perSidPacks, isFalse);
+      expect(pocket.packs.map((p) => p.dirName), ['pocket-tts']);
+      // The sentinel (not model.onnx) is the installed-marker: bumping
+      // its name in the pack is how the app forces a re-download.
+      expect(pocket.packs.single.markerFile, 'pack-v2.ok');
+      // Roster order == pocketRefs order == the pack script's ORDER —
+      // a drift here would silently relabel every preset.
+      expect(
+        pocket.staticRoster!.map((s) => s.sid),
+        List.generate(TtsVoice.pocketRefs.length, (i) => i),
+      );
+      expect(pocket.staticRoster!.map((s) => s.name), [
+        'Jane',
+        'Anna',
+        'Jean',
+        'Michael',
+        'Alba',
+        'Bill Boerst',
+      ]);
+    });
+
+    test('installed once the sentinel is on disk', () async {
+      final dir = Directory.systemTemp.createTempSync('models');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      expect(await pocket.installedIn(dir.path), isFalse);
+      Directory('${dir.path}/pocket-tts').createSync();
+      File('${dir.path}/pocket-tts/pack-v2.ok').writeAsBytesSync([0]);
+      expect(await pocket.installedIn(dir.path), isTrue);
+    });
+
+    test(
+      'the picked sid rides the spec and indexes the reference wavs',
+      () async {
+        final spec = await pocket.specIn('/models', sid: 5);
+        expect(spec.engine, 'pocket');
+        expect(spec.sid, 5); // TitlTts-style regression guard: dropping the
+        // sid from the spec spoke preset 0 no matter what was picked.
+        expect(spec.pocketRefs, hasLength(6));
+        expect(spec.pocketRefs[5], '/models/pocket-tts/voices/bill_boerst.wav');
+        expect(spec.pocketLmMain, '/models/pocket-tts/lm_main.onnx');
+        expect(spec.pocketNumSteps, 2); // kyutai distilled 1-step decoder
+      },
+    );
+
+    test('pocket sids are not clamped like per-sid packs', () {
+      // Six styles live inside the one pack (like Kokoro's 54): an old
+      // pick of sid 3 must survive to speak preset 3, not snap to 0.
+      expect(TtsPrefs.fromJson({'voice': 'pocket', 'sid': 3}).sid, 3);
+    });
+  });
 }

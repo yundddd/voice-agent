@@ -626,6 +626,9 @@ Future<void> _runWorker(
             break;
           }
           final pieces = splitForTts(message.text!);
+          final merged = spec.engine == 'pocket'
+              ? mergePocketChunks(pieces)
+              : pieces;
           // One-shot speaker override (style-picker auditions): valid sids
           // ride this call only; the engine keeps its configured speaker.
           final sid =
@@ -634,7 +637,7 @@ Future<void> _runWorker(
                   message.sid! < tts.numSpeakers
               ? message.sid!
               : spec.sid;
-          synthQueue = (id: message.id, pieces: pieces, i: 0, sid: sid);
+          synthQueue = (id: message.id, pieces: merged, i: 0, sid: sid);
           stepSynth();
           if (synthQueue != null) port.sendPort.send(const _Job.step());
         case 'step':

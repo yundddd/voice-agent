@@ -214,15 +214,18 @@ Silero ever sees it:
 
 The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart`):
 
-- **Standard voices.** Five Piper VITS voices — Lessac (default), Ryan,
-  Amy, Alba, and LibriTTS-R (a slider picks any of its 60 reader styles),
-  taken from the k2-fsa sherpa-onnx releases. Downloads are **lazy**:
-  nothing lands on disk until the user selects that voice, and any
-  downloaded voice can be **deleted** again (trash icon; the voice in use
-  is protected — re-selecting simply re-downloads). The worker isolate
-  hot-swaps its TTS engine to match (`TtsSpec` + `useTts` job in
-  `speech_worker.dart`); the chosen voice and speaker id persist in
-  `models/tts_prefs.json`. A headphones button previews any loaded voice.
+- **Students (8M, TITL)** — the shipped default. Teacher-in-the-loop
+  distillations of Kokoro: one 9 MB int8 graph per style (af_heart),
+  speaking English fully off Kokoro's own lexicon files
+  (`lexicon_pronouncer.dart`) or the out-of-process espeak-ng when it can
+  run (+238: the GPL binary rides in jniLibs at arm's length, so letter
+  names survive on Android). Downloads are **lazy**: nothing lands on
+  disk until the user selects that voice, and any downloaded voice can be
+  **deleted** again (trash icon; the voice in use is protected —
+  re-selecting simply re-downloads). The worker isolate hot-swaps its TTS
+  engine to match (`TtsSpec` + `useTts` job in `speech_worker.dart`); the
+  chosen voice and speaker id persist in `models/tts_prefs.json`. A
+  headphones button previews any loaded voice.
 - **Kokoro v1.0** (82M, fp32). The best-sounding reader in the app: a
   StyleTTS2-lineage one-pass renderer (no neural codec in the path, no
   autoregressive cold start — the first syllable is as clean as the last,
@@ -231,41 +234,20 @@ The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart
   ▶ to audition a style without switching — the sid rides the synth job,
   no engine rebuild; the roster table lives in `kokoro_voices.dart`),
   American + British English; RTF ~0.10 on desktop
-  CPU at 4 threads. Fetched straight from the k2-fsa tts-models release
-  (334 MB download, fp32 deliberately: our A/B measured the int8 pack
-  audible-muted *and* 4× slower — `tool/kokoro_ab.dart`). Chinese-capable
-  in-model but not wired: the Dart binding drops `dictDir`.
-- **Clone my voice** (ZipVoice). Record one clear sentence (2–20 s, live
-  timer; the mic is handed to the recorder and any running conversation
-  resumes when done). On-device Whisper writes the transcript — ZipVoice
-  speaks the reference *transcript*, so the UI lets you fix a mis-heard
-  word before applying. The cloning engine (ZipVoice distill int8 + the
-  Vocos vocoder, ~155 MB total) downloads on first use only. "Use my
-  voice" switches all replies to the clone; the preview button speaks a
-  test line. Cloned replies are noticeably slower to generate than the
-  stock voices (RTF ≈0.2 measured on desktop, so expect replies to take
-  a second or two more on the phone). Backgrounding during recording
-  cancels the sample; the recording and delete buttons free the disk.
-- **NeuTTS Nano** (Neuphonic). A speech-token neural codec voice, running
-  through a *second native stack*: `neutts/bridge/` is a small Rust crate
-  (C FFI, built by `tool/build_neutts_pack.sh`) over the MIT `neutts`
-  crate — a llama.cpp GGUF backbone (Q4), a pure-Rust NeuCodec decoder,
-  and a bundled-espeak phonemizer, so inference is self-contained next to
-  sherpa-onnx, on the same worker isolate. The bridge `.so`, the GGUF, the
-  converted decoder weights and the preset voices all ride **inside the
-  voice pack** (zero APK weight, ~520 MB downloaded); four preset reference
-  styles (Greta/Jo/Mateo/Juliette — the MIT-licensed reference samples of
-  the Rust port) are selected with the same speaker slider used by
-  LibriTTS-R. The sampler seed is pinned (upstream re-rolls it per call),
-  which keeps each voice's character stable between replies. Android
-  (arm64) only: iOS needs a `.xcframework` build of the same crate, and
-  user-voice cloning is pending the pure-Rust NeuCodec *encoder* (the
-  Rust port still defers reference encoding to Python). Upstream model
-  repos are gated on Hugging Face (one-time terms click + login), so the
-  pack is mirrored to our GitHub release by the script above — the app
-  itself only ever downloads anonymously. The reply audio is 24 kHz;
-  expect ~45 tok/s (RTF ≈1) on a mid-range phone (measured RTF 0.9-1.3
-  on desktop x86; the Q8_0 backbone measured no better, so Q4 ships).
+  CPU at 4 threads. 334 MB download, fp32 deliberately: our A/B measured
+  the int8 pack audible-muted *and* 4× slower — `tool/kokoro_ab.dart`).
+  Chinese-capable in-model but not wired: the Dart binding drops
+  `dictDir`. (Mirror note: the pack rides our own GitHub release as a
+  zip — the k2-fsa original ships .tar.bz2, whose pure-Dart decode costs
+  ~21 s and ~900 MB on a desktop and OOM-kills mid-range phones; see
+  `model_packs.dart`.)
+- *Retired:* Piper/VITS (superseded by the students), ZipVoice and its
+  record-and-clone UI, and NeuTTS Nano with its second native stack
+  (iOS-side `.xcframework` never landed) — all dropped in the +27 A/B
+  clean-up. Their probes and pack scripts live in git history; Pocket's
+  zero-shot cloning is the surviving path back to "Clone my voice" (the
+  engine takes a bare wav, no transcript — wiring the old record UI to
+  a pocket spec is one small follow-up).
 - **Pocket TTS** (Kyutai). A 100M-parameter zero-shot cloning model that
   runs *inside the existing sherpa-onnx engine* (PocketTTS support since
   v1.12.24) — no second native stack this time: the voice pack is plain
@@ -911,7 +893,7 @@ Hard-won details:
   importing `tts_voices.dart`.
 * **Before shipping**: `dart format --set-exit-if-changed lib tool test`,
   `dart analyze`, and the headless tests below (with `LD_LIBRARY_PATH` set,
-  and `POCKET_DIR`/`NEUTTS_DIR` pointing at staged packs) must pass; the
+  and `POCKET_DIR` pointing at a staged pack) must pass; the
   Pocket leg re-hears each preset through Whisper, so borderline scores are
   the judge (Whisper tiny), not the engine — the test uses the most stable
   presets for its second check.
@@ -937,9 +919,6 @@ LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x
   dart run tool/onset_probe.dart      # asserts the first word survives endpointing
 
 LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
-  dart run tool/clone_probe.dart      # ZipVoice clone + Whisper intelligibility check
-
-LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x64 \
   dart run tool/pocket_probe.dart     # Pocket TTS presets + Whisper intelligibility check
 ```
 
@@ -947,10 +926,6 @@ LD_LIBRARY_PATH=$HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_linux-1.13.8/linux/x
 k2-fsa ONNX export + ungated kyutai/tts-voices wavs and, with the `upload`
 argument, publishes it to the same GitHub release; re-run it before
 `pocket_probe.dart` if `/tmp/opencode/pocket-pack` is gone.)
-
-(The clone leg of `roundtrip_test.dart` runs when the extracted ZipVoice
-pack + `vocos_24khz.onnx` sit under `/tmp/opencode` — see the k2-fsa
-`tts-models` / `vocoder-models` releases; otherwise it skips.)
 
 ### Linux desktop (full app with mic)
 
