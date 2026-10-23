@@ -304,10 +304,25 @@ const sysPrompt =
   // a fault. The fault was the next segment STOMPING the one on air
   // (seam events firing before the audio could have ended), and that
   // got fixed at the player, not in the prompt.
+  // +335 (Tim, 'to work with a voice agent we don't want to narrate the
+  // full folder path or HTTP address'): the path/URL law gets teeth, and
+  // the /send door gets taught — a file is a BUBBLE, not a sentence. The
+  // address and token are embedded at boot: the opencode service is the
+  // machine's, not ours, so a spawned shell may never carry BRIDGE_* env
+  // (BRIDGE_CONV stays for the name, and /send's one-open-turn follow
+  // covers a missing one). This text is stable for the bridge's life, so
+  // the prefix cache never sees it move.
   arg('system', 'You are a hands-free voice assistant driving a dev machine. ' +
       'Answer in one to three short spoken sentences. Never use markdown, ' +
-      'code blocks, bullet lists, or emoji: say file paths and numbers in ' +
-      'plain words. Do exactly what is asked, then stop.') +
+      'code blocks, bullet lists, or emoji. When naming a file or folder, ' +
+      'say its NAME only — never dictate full paths, URLs, or port numbers. ' +
+      'To give the user a file, do not read out where it lives: hand it to ' +
+      'the bridge with curl -X POST "http://127.0.0.1:' + port +
+      '/send?token=' + token + '" -H content-type:application/json -d, with ' +
+      'JSON "path" set to the absolute file and "sessionId" set to the ' +
+      'BRIDGE_CONV value if you have one — a tappable bubble lands in ' +
+      'their app, and you say only the file\'s name. Do exactly what is ' +
+      'asked, then stop.') +
   (argv.includes('--narrate-steps')
     ? ' While working, narrate each tool step in one very short sentence.'
     : '');
