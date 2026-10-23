@@ -1,0 +1,39 @@
+{
+  "seed": 1785992107,
+  "actions": [
+    "stubEmit",
+    "newSession",
+    "interrupt",
+    "interrupt",
+    "stubEmit",
+    "stubEmit",
+    "sendFile",
+    "faultCut",
+    "switchTo",
+    "tick",
+    "prompt",
+    "stubFinish",
+    "newSession",
+    "faultReorder",
+    "dropConnection",
+    "stubEmit",
+    "stubCrash",
+    "reconnect",
+    "faultReorder",
+    "reconnect",
+    "faultDup",
+    "closeSession",
+    "prompt",
+    "dropConnection"
+  ],
+  "min": [
+    "stubEmit",
+    "newSession",
+    "interrupt",
+    "interrupt",
+    "stubEmit",
+    "stubEmit",
+    "sendFile"
+  ],
+  "note": "/send named c-2 (28d0f288-98f6-4590-a05d-757dddc96a39): no file frame in its chat; response named 28d0f288-98f6-4590-a05d-757dddc96a39"
+}

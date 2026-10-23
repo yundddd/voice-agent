@@ -30,12 +30,18 @@ const auth = 'Basic ' + Buffer.from('opencode:labpw').toString('base64');
 const portsFile = CTL_DIR ? join(CTL_DIR, 'oc.ports') : null;
 
 let evtSeq = 0;
+let lastSid = null; // the service's own id for the conversation it made —
+                    // every session bus event wears it, tagged HERE, the
+                    // way the real service tags its truth (a test cannot
+                    // know a minted id before the mint)
 const subs = new Set();
 const ring = []; // late subscribers get the tail replayed (the real
                  // service does; the adapter dedupes by id — pin that)
 const send = (type, data) => {
+  const d = data ?? {};
+  if (type.startsWith('session.') && lastSid) d.sessionID = lastSid;
   const f = `data: ${JSON.stringify({ id: 'e' + (++evtSeq), type,
-    data: data ?? {} })}\n\n`;
+    data: d })}\n\n`;
   ring.push(f);
   for (const s of subs) s.res.write(f);
 };
@@ -55,15 +61,28 @@ const svc = http.createServer((req, res) => {
     }
     if (u.pathname === '/api/session' && req.method === 'POST') {
       note(`session ${body}`);
+      lastSid = 'sess-' + evtSeq + Math.random().toString(36).slice(2,6);
       res.writeHead(200, {'content-type': 'application/json'})
-        .end(JSON.stringify({data: {id: 'sess-' + evtSeq + Math.random().toString(36).slice(2,6)}})); return;
+        .end(JSON.stringify({data: {id: lastSid}})); return;
     }
     if (u.pathname === '/api/event' && req.method === 'GET') {
       res.writeHead(200, {'content-type': 'text/event-stream',
         'cache-control': 'no-cache'});
+      // The real service speaks the stream OPEN immediately (its first
+      // bytes are headers/comment, not payload). Without this, an
+      // empty-ring subscription flushed nothing, headers never landed,
+      // and the bus was a silent hole — the fake behaving UNLIKE the
+      // service it pins (the exact sin this doctrine forbids).
+      res.write(': open\n\n');
       const sub = {res}; subs.add(sub);
       for (const f of ring) res.write(f); // replay the tail like the real bus
-      req.on('close', () => subs.delete(sub));
+      res.on('close', () => subs.delete(sub));
+      // UNSUBSCRIBE rides the RESPONSE's close (socket death), never the
+      // request's: on a bodyless GET, req 'close' fires the instant the
+      // (empty) request is done reading — and the subscription dies
+      // seconds old. That is exactly how the lab's opencode turns were
+      // born open and never closed: the bus wrote to a set that had
+      // already dropped its only ear.
       return;
     }
     let m;

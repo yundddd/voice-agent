@@ -1,0 +1,38 @@
+{
+  "seed": 1785992070,
+  "actions": [
+    "stubCrash",
+    "modelPick",
+    "newSession",
+    "compact",
+    "compact",
+    "sendFile",
+    "stubEmit",
+    "modelPick",
+    "compact",
+    "prompt",
+    "stubEmit",
+    "stubEmit",
+    "faultDrop",
+    "faultDelay",
+    "modelPick",
+    "newSession",
+    "faultCut",
+    "stubEmit",
+    "stubEmit",
+    "stubFinish",
+    "dropConnection",
+    "stubFinish",
+    "newSession",
+    "reconnect"
+  ],
+  "min": [
+    "stubCrash",
+    "modelPick",
+    "newSession",
+    "compact",
+    "compact",
+    "sendFile"
+  ],
+  "note": "heard mail re-owed: bee94ef3-18a2-4d00-9aa5-845de6ff5469 still reports 3 after its ear drained and acked every frame"
+}

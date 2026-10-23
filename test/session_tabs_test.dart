@@ -774,6 +774,47 @@ void main() {
       expect(a.view.tabIndex, 1);
     });
 
+    test('+248: mid-turn, a CROSS-harness switch backgrounds too — '
+        'the positive walk the +278 debt test only hinted at', () async {
+      // +248 retired the same-harness restriction outright: the
+      // running child is not bound to the harness variable (the seat's
+      // new harness spawns its own child only on the NEXT turn), so a
+      // live turn has nothing to lose to a differing tab. The +246
+      // walk above pins same-harness; every surviving cross-harness
+      // pin was a REFUSAL shape (+256) or a debt-window variant
+      // (+278). This is the success walk itself.
+      await a.createSession(harness: 'claude', dir: '/proj-x');
+      await a.createSession(harness: 'opencode', dir: '/proj-y');
+      // Name the destination (+256 law: an unnamed tab is a reset and
+      // would rightly refuse; a named one is a conversation).
+      harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
+      await a.setBridgeDir('/proj-y');
+      await settle();
+      expect(a.view.tabs[1].currentId, 'ses-Y');
+      await a.switchSession(0); // home on X (its fresh seat, idle: allowed)
+      await settle();
+      harness.healthState = {
+        ...harness.healthState!,
+        'harness': 'claude',
+        'sessionId': 'ses-X', // X is WORKING: the bridge says so, and the
+        'turnOpen': true,     // app obeys the bridge, not its own tab
+        'missed': 1,
+      };
+      final before = harness.seatCalls.length;
+      expect(
+        await a.switchSession(1),
+        isNull,
+        reason:
+            'the differing harness is not a reason to refuse: the '
+            'turn backgrounds exactly as on a same-harness swipe '
+            '(+248 — the child survives; the next turn spawns on '
+            'the new era only when spoken)',
+      );
+      expect(harness.seatCalls.length, before + 1);
+      expect(harness.seatCalls.last['harness'], 'opencode');
+      expect(a.view.tabIndex, 1);
+    });
+
     test('+249: mid-turn, a switch hides the thinking row at the '
         'destination and restores it at home', () async {
       // The field shape: two named threads, a turn WORKING in one.

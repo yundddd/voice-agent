@@ -51,6 +51,7 @@ process.stdin.on('data', (b) => {
       // the bridge deserves the real control_response error shape.
       if (sub === 'set_model' && refuseModel === m.request?.model) {
         refuseModel = null;
+        note(`refused ${m.request?.model}`);
         out({ type: 'control_response',
           response: { subtype: 'error', request_id: m.request_id } });
       }

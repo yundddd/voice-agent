@@ -183,6 +183,19 @@ export const FRAMES = {
   },
   // OpenCode bus equivalents for the opencode stub's /push.
   oc: {
+    // one spoken-word delta of a running turn (sessionID is service-side
+    // truth — the stub tags it; these events carry only the shape)
+    delta(label, n) {
+      return [{ type: 'session.step.started', data: {} },
+        { type: 'session.usage.updated', data: { tokens: { input: 1500 + (n % 500), output: 12 + (n % 40) }, cost: 0.001 } },
+        { type: 'session.text.delta', data: { delta: `word${n} ` } }];
+    },
+    finish(label) {
+      return [{ type: 'session.text.delta', data: { delta: 'done. ' } },
+        { type: 'session.text.ended', data: { text: 'The number is 42. done.' } },
+        { type: 'session.step.ended', data: {} },
+        { type: 'session.execution.succeeded', data: {} }];
+    },
     plain(conv, text) {
       return [
         { type: 'session.step.started', data: { sessionID: conv,
@@ -222,13 +235,13 @@ export function newPlan(conv, rand) {
   if (tape) return { conv, fromTape: true, queue: fragmentTape(tape) };
   const kind = rand();
   const n = Math.floor(rand() * 90 + 10);
-  if (kind < 0.55) return FRAMES.textAnswer(conv, `The number is ${n}.`);
-  if (kind < 0.8) return [
-    ...FRAMES.thinkAnswer(conv, `Working on it`, `The number is ${n}.`)];
-  return [
+  if (kind < 0.55) return { conv, queue: FRAMES.textAnswer(conv, `The number is ${n}.`) };
+  if (kind < 0.8) return { conv, queue: [
+    ...FRAMES.thinkAnswer(conv, `Working on it`, `The number is ${n}.`)] };
+  return { conv, queue: [
     ...FRAMES.toolTurn(conv, `echo ${n}`, String(n)),
     ...FRAMES.toolAnswer(conv, `It is ${n}.`),
-  ];
+  ] };
 }
 export function nextFragments(plan, rand, max = 3) {
   const take = [];

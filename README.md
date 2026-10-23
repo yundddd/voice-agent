@@ -1013,8 +1013,24 @@ points (implemented under `tool/testlab/`):
     # the generator (seeded; --seed locks a failure; failures land in
     # tool/testlab/failures/ with their shrunk trace)
     node tool/testlab/proptest.mjs --runs 20 --steps 20
+    # the named-law pins the first coverage review asked for
+    node --test tool/testlab/laws_test.mjs
     # re-record the golden tapes after a harness upgrade
     node tool/testlab/record_tapes.mjs
+
+    Actions: prompt, switchTo, interrupt, newSession, closeSession,
+    stubEmit, stubFinish, stubCrash, dropConnection, reconnect, tick,
+    faultDrop/Dup/Reorder/Delay/Cut — plus the verbs the first review
+    found the generator blind to: modelPick, harnessFlip, dirMove,
+    compact, sendFile.
+
+    Known probe-side flake (v1, honest): inter-view frame arrival rides
+    real sockets, so a handful of 50-run sweeps end on a shrink trace
+    that passes at locked seed — the violation was a wait-window miss
+    in the probe, not the wire. Determinism is enforced on ACTIONS;
+    when a locked failure IS stable it has repeatedly been real (the
+    bus-headers hole, the req-close unsubscribe, the seat-resets-its-
+    own-backlog law were all caught this way).
 
 ## Next steps
 
