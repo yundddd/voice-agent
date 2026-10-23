@@ -1474,13 +1474,43 @@ test('two conversations work at once, each with its own row (+257)',
       await until('both done', async () =>
         sseEvents(a.text).some((e) => e.ev === 'done') &&
         sseEvents(b.text).some((e) => e.ev === 'done'));
+      // +325: THE TURN ID LIVES ON THE RECORD. A generated while B took
+      // the seat — under the one shared curTurnId this was the exact
+      // moment A's remaining frames started wearing B's turn (a _sess
+      // stamp saying A while _turn said B: the frame contradicts itself,
+      // and the phone's pump closes the wrong turn). Frame level, both
+      // sessions: every stamped frame on a stream wears that stream's
+      // OWN turn, start to finish, whoever held the seat in between.
+      const turnOf = (txt) => sseEvents(txt).find((e) =>
+        e.ev === 'tool' && e.data?.name === 'started')?.data?._turn ?? 0;
+      const tA = turnOf(a.text), tB = turnOf(b.text);
+      assert.ok(tA > 0 && tB > 0 && tA !== tB,
+        `the two conversations name their turns apart (A ${tA}, B ${tB})`);
+      for (const [who, txt, t] of [['A', a.text, tA], ['B', b.text, tB]]) {
+        for (const e of sseEvents(txt)) {
+          // preview context frames ride unstamped by law (never
+          // backlogged); everything else that speaks an id speaks its
+          // OWN conversation's.
+          if (e.data?._turn === undefined) continue;
+          assert.equal(e.data._turn, t,
+            `${who}'s '${e.ev}' frame wears ${who}'s own turn`);
+        }
+      }
       await until('both rest', async () => {
         const rows = (await health(PORT20)).sessions;
         return rows.length === 2 && rows.every((r) => r.turnOpen === false);
       });
-      const rows = (await health(PORT20)).sessions;
+      const hBoth = await health(PORT20);
+      const rows = hBoth.sessions;
       const rA = rows.find((r) => r.sid === uuidA);
       const rB = rows.find((r) => r.sid === uuidB);
+      // Row level, both sessions: each record reports the turn IT is
+      // in; the top-level `turn` is the seat's own — B's, not a global
+      // that any seat move repaints.
+      assert.equal(rA.turn, tA,
+        'A\'s row names A\'s turn — a stranger taking the seat never moved it');
+      assert.equal(rB.turn, tB, 'B\'s row names B\'s own turn');
+      assert.equal(hBoth.turn, tB, 'the seat reports its own record\'s turn');
       assert.ok(rA && !rA.turnOpen, 'A rests at home with its history');
       assert.ok(rB && !rB.turnOpen, 'B rests under its birth uuid');
       assert.equal(rB.backendSid, 'ses-registry-b',

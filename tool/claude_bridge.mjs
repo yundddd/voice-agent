@@ -399,6 +399,7 @@ let focus = {
   child: null, childDead: true, turnOpen: false, curRes: null,
   proactiveTurn: false, pending: null, contextFull: false,
   lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
+  curTurnId: 0, // +325: the turn this record is IN — its own, never a neighbour's
   foldUnanswered: false, foldHeld: false, turnStartAt: 0, turnBeganAt: 0,
   tokIn: 0, tokOutExact: 0, tokMsgBase: 0, tokLastMsgOut: 0,
   tokChars: 0, tokKind: '', thinkBuf: '', curMsg: null, lastTextBlk: null,
@@ -842,6 +843,7 @@ function newConv(seed) {
     child: null, childDead: true, turnOpen: false, curRes: null,
     proactiveTurn: false, pending: null, contextFull: false,
     lastCompactingRelay: 0, foldedTurnId: 0, cutForPrompt: false,
+    curTurnId: 0, // +325: born outside any turn, like every other field
     foldUnanswered: false, foldHeld: false,
     turnStartAt: 0, turnBeganAt: 0,
     tokIn: 0, tokOutExact: 0, tokMsgBase: 0, tokLastMsgOut: 0,
@@ -937,6 +939,9 @@ function convRow(r) {
               : { in: r.lastCtx?.in ?? 0, window: r.ctxWindow ?? 0 },
     missed: live ? focus.backlog.length : (r.backlog?.length ?? 0),
     turnOpen: live ? focus.turnOpen : r.turnOpen,
+    // +325: the turn the record is IN, reported by the record itself —
+    // a backgrounded row names its own open turn (0 = resting).
+    turn: live ? focus.curTurnId : r.curTurnId ?? 0,
     queued: live ? !!focus.pending : !!r.pending,
     updatedAt: Date.now(),
   };
@@ -1043,7 +1048,12 @@ let ringSeq = Date.now();
 // hearing, and no side ever infers from text, order or age again.
 let msgSeq = Date.now();
 let nextTurnId = Date.now();
-let curTurnId = 0; // 0 = outside any turn
+// +325: WHICH turn is current is a per-record fact — the last global
+// on this axis was itself a leak: while A generated in the background,
+// B taking the seat moved the shared curTurnId, and A's next frame got
+// stamped with B's turn (the +312 law complete: the state lives on the
+// record, the module keeps only the ONE counter that mints ids).
+// Each record carries its own curTurnId (0 = outside any turn).
 const relay = (ev, data) => {
   data._ts ??= Date.now();
   // +274: WHOSE frame is this — answered on the frame itself. The
@@ -1062,7 +1072,7 @@ const relay = (ev, data) => {
   // ??=, never =: a re-relayed receipt (heldFinished rides two turns)
   // keeps the identity it was born with — one message, one id.
   data._mid ??= ++msgSeq;
-  data._turn ??= curTurnId;
+  data._turn ??= focus.curTurnId ?? 0;
   ring.push({seq: ++ringSeq, ev, data});
   if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
   if (focus.curRes) sse(focus.curRes.res, ev, data);
@@ -2596,7 +2606,7 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   // pass through untouched (/compact cannot run against a refusal).
   if (focus.contextFull && !String(text).startsWith('/')) {
     console.error('  [context-full] instant refusal (no upstream call)');
-    curTurnId = turnId ?? ++nextTurnId;
+    focus.curTurnId = turnId ?? ++nextTurnId;
     focus.foldedTurnId = 0;
     focus.curRes = { res, keep, turnStart: Date.now() };
     relay('tool', {
@@ -2612,7 +2622,9 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   if (focus.childDead) spawnClaude(focus.sid); // resume our voice conversation if any
   // The id the POST promised this prompt; every frame relayed from here
   // on wears it (proactive turns invent their own — no echo, no queue).
-  curTurnId = turnId ?? ++nextTurnId;
+  // +325: on the RECORD, not on the module — a seat move while this
+  // record generates must not move another conversation's turn id.
+  focus.curTurnId = turnId ?? ++nextTurnId;
   focus.foldedTurnId = 0; // +163: a fresh turn's farewell closes its OWN id —
   // a stale fold id must never re-stamp a later done.
   focus.foldUnanswered = false; focus.foldHeld = false; // +273: ditto the hold
@@ -2729,7 +2741,7 @@ function flushPending() {
   // RESERVED turn, not the one whose `done` just fired (the result
   // handler relays that farewell BEFORE flushing — it stays stamped
   // with the old id, and the phone's pump tells them apart by it).
-  curTurnId = p.turnId;
+  focus.curTurnId = p.turnId;
   // +104: an ended response is NOT an abandoned message. This branch
   // used to eat the utterance silently — field report 'the queued
   // message was lost': the phone's stream died in the queue (quiet-wire
@@ -3255,7 +3267,9 @@ const server = http.createServer((req, res) => {
       turnOpen: focus.turnOpen, queued: !!focus.pending,
       // v2 handshake: ids are law. An app that sees anything else
       // shows one honest error banner instead of guessing.
-      proto: 2, turn: curTurnId,
+      proto: 2, turn: focus.curTurnId, // the SEAT's turn; every row
+      // below reports its OWN (+325), so a backgrounded conversation's
+      // open turn is nameable from its row without touching the seat.
       // +230: feature flag for session tabs — /seat answers here. An
       // older bridge (proto 2, no flag) gets no seat calls: the app
       // keeps its single-thread behavior instead of guessing.
