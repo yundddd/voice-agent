@@ -59,6 +59,25 @@ silently switching to the 500-frame default.
    and treat `eos_step == 0` as "at frame 0", currently unreachable).
 3. Optionally clamp/scale the first decoder chunk (fade-in), as the Go port does.
 
+## Update (2026-10-23): the upstream export now ships the fix's data
+[KevinAHM/pocket-tts-onnx](https://huggingface.co/KevinAHM/pocket-tts-onnx)
+re-exported to per-language bundles that each carry **`bos_before_voice.npy`**
+— the learned BOS embedding fix #1 names, exported — and its bundled
+`pocket_tts_onnx.py` runtime feeds it before the voice embedding (line ~269),
+honours `model_recommended_frames_after_eos`, and loads kyutai's
+`.safetensors` prompt states directly (the without-voice-cloning path).
+Measured on this machine with the same text + alba reference as the
+clone-leg above, english_2026-04 int8 bundle:
+**first-20 ms RMS 0.0018** (true pre-roll; sherpa draws measured 0.05-0.3
+at the same window) and whisper-tiny re-hears
+"Hello Tim, Pocket TTS Speaking, generated entirely on this device." — head
+intact. sherpa-onnx `master` (checked today) still consumes neither the npy
+nor the safetensors states (`offline-tts-pocket{,-model}.h` mention no
+bos/npy), so the artifact exists end-to-end: what is missing is the sherpa
+runtime change. This closes the diagnosis half of this issue; the app keeps
+the '....' + `pocketLeadIn` ritual until sherpa ships the BOS step (or the
+pack moves to a runtime that has it).
+
 Happy to re-run any experiment against a branch — I have the full A/B harness
 (official pytorch renders vs sherpa renders, whisper-tiny re-transcription,
 onset RMS profiles) for all six presets.
