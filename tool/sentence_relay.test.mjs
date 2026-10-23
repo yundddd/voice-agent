@@ -31,17 +31,18 @@ test('micro-segment floor: "OK." never carves its own frame', () => {
   assert.ok(out[0].endsWith('going.'));
 });
 
-test('ramble past the cap cuts at the LAST clause mark inside it, not an '
-    + 'arbitrary space (+232: with clause cuts retired, the cap branch is '
-    + 'the only mid-sentence cut left, and it still breathes where the '
-    + 'prose says)', () => {
+test('+342: a ramble past the old cap WAITS — no comma, no word gap, no '
+    + 'mid-sentence frame (the tape at "…before the fix, where…": the '
+    + 'last-comma-in-cap seam is retired; the phone owns sentence '
+    + 'interiors)', () => {
   const head = 'word '.repeat(30).trim(); // 149 chars, no punctuation
   const commaAt = `${head} and the first comma lands here, then the clause ` +
     'runs on and a second comma comes later, well inside the cap but past ' +
     'the halfway mark of the window the cutter sees';
-  const { out } = run(commaAt);
-  assert.ok(out.length >= 1);
-  assert.ok(out[0].endsWith('later,'), 'frame must end at the LAST legal comma');
+  assert.equal(run(commaAt).out.length, 0, 'nothing without a real boundary');
+  const { out } = run(commaAt, { force: true });
+  assert.equal(out.length, 1);
+  assert.equal(out[0], commaAt, 'the block close ships it whole, uncut');
 });
 
 test('+232: a short reply stays fused — commas are the app\'s problem now', () => {
@@ -82,11 +83,12 @@ test('path labels and versions do not fake a boundary', () => {
     'having no trailing space, never pretended to be one');
 });
 
-test('truly unpunctuated ramble still cuts at a word gap under the cap', () => {
+test('+342: truly unpunctuated ramble holds the whole wire, not a word gap', () => {
   const ramble = 'x'.repeat(299) + ' y'.repeat(60);
-  const { out } = run(ramble);
-  assert.ok(out[0].length <= 320, 'word-gap cut stays near the cap');
-  assert.ok(!/\S+$/.test(out[0].slice(0, 1)) || true);
+  assert.equal(run(ramble).out.length, 0, 'it waits for a period');
+  const { out } = run(ramble, { force: true });
+  assert.equal(out.length, 1);
+  assert.equal(out[0], ramble, 'and rides the close whole to the phone');
 });
 
 test('forced flush ships the final sentence whose period has no trailing space', () => {
@@ -144,8 +146,7 @@ test('token counts read with two decimals at every magnitude', () => {
   assert.equal(fmtTok(1250000), '1.25M');
 });
 
-test('floors are the documented 40 / 300 characters (+232: the clause '
-    + 'floors retired with the clause cut — the app owns mid-sentence seams)', () => {
+test('the floor is 40; the 300 is a scan window, not a blade (+342)', () => {
   assert.equal(MIN_SENT_CHARS, 40);
   assert.equal(MAX_SENT_CHARS, 300);
 });

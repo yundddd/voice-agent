@@ -19,8 +19,17 @@
 // its middle (lib/src/speech/tts_split.dart). Fewer frames, whole
 // sentences on the wire, and the seam lands where the prose is widest,
 // not where its first comma happens to sit.
+//
+// +342 — the cap's mid-sentence cut is RETIRED (Tim, after the tape at
+// '…before the fix, where…': the bridge's last-comma-in-cap picked the
+// weakest possible seam, a relative-clause break, and reached it BEFORE
+// the phone's middle-law could pick the dash). The wire now cuts on
+// sentence boundaries only: a run with no period rides to the block
+// close, where the forced flush ships it whole and the PHONE owns every
+// seam inside it. MAX_SENT_CHARS stays as the regex's scan window —
+// bookkeeping, never a blade.
 export const MIN_SENT_CHARS = 40; // never carve micro-segments ("OK.")
-export const MAX_SENT_CHARS = 300; // bound first-audio latency unpunctuated
+export const MAX_SENT_CHARS = 300; // scan window ×3, not a cut target (+342)
 
 // blk: {buf: string, spoken: number}. Advances blk.spoken past every
 // emitted sentence. opts.force: block closed — flush the remainder
@@ -46,25 +55,9 @@ export function relaySentences(blk, {force = false, emit = () => {}} = {}) {
         break;
       }
     }
-    if (cut < 0 && blk.buf.length - from >= MAX_SENT_CHARS) {
-      // Long ramble, no sentence end yet: prefer the LAST clause mark
-      // (comma, semicolon, colon, dash) inside the cap — a place the
-      // prose itself would breathe. A word gap remains only for truly
-      // unpunctuated runs, and the micro-segment floor applies too.
-      // This is now the cutter's ONLY mid-sentence cut, and it exists
-      // for latency, not rhythm: a sentence whose period hasn't shown
-      // itself by 300 chars gets heard NOW and continued shortly.
-      const clause = /[^\s][,;:—–]["')\]]*[ \n]/g;
-      let cw = -1;
-      for (let m; (m = clause.exec(win.slice(0, MAX_SENT_CHARS))) !== null;) {
-        if (m.index + m[0].length >= MIN_SENT_CHARS) cw = m.index + m[0].length;
-      }
-      if (cw > 0) cut = cw;
-      else {
-        const w = blk.buf.lastIndexOf(' ', from + MAX_SENT_CHARS);
-        if (w > from) cut = w + 1 - from; // long ramble: cut at a word gap
-      }
-    }
+    // +342: no cap branch. Past the scan window with no boundary in
+    // sight, the sentence simply WAITS — for its period, or for the
+    // block close below. The phone owns everything inside a sentence.
     // On block close, force whatever is left out whole: without this
     // the last sentence of every reply ending on bare punctuation was
     // spoken as nothing ('the last message dropped again').
