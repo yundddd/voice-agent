@@ -24,40 +24,50 @@ void main() {
     expect(splitForTts(''), ['']);
   });
 
-  test('a comma-spliced sentence under the cap ships WHOLE, commas intact', () {
-    // The +232 headline: this is the shape the old 40-word packer shaved
-    // into clause shreds; 60 words is one breath to the new law.
+  test('a comma-spliced sentence rides the +341 window, not the old cap', () {
+    // The +232 headline said 60 words ship whole; the +341 tape said a
+    // 20.8-second say gets cut by the ENGINE where WE wouldn't have.
+    // So the window applies: this 430-char sentence halves at its only
+    // comma, and each half — still over the window — halves again at
+    // the middle word. No seam lands at the prose's first breath.
     final sentence =
         '${List.filled(30, 'clause').join(' ')} mark, '
         '${List.filled(29, 'more').join(' ')} filler words here.';
     expect(_words(sentence), 63);
-    expect(splitForTts(sentence), [sentence]);
+    final chunks = splitForTts(sentence);
+    expect(chunks.length, 4); // lead 15 clause, 15+mark, then the tail halved
+    for (final c in chunks) {
+      expect(c.length, lessThanOrEqualTo(maxChunkChars));
+    }
+    expect(chunks.join(' '), sentence); // lossless, in order
   });
 
   test('an overlong sentence halves at the comma nearest its middle', () {
     // 120 words with its only comma dead center: the seam lands at the
     // middle, not at the prose's first breath (the old greedy front-shave).
+    // +341: each middle half is still over the window, so it halves
+    // again at the middle word — the comma cut is still the FIRST cut.
     final text =
         '${List.filled(59, 'alpha').join(' ')} beta, '
         '${List.filled(60, 'omega').join(' ')}.';
     final chunks = splitForTts(text);
-    expect(chunks.length, 2);
-    expect(_words(chunks[0]), 60);
-    expect(_words(chunks[1]), 60);
-    expect(chunks.first.endsWith('beta,'), isTrue, reason: chunks.first);
+    expect(chunks.length, 8); // comma first, then each half halves twice
+    expect(chunks[3].endsWith('beta,'), isTrue, reason: chunks[3]);
     expect(chunks.join(' '), text); // lossless, in order
   });
 
   test('the middle-most of several clause marks wins', () {
-    // Commas at words 10 and 55 of 101: 55 is nearer the middle (50) —
-    // 'evenly' is the rule, 'first comma' was the old one.
+    // Commas at words 10 and 55 of 101: 55 is nearer the middle —
+    // 'evenly' is the rule, 'first comma' was the old one. +341: the
+    // window then halves each side; the comma nearest the middle is
+    // still the first cut the law takes.
     final text =
         '${List.filled(9, 'one').join(' ')} two, '
         '${List.filled(44, 'mid').join(' ')} three, '
         '${List.filled(46, 'tail').join(' ')}.';
     final chunks = splitForTts(text);
-    expect(chunks.length, 2);
-    expect(chunks.first.endsWith('three,'), isTrue, reason: chunks.first);
+    expect(chunks[2].endsWith('three,'), isTrue, reason: chunks[2]);
+    expect(chunks.join(' '), text);
   });
 
   test('numbers never fake a breath', () {
@@ -115,35 +125,67 @@ void main() {
 
   test('terminator runs never split the sentence they end', () {
     // The '...' + closing quote is ONE boundary: the ellipsis and its
-    // quote never orphan from each other. The boundary still ends that
-    // quoted fragment's sentence; +233 then walks the short tail back —
-    // '"Wait..."' < 'he said.' < 'Then silence.' are all sub-breath, so
-    // the whole text is ONE chunk: the aside reattaches to the prose it
-    // was always part of, lossless.
+    // quote never orphan from each other. +233 still welds the sub-breath
+    // tail onto its head, but the +341 window then halves the long head
+    // (no clause mark keeps both sides on the floor except 'here.', and
+    // even that cut's halves go back to the word fallback) — while the
+    // welded '"Wait..." he said. Then silence.' rides whole.
     final text =
         'Words up front like ${List.filled(33, 'filler').join(' ')} here. '
         '"Wait..." he said. Then silence.';
     final chunks = splitForTts(text);
-    expect(chunks, [text]);
+    // No clause mark inside keeps both sides on the floor, so the cut
+    // is the middle word — and the ellipsis+quote+attribution run
+    // rides on in one piece, attached to the prose it merges from.
+    expect(chunks.last, endsWith('"Wait..." he said. Then silence.'));
+    expect(chunks.last, contains('here. "Wait..."'));
+    for (final c in chunks) {
+      expect(c, isNot(matches(RegExp(r'\.\.\.\s*$'))), reason: c);
+    }
+    expect(chunks.join(' '), text);
   });
 
   test('one giant unpunctuated blob splits at middle words, recursively', () {
-    // 250 bare words: no breath to take, so the sentence halves (125/125),
-    // each half still too long halves again — four even pieces, every one
-    // inside the graph's budget. The old law made three 40-word shavings
-    // and one ragged tail.
+    // 250 bare words: no breath to take, so the sentence halves and
+    // halves again — now under TWO triggers: [maxWords] for the graph
+    // and, since +341, [maxChunkChars] for the breath window. The
+    // halving stops when every piece fits a 15-second breath.
     final blob = List.filled(250, 'word').join(' ');
     final chunks = splitForTts(blob);
-    expect(chunks.length, 4);
+    expect(chunks.length, 8); // 1249 chars halve to ~156 — one floor each
     for (final c in chunks) {
-      expect(_words(c), lessThanOrEqualTo(maxWords));
-      expect(_words(c), greaterThanOrEqualTo(60), reason: 'uneven: $c');
+      expect(c.length, lessThanOrEqualTo(maxChunkChars));
+      expect(c.length, greaterThanOrEqualTo(minBreathChars), reason: c);
     }
     expect(chunks.join(' '), blob);
   });
 
+  test('the +341 lead cut ends the first chunk at its earliest breath', () {
+    // The latency law: whatever the sentence's fate, audio starts on
+    // the first clause. A 30-word opener with a comma at word 6 ships
+    // the comma-sized first chunk, and the tail rides on.
+    final text =
+        'Read this first clause out loud to me right now, and hear how '
+        'quickly the voice gets going on a sentence that is comfortably '
+        'longer than one clean breath.';
+    final chunks = splitForTts(text);
+    expect(chunks.first, 'Read this first clause out loud to me right now,');
+    expect(chunks.first.length, greaterThanOrEqualTo(minBreathChars));
+    expect(chunks.join(' '), text);
+  });
+
+  test('the lead cut never leaves a side under the breath floor', () {
+    // 'Yes sir.' welded forward: the first mark's prefix is a greeting,
+    // not a breath (+233's lesson restated for the new law) — no cut.
+    const text =
+        'Yes sir. The rest of this reply is comfortably long prose '
+        'that keeps going past every runt it might have made.';
+    expect(splitForTts(text).first, contains('Yes sir.'));
+  });
+
   test('maxWords is the student graph budget (~510 phonemes)', () {
     expect(maxWords, 100);
+    expect(maxChunkChars, 160); // ~15 s at the slowest measured engine
   });
 
   test('pocket merge keeps every chunk past the runt-piece floor', () {
@@ -168,7 +210,11 @@ void main() {
       'Quite famous.',
       'Victor Hugo admired it greatly.',
     ]);
-    expect(pieces, hasLength(1)); // all one spoken paragraph now
+    // +341: 'Yes.' merges for the floor, the grown lead then rides alone,
+    // and the remaining runt folds into its neighbour — no runts, one
+    // extra seam, both laws intact.
+    expect(pieces, hasLength(2));
+    expect(pieces.first, startsWith('Yes.'));
     for (final p in pieces) {
       expect(p.length, greaterThanOrEqualTo(30));
     }
@@ -192,6 +238,24 @@ void main() {
     expect(para.join(' '), text); // zero loss, zero reorder, no glue skew
     // An unmergeable lone runt stays as-is (nothing to merge into).
     expect(mergePocketChunks(['Yes.']), ['Yes.']);
+  });
+
+  test('+341: the pocket merge never welds the lead breath back shut', () {
+    // The lead chunk was cut short ON PURPOSE so Pocket's first audio
+    // lands early; re-merging piece two onto it would undo the latency
+    // win for the sake of one fewer ritual. A lead under the runt floor
+    // still merges ('Yes.' alone garbles) — floor outranks latency.
+    final merged = mergePocketChunks([
+      'Here is the first clause, and it was cut deliberately short by '
+      'the lead law.',
+      'The second sentence is perfectly long enough to ride the merge '
+      'into its neighbours.',
+      'And a third joins it under the merge cap, as any well-behaved '
+      'piece does.',
+    ]);
+    expect(merged.first, startsWith('Here is the first clause,'));
+    expect(merged.length, greaterThan(1));
+    expect(merged.join(' '), contains('And a third joins it')); // nothing lost
   });
 
   test('pocket lead-in drops the warm-up growl and fades the cut', () {

@@ -22,11 +22,39 @@
 /// input inside it politely. The engine's own split remains the last
 /// backstop — a chunk that still overruns is cut at the last space in
 /// budget, never dropped.
+///
+/// +341 — the window and the lead cut. Two field truths re-tuned the
+/// law: a cap-fitting sentence still outlives one breath (the tape: a
+/// 20.8-second say whose internal pause the LISTENER heard, made by the
+/// engine's own clause pass because OUR splitter waved a 48-word
+/// sentence whole), and the only real win in going smaller is the
+/// FIRST chunk — at RTF ~0.1 the pipeline computes ten seconds of audio
+/// per second of playback, so after the first breath every chunk is
+/// already invisible; uniform tiny chunks would buy nothing but seams.
+/// So: (1) the window — a chunk may not exceed [maxChunkChars],
+/// a duration budget expressed in characters because every engine's
+/// measured speaking rate is characters-to-seconds (Pocket ~10 c/s
+/// slowest, Kokoro ~13-15); [maxWords] stays as the student graph's
+/// phoneme backstop, and a window cut with no clause mark willing both
+/// sides on the floor ships whole rather than chop; (2) the lead cut —
+/// the FIRST chunk of a reply ends at its earliest breath mark (clause
+/// OR a sentence terminator a +233 merge welded in) where both sides
+/// keep [minBreathChars], so audio starts on the first clause while
+/// every later chunk rides the window like any other. Pocket's merge
+/// re-welds the tail pieces for its per-call ritual, but the lead
+/// chunk stays alone by law: it is the one whose size IS the latency.
 library;
 
 /// Hard ceiling on one synthesized chunk (~510 phonemes; see the law
 /// above).
 const int maxWords = 100;
+
+/// +341: the breath window — ~15 seconds of audio at the SLOWEST
+/// measured engine rate (Pocket, ~10 chars/s; Kokoro lands ~11 s).
+/// A duration budget, stated in characters: the engines disagree on
+/// phonemes, frames and words, but all three have been timed in
+/// characters per second by the round-trip bench.
+const int maxChunkChars = 160;
 
 /// +233 — the floor under a breath. The per-sentence law shipped a
 /// bug the old packer had hidden: 'Hello! The +232 APK should be…'
@@ -58,7 +86,63 @@ List<String> splitForTts(String text) {
   for (final (start, end) in _merged(t, _sentences(t))) {
     _balance(t, start, end, chunks);
   }
+  // +341: the lead cut — the first chunk ends at its earliest breath.
+  if (chunks.isNotEmpty) {
+    final lead = chunks.removeAt(0);
+    final cut = _leadSplit(lead);
+    if (cut != null) {
+      chunks.insert(0, cut[1]);
+      chunks.insert(0, cut[0]);
+    } else {
+      chunks.insert(0, lead);
+    }
+  }
   return chunks;
+}
+
+/// The +341 lead cut: split [s] right after its earliest word that ends
+/// on a breath — a clause mark ([_endsAtBreath]) OR a sentence
+/// terminator (+233's merges weld whole sentences together, and a
+/// period is the widest breath there is) — but only where BOTH sides
+/// keep [minBreathChars]: a 6-word opener is the clipped-greeting bug
+/// wearing a latency story. Null when no mark qualifies: the chunk
+/// rides alone and whole.
+List<String>? _leadSplit(String s) {
+  final ranges = _wordRanges(s, 0, s.length);
+  for (var k = 0; k < ranges.length - 1; k++) {
+    final (wStart, wEnd) = ranges[k];
+    if (!_endsAtBreath(s, (wStart, wEnd)) && !_endsTerminator(s, (wStart, wEnd))) {
+      continue;
+    }
+    if (wEnd < minBreathChars) continue; // prefix too short to be a breath
+    var right = wEnd;
+    while (right < s.length && _isWs(s.codeUnitAt(right))) {
+      right += 1;
+    }
+    if (s.length - right < minBreathChars) continue; // tail runt
+    return [s.substring(0, wEnd), s.substring(right)];
+  }
+  return null;
+}
+
+/// Does this word end on a sentence-terminator run (. ! ?), optionally
+/// inside closing quotes/brackets — the same attachment law _sentences
+/// applies to real boundaries?
+bool _endsTerminator(String t, (int, int) word) {
+  var e = word.$2;
+  final lo = word.$1;
+  while (e > lo) {
+    final c = t.codeUnitAt(e - 1);
+    if (c == 0x22 || c == 0x27 || c == 0x29 || c == 0x5D || c == 0x7D ||
+        c == 0x2E || c == 0x21 || c == 0x3F) {
+      e -= 1; // trailing closer or terminator: keep walking back
+      continue;
+    }
+    break;
+  }
+  if (e == word.$2 || e <= lo) return false;
+  final c = t.codeUnitAt(e - 1);
+  return c == 0x2E || c == 0x21 || c == 0x3F;
 }
 
 /// Merge sub-breath sentences into their neighbours: forward while a
@@ -128,29 +212,69 @@ List<(int, int)> _sentences(String t) {
   return out..removeWhere((r) => t.substring(r.$1, r.$2).trim().isEmpty);
 }
 
-/// Emit the chunks of t[start:end]: the sentence whole when it fits one
-/// breath, else recursively halved at the breath-mark nearest its middle.
+/// Emit the chunks of t[start:end]: whole when the sentence fits one
+/// breath ([maxWords] for the graph's phoneme budget, [maxChunkChars]
+/// for the +341 window), else recursively cut at the breath-mark
+/// nearest its MIDDLE position. Candidates that keep [minBreathChars]
+/// on both sides win outright; among the rest, the mark nearest the
+/// middle still beats the middle word, and the middle word still beats
+/// overrun. Truly unsplittable text ships whole — the engine's own
+/// split is the backstop for a 2-kiloword monster.
 void _balance(String t, int start, int end, List<String> out) {
   final words = _wordRanges(t, start, end);
-  if (words.length <= maxWords) {
+  if (words.length <= maxWords && end - start <= maxChunkChars) {
     final s = t.substring(start, end).trim();
     if (s.isNotEmpty) out.add(s);
     return;
   }
   // Cut candidates = after word k, k in [0, len-2] (both sides non-empty).
-  // Clause marks preferred, nearest the middle; the middle WORD is the
-  // fallback for truly punctuation-less runs (it can't fake anything).
-  final target = (words.length - 1) / 2;
-  var best = -1, bestDist = double.infinity;
-  for (var k = 0; k < words.length - 1; k++) {
-    if (!_endsAtBreath(t, words[k])) continue;
-    final d = (k - target).abs();
-    if (d < bestDist) {
-      bestDist = d;
-      best = k;
+  // +341: the middle is measured in CHARACTERS now — the window is a
+  // duration budget and words are not equal.
+  final midPos = start + (end - start) ~/ 2;
+  int? pick({required bool floored}) {
+    var best = -1;
+    var bestDist = double.infinity;
+    for (var k = 0; k < words.length - 1; k++) {
+      if (!_endsAtBreath(t, words[k])) continue;
+      final cut = words[k].$2;
+      if (floored &&
+          (cut - start < minBreathChars || end - cut < minBreathChars)) {
+        continue;
+      }
+      final d = (cut - midPos).abs().toDouble();
+      if (d < bestDist) {
+        bestDist = d;
+        best = k;
+      }
+    }
+    return best < 0 ? null : best;
+  }
+
+  var best = pick(floored: true) ?? pick(floored: false);
+  if (best == null) {
+    // Word fallback: the mark-less middle, floor-respecting when any
+    // word cut can keep it.
+    for (var d = 0; d < words.length; d++) {
+      for (final k in [
+        ((words.length - 1) ~/ 2) - d,
+        ((words.length - 1) ~/ 2) + d,
+      ]) {
+        if (k < 0 || k >= words.length - 1) continue;
+        final cut = words[k].$2;
+        if (cut - start < minBreathChars || end - cut < minBreathChars) {
+          continue;
+        }
+        best = k;
+        break;
+      }
+      if (best != null) break;
     }
   }
-  if (best < 0) best = ((words.length - 1) / 2).floor();
+  if (best == null) {
+    final s = t.substring(start, end).trim();
+    if (s.isNotEmpty) out.add(s); // unsplittable inside the floor
+    return;
+  }
   final mid = words[best].$2;
   var right = mid;
   while (right < end && _isWs(t.codeUnitAt(right))) {
@@ -228,7 +352,18 @@ List<String> mergePocketChunks(List<String> pieces) {
   const maxChars = 400;
   final out = <String>[];
   for (final p in pieces) {
-    if (out.isNotEmpty &&
+    if (out.isEmpty) {
+      out.add(p);
+      continue;
+    }
+    // +341: the LEAD piece rides alone once it's a real breath — the
+    // splitter cut it short on purpose so audio starts early, and a
+    // merge that welds piece two onto it would undo the whole law. A
+    // lead under the runt floor is different: the floor outranks the
+    // latency ('Yes.' alone garbles the first syllable), so it merges
+    // like anything else.
+    final leadAlone = out.length == 1 && out.first.length >= minChars;
+    if (!leadAlone &&
         (out.last.length < minChars ||
             p.length < minChars ||
             out.last.length + p.length + 1 <= maxChars)) {
