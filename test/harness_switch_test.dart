@@ -503,7 +503,17 @@ void modelPickerTests() {
                 ],
               }),
             );
-        } else if (req.uri.path == '/model') {
+        } else if (req.uri.path == '/health') {
+          // +323: the named-verb client asks who is seated before it
+          // speaks; this stub's seat has a name.
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({
+            'ok': true,
+            'claudeUp': true,
+            'sessionId': 'ses-http-stub',
+            'harness': 'claude',
+          }));
+        } else if (req.uri.path.endsWith('/model')) {
           final body = jsonDecode(await utf8.decodeStream(req));
           if (body['id'] == 'pi') {
             req.response.statusCode = HttpStatus.badRequest;

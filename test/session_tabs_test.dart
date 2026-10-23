@@ -2017,22 +2017,91 @@ void main() {
         isFalse,
         reason: 'the doomed tab\'s thread left with it',
       );
-      // 2) Rebuild to two tabs and delete the ACTIVE one while a turn
-      // is open: the relief move is a seat verb — it rests.
+      // 2) Rebuild to two tabs and delete the ACTIVE one while a
+      // NEIGHBOUR streams: +323's law — the rest check reads the
+      // doomed thread's own row, and a stranger's turn is no one's
+      // veto (the seat move backgrounds it like any switch, +246).
       await a.createSession(harness: 'opencode', dir: '/proj-z'); // tab 1
       await a.switchSession(0);
-      harness.healthState = {...harness.healthState!, 'turnOpen': true};
+      final doomedSid = a.view.tabs[0].currentId;
+      harness.healthState = {
+        ...harness.healthState!,
+        'turnOpen': true, // the SEAT (a neighbour) is mid-answer
+        'sessions': [
+          {
+            'sid': doomedSid,
+            'turnOpen': false,
+            'missed': 0,
+            'queued': false,
+          },
+        ],
+      };
+      expect(
+        await a.removeSessionTab(0),
+        isNull,
+        reason: "a streaming neighbour must not rest THIS tab's ✕",
+      );
+      expect(a.view.tabs, hasLength(1));
+      // 2b) Rebuild and delete the ACTIVE one while the DOOMED row
+      // itself is mid-turn: that one rests — deleting it would
+      // silently eat its own answer. (Name the tab the way the wire
+      // does — a frame that stamps its session; an unnamed tab has
+      // no row and no veto.)
+      // Clear (2)'s scripted stranger-turn first: creation and the
+      // swipe both guard on the global face for their own reasons.
+      harness.healthState = {
+        ...harness.healthState!,
+      }..remove('turnOpen');
+      await a.createSession(harness: 'opencode', dir: '/proj-x'); // tab 1
+      await a.switchSession(0);
+      harness.healthState = {
+        ...harness.healthState!,
+        'sessionId': 'ses-doomed',
+      };
+      unawaited(a.runQuickCommand('name this tab', bubble: 'name this tab'));
+      await settle();
+      harness.emit(BridgeEvent.forTest('done'));
+      harness.finishView();
+      await settle(); // the turn's own /health refresh wears the name
+      final doomed2 = a.view.tabs[0].currentId;
+      expect(doomed2, 'ses-doomed', reason: 'the wire named the tab');
+      expect(a.view.tabIndex, 0, reason: 'the doomed tab is the ACTIVE one');
+      expect(a.view.tabs, hasLength(2));
+      final hNoTop = {
+        ...harness.healthState!,
+      }..remove('turnOpen');
+      harness.healthState = {
+        ...hNoTop,
+        'sessions': [
+          {
+            'sid': doomed2,
+            'turnOpen': true,
+            'missed': 0,
+            'queued': false,
+          },
+        ],
+      };
       expect(
         await a.removeSessionTab(0),
         'the harness is mid-turn — stop it before switching sessions',
       );
       expect(a.view.tabs, hasLength(2)); // nothing half-happened
-      harness.healthState = {...harness.healthState!}..remove('turnOpen');
+      harness.healthState = {
+        ...harness.healthState!,
+        'sessions': [
+          {
+            'sid': doomed2,
+            'turnOpen': false,
+            'missed': 0,
+            'queued': false,
+          },
+        ],
+      };
       // 3) Now it goes, and the NEIGHBOUR takes the seat.
       expect(await a.removeSessionTab(0), isNull);
       expect(a.view.tabs, hasLength(1));
       expect(a.view.tabIndex, 0);
-      expect(harness.seatCalls.last['dir'], '/proj-z');
+      expect(harness.seatCalls.last['dir'], '/proj-x');
     });
 
     test(

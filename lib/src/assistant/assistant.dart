@@ -1413,7 +1413,19 @@ class VoiceAssistant extends ChangeNotifier {
   /// mid-turn switch would resetConversation over a live answer, so
   /// the law matches the harness row's: the switch RESTS while a
   /// turn (or a queued prompt) is open. Returns the refusal reason.
-  Future<String?> switchSession(int index, {bool force = false}) async {
+  /// [skipRest] is for the death hand-off (removeSessionTab): the
+  /// caller has already weighed the rest law against the DOOMED
+  /// thread's own row (+323), and the bridge's /seat is a record
+  /// swap — a mid-turn move backgrounds the stranger's turn (+246)
+  /// and a fresh destination starts blank without touching the
+  /// old record's living conversation. Re-running the guard against
+  /// the SEAT's global face would let one busy agent veto every
+  /// other thread's funerals.
+  Future<String?> switchSession(
+    int index, {
+    bool force = false,
+    bool skipRest = false,
+  }) async {
     final g = _gateway;
     final prefs = _bridgePrefs;
     if (g == null) return 'bridge not configured';
@@ -1437,7 +1449,9 @@ class VoiceAssistant extends ChangeNotifier {
     // never spoken reset the bridge's conversation under a 'free to
     // move' verdict, SIGTERM'd the answering turn, and the phone
     // reattached to mail it never asked to stop reading.
-    final rest = _seatRest(h, resets: tab.currentId == null);
+    final rest = skipRest
+        ? null
+        : _seatRest(h, resets: tab.currentId == null);
     if (rest != null) return rest;
     // +289 (Tim's field: 'swipe away from a session — the TTS should
     // be paused or stopped IMMEDIATELY, but is still speaking'): the
@@ -1744,9 +1758,38 @@ class VoiceAssistant extends ChangeNotifier {
     final active = prefs.activeTab.clamp(0, prefs.tabs.length - 1);
     final isActive = index == active;
     if (isActive && prefs.tabs.length > 1) {
-      // Relieving the seat is a seat verb.
-      final rest = _seatRest(await bridgeHealth(), resets: true);
-      if (rest != null) return rest;
+      // Relieving the seat is a seat verb — but the rest law reads
+      // the DOOMED thread's OWN row, not the seat's global face
+      // (+323, field: 'whenever one agent is working, I cannot close
+      // the other session'). A voice answer streaming in a neighbour
+      // is that conversation's business: the seat move it forces
+      // here backgrounds the stranger's turn exactly like every
+      // other mid-turn switch (+246), so it must not veto a deletion.
+      // Only the doomed conversation's own live turn, queued prompt,
+      // or unheard debt rests its ✕ — those are the shapes a death
+      // would silently eat.
+      final h = await bridgeHealth();
+      final doomedIds = prefs.tabs[index].sessionIds;
+      final row = (h?['sessions'] as List?)
+          ?.cast<Map<String, Object?>?>()
+          .firstWhere(
+            (r) => r?['sid'] != null && doomedIds.contains(r!['sid']),
+            orElse: () => null,
+          );
+      // Unnamed tab: no row, no debt, no veto — there is nothing on
+      // the bridge yet that a death could eat.
+      if (row != null) {
+        // The row's nulls (--resume material a resting record never
+        // spoke) are the JSON's honesty, not a verdict — _seatRest
+        // reads booleans and counts; hand it exactly those.
+        final verdict = Map<String, Object>.fromEntries(
+          row.entries.where((e) => e.value != null).map(
+            (e) => MapEntry(e.key, e.value as Object),
+          ),
+        );
+        final rest = _seatRest(verdict, resets: true);
+        if (rest != null) return rest;
+      }
     }
     final doomed = prefs.tabs.removeAt(index);
     // +314: the doomed tab's cached band rides OUT with the object —
@@ -1771,7 +1814,7 @@ class VoiceAssistant extends ChangeNotifier {
       // active index can already point at it while the seat never
       // moved there.
       final dest = index == 0 ? 0 : index - 1;
-      final err = await switchSession(dest, force: true);
+      final err = await switchSession(dest, force: true, skipRest: true);
       if (err != null) return err; // tab gone; the move's reason rides back
       // +314: the inherited seat paints the doomed tab's line OUT of
       // existence — the band belongs to the thread, and the thread
