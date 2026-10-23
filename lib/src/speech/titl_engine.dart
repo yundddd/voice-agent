@@ -231,6 +231,10 @@ class TitlEngine {
     // cut hands one over every few replies), a proven-good shape. The
     // rule itself stays the teacher's: any trained stop stands down.
     var s = breathe(b.toString().trimRight());
+    // (The ladder has always stood down at a trailing ',' — the ',.'
+    // the phone's journal put on trial came from the espeak path,
+    // fixed in +346 at EspeakExec.phonemesFromIpa; this rule was the
+    // proof of what the correct shape looks like.)
     if (s.isNotEmpty && !RegExp(r'[.!?,;:]$').hasMatch(s)) s += '.';
     return s;
   }

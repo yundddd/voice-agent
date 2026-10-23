@@ -227,7 +227,11 @@ class EspeakExec {
       if (vocab.contains(folded)) b.write(folded);
     }
     var s = b.toString().trim();
-    if (s.isNotEmpty && !s.endsWith('.')) s = '$s.'; // sentence intonation
+    // +346: a trailing ',' stands down the stop too. The weld already
+    // gave the piece its breath; stacking '.' on top handed the graph
+    // a ',.' double stop — the tape's 'very long pause at the comma',
+    // and a continuation clause has no business taking a period's fall.
+    if (s.isNotEmpty && !s.endsWith('.') && !s.endsWith(',')) s = '$s.';
     return s;
   }
 }

@@ -109,6 +109,13 @@ void main() {
         EspeakExec.phonemesFromIpa('dˈɒn.', {'d', 'ˈ', 'ɒ', 'n', '.'}),
         'dˈɒn.',
       );
+      // +346: a trailing ',' — the weld's own breath — stands the stop
+      // down. 'dˈɒn,.' was the double pause the phone's journal caught
+      // stretching every clause cut into a gaping seam.
+      expect(
+        EspeakExec.phonemesFromIpa('dˈɒn,', {'d', 'ˈ', 'ɒ', 'n', '.', ','}),
+        'dˈɒn,',
+      );
     });
 
     test('foreign chars drop against the vocab — never guessed', () {
