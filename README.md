@@ -863,6 +863,15 @@ flutter build apk --release --split-per-abi \
 # → build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  (the phone build, ~46 MB)
 ```
 
+**Pocket TTS pre-step:** if `android/app/src/main/jniLibs/*/libsherpa-onnx-c-api.so`
+is missing (fresh clone), run `tool/sherpa-bos/build_android.sh` first —
+the app vendors a patched sherpa build (learned BOS-before-voice for
+pack v3; see tool/sherpa-bos/README.md) and Gradle would otherwise ship
+the plugin's unpatched library while the pack already flipped the Dart
+growl ritual off. The script's own grep + the APK audit
+(`unzip -p <apk> lib/<abi>/libsherpa-onnx-c-api.so | grep -c bos_before_voice`
+= 2) are the tripwires.
+
 Hard-won details:
 
 * **The JDK the Gradle daemon runs on** — Gradle always considers the

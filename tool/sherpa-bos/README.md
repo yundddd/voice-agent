@@ -68,25 +68,40 @@ The patched library must come FIRST on the path (the pub plugin ships
 the same SONAME). The v1.13.8 pin downloads onnxruntime **1.28.2** — the
 identical version the pub plugin bundles, so no ORT swap is needed.
 
-## Vendor it (Android arm64)
+## Vendor it (Android — scripted)
 
-Cross-build with the NDK (any r26+; `flutter doctor` shows the pinned
-one) and drop the result into the app so it shadows the plugin's copy —
-app `jniLibs` beat library `jniLibs` in the merge:
+`build_android.sh` does the whole thing: checks out the tag named by
+`pubspec.lock`'s `sherpa_onnx` version (patch and plugin may never
+disagree), applies the patch idempotently, cross-builds **every ABI the
+APK ships** (arm64-v8a, x86_64, armeabi-v7a — the pairing rule applies
+per device, an emulator is a device), strips with the NDK's llvm-strip
+(the pub package ships stripped libs; ours match: ~4.4 MB vs 4.5 MB),
+and installs into `android/app/src/main/jniLibs/<abi>/` — the SAME
+ignored dir + tool-script convention as the espeak executable
+(`third_party/espeak_exec`). App-level `jniLibs` shadow the plugin's
+copies of the same SONAME in the Gradle merge, so only this one `.so`
+is replaced; ORT and everything else stay upstream.
 
 ```bash
-cmake -B build-and -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
-    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DANDROID_ARM_NEON=ON \
-    <the same -D flags as above>
-cmake --build build-and --target sherpa-onnx-c-api -j
-cp build-and/lib/libsherpa-onnx-c-api.so \
-   android/app/src/main/jniLibs/arm64-v8a/
+tool/sherpa-bos/build_android.sh            # ~3 min/ABI from clean
+flutter build apk --release --split-per-abi --dart-define=APP_VERSION=0.1.0+N
 ```
 
-(Only that one `.so` is needed — the patch is header-only and the core
-links statically, mirroring how the plugin ships it. Verify with the
-round-trip bench on-device: the voice-screen latency card, or
-`dart run tool/pocket_probe.dart` before packaging.)
+Verified conventions (readelf on the plugin's own binary): static libc++
+(there is no `libc++_shared.so` in the APK) and the plain soname
+`libonnxruntime.so` — the v1.13.8 pin downloads onnxruntime **1.28.2**,
+byte-identical to what the plugin bundles, so the vendored link deps
+match exactly. `build_android.sh` checks both per ABI (patch string
+present in the binary, NEEDED list unchanged) and fails the build
+otherwise; after the APK, `unzip -p <apk> lib/<abi>/libsherpa-onnx-c-api.so |
+grep -c bos_before_voice` should say 2 — the marker the upstream copy
+lacks (0).
+
+Until the vendored dir exists (fresh clone), APK builds silently ship
+the UNPATCHED plugin library — with pack v3 already flipped on that
+re-opens the growl. So: run `build_android.sh` before every release
+build, or pin the pack back to the v2 URL. (A follow-up worth its own
+commit: make the pack URL conditional at build time.)
 
 ## iOS
 

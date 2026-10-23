@@ -50,7 +50,10 @@ app.*.map.json
 /models/
 /assets/models/
 
-# Built by tool/build_neutts_pack.sh (shipped inside the voice pack)
+# Built artifacts, not blobs (the espeak-exec binary from
+# third_party/espeak_exec and the patched sherpa-onnx from
+# tool/sherpa-bos/build_android.sh; the app-level jniLibs shadow the
+# plugin copies of the same SONAME at packaging)
 android/app/src/main/jniLibs/
 # LEGACY pointer dotfiles (+305 moved them to ~/.claude-bridge/pointers;
 # a running old-code bridge may still rewrite these until its next
@@ -60,3 +63,4 @@ android/app/src/main/jniLibs/
 # harness-local state (claude's worktree dir; ~/.claude-bridge/pointers
 # and ~/.claude_bridge_harness carry the conversation memory instead)
 .claude/
+tool/sherpa-bos/sherpa-onnx-src/
