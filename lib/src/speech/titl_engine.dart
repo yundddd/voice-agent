@@ -220,7 +220,11 @@ class TitlEngine {
       }
       b.write(' ');
     }
-    var s = b.toString().trimRight();
+    // +343: fold BEFORE the stop rule — a piece ending on ';' becomes
+    // the ',.' tail a comma-cut piece already ships today (the lead
+    // cut hands one over every few replies), a proven-good shape. The
+    // rule itself stays the teacher's: any trained stop stands down.
+    var s = breathe(b.toString().trimRight());
     if (s.isNotEmpty && !RegExp(r'[.!?,;:]$').hasMatch(s)) s += '.';
     return s;
   }
@@ -258,11 +262,28 @@ class TitlEngine {
 
   // ── Inference ──────────────────────────────────────────────────────────
 
+  /// The +343 breath fold: semicolons, colons, dashes and ellipses are
+  /// IN the trained alphabet (the teacher's pipeline feeds them through)
+  /// but an 8M student distills them to nearly nothing — the field ear
+  /// heard '…; next word' run together. The comma is the break the
+  /// Misaki training data floods, so every rarer breath mark folds onto
+  /// it before the graph sees a codepoint. Periods, bangs, question
+  /// marks and commas ride untouched; applied inside [synth] so BOTH
+  /// front ends — lexicon ladder and espeak fallback — pass this one
+  /// gate. Pure; unit-tested.
+  static String breathe(String phonemes) {
+    for (final m in const [';', ':', '—', '–', '…'].indexed) {
+      phonemes = phonemes.replaceAll(m.$2, ',');
+    }
+    return phonemes;
+  }
+
   /// One sentence of Kokoro phonemes (as [phonemesFromWords] emits) to
   /// 24 kHz float PCM. Overlong lines run as several graph calls glued
   /// back-to-back.
   Float32List synth(String phonemes, {double speed = 1.0}) {
     if (disposed) throw TitlException('engine freed');
+    phonemes = breathe(phonemes); // +343: rare breaths become trained ones
     final tensor = _apiSlot(_api, _CreateTensorWithDataAsOrtValue)
         .cast<
           NativeFunction<

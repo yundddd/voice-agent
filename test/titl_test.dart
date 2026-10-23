@@ -30,6 +30,26 @@ void main() {
       expect(ph, 'aʊ.');
     });
 
+    test('+343: rare breath marks fold onto the trained comma', () {
+      // The field ear: 'the student sometimes just continues the next
+      // word' over a ';' or '—' — in the vocab, too rare in the distill.
+      expect(TitlEngine.breathe('wˈɔɹd; nˈɛkst'), 'wˈɔɹd, nˈɛkst');
+      expect(TitlEngine.breathe('a—b–c…d'), 'a,b,c,d');
+      // Stops, bangs, quests and commas ride untouched.
+      expect(TitlEngine.breathe('a. b! c? d, e'), 'a. b! c? d, e');
+      // The ladder: a piece ending on ';' joins the fold THEN the stop
+      // rule — it lands on the ',.' tail a comma-cut piece already
+      // ships today, not a breath-less tail.
+      final ph = TitlEngine.phonemesFromWords(
+        [
+          'wˈɔɹd;'.codeUnits,
+          'nˈɛkst'.codeUnits,
+        ],
+        vocab.keys.toSet(),
+      );
+      expect(ph, 'wˈɔɹd, nˈɛkst.');
+    });
+
     test('ids are padded at both ends and stay under the graph window', () {
       final runs = TitlEngine.idsFromPhonemes('a b c.', vocab);
       expect(runs, hasLength(1));
