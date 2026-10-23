@@ -1324,10 +1324,16 @@ class VoiceAssistant extends ChangeNotifier {
         'the harness is mid-turn — stop it before switching sessions',
       );
     }
-    // The backlog dies to a reset whenever one runs: creation always
-    // resets; a switch resets precisely when no turn is open to
-    // background (the bridge's own condition, mirrored here).
-    if (missed && (resets || !turnOpen)) {
+    // +324: only a RESET eats the backlog — the law that refused a
+    // plain seat move was a single-conversation relic. Since +257
+    // every record carries its OWN backlog: a swipe to a named tab
+    // parks the owed mail where it lives, and the return's /attach
+    // replays it (+298's every-tab-keeps-its-own-face). Refusing the
+    // swipe showed a banner that blocked navigation to protect mail
+    // that was never at risk. A wipe (creation, fresh, a doomed
+    // tab's close) does kill it — THAT rests. Drain still starts on
+    // the spot either way.
+    if (missed && resets) {
       if (!_bridgeBusy &&
           !_turn.backgrounded &&
           !_benchCapturing &&
@@ -1922,6 +1928,32 @@ class VoiceAssistant extends ChangeNotifier {
     final hm = h?['harness'];
     final eraNow = hm == 'claude' || hm == 'opencode' ? hm as String : null;
     _lastHealth = h;
+    // +324: the glance that SEES owed mail arms the drain, wherever
+    // the eye sits. The old law refused the swipe instead — a banner
+    // that blocked navigation to protect mail that was never at risk
+    // (+257 gave every record its own backlog; the replay routes by
+    // name and files silently for the away thread). Resting at home
+    // it lands the same beat it always did; mid-swipe it lands while
+    // you look elsewhere and is painted when you return.
+    if (h != null &&
+        ((h['missed'] as num?)?.toInt() ?? 0) > 0 &&
+        h['turnOpen'] != true &&
+        !_bridgeBusy &&
+        !_turn.backgrounded &&
+        !_benchCapturing &&
+        !_benchBusy &&
+        _ptt.pointers == 0 &&
+        // +124 still rules the air: a drain never cuts a paragraph
+        // still on its way out of the speaker.
+        !_reply.playing &&
+        _reply.queuedCount == 0 &&
+        !_chain.armed) {
+      _chain.start(
+        gen: _generation,
+        seq: _bridgeTurnSeq,
+        firstProbe: Duration.zero,
+      );
+    }
     // +230: the tab ledger reads every glance BEFORE the single-thread
     // bookkeeping below — an upgrade's seed creates tab 1 here, the
     // boot reconcile may re-home the seat (and asks for its own

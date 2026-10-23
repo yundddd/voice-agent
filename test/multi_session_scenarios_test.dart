@@ -169,11 +169,12 @@ void main() {
       elapse(4000); // the tape's 4 seconds between report and return
       expect(await a.switchSession(0), isNull);
       await pump(beats: 4);
-      expect(
-        await a.switchSession(1),
-        isNotNull,
-        reason: 'leaving with unheard words refuses — they land first',
-      );
+      // +324: the away move is FREE — the owed mail rides the
+      // record it lives on, and the return's /attach files it.
+      expect(await a.switchSession(1), isNull);
+      await pump(beats: 4);
+      expect(await a.switchSession(0), isNull,
+          reason: 'coming home, the returning ear takes its own mail');
       await pump(beats: 4);
       expect(
         a.view.chat.any(
@@ -342,22 +343,13 @@ void main() {
       // phone is still sitting at home.
       bridge.complete(x.uuid, 'Bash sleep 30', cancelled: true);
       await pump();
-      expect(
-        await a.switchSession(1),
-        isNotNull,
-        reason: 'a backlog of unheard words stops the move (+254)',
-      );
+      // +324: the backlog no longer vets the move — it lives on
+      // X's record and waits for the ear that comes for it.
+      expect(await a.switchSession(1), isNull,
+          reason: 'the away move is free (+324)');
       await pump(beats: 4);
-      // The first refusal's replay lands the FAREWELL; the late
-      // receipt outlives that pump (its tool's result crossed the
-      // wire after the turn's done — chronology, the bridge's
-      // heldFinished case). The refusal is self-healing: the next
-      // probe owes the same drain, and the receipt files then.
-      expect(
-        await a.switchSession(1),
-        isNotNull,
-        reason: 'still owed: the receipt has not landed yet',
-      );
+      expect(await a.switchSession(0), isNull,
+          reason: 'the way home is free too');
       await pump(beats: 4);
       expect(
         a.view.chat.any((e) => e.blocks.any((b) => b.contains('cancelled.'))),
