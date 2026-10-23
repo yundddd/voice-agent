@@ -279,6 +279,13 @@ void main() {
       // and tiny.en drops the trailing words of a long take, so assert on the
       // middle of the sentence — that is what the engine guarantees.
       expect(hits, greaterThan(2));
+      if (File('$dir/bos_before_voice.npy').existsSync()) {
+        // v3 pack (BOS embedding staged next to the encoder): the patched
+        // sherpa build feeds the learned BOS frame, the port cold-starts
+        // like the PyTorch reference, and the ritual is off — the FIRST
+        // word surviving intact is now the engine's guarantee.
+        expect(heard, contains('hello'));
+      }
 
       // Second preset sounds different but is equally intelligible.
       await worker.useTts(spec(5)); // bill_boerst: the most stable draw

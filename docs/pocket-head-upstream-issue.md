@@ -78,6 +78,27 @@ runtime change. This closes the diagnosis half of this issue; the app keeps
 the '....' + `pocketLeadIn` ritual until sherpa ships the BOS step (or the
 pack moves to a runtime that has it).
 
+### Patched locally, measured (same day)
+The runtime half is now applied as `tool/sherpa-bos/pocket-bos-v1.13.8.patch`
+(one header: load the npy from the encoder's directory, prepend it before
+the voice embedding at cache-miss, `min_frames_before_eos = 6` + the
+`eos_step == 0` break, plus the cache-hit rank/overrun fix). Against
+KevinAHM's english_2026-04 graphs with the same alba reference:
+
+| build | first-20ms RMS | whisper re-hears |
+|---|---|---|
+| 2026-01 graphs (v2 pack), ritual OFF | 0.1844 (growl from sample 0) | full sentence (lucky draw) |
+| 2026-04 graphs, unpatched sherpa | 0.0251 | "**L**OTIM…" — head damaged |
+| 2026-04 graphs, **patched** sherpa | **0.0020** | "Hello Tim, Pocket TTS Speaking…" |
+| KevinAHM's own Python runtime | 0.0018 | same, full |
+
+The patch reproduces the reference runtime's clean head inside sherpa.
+The app switches to the v3 pack (npy included) and the Dart ritual retires
+conditionally on the npy's presence; iOS keeps the v2 line until the
+xcframework is rebuilt with the same patch. The PR to k2-fsa is still the
+point — this file is now evidence, and the patch shrinks to "drop when
+merged".
+
 Happy to re-run any experiment against a branch — I have the full A/B harness
 (official pytorch renders vs sherpa renders, whisper-tiny re-transcription,
 onset RMS profiles) for all six presets.

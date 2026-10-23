@@ -1,0 +1,184 @@
+diff --git a/sherpa-onnx/csrc/offline-tts-pocket-impl.h b/sherpa-onnx/csrc/offline-tts-pocket-impl.h
+index c8e30a5..49d7fd3 100644
+--- a/sherpa-onnx/csrc/offline-tts-pocket-impl.h
++++ b/sherpa-onnx/csrc/offline-tts-pocket-impl.h
+@@ -47,6 +47,7 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+     InitTokenizer();
+ 
+     cache_.SetCapacity(config.model.pocket.voice_embedding_cache_capacity);
++    LoadBosBeforeVoice();
+ 
+     if (!config.rule_fsts.empty()) {
+       std::vector<std::string> files;
+@@ -104,6 +105,7 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+         model_(std::make_unique<OfflineTtsPocketModel>(mgr, config.model)) {
+     InitTokenizer(mgr);
+     cache_.SetCapacity(config.model.pocket.voice_embedding_cache_capacity);
++    LoadBosBeforeVoice();
+ 
+     if (!config.rule_fsts.empty()) {
+       std::vector<std::string> files;
+@@ -336,6 +338,12 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+     int32_t num_steps = gen_config.num_steps;
+     int32_t max_frames = gen_config.GetExtraInt("max_frames", 500);
+     int32_t frames_after_eos = gen_config.GetExtraInt("frames_after_eos", 3);
++    // kyutai's _MIN_FRAMES_BEFORE_EOS: some voice prompts cross the EOS
++    // threshold before any speech has started; an early fire truncates the
++    // word or (with the break below made reachable by eos_step==0) babble
++    // -decodes to max_frames.
++    int32_t min_frames_before_eos =
++        gen_config.GetExtraInt("min_frames_before_eos", 6);
+     float temperature = gen_config.GetExtraFloat("temperature", 0.7f);
+     float stddev = std::sqrt(temperature);
+     int32_t seed = gen_config.GetExtraInt("seed", -1);
+@@ -369,11 +377,11 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+           std::move(cur_tensor), View(&empty_text_tensor), lm_main_state);
+       const float *p_logit = eos_logit.GetTensorData<float>();
+ 
+-      if (eos_step < 0 && p_logit[0] > -4) {
++      if (eos_step < 0 && step >= min_frames_before_eos && p_logit[0] > -4) {
+         eos_step = step;
+       }
+ 
+-      if (eos_step > 0 && (step >= eos_step + frames_after_eos)) {
++      if (eos_step >= 0 && (step >= eos_step + frames_after_eos)) {
+         break;
+       }
+ 
+@@ -463,6 +471,61 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+         config_.model.pocket.token_scores_json);
+   }
+ 
++  // Loads kyutai's learned BOS-before-voice embedding from
++  // <encoder.onnx dir>/bos_before_voice.npy, the convention this build
++  // adds (no config-field growth, so the FFI structs stay compatible).
++  // The file ships inside the voice pack: for checkpoints that export it
++  // (english_2026-04+) GetVoiceEmbedding prepends it to the voice prompt;
++  // an absent file keeps the old behavior byte-for-byte.
++  void LoadBosBeforeVoice() {
++    const std::string &enc = config_.model.pocket.encoder;
++    auto pos = enc.rfind('/');
++    if (pos == std::string::npos) return;
++    std::string npy_path = enc.substr(0, pos + 1) + "bos_before_voice.npy";
++    if (!FileExists(npy_path)) return;
++
++    std::vector<char> data;
++    try {
++      data = ReadFile(npy_path);
++    } catch (...) {
++      return;
++    }
++    // NPY: '\x93NUMPY' magic, 1-byte version, header length (2-byte LE for
++    // v1, 4-byte LE for v2/v3), ASCII dict, then C-contiguous little-endian
++    // f4 payload. Only v1/v2 and descr '<f4' Fortran-order False are read.
++    if (data.size() < 80) return;
++    if (std::memcmp(data.data(), "\x93NUMPY", 6) != 0) return;
++    uint8_t major = static_cast<uint8_t>(data[6]);
++    size_t hdr_len = 0, off = 0;
++    if (major == 1) {
++      hdr_len = static_cast<size_t>(static_cast<uint8_t>(data[8])) |
++                (static_cast<size_t>(static_cast<uint8_t>(data[9])) << 8);
++      off = 10;
++    } else if (major == 2 || major == 3) {
++      hdr_len = static_cast<size_t>(static_cast<uint8_t>(data[8])) |
++                (static_cast<size_t>(static_cast<uint8_t>(data[9])) << 8) |
++                (static_cast<size_t>(static_cast<uint8_t>(data[10])) << 16) |
++                (static_cast<size_t>(static_cast<uint8_t>(data[11])) << 24);
++      off = 12;
++    } else {
++      return;
++    }
++    std::string header(data.data() + off, hdr_len);
++    if (header.find("'descr': '<f4'") == std::string::npos) return;
++    if (header.find("'fortran_order': False") == std::string::npos) return;
++    if (header.find("(1, 1, 1024)") == std::string::npos) return;
++    if (data.size() < off + hdr_len + 4 * 1024) return;
++
++    bos_before_voice_.resize(1024);
++    std::memcpy(bos_before_voice_.data(), data.data() + off + hdr_len,
++                4 * 1024);
++    bos_dim_ = 1024;
++    if (config_.model.debug) {
++      SHERPA_ONNX_LOGE("pocket: loaded bos_before_voice (1,1,1024) from %s",
++                       npy_path.c_str());
++    }
++  }
++
+   Ort::Value GetVoiceEmbedding(const GenerationConfig &gen_config) const {
+     if (gen_config.reference_sample_rate <= 0) {
+       SHERPA_ONNX_LOGE("reference_sample_rate %d is invalid.",
+@@ -532,12 +595,17 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+       if (config_.model.debug) {
+         SHERPA_ONNX_LOGE("CACHE HIT: voice embedding (hash=%zu)", audio_hash);
+       }
+-      // Create an owned tensor and copy data to avoid use-after-free
++      // Create an owned tensor with the cached shape and copy the data in.
++      // (The upstream code created the tensor from the cached SHAPE (a
++      // vector<int64_t> read as float, so the tensor was rank-1) and then
++      // copied the DATA into that 3-element buffer — a heap overrun. Use
++      // the alloc+shape overload, then fill.)
+       auto result = Ort::Value::CreateTensor<float>(
+           model_->Allocator(), cached_embedding->second.data(),
+           cached_embedding->second.size());
+-      std::copy(cached_embedding->first.begin(), cached_embedding->first.end(),
+-                result.GetTensorMutableData<float>());
++      std::memcpy(result.GetTensorMutableData<float>(),
++                  cached_embedding->first.data(),
++                  cached_embedding->first.size() * sizeof(float));
+       return result;
+     }
+ 
+@@ -556,6 +624,40 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+     size_t total = info.GetElementCount();
+     const float *result_data = result.GetTensorData<float>();
+ 
++    // Prepend kyutai's learned BOS-before-voice embedding so the voice
++    // conditioning step sees [bos] + voice_prompt, exactly as
++    // FlowLM.VoicePrompt builds it (configs with
++    // insert_bos_before_voice: true). Without this frame the prompt starts
++    // one step too early and the model decodes its first frames as a low
++    // growl that swallows the first word. The .npy is loaded from the
++    // model directory by LoadBosBeforeVoice(); absent file = no-op (older
++    // checkpoints, e.g. english_2026-01, have no such embedding).
++    if (bos_dim_ > 0 && result_shape.size() == 3 && result_shape[0] == 1 &&
++        result_shape[2] == static_cast<int64_t>(bos_dim_)) {
++      std::vector<float> prepended;
++      prepended.reserve((result_shape[1] + 1) * bos_dim_);
++      prepended.insert(prepended.end(), bos_before_voice_.begin(),
++                       bos_before_voice_.end());
++      prepended.insert(prepended.end(), result_data, result_data + total);
++      result_shape[1] += 1;
++
++      Ort::Value prepended_value = Ort::Value::CreateTensor<float>(
++          model_->Allocator(), result_shape.data(), result_shape.size());
++      std::memcpy(prepended_value.GetTensorMutableData<float>(),
++                  prepended.data(), prepended.size() * sizeof(float));
++
++      cache_.Put(audio_hash, std::move(prepended), std::move(result_shape));
++
++      if (config_.model.debug) {
++        SHERPA_ONNX_LOGE(
++            "CACHE MISS: prepended BOS-before-voice frame (hash=%zu, %zu "
++            "floats)",
++            audio_hash, prepended_value.GetTensorTypeAndShapeInfo()
++                             .GetElementCount());
++      }
++      return prepended_value;
++    }
++
+     cache_.Put(audio_hash, std::vector<float>(result_data, result_data + total),
+                std::move(result_shape));
+ 
+@@ -666,6 +768,12 @@ class OfflineTtsPocketImpl : public OfflineTtsImpl {
+   std::vector<std::unique_ptr<kaldifst::TextNormalizer>> tn_list_;
+   std::unique_ptr<SentencePieceTokenizer> tokenizer_;
+ 
++  // BOS-before-voice embedding (1024 floats), loaded by
++  // LoadBosBeforeVoice() from the model directory; bos_dim_ == 0 when the
++  // pack carries no such file.
++  std::vector<float> bos_before_voice_;
++  int32_t bos_dim_ = 0;
++
+   // Shared Thread-Safe LRU Cache for Voice Embeddings
+   struct VoiceEmbeddingCache {
+     using Embedding = std::pair<std::vector<float>, std::vector<int64_t>>;

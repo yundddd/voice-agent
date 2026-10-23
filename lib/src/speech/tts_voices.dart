@@ -268,17 +268,19 @@ const ttsVoices = <TtsVoice>[
     note:
         'Kyutai 100M zero-shot model — six preset voices (Jane/Anna/Jean/'
         'Michael/Alba/Bill) once loaded; any one of them also clones from a '
-        'recording later. Full-precision graphs: subjective A/B on our '
-        'renders preferred them over the int8 quantized ones (the ~10 kHz '
-        'Mimi-codec ceiling is shared, but the int8 AR path measured a '
-        'drier, less reliable head). Runs on the shared sherpa-onnx engine.',
-    sizeLabel: '~205 MB',
+        'recording later. v3 pack: the english_2026-04 graphs from '
+        'KevinAHM’s ONNX export plus the learned BOS-before-voice '
+        'embedding our patched sherpa-onnx feeds before the voice (see '
+        'tool/sherpa-bos/) — the cold-start growl is gone and the text '
+        'opens with the model’s own breath, not a workaround. Runs on '
+        'the shared sherpa-onnx engine.',
+    sizeLabel: '~180 MB',
     packs: [
       ModelPack(
         label: 'voice: Pocket TTS (engine + voices)',
-        url: '$_ourPacks/pocket-tts-v2.zip',
+        url: '$_ourPacks/pocket-tts-v3.zip',
         dirName: 'pocket-tts',
-        markerFile: 'pack-v2.ok', // sentinel: bump to force pack re-download
+        markerFile: 'pack-v3.ok', // sentinel: bump to force pack re-download
       ),
     ],
   ),

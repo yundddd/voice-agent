@@ -100,8 +100,9 @@ void main() {
       expect(pocket.perSidPacks, isFalse);
       expect(pocket.packs.map((p) => p.dirName), ['pocket-tts']);
       // The sentinel (not model.onnx) is the installed-marker: bumping
-      // its name in the pack is how the app forces a re-download.
-      expect(pocket.packs.single.markerFile, 'pack-v2.ok');
+      // its name in the pack is how the app forces a re-download. v3 =
+      // english_2026-04 graphs + bos_before_voice.npy (patched sherpa).
+      expect(pocket.packs.single.markerFile, 'pack-v3.ok');
       // Roster order == pocketRefs order == the pack script's ORDER —
       // a drift here would silently relabel every preset.
       expect(
@@ -123,7 +124,7 @@ void main() {
       addTearDown(() => dir.deleteSync(recursive: true));
       expect(await pocket.installedIn(dir.path), isFalse);
       Directory('${dir.path}/pocket-tts').createSync();
-      File('${dir.path}/pocket-tts/pack-v2.ok').writeAsBytesSync([0]);
+      File('${dir.path}/pocket-tts/pack-v3.ok').writeAsBytesSync([0]);
       expect(await pocket.installedIn(dir.path), isTrue);
     });
 

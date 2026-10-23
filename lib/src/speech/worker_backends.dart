@@ -227,6 +227,7 @@ class RealBackends extends WorkerBackends {
         ),
         refs: s.pocketRefs,
         numSteps: s.pocketNumSteps > 0 ? s.pocketNumSteps : 2,
+        bosBeforeVoice: pocketHasBosBeforeVoice(s.pocketEncoder),
       );
     }
     return SherpaTts(
@@ -450,19 +451,36 @@ class SherpaTts implements TtsBackend {
 /// #6), and the port's growl-corrupted first 250 ms of that pause is
 /// dropped by [pocketLeadIn] before the audio leaves the backend.
 /// silenceScale 1.0 keeps that pause (and every punctuation breath)
-/// whole — the Dart default 0.2 squashes all silence to 20%. The
+/// whole — the Dart default 0.2 would squash all silence to 20%. The
 /// per-call max_frames scales with the merged piece (see
 /// [mergePocketChunks] in tts_split.dart: runts garble and every extra
 /// call re-pays the whole ritual, so answers ship as few pieces as
 /// possible): a missed EOS self-limits inside the text's own length
-/// instead of babbling to the model's 500-frame ceiling.
+/// instead of babbling to the model's 500-frame ceiling. On a v3 pack
+/// with the patched native lib ([bosBeforeVoice]) the whole prefix/trim
+/// half retires — only the device-ramp silence lead remains.
 class PocketTts implements TtsBackend {
-  PocketTts(this._tts, {required this.refs, required this.numSteps})
-    : assert(refs.isNotEmpty, 'pocket spec needs at least one preset');
+  PocketTts(
+    this._tts, {
+    required this.refs,
+    required this.numSteps,
+    required this.bosBeforeVoice,
+  }) : assert(refs.isNotEmpty, 'pocket spec needs at least one preset');
 
   final sherpa_onnx.OfflineTts _tts;
   final List<String> refs;
   final int numSteps;
+
+  /// True when the pack carries `bos_before_voice.npy` beside the encoder
+  /// graph (the v3 pack) AND the loaded sherpa build is the patched one
+  /// that feeds it: the port then cold-starts like the PyTorch reference
+  /// (measured: first-20ms RMS 0.002, first word intact), so the growl
+  /// ritual retires — no '.... ' prefix, no 250 ms drop. The 300 ms
+  /// silence LEAD stays regardless: it covers the phone's post-capture
+  /// output ramp, a device fact unrelated to the port bug. The APK and
+  /// the pack ship together (the sentinel bump forces the re-download),
+  /// so this flag can never pair a v3 pack with an unpatched library.
+  final bool bosBeforeVoice;
   final Map<int, (Float32List, int)> _decoded = {};
 
   @override
@@ -481,7 +499,7 @@ class PocketTts implements TtsBackend {
       () => decodeWav(File(refs[at]).readAsBytesSync()),
     );
     final audio = _tts.generateWithConfig(
-      text: '.... $text',
+      text: bosBeforeVoice ? text : '.... $text',
       config: sherpa_onnx.OfflineTtsGenerationConfig(
         referenceAudio: reference,
         referenceSampleRate: sampleRate,
@@ -494,11 +512,26 @@ class PocketTts implements TtsBackend {
         extra: {'max_frames': (text.length * 135 ~/ 100 + 30).clamp(60, 500)},
       ),
     );
-    return (pocketLeadIn(audio.samples), audio.sampleRate);
+    return (
+      pocketLeadIn(audio.samples, dropMs: bosBeforeVoice ? 0 : 250),
+      audio.sampleRate,
+    );
   }
 
   @override
   void free() => _tts.free();
+}
+
+/// Whether this pack carries the BOS-before-voice embedding next to the
+/// encoder graph — the same file convention the patched sherpa lib reads
+/// (offline-tts-pocket-impl.h::LoadBosBeforeVoice). Presence = v3 pack:
+/// the Dart ritual and the native prepend flip together on this one bit.
+bool pocketHasBosBeforeVoice(String encoderPath) {
+  final slash = encoderPath.lastIndexOf('/');
+  if (slash < 0) return false;
+  return File(
+    '${encoderPath.substring(0, slash + 1)}bos_before_voice.npy',
+  ).existsSync();
 }
 
 /// Lead-in repair for one Pocket Generate output. Paired with the '....'
@@ -506,16 +539,17 @@ class PocketTts implements TtsBackend {
 /// generated pause — the port decodes the first frames of that pause as
 /// a low growl instead of silence (its NaN/zeros cold start, not the
 /// reference's BOS-primed prompt-tail state), and the pause absorbs it.
-/// Drop the first 250 ms (growl + pause head), ramp the cut in over 30 ms
+/// Drop the first [dropMs] ms (growl + pause head; 0 on a BOS-patched
+/// pack — see [PocketTts.bosBeforeVoice]), ramp the cut in over 30 ms
 /// so the splice adds no click, and prepend a short silence so the phone's
 /// post-capture output ramp (measured ~150 ms, plus mic-teardown mute on
 /// PTT) also lands inside silence, not speech — the generated pause behind
 /// it (~0.5-0.9 s after the drop) carries the protection the 800 ms lead
 /// used to provide alone. Measured with the prefix: 10/10 head hits across
 /// presets (whisper-tiny re-transcription, first phrase intact in 10/10).
-Float32List pocketLeadIn(Float32List s) {
+Float32List pocketLeadIn(Float32List s, {int dropMs = 250}) {
   const rate = 24000; // Pocket is fixed at 24 kHz.
-  const drop = rate * 250 ~/ 1000;
+  final drop = rate * dropMs ~/ 1000;
   const lead = rate * 3 ~/ 10;
   if (s.length <= drop) return s;
   final fade = rate * 30 ~/ 1000;

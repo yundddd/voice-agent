@@ -252,52 +252,62 @@ The voice icon (top right) opens the voice screen (`lib/src/ui/voice_screen.dart
   runs *inside the existing sherpa-onnx engine* (PocketTTS support since
   v1.12.24) — no second native stack this time: the voice pack is plain
   model data, so the whole APK weight of the feature is one catalogue row.
-  `tool/build_pocket_pack.sh` mirrors the public k2-fsa ONNX export of
+  `tool/build_pocket_pack.sh` mirrors the public ONNX export of
   `kyutai/pocket-tts` (the HF repo itself is gated behind a terms click —
   one-time, login + acknowledge on the model page; the export is not) and
   six reference wavs from the ungated `kyutai/tts-voices` repo (Jane,
   Anna, Jean, Michael, Alba, Bill Boerst — CC-BY-4.0), zipped with a
-  `pack-v2.ok` sentinel and uploaded to our GitHub release; the app
-  again only ever downloads anonymously. v1 shipped the int8-quantized
-  export at ~105 MB; v2 switched the LM/flow/decoder to the fp32 graphs:
-  band forensics showed both variants hit the same ~10 kHz Mimi-codec
-  ceiling (quantization bought no bandwidth), but the fp32 renders won
-  the listening test and the head-drop rate improved — the cost is the
-  download (~205 MB zip vs ~105 MB) and ~1.6x desktop CPU; the round-trip bench
-  below measures the honest per-device numbers. Sentinel bumps are how
-  the app re-downloads in place; the unpacker wipes the old directory
-  first so orphaned graphs can't squat (`model_unpack.dart`).
-  Like the NeuTTS presets, the six
+  `pack-v3.ok` sentinel and uploaded to our GitHub release; the app
+  again only ever downloads anonymously. Pack history: v1 int8 at
+  ~105 MB; v2 fp32 graphs (~205 MB, the listening A/B preferred them
+  over int8 on that checkpoint); **v3** moves to KevinAHM's
+  `english_2026-04` bundle (int8 LM/flow back — the new checkpoint's
+  int8 measured clean; fp32 mimi codec side) plus
+  **`bos_before_voice.npy`**, the learned BOS-before-voice embedding
+  our patched sherpa-onnx feeds before the voice conditioning
+  (`tool/sherpa-bos/`, one header, ~90 lines, v1.13.8-pinned). With the
+  patch the port cold-starts like the PyTorch reference — measured
+  first-20 ms RMS 0.0020 and the full first sentence through whisper
+  re-transcription — so the growl workaround below is conditional:
+  with the npy in the pack, Dart sends the text unprefixed and drops
+  no lead (only the 300 ms device-ramp silence stays). Sentinel bumps
+  are how the app re-downloads in place; the unpacker wipes the old
+  directory first so orphaned graphs can't squat (`model_unpack.dart`).
+  The pairing rule: the npy flips the ritual off, so a v3 pack MUST run
+  on a patched library (vendor the `.so`, see the tool/sherpa-bos
+  README); iOS keeps the v2 line until its xcframework is rebuilt, and
+  on v2 the fallback keeps every engine sounding as it did before.
+  The six
   voices ride the speaker slider (`useTts` returns the reference count);
   the native layer resamples each reference to 24 kHz and caps it at 10 s,
   so presets of any upstream rate are fine. Output is 24 kHz, generated
   with 2 flow steps (the decoder ships one-step distilled). Cloning your
   own voice through this engine only needs the wav — no transcript — so
   wiring the record UI to a pocket spec is a small follow-up.
-One port caveat to know before judging a recording: the k2-fsa ONNX
-  export cold-starts differently from the PyTorch reference (sherpa's NaN
-  initial latent maps to zeros, and the voice prompt is fed without the
-  learned BOS embedding that `insert_bos_before_voice` prescribes — see
-  kyutai's `flow_lm.py::VoicePrompt`). Worse, the single pooled voice
-  embedding loses the prompt's trailing-pause state, so the port starts
-  speaking ~0.4 s earlier than the reference — inside its own
-  growl-corrupted first frames. The reference emits a clean ~0.5 s
-  silence pre-roll before the first word; the export emits a low growl
-  that swallows the attack, and the first words read as truncated
-  (identically in PTT, conversation mode, and debug replay — proving the
-  damage is in the *content*, not the playback path). Worked around in
-  `SpeechWorker` (pocket arm, validated by whisper-tiny re-transcription
-  of all six presets): every Generate call's text gets a `'.... '` prefix
-  so the model *itself* opens with a generated pause (kyutai's own FAQ,
-  issue #6) — plus `silenceScale: 1.0`, because the Dart default 0.2
-  would squash that pause; `mergePocketChunks` (runt pieces misbehave — a
-  one-word answer decodes to '[sound]', and a missed EOS babble-decoded
-  40 s on michael — and every extra Generate call re-pays this whole
-  ritual, so pieces now merge up to ~340 chars: a typical long answer is
-  ONE call whose internal sentence pauses come from the model's own
-  punctuation instead of our splice points. The per-piece
-  `max_frames` cap scales with the merged size (a runaway EOS
-  self-limits there, and no call truncates mid-word);
+Historical note — the port defect this engine grew up with: the k2-fsa
+  ONNX export cold-started differently from the PyTorch reference (the
+  voice prompt was fed without the learned BOS embedding that
+  `insert_bos_before_voice` prescribes — see kyutai's
+  `flow_lm.py::VoicePrompt`), and sherpa's voice-embedding cache hit
+  path had a rank/overrun bug on every repeat voice (fixed in the same
+  patch). The reference emits a clean ~0.5 s silence pre-roll before
+  the first word; the unpatched export emits a low growl that swallows
+  the attack, and first words read as truncated (identically in PTT,
+  conversation mode, and debug replay — proving the damage is in the
+  *content*, not the playback path). The on-v2-pack workaround, kept
+  alive for iOS until its rebuild (validated by whisper-tiny
+  re-transcription of all six presets): every Generate call's text gets
+  a `'.... '` prefix so the model *itself* opens with a generated pause
+  (kyutai's own FAQ, issue #6) — plus `silenceScale: 1.0`, because the
+  Dart default 0.2 would squash that pause; `mergePocketChunks` (runt
+  pieces misbehave — a one-word answer decodes to '[sound]', and a
+  missed EOS babble-decoded 40 s on michael — and every extra Generate
+  call re-pays this whole ritual, so pieces merge up to ~340 chars: a
+  typical long answer is ONE call whose internal sentence pauses come
+  from the model's own punctuation instead of our splice points. The
+  per-piece `max_frames` cap scales with the merged size (a runaway EOS
+  self-limits there, and no call truncates mid-word; on the patched
+  build sherpa's own first-6-frame EOS guard now does this job);
   `pocketLeadIn` (drop the first 250 ms — the growl now
   dies inside the pause; 30 ms fade so the splice adds no click; 300 ms
   inserted silence so the phone's post-capture output ramp — ~150 ms,
@@ -305,10 +315,10 @@ One port caveat to know before judging a recording: the k2-fsa ONNX
   model-generated pause behind it carrying the protection). The assistant
   additionally holds the output route open with inaudible silence from
   turn end until the first chunk (insurance for the same ramp; helps
-  every engine). First phrase then lands intact in re-transcription on
-  every measured draw (10/10 heads; RTF unchanged at ~0.11). If kyutai or
-  k2-fsa fix the export, these workarounds retire one function at a time;
-  the official renders under `ref6_*.wav` make the A/B audition trivial.
+  every engine). First phrase then landed intact in re-transcription on
+  every measured workaround draw (10/10 heads; RTF unchanged at ~0.11);
+  on the patched v3 path it lands intact by construction, asserted by
+  the round-trip bench's `contains('hello')` leg.
 
 ### Session tabs (first launch, swipes, and the seat)
 

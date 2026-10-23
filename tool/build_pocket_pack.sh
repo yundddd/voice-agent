@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 # Build + pack the Kyutai Pocket TTS voice-engine assets, then upload to our
 # GitHub release so the app downloads the pack anonymously (same CDN story as
-# the NeuTTS pack, but nothing here is gated: we ship the *public* k2-fsa
-# ONNX export of kyutai/pocket-tts (the HF repo itself is gated:auto — one
-# terms click — but the export on the sherpa-onnx releases is not) plus
-# reference wavs from the ungated kyutai/tts-voices repo).
+# every other pack: nothing here is gated).
 #
-# The engine itself is sherpa-onnx (already in the APK via the pub plugin,
-# PocketTTS support since v1.12.24) — this pack carries only model data, so
-# no NDK/Rust step; re-running needs only curl + zip + gh.
+# v3 layout (the no-growl pack):
+#   - the FLOW LM graphs move from the k2-fsa 2026-01 export (checkpoint
+#     english_2026-01, which has NO bos_before_voice embedding at all) to
+#     KevinAHM's per-language bundle of checkpoint english_2026-04 —
+#     https://huggingface.co/KevinAHM/pocket-tts-onnx — whose
+#     bos_before_voice.npy the patched sherpa-onnx build (see
+#     tool/sherpa-bos/) feeds before the voice embedding, exactly as
+#     kyutai's FlowLM.VoicePrompt does. Measured (docs/pocket-head-upstream-
+#     issue.md): first-20ms RMS 0.0020 vs 0.0251 unpatched, whisper re-hears
+#     the full first sentence; the Dart '....' prefix + 250ms trim retire.
+#   - LM/flow ship INT8 (the bundle's own default; measured clean and ~2x
+#     the fp32 throughput — see benchmarks in the bundle README). The mimi
+#     encoder/decoder and text conditioner ship fp32, following the v1->v2
+#     A/B on our own ears (the int8 decoder path measured drier; the codec
+#     side is where the listening test was decided). PRECISION=fp32 flips
+#     the LM graphs too if you want to redo that A/B on the new checkpoint.
+#   - vocab.json/token_scores.json still come from the k2-fsa rehost (they
+#     are generated artifacts of the export; the tokenizer.model is byte-
+#     identical across the repos, so they stay valid for the new graphs).
 #
 #   tool/build_pocket_pack.sh            # download, stage, zip
 #   tool/build_pocket_pack.sh upload     # ...and gh-release-uploads the zip
@@ -17,16 +30,17 @@ set -euo pipefail
 REPO=${REPO:-yundddd/voice-agent}
 STAGE=${STAGE:-/tmp/opencode/pocket-pack/pocket-tts}
 K2FSA_TTS=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models
-# FP32 export (v2 pack). The int8 pack (v1) measured the SAME ~10 kHz Mimi
-# codec ceiling in our band forensics, so quantization bought no bandwidth —
-# but subjective A/B (and the user's ears at ~1 kHz less AR-path hiss) came
-# down for the full-precision graphs, at +70 MB download / 1.6x desktop RTF
-# (0.16 vs 0.10; the voice-screen round-trip bench is how to feel it out).
-PACK=sherpa-onnx-pocket-tts-2026-01-26
+# Same k2-fsa export as v1/v2: still the source of the tokenizer JSONs,
+# the LICENSE and the provenance anchor (its graphs are superseded below).
+K2PACK=sherpa-onnx-pocket-tts-2026-01-26
+KEVIN=https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/main
+KEVIN_LANG=english_2026-04           # the bundle whose npy the patch wants
+PRECISION=${PRECISION:-int8}         # int8 | fp32 for the LM graphs
 TTS_VOICES=https://huggingface.co/kyutai/tts-voices/resolve/main   # ungated
 
 # Preset voices -> upstream paths (kyutai.org/pocket-tts voice list). Names
-# must stay in sync with TtsVoice.pocketRefs in lib/tts_voices.dart.
+# must stay in sync with TtsVoice.pocketRefs in lib/src/speech/tts_voices.dart
+# and pocketRoster in kokoro_voices.dart.
 declare -A REFS=(
   [jane]=vctk/p339_023_enhanced.wav                 # f, conversation
   [anna]=vctk/p228_023_enhanced.wav                 # f, conversation
@@ -42,57 +56,91 @@ cd "$(dirname "$0")/.."
 
 mkdir -p "$(dirname "$STAGE")"
 
-# 1. Model files: the exported ONNX set + the CC-BY-4.0 licence text.
-if [ ! -f "$STAGE/lm_main.onnx" ]; then
+# 1. k2-fsa export: tokenizer JSONs, LICENSE, and the graph set we overwrite.
+if [ ! -f "$STAGE/vocab.json" ]; then
   rm -rf "$STAGE"  # fresh: mv must land the extracted dir AT $STAGE, not in it
-  (cd "$(dirname "$STAGE")" && curl -sfL -O "$K2FSA_TTS/$PACK.tar.bz2" &&
-    tar xjf "$PACK.tar.bz2" && rm "$PACK.tar.bz2" &&
-    mv "$PACK" "$(basename "$STAGE")")
+  (cd "$(dirname "$STAGE")" && curl -sfL -O "$K2FSA_TTS/$K2PACK.tar.bz2" &&
+    tar xjf "$K2PACK.tar.bz2" && rm "$K2PACK.tar.bz2" &&
+    mv "$K2PACK" "$(basename "$STAGE")")
 fi
 mkdir -p "$STAGE/voices"
 rm -rf "$STAGE/test_wavs"   # k2-fsa's samples: our curated voices/ replace them
 rm -f "$STAGE/README.md"    # k2-fsa's two-paragraph note; NOTICE replaces it
+
+# 2. v3 graphs: KevinAHM's english_2026-04 bundle, renamed to the k2-fsa
+#    file names sherpa-onnx (and our TtsSpec) read. Wipe any v2 graphs in
+#    a re-staged directory first: fetch() below skips files that exist,
+#    and a stale v2 lm_main.onnx must not shadow the new bundle.
+rm -f "$STAGE/lm_main.onnx" "$STAGE/lm_flow.onnx" "$STAGE/decoder.onnx" \
+      "$STAGE/encoder.onnx" "$STAGE/text_conditioner.onnx" \
+      "$STAGE"/*.int8.onnx "$STAGE"/pack-v*.ok
+fetch() { # fetch <url> <dest-name>
+  [ -s "$STAGE/$2" ] && return
+  curl -sfL -o "$STAGE/$2.part" "$1" && mv "$STAGE/$2.part" "$STAGE/$2"
+}
+fetch "$KEVIN/onnx/$KEVIN_LANG/flow_lm_main_$PRECISION.onnx"   lm_main.onnx
+fetch "$KEVIN/onnx/$KEVIN_LANG/flow_lm_flow_$PRECISION.onnx"   lm_flow.onnx
+fetch "$KEVIN/onnx/$KEVIN_LANG/mimi_decoder.onnx"              decoder.onnx
+fetch "$KEVIN/onnx/$KEVIN_LANG/mimi_encoder.onnx"              encoder.onnx
+fetch "$KEVIN/onnx/$KEVIN_LANG/text_conditioner.onnx"          text_conditioner.onnx
+fetch "$KEVIN/onnx/$KEVIN_LANG/bos_before_voice.npy"           bos_before_voice.npy
+rm -f "$STAGE"/*.int8.onnx   # the 2026-01 graphs: superseded by the bundle
 for f in lm_flow.onnx lm_main.onnx encoder.onnx decoder.onnx \
-  text_conditioner.onnx vocab.json token_scores.json LICENSE; do
+  text_conditioner.onnx bos_before_voice.npy vocab.json token_scores.json LICENSE; do
   [ -s "$STAGE/$f" ] || { echo "missing $STAGE/$f" >&2; exit 1; }
 done
 
-# 2. Reference voices (mono PCM16, 10-13 s; sherpa resamples to 24 kHz and
-#    caps the prompt at 10 s itself, so upstream rates are fine).
+# 3. Reference voices (mono PCM16/PCM_F32, 10-13 s; sherpa resamples to
+#    24 kHz and caps the prompt at 10 s itself, so upstream rates are fine).
 for v in "${ORDER[@]}"; do
   [ -s "$STAGE/voices/$v.wav" ] ||
     curl -sfL -o "$STAGE/voices/$v.wav" "$TTS_VOICES/${REFS[$v]}"
 done
 
-# 3. Attribution note for the mirrored files (license: CC-BY-4.0, shipped
+# 4. Attribution note for the mirrored files (license: CC-BY-4.0, shipped
 #    verbatim as LICENSE; this records provenance for the onnx export step).
 cat > "$STAGE/NOTICE" <<EOF
-pocket-tts pack (v2, fp32 graphs)
+pocket-tts pack (v3, $PRECISION LM/flow graphs + learned BOS-before-voice)
   model:  kyutai/pocket-tts (CC-BY-4.0, https://huggingface.co/kyutai/pocket-tts)
-          exported to ONNX (fp32) by KevinAHM/pocket-tts-onnx-export and
-          repackaged on the k2-fsa/sherpa-onnx 'tts-models' releases as
-          $PACK
+          bundle '$KEVIN_LANG' (checkpoint english_2026-04) exported to ONNX by
+          KevinAHM/pocket-tts-onnx (https://huggingface.co/KevinAHM/pocket-tts-onnx)
+          graphs renamed from flow_lm_main_$PRECISION/flow_lm_flow_$PRECISION/
+          mimi_decoder/mimi_encoder/text_conditioner to the sherpa-onnx names
+  npy:    bos_before_voice.npy = flow_lm.bos_before_voice of the same
+          checkpoint; consumed by our patched sherpa-onnx v1.13.8 (see
+          tool/sherpa-bos/) — with it, the voice prompt is conditioned as
+          [BOS] + voice (kyutai FlowLM.VoicePrompt) and the cold-start
+          growl documented in docs/pocket-head-upstream-issue.md is gone
+  tokens: vocab.json/token_scores.json from the k2-fsa re-host
+          ($K2PACK) of the original export; tokenizer.model is byte-
+          identical between the checkpoints' repos, so they remain valid
   voices: reference wavs from https://huggingface.co/kyutai/tts-voices
           (jane -> vctk/p339, anna -> vctk/p228, jean -> ears/p010,
           michael -> vctk/p360, alba -> alba-mackenna/casual,
           bill_boerst -> voice-zero/bill_boerst)
 EOF
 
-# 4. Sentinel: bump the name when the pack layout changes — the app's
-#    presence check keys on this file (see lib/tts_voices.dart). v1 was the
-#    int8 graph set; v2 switches lm/flow/decoder to the fp32 export (the
-#    unpacker clears the old directory on marker-bump re-downloads).
-touch "$STAGE/pack-v2.ok"
+# 5. Sentinel: bump the name when the pack layout changes — the app's
+#    presence check keys on this file (see lib/src/models/model_unpack.dart).
+#    v2 was the fp32 2026-01 graphs; v3 swaps in the english_2026-04 bundle
+#    + bos_before_voice.npy (the unpacker clears the old directory on
+#    marker-bump re-downloads). THE PAIRING RULE: Dart flips the ritual off
+#    when the npy exists, and the native side must actually feed it — a v3
+#    pack on an UNPATCHED runtime re-opens the growl (worse: the prefix that
+#    used to absorb it is gone). The patched .so therefore ships in the same
+#    APK as this pack: tool/sherpa-bos/README.md is the build-and-vendor
+#    note, and the round-trip bench's contains('hello') leg is the tripwire.
+touch "$STAGE/pack-v3.ok"
 
-# 5. Zip with one top-level dir (stripped on unpack, see model_unpack.dart):
+# 6. Zip with one top-level dir (stripped on unpack, see model_unpack.dart):
 #    the app's streaming zip path keeps phone RAM flat during unpack.
-(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v2.zip && zip -qry9 \
-  pocket-tts-v2.zip "$(basename "$STAGE")")
-echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v2.zip" | cut -f1)"
+(cd "$(dirname "$STAGE")" && rm -f pocket-tts-v3.zip && zip -qry9 \
+  pocket-tts-v3.zip "$(basename "$STAGE")")
+echo "pack: $(du -h "$(dirname "$STAGE")/pocket-tts-v3.zip" | cut -f1)"
 
-# 6. Publish alongside the ASR/TTS packs.
+# 7. Publish alongside the ASR/TTS packs.
 if [ "${1:-}" = upload ]; then
-  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v2.zip" \
+  gh release upload models-v1 "$(dirname "$STAGE")/pocket-tts-v3.zip" \
     --clobber -R "$REPO"
   echo "uploaded to $REPO releases (tag models-v1)"
 fi
