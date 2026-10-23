@@ -1,0 +1,41 @@
+{
+  "seed": 1787964418,
+  "actions": [
+    "compact",
+    "stubFinish",
+    "stubEmit",
+    "stubFinish",
+    "harnessFlip",
+    "faultDelay",
+    "stubFinish",
+    "stubEmit",
+    "prompt",
+    "interrupt",
+    "newSession",
+    "compact",
+    "switchTo",
+    "stubEmit",
+    "tick",
+    "prompt",
+    "stubEmit",
+    "prompt",
+    "stubFinish",
+    "stubCrash",
+    "modelPick",
+    "interrupt"
+  ],
+  "min": [
+    "faultDelay",
+    "stubFinish",
+    "stubEmit",
+    "prompt",
+    "interrupt",
+    "newSession",
+    "compact",
+    "switchTo",
+    "stubEmit",
+    "tick",
+    "prompt"
+  ],
+  "note": "heard mail re-owed: 945145bb-a312-4dc4-8b14-b42a8d6b318f still reports 14 after its ear drained and acked every frame"
+}

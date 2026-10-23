@@ -1,0 +1,36 @@
+{
+  "seed": 1787964392,
+  "actions": [
+    "faultDelay",
+    "stubEmit",
+    "prompt",
+    "faultCut",
+    "stubEmit",
+    "tick",
+    "prompt",
+    "modelPick",
+    "modelPick",
+    "sendFile",
+    "prompt",
+    "faultReorder",
+    "stubEmit",
+    "prompt",
+    "stubFinish",
+    "prompt",
+    "prompt",
+    "stubEmit",
+    "tick",
+    "modelPick",
+    "compact",
+    "faultCut"
+  ],
+  "min": [
+    "prompt",
+    "stubEmit",
+    "tick",
+    "modelPick",
+    "compact",
+    "faultCut"
+  ],
+  "note": "heard mail re-owed: cfeab2f0-bd73-401f-bb12-40625e02b591 still reports 4 after its ear drained and acked every frame"
+}

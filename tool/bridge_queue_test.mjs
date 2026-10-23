@@ -1902,3 +1902,52 @@ test('+310: command receipts and the turn floor survive a restart',
   } finally { await stopBridge(proc); }
 });
 
+
+// +332 (Tim, 'we should be able to create a new session whenever we
+// want'): /seat fresh:true is a record swap like every other move — a
+// live turn being left BACKGROUNDS into its own record instead of
+// being reset away. The && !fresh veto was the phone hostage: one busy
+// conversation held the whole app from starting another.
+const PORT34 = PORT1 + 44;
+test('+332: a fresh seat mid-turn backgrounds the turn being left',
+  async () => {
+    const stubLog = join(mkdtempSync(join(tmpdir(), 'bridge-qlog-')),
+      'stub.log');
+    const proc = startBridge(stubLog, PORT34);
+    try {
+      await up(PORT34);
+      // A is born through the seat's own name, mid-answer.
+      const a = await say(PORT34, 'creation guard gone');
+      let uuidA = null;
+      await until('A open and named', async () => {
+        const h = await health(PORT34);
+        uuidA = h.turnSid;
+        return h.turnOpen === true && h.turnSid === (h.sessions[0]?.sid);
+      });
+      // The phone's creation: /seat with fresh:true, no name spoken.
+      const seat = await call(PORT34, `/seat?token=${TOKEN}`,
+        { body: JSON.stringify({ fresh: true }), method: 'POST' });
+      const j = JSON.parse(seat.text);
+      assert.equal(j.ok, true, 'the creation landed mid-turn, no refusal');
+      const uuidN = j.sessionId;
+      assert.match(uuidN, /^[0-9a-f-]{36}$/, 'the fresh tab is born named');
+      assert.notEqual(uuidN, uuidA, 'a new record, not the old one scrubbed');
+      const bg = await health(PORT34);
+      const rowA = bg.sessions.find((r) => r.sid === uuidA);
+      assert.ok(rowA?.turnOpen, 'the answer being left lives on, backgrounded');
+      assert.notEqual(bg.sessionId, uuidA, 'the seat really moved');
+      // The backgrounded turn still closes on its OWN terms: A's done
+      // arrives on A's stream and its row goes honest-idle.
+      await until('A closes itself, unheard', async () =>
+        sseEvents(a.text).some((e) => e.ev === 'done') &&
+        !(await health(PORT34)).sessions.find((r) => r.sid === uuidA)
+          ?.turnOpen);
+      // And the fresh conversation takes a word at once — no queue
+      // behind the stranger's ghost, no dead child to respawn around.
+      const n = await say(PORT34, 'first words on the new tab');
+      assert.ok(!n.text.includes('"name":"queued"'),
+        'a fresh seat queued behind the turn it backgrounded');
+      await until('the new tab answers', async () =>
+        sseEvents(n.text).some((e) => e.ev === 'done'));
+    } finally { await stopBridge(proc); }
+  });

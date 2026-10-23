@@ -1,0 +1,33 @@
+{
+  "seed": 1787964411,
+  "actions": [
+    "dropConnection",
+    "prompt",
+    "stubFinish",
+    "faultDrop",
+    "stubEmit",
+    "reconnect",
+    "stubEmit",
+    "reconnect",
+    "stubFinish",
+    "stubEmit",
+    "prompt",
+    "stubEmit",
+    "stubEmit",
+    "faultDrop",
+    "faultCut",
+    "faultReorder",
+    "faultDelay",
+    "stubEmit",
+    "stubFinish",
+    "prompt",
+    "modelPick",
+    "stubEmit"
+  ],
+  "min": [
+    "faultReorder",
+    "faultDelay",
+    "prompt"
+  ],
+  "note": "turn 1792789388963 reopened in aa3ca615-2a6e-441e-8e74-741d976d24db"
+}

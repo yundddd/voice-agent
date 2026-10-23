@@ -326,9 +326,11 @@ class _AssistantScreenState extends State<AssistantScreen>
     _slideOut(a, target);
   }
 
-  /// A pill tap: jump the seat to that tab. A refusal (mid-turn, a
-  /// bridge too old, the wire down) surfaces as a one-line snackbar —
-  /// the channel simply stayed where it was, which IS the truth.
+  /// A pill tap: jump the seat to that tab. A refusal (a prompt parked
+  /// with no open turn, owed mail behind a wipe (+332: never mere
+  /// busyness), a bridge too old, the wire down) surfaces as a one-line
+  /// snackbar — the channel simply stayed where it was, which IS the
+  /// truth.
   /// A pill in the bar's session strip: the harness glyph, the folder
   /// it works in (its label), and an ✕ that FORGETS the tab (and its
   /// thread — the replace law; see removeSessionTab). The pill wears

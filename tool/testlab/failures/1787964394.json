@@ -1,0 +1,33 @@
+{
+  "seed": 1787964394,
+  "actions": [
+    "stubFinish",
+    "stubFinish",
+    "stubEmit",
+    "stubEmit",
+    "reconnect",
+    "switchTo",
+    "faultDup",
+    "stubFinish",
+    "stubEmit",
+    "tick",
+    "switchTo",
+    "stubEmit",
+    "stubEmit",
+    "faultDelay",
+    "stubFinish",
+    "prompt",
+    "stubFinish",
+    "switchTo",
+    "stubEmit",
+    "tick",
+    "stubEmit",
+    "switchTo"
+  ],
+  "min": [
+    "faultDup",
+    "faultDelay",
+    "prompt"
+  ],
+  "note": "turn 1792789341301 reopened in 5478d7a5-7f5e-47d3-a9a2-fc8c9ca41fca"
+}

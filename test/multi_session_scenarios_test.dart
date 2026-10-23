@@ -89,9 +89,9 @@ void main() {
       return c;
     }
 
-    // A creation mid-turn refuses by law (the +259 shape), so walks
-    // that background a live turn make BOTH tabs while all is idle
-    // and switch, which backgrounds instead of refusing.
+    // A creation mid-turn backgrounds (the +332 shape — the +259
+    // refusal is retired); walks still make BOTH tabs while all is
+    // idle, so the scripted bridge facts stay simple.
 
     test('the sleep tape, end to end: two conversations, receipts at '
         'home, the report speaks when you return', () async {

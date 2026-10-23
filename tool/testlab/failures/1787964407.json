@@ -1,0 +1,36 @@
+{
+  "seed": 1787964407,
+  "actions": [
+    "stubEmit",
+    "stubEmit",
+    "stubEmit",
+    "compact",
+    "interrupt",
+    "stubEmit",
+    "stubFinish",
+    "switchTo",
+    "stubEmit",
+    "modelPick",
+    "prompt",
+    "stubCrash",
+    "switchTo",
+    "switchTo",
+    "stubEmit",
+    "faultReorder",
+    "stubEmit",
+    "stubEmit",
+    "stubFinish",
+    "stubFinish",
+    "reconnect",
+    "switchTo"
+  ],
+  "min": [
+    "prompt",
+    "faultReorder",
+    "stubEmit",
+    "stubEmit",
+    "stubFinish",
+    "stubFinish"
+  ],
+  "note": "turn 1792789368106 closed twice in 21ba27a9-db90-4b3f-92a5-952a239a30a0"
+}

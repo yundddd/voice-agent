@@ -3221,8 +3221,11 @@ const server = http.createServer((req, res) => {
       // conversation id comes from the CALLER, not from the pointer —
       // and it WRITES the pointer, so a bridge restart wakes on the
       // tab that was seated last, exactly as +223 made a folder a
-      // thread. fresh:true means: sit here, but the conversation
-      // starts blank (the /new law at a chosen destination); an
+      // thread. fresh:true means: sit here, and THIS conversation
+      // starts blank — +332: the blankness belongs to the
+      // DESTINATION; a live turn being left backgrounds like it does
+      // for any named move (the /new law at a chosen destination died
+      // with the phone-hostage shape it created); an
       // explicit sessionId means: sit here and RESUME (or adopt) this
       // conversation even where a pointer says otherwise. Missing
       // fields mean: keep the current harness/dir, read the pointer.
@@ -3271,8 +3274,17 @@ const server = http.createServer((req, res) => {
         // seat's new harness spawns its own child only on the NEXT
         // turn, and the opencode bus path never touches `child` at
         // all), so nothing about backgrounding changes shape when
-        // tabs differ. fresh:true still means 'end this
-        // conversation' — that verb's whole word is the reset.
+        // tabs differ. +332 retired fresh's veto here: the /new verb
+        // (the chip's named /reset, the /dir move, the /harness flip)
+        // keeps the kill in ITS hand; /seat's fresh only mints blank.
+        // +332 (Tim, 'we should be able to create a new session
+        // whenever we want'): the && !fresh clause is gone. A creation
+        // is a record swap like every other seat move — a live turn
+        // being left BEGINS in THEIR record, and the reply it owes
+        // is ADDRESSED to it (+331's say gate), so a fresh destination
+        // names the DESTINATION blank, not the departure a kill. The
+        // field shape this clause vetoed: an agent mid-turn held the
+        // whole phone hostage — no new conversation until it finished.
         // +257: /seat is a RECORD SWAP, not a mutation of one shared
         // conversation. The conversation being left keeps exactly what
         // the verb says it keeps (backgroundable turns live ON IN
@@ -3296,11 +3308,15 @@ const server = http.createServer((req, res) => {
         // (bgTools) — not only while its turn streams. The debt's
         // 'finished' receipt then still arrives, into ITS backlog,
         // for the phone to pay when the user comes home.
-        const backgroundable =
-          (focus.turnOpen || focus.detached.size > 0 || focus.agentTasks.size > 0 ||
-           focus.bgTools.size > 0) &&
-          !fresh;
-        if (!backgroundable) resetConversation(); // ends the conversation being left
+        const liveWork =
+          focus.turnOpen || focus.detached.size > 0 || focus.agentTasks.size > 0 ||
+          focus.bgTools.size > 0;
+        // A conversation with nothing live is ended by the move exactly
+        // as a plain mid-idle switch ends it (+330's lab law) — under
+        // +332 that shape no longer depends on fresh: nothing alive is
+        // at risk, and the destination's blankness is minted, not paid
+        // for with the old record's corpse.
+        if (!liveWork) resetConversation(); // ends the conversation being left
         const eraFlip = to !== focus.harness;
         if (eraFlip) noteHarnessEra(to); // the era timeline spans the bridge, not one seat
         // +312: no save — the record already IS the memory.

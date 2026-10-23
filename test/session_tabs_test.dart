@@ -807,11 +807,11 @@ void main() {
       await a.createSession(harness: 'opencode', dir: '/proj-x');
       await a.createSession(harness: 'opencode', dir: '/proj-y');
       // +256: the destination gets NAMED first (one turn, then the
-      // /health records the id onto the tab). A never-spoken tab is a
-      // FRESH seat — its move resets, and a mid-turn swipe onto it
-      // refuses by law (see 'the unnamed destination is a reset'
-      // walk). The backgrounding law is about moving between two
-      // conversations that exist.
+      // /health records the id onto the tab) — the positive walks are
+      // about moving between two conversations that exist. A
+      // never-spoken tab is a FRESH seat too: since +332 a mid-turn
+      // swipe onto it backgrounds exactly like this one (see
+      // 'the unnamed destination no longer KILLS').
       harness.healthState = {...harness.healthState!, 'sessionId': 'ses-Y'};
       await a.setBridgeDir('/proj-y'); // any awaited refresh path names it
       await settle();
@@ -1370,12 +1370,16 @@ void main() {
     });
 
     test(
-      "+259: a creation that WOULD inherit a command refuses instead",
+      "+332: a creation mid-turn BACKGROUNDS — the fresh tab never "
+      "inherits the old work line, and nothing had to be refused",
       () async {
-        // The other half of the field report: opening a new session while
-        // the old one chews must not print the old work line on the new
-        // tab. Creation RESTS the seat (+248), so mid-command it refuses
-        // with words — the inheritance shape never lands.
+        // The other half of the +259 field report: opening a new session
+        // while the old one chews must not print the old work line on
+        // the new tab. The band cache (+266) was always the real guard —
+        // the refusal (+248) was the same law enforced by blocking the
+        // door. +332 removes the block: creation mid-turn rides the
+        // record swap exactly like a switch (+246), the old turn lives
+        // on in its own record, and the fresh tab wears its own peace.
         await a.createSession(harness: 'opencode', dir: '/proj-x');
         unawaited(a.runQuickCommand('build in X', bubble: 'build in X'));
         await settle();
@@ -1388,13 +1392,30 @@ void main() {
         );
         await settle();
         expect(a.view.status, 'Bash flutter analyze…');
-        final err = await a.createSession(harness: 'opencode', dir: '/proj-y');
+        final before = harness.seatCalls.length;
         expect(
-          err,
-          contains('mid-turn'),
-          reason: 'the refusal IS the guard: no fresh tab wears it',
+          await a.createSession(harness: 'opencode', dir: '/proj-y'),
+          isNull,
+          reason: 'mid-turn no longer rests a creation — the turn backgrounds',
         );
-        expect(a.view.status, 'Bash flutter analyze…');
+        expect(harness.seatCalls.length, before + 1,
+            reason: 'the /seat verb fired — no app-side veto');
+        expect(harness.seatCalls.last['fresh'], isTrue);
+        expect(a.view.tabs, hasLength(2));
+        expect(a.view.tabIndex, 1);
+        // The screen's slide hand-off (what the real app does at the
+        // flip, off-screen): the leaving tab caches its work line and
+        // the landing paints the destination's own rest line.
+        a.settleBandOnLanding(0, 1);
+        expect(
+          a.view.status,
+          isNot('Bash flutter analyze…'),
+          reason: 'the fresh tab wears ITS OWN line, not the departed work',
+        );
+        a.settleBandOnLanding(1, 0); // back: the old line resumes, cached
+        expect(a.view.status, 'Bash flutter analyze…',
+            reason: 'the backgrounded work still speaks its own tab\'s band');
+        a.settleBandOnLanding(0, 1);
         harness.emit(BridgeEvent.forTest('done'));
         harness.finishView();
         await settle();
@@ -1976,15 +1997,20 @@ void main() {
     });
 
     test(
-      '+256: the unnamed destination is a reset — a mid-turn swipe '
-      'onto a never-spoken tab REFUSES with words, not a silent kill',
+      '+256/+332: the unnamed destination no longer KILLS — a mid-turn '
+      'swipe onto a never-spoken tab backgrounds the live answer',
       () async {
         // The xray tape's opening act: the first swipe reset the
         // bridge's conversation under a 'free to move' verdict and
-        // SIGTERM'd the answering turn. A tab that never spoke has no
-        // id; seating it sends fresh:true; fresh ALWAYS resets; so the
-        // rest law reads the reset law. Idle moves stay free — the
-        // refusal is exactly the shape +248 already wrote for fresh.
+        // SIGTERM'd the answering turn — fresh ALWAYS reset, so the
+        // guard refused the swipe instead. +332 closes the hole at the
+        // root: the bridge backgrounds a live turn for a fresh seat
+        // exactly as for a named one (+246), so the swipe moves, the
+        // answer lives in its own record, and the phone reattaches to
+        // mail it never asked to stop reading. The RESET now only
+        // survives over a fully resting conversation — and there the
+        // +256 guard still bites for the BACKLOG (see 'unheard
+        // messages rest the seat').
         await a.createSession(harness: 'opencode', dir: '/proj-x');
         await a.createSession(
           harness: 'opencode',
@@ -2003,19 +2029,21 @@ void main() {
         final before = harness.seatCalls.length;
         expect(
           await a.switchSession(1),
-          'the harness is mid-turn — stop it before switching sessions',
-          reason: 'an unnamed destination resets; resets rest mid-turn',
+          isNull,
+          reason: 'a live turn is backgrounding material, not a veto',
         );
-        expect(harness.seatCalls.length, before, reason: 'no wire verb fired');
-        expect(a.view.tabIndex, 0, reason: 'stayed put, honestly');
-        // The turn closes; the same move is now free (resetting nothing).
+        expect(harness.seatCalls.length, before + 1);
+        expect(harness.seatCalls.last['fresh'], isTrue,
+            reason: 'the never-spoken tab still seats fresh — the kill is '
+            'what changed, not the name');
+        expect(a.view.tabIndex, 1);
         harness.emit(BridgeEvent.forTest('done'));
         harness.finishView();
         harness.healthState = Map.of({...harness.healthState!})
           ..remove('turnOpen'); // the real bridge closes its flag with the turn
         await settle();
-        expect(await a.switchSession(1), isNull);
-        expect(a.view.tabIndex, 1);
+        expect(await a.switchSession(0), isNull); // home to the live thread
+        expect(a.view.tabIndex, 0);
       },
     );
 

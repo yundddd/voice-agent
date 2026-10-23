@@ -366,8 +366,14 @@ switches spring the thread back with not a swap. Each tab is `(harness,
 folder, model, sessions…)` in `bridge_prefs.json`; switching calls
 `POST /seat {"sessionId":…}` which resumes that exact conversation
 (and rewrites the project's pointer, so a bridge restart wakes on the
-tab that was seated last). The switch RESTS while a turn is open —
-like the harness row — and the refusal says so. The `/new` chip now
+tab that was seated last). A live turn never RESTS a move: switches
+and creations (since +332, even onto a never-spoken tab) BACKGROUND
+it — the conversation being left keeps its child, its queue and its
+backlog in its own record, and its reply stays addressed to it
+(+246/+257/+331). Only the shapes no backgrounding can carry REST: a
+prompt parked with no open turn to flush it, and unheard mail behind a
+WIPE (a fresh seat over a fully resting conversation, a doomed tab's
+✕, the `/new` chip). The refusal says so. The `/new` chip now
 REPLACES THE CURRENT TAB: same harness, model and folder (unless the
 Bridge rows steered them meanwhile — those rows update the tab too),
 a blank conversation, and only that tab's bubbles leave the log;

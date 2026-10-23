@@ -1,0 +1,32 @@
+{
+  "seed": 1787856713,
+  "actions": [
+    "stubEmit",
+    "dropConnection",
+    "newSession",
+    "stubEmit",
+    "switchTo",
+    "faultDrop",
+    "sendFile",
+    "prompt",
+    "stubEmit",
+    "compact",
+    "modelPick",
+    "reconnect",
+    "faultDrop",
+    "tick",
+    "stubEmit",
+    "sendFile",
+    "stubCrash",
+    "stubEmit",
+    "stubEmit",
+    "stubFinish",
+    "stubEmit",
+    "stubEmit"
+  ],
+  "min": [
+    "faultDrop",
+    "sendFile"
+  ],
+  "note": "/send named c-2 (93dea34b-20fc-40e0-959d-8033462a46bd): no file frame in its chat; response named 93dea34b-20fc-40e0-959d-8033462a46bd"
+}

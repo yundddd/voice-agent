@@ -1277,29 +1277,32 @@ class VoiceAssistant extends ChangeNotifier {
     }
   }
 
-  /// The seat's rest law (+230, extended by the unseen-message rule):
-  /// no seat VERB (create, switch, boot reconcile) may fire while the
-  /// bridge is mid-turn, mid-queue, or — the new clause — holding a
-  /// BACKLOG of unheard frames (missed > 0). Every seat move runs
-  /// resetConversation, which DROPS that backlog: a swipe past the
-  /// newest tab must not silently eat the answer the phone has not
-  /// read yet, on any tab. The refusal is self-healing: it arms the
-  /// reattach chain NOW (the same +168 mail-fetch, honest dark), so
-  /// the replay lands within a round trip and the next swipe moves.
-  /// Null = free to move; a string is the reason, in words.
-  /// The seat's rest law, shared by switchSession and createSession —
-  /// with ONE difference, decided by what the wire does next:
-  /// [+resets] says the caller's /seat will run resetConversation
-  /// (fresh:true always; a harness flip did until +248's reading of
-  /// its own log line), and then mid-turn and owed backlog are both
-  /// genuinely at risk — refuse. When the move BACKGROUNDS instead
-  /// (+246/+248: turnOpen && !fresh on the bridge side), nothing is
-  /// at risk except the one shape streaming cannot carry: a prompt
-  /// parked with no open turn to flush it.
+  /// The seat's rest law (+230; retuned by +324, +330 — and by +332,
+  /// Tim's 'we should be able to create a new session whenever we
+  /// want'). /seat is a RECORD SWAP: a live turn being left BACKGROUNDS
+  /// (+246/+248) whether the destination is named or fresh — the
+  /// conversation keeps its child, its queue and its backlog IN ITS OWN
+  /// RECORD, and its reply stays ADDRESSED to it (+331's say gate), so
+  /// mid-turn rests NOTHING. What still rests a seat VERB:
+  /// a prompt parked with no open turn to flush it (no backgrounding
+  /// can carry it — whatever the bridge resets would drop it), and —
+  /// only where a WIPE of the conversation being left actually runs
+  /// ([resets]: a fresh seat over a fully resting one, or a doomed
+  /// tab's close) — an unheard BACKLOG (missed > 0) that wipe would
+  /// silently eat. The refusal is self-healing: it arms the reattach
+  /// chain NOW (the same +168 mail-fetch, honest dark), so the replay
+  /// lands within a round trip and the next press moves. [doomed] is
+  /// the death shape (+323): the doomed row's own live turn or parked
+  /// prompt is a deletion's silent eat, so there the old strict verdict
+  /// stands. Null = free to move; a string is the reason, in words.
   /// Every verdict, free or refused, journalled with its inputs
   /// (+247) so the field's 'I still see the refusal' reads the exact
   /// clause from /applogs.
-  String? _seatRest(Map<String, Object>? h, {bool resets = false}) {
+  String? _seatRest(
+    Map<String, Object>? h, {
+    bool resets = false,
+    bool doomed = false,
+  }) {
     if (h == null) return null; // unreachable: the verb's own error speaks
     final turnOpen = h['turnOpen'] == true;
     final queued = h['queued'] == true;
@@ -1312,17 +1315,23 @@ class VoiceAssistant extends ChangeNotifier {
       return why;
     }
 
-    // A parked prompt always rests a RESET; mid-turn the queued flush
-    // rides the backgrounding (it belongs to the conversation being
-    // backgrounded, and its own turn is still there to flush it), so
-    // only the no-turn shape refuses.
-    if (queued && !(turnOpen && !resets)) {
-      return rest('a prompt is queued — stop it before switching sessions');
-    }
-    if (resets && (turnOpen || queued)) {
+    // +332: mid-turn rests NOTHING for a move or a creation — the
+    // flush and the turn ride the backgrounding together. The doomed
+    // row keeps +323's strict shape: a death does not background, it
+    // discards, so the doomed thread's own live turn or parked prompt
+    // refuses its ✕.
+    if (doomed && (turnOpen || queued)) {
       return rest(
         'the harness is mid-turn — stop it before switching sessions',
       );
+    }
+    // A parked prompt rests a move only with NO open turn to flush it:
+    // mid-turn the queue belongs to the conversation being backgrounded,
+    // and its own turn is still there to flush it (+332 extended this
+    // to creation — the bridge backgrounds a live turn fresh:true or
+    // not, so the old resets-and-queued asymmetry is gone).
+    if (queued && !turnOpen) {
+      return rest('a prompt is queued — stop it before switching sessions');
     }
     // +324: only a RESET eats the backlog — the law that refused a
     // plain seat move was a single-conversation relic. Since +257
@@ -1330,10 +1339,12 @@ class VoiceAssistant extends ChangeNotifier {
     // parks the owed mail where it lives, and the return's /attach
     // replays it (+298's every-tab-keeps-its-own-face). Refusing the
     // swipe showed a banner that blocked navigation to protect mail
-    // that was never at risk. A wipe (creation, fresh, a doomed
-    // tab's close) does kill it — THAT rests. Drain still starts on
-    // the spot either way.
-    if (missed && resets) {
+    // that was never at risk. A wipe does kill it — THAT rests: a
+    // fresh seat over a FULLY RESTING conversation (+332: mid-turn,
+    // the wipe never runs — the record lives on with its mail, so the
+    // refusal would protect nothing), or a doomed tab's close. Drain
+    // still starts on the spot either way.
+    if (missed && resets && (doomed || !turnOpen)) {
       if (!_bridgeBusy &&
           !_turn.backgrounded &&
           !_benchCapturing &&
@@ -1359,9 +1370,11 @@ class VoiceAssistant extends ChangeNotifier {
   }) async {
     final g = _gateway;
     if (g == null) return 'bridge not configured — set url and token';
-    // The rest law applies to creation too: /seat resets, and a
-    // reset drops the backlog — unseen messages leave with the seat
-    // that owed them.
+    // +332: creation mid-turn BACKGROUNDS — the turn being left keeps
+    // its life in its own record and its reply stays addressed to it.
+    // It still consults the rest law, because a fresh seat over a
+    // FULLY RESTING one runs the reset, and that wipe drops the
+    // backlog — unseen messages leave with the seat that owed them.
     final rest = _seatRest(await bridgeHealth(), resets: true);
     if (rest != null) return rest;
     final r = await g.seat(
@@ -1416,9 +1429,11 @@ class VoiceAssistant extends ChangeNotifier {
   }
 
   /// Jump the channel (and the bridge's seat) to tab [index]. A
-  /// mid-turn switch would resetConversation over a live answer, so
-  /// the law matches the harness row's: the switch RESTS while a
-  /// turn (or a queued prompt) is open. Returns the refusal reason.
+  /// mid-turn switch BACKGROUNDS the live answer (+246; +332 took the
+  /// same law onto creation and never-spoken destinations), so the
+  /// switch RESTS only on the shapes a move cannot carry: a prompt
+  /// parked with no open turn, and owed mail behind a destination that
+  /// will wipe. Returns the refusal reason.
   /// [skipRest] is for the death hand-off (removeSessionTab): the
   /// caller has already weighed the rest law against the DOOMED
   /// thread's own row (+323), and the bridge's /seat is a record
@@ -1449,12 +1464,12 @@ class VoiceAssistant extends ChangeNotifier {
     // +246: same harness => the mid-turn move backgrounds rather than
     // resets (see /seat); the rest guard only bites across harnesses.
     // +256 (the xray tape): an UNNAMED destination is a fresh seat —
-    // the verb below sends fresh:true, and fresh always resets — so
-    // the guard must consult the reset law for exactly that shape.
-    // The tape caught the hole: a mid-turn swipe onto a tab that had
-    // never spoken reset the bridge's conversation under a 'free to
-    // move' verdict, SIGTERM'd the answering turn, and the phone
-    // reattached to mail it never asked to stop reading.
+    // the verb below sends fresh:true. +332 retired fresh's power to
+    // end a LIVE turn (it backgrounds like every other move, so the
+    // tape's SIGTERM-under-a-free-to-move hole is closed at the root),
+    // but over a fully resting seat the wipe still runs — so the
+    // guard still consults the reset law for exactly that shape, and
+    // an owed backlog still rests the swipe onto a never-spoken tab.
     final rest = skipRest
         ? null
         : _seatRest(h, resets: tab.currentId == null);
@@ -1793,7 +1808,11 @@ class VoiceAssistant extends ChangeNotifier {
             (e) => MapEntry(e.key, e.value as Object),
           ),
         );
-        final rest = _seatRest(verdict, resets: true);
+        // +332: the death keeps +323's strict shape — a doomed thread's
+        // live turn is not backgrounding material, it is being thrown
+        // away, so doomed:true refuses the mid-turn ✕ even though the
+        // plain seat verbs no longer rest on a turn.
+        final rest = _seatRest(verdict, resets: true, doomed: true);
         if (rest != null) return rest;
       }
     }

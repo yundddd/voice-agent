@@ -1,0 +1,37 @@
+{
+  "seed": 1788247220,
+  "actions": [
+    "dropConnection",
+    "switchTo",
+    "reconnect",
+    "prompt",
+    "stubEmit",
+    "stubEmit",
+    "switchTo",
+    "faultDrop",
+    "stubFinish",
+    "modelPick",
+    "compact",
+    "modelPick",
+    "stubEmit",
+    "tick",
+    "compact",
+    "sendFile",
+    "newSession",
+    "switchTo",
+    "compact",
+    "modelPick",
+    "dropConnection",
+    "faultDrop"
+  ],
+  "min": [
+    "tick",
+    "compact",
+    "sendFile",
+    "newSession",
+    "switchTo",
+    "compact",
+    "modelPick"
+  ],
+  "note": "model default pick left current at claude-sonnet-5-5 (was sonnet)"
+}
