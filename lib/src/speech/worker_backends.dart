@@ -83,19 +83,57 @@ class RealBackends extends WorkerBackends {
     return SherpaAsr(
       sherpa_onnx.OfflineRecognizer(
         sherpa_onnx.OfflineRecognizerConfig(
-          model: sherpa_onnx.OfflineModelConfig(
-            whisper: sherpa_onnx.OfflineWhisperModelConfig(
-              encoder: p.whisperEncoder,
-              decoder: p.whisperDecoder,
-              language: 'en',
-              task: 'transcribe',
+          // Every family is a whole-clip decoder behind the same
+          // create→accept→decode→result path, so the choice is only which
+          // sub-config sherpa reads the files from. Moonshine needs no
+          // language/task: its graph is English-only by construction.
+          model: switch (p.modelType) {
+            // Qwen3's own defaults cap a decode at 128 new tokens — a long
+            // hold comes back cut off mid-sentence — so the budget is raised
+            // well past one; this family decodes whole (see
+            // [ModelPaths.chunksLongClips]) and an 88 s clip came back
+            // complete on these settings. `tokens` stays empty: the tokenizer
+            // directory is this family's vocabulary.
+            'qwen3-asr' => sherpa_onnx.OfflineModelConfig(
+              qwen3Asr: sherpa_onnx.OfflineQwen3AsrModelConfig(
+                convFrontend: p.qwen3ConvFrontend,
+                encoder: p.qwen3Encoder,
+                decoder: p.qwen3Decoder,
+                tokenizer: p.qwen3Tokenizer,
+                maxTotalLen: 4096,
+                maxNewTokens: 2048,
+              ),
+              tokens: '',
+              modelType: 'qwen3-asr',
+              numThreads: 4,
+              debug: false,
+              provider: 'cpu',
             ),
-            tokens: p.whisperTokens,
-            modelType: 'whisper',
-            numThreads: 4,
-            debug: false,
-            provider: 'cpu',
-          ),
+            'moonshine' => sherpa_onnx.OfflineModelConfig(
+              moonshine: sherpa_onnx.OfflineMoonshineModelConfig(
+                encoder: p.moonshineEncoder,
+                mergedDecoder: p.moonshineMergedDecoder,
+              ),
+              tokens: p.tokens,
+              modelType: 'moonshine',
+              numThreads: 4,
+              debug: false,
+              provider: 'cpu',
+            ),
+            _ => sherpa_onnx.OfflineModelConfig(
+              whisper: sherpa_onnx.OfflineWhisperModelConfig(
+                encoder: p.whisperEncoder,
+                decoder: p.whisperDecoder,
+                language: 'en',
+                task: 'transcribe',
+              ),
+              tokens: p.tokens,
+              modelType: 'whisper',
+              numThreads: 4,
+              debug: false,
+              provider: 'cpu',
+            ),
+          },
         ),
       ),
       // Long-clip chunking rides the SAME silero file the endpointer
@@ -103,7 +141,8 @@ class RealBackends extends WorkerBackends {
       // degrades to today's whole-clip decode, minus nothing.
       // maxSpeechDuration mirrors the live endpointer's 20 s: a clip
       // of unbroken talk still cuts inside Whisper's 30 s window.
-      chunkVadModel: p.vadModel,
+      // Qwen3 opts out — see [ModelPaths.chunksLongClips].
+      chunkVadModel: p.chunksLongClips ? p.vadModel : '',
     );
   }
 

@@ -54,7 +54,7 @@ void main() {
     const ModelPaths(
       whisperEncoder: '',
       whisperDecoder: '',
-      whisperTokens: '',
+      tokens: '',
     ), // fakes read no files
     tts: tts,
     onEvent: onEvent,

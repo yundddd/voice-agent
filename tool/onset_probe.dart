@@ -21,7 +21,7 @@ Future<void> main(List<String> args) async {
   final paths = ModelPaths(
     whisperEncoder: '$asrDir/tiny.en-encoder.int8.onnx',
     whisperDecoder: '$asrDir/tiny.en-decoder.int8.onnx',
-    whisperTokens: '$asrDir/tiny.en-tokens.txt',
+    tokens: '$asrDir/tiny.en-tokens.txt',
     vadModel: Directory('models/silero_vad.onnx').absolute.path,
   );
 

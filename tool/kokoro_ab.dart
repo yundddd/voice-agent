@@ -39,7 +39,7 @@ Future<void> main() async {
           '$m/sherpa-onnx-whisper-tiny.en/tiny.en-encoder.int8.onnx',
       whisperDecoder:
           '$m/sherpa-onnx-whisper-tiny.en/tiny.en-decoder.int8.onnx',
-      whisperTokens: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-tokens.txt',
+      tokens: '$m/sherpa-onnx-whisper-tiny.en/tiny.en-tokens.txt',
       vadModel: '$m/silero_vad.onnx',
     ),
   );
