@@ -471,11 +471,22 @@ Future<void> _runWorker(
       sid: q.sid,
       speed: 1.0,
     );
-    // +344: the student tells the journal what it read. One note per
-    // synthesized piece, only for engines with a text front end.
+    // +344: the engine tells the journal what it read. One note per
+    // synthesized piece, only for engines with a text front end. Pocket
+    // rides the same channel (+350): its fed note re-renders the text
+    // through pocketInternalSplit, joining the C++ pass's own sentences
+    // with ' | ' — so the tape shows every seam the listener will hear,
+    // ours between fed notes, the model's inside them.
     final feed = engine.lastFeed;
     if (feed.isNotEmpty) {
-      toParent.send(_Event.note('titl fed: $feed'));
+      final pocket = spec?.engine == 'pocket';
+      toParent.send(
+        _Event.note(
+          pocket
+              ? 'pocket fed: ${pocketInternalSplit(feed).join(' | ')}'
+              : 'titl fed: $feed',
+        ),
+      );
     }
     final isLast = q.i == q.pieces.length - 1;
     var data = samples;
@@ -635,6 +646,18 @@ Future<void> _runWorker(
           final merged = spec.engine == 'pocket'
               ? mergePocketChunks(pieces)
               : pieces;
+          // +350: the split decision lands on the tape BEFORE the first
+          // call renders — pieces into Generate calls with their sizes, so
+          // an unnatural pause can be traced to a boundary WE chose here.
+          if (spec.engine == 'pocket') {
+            toParent.send(
+              _Event.note(
+                'pocket split: ${pieces.length} sentence piece(s) -> '
+                '${merged.length} Generate call(s) '
+                '(${merged.map((c) => '${c.length}ch').join(' + ')})',
+              ),
+            );
+          }
           // One-shot speaker override (style-picker auditions): valid sids
           // ride this call only; the engine keeps its configured speaker.
           final sid =

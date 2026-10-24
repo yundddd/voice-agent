@@ -5240,6 +5240,14 @@ class VoiceAssistant extends ChangeNotifier {
       if (event.note!.startsWith('titl fed: ')) {
         _logDebug(event.note!);
       }
+      // +350: the pocket split tape — our Generate boundaries
+      // ('pocket split:') and each call's fed text with the C++ pass's
+      // own seams marked ' | ' ('pocket fed:'), so an unnatural pause
+      // names its author instead of being argued from ears.
+      if (event.note!.startsWith('pocket split: ') ||
+          event.note!.startsWith('pocket fed: ')) {
+        _logDebug(event.note!);
+      }
       return;
     }
     if (_reply.debugPlaying) {

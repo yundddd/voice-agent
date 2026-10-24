@@ -322,6 +322,143 @@ bool _endsAtBreath(String t, (int, int) word) {
 
 bool _isWs(int c) => c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D;
 
+/// Trace-only mirror of the sentence pass sherpa-onnx v1.13.8 runs INSIDE
+/// every Pocket Generate call (offline-tts-pocket-impl.h::Generate +
+/// text-utils.cc — the vendored version, read straight from upstream):
+///
+/// 1. SplitByPunctuation — flush at EVERY `. ! ?` with NO word-char
+///    anchor (ours has one), so '3.5' fakes a boundary here;
+/// 2. MergeShortSentences — buffer runts until [minChars] codepoints
+///    (default 30, the floor mergePocketChunks matches — which also
+///    repairs the '3.5' fake above). The weld EATS the sentence space:
+///    NeedSpaceBetween sees the left side always ending on a boundary
+///    char, so merged runts feed the model run-together text ('Yes.The
+///    answer'), and the non-BOS ritual welds '.... ' onto sentence one
+///    the same way — spaces are ▁ word-boundary tokens to the tokenizer,
+///    so this is audible, not cosmetic;
+/// 3. SplitLongSentence — cut windows of [maxChars] codepoints at the
+///    boundary nearest the window's END — a space or, note well, ANY of
+///    `, ; :` counts (IsChunkBoundary), so a merged piece over 200 chars
+///    re-splits at a comma near its char-200 line, not its middle: the
+///    same weak-seam shape +342 retired from the bridge, alive in C++.
+///
+/// The tape journals this function's output as the model's own seams (the
+/// ' | ' inside a 'pocket fed:' note), so an unnatural pause can be named
+/// ours (the Generate boundary between fed notes) or C++'s (a seam inside
+/// one). Runes throughout — C++ counts codepoints, not UTF-16 units.
+/// Keep in lockstep with the vendored version, or better, pin C++ to our
+/// decisions instead: max/min_char_in_sentence ride Generate's extra map
+/// (PocketTts.generate). ASCII boundary marks only — the C++ set also
+/// carries CJK variants this app never feeds.
+List<String> pocketInternalSplit(
+  String piece, {
+  int minChars = 30,
+  int maxChars = 200,
+}) {
+  // -- SplitByPunctuation: flush at every . ! ?.
+  final raw = <String>[];
+  final cur = StringBuffer();
+  void flushRaw() {
+    final s = cur.toString().trim();
+    if (s.isNotEmpty) raw.add(s);
+    cur.clear();
+  }
+
+  for (final r in piece.runes) {
+    cur.writeCharCode(r);
+    if (r == 0x2E || r == 0x21 || r == 0x3F) flushRaw();
+  }
+  flushRaw();
+
+  // -- MergeShortSentences: buffer until minChars codepoints.
+  final merged = <String>[];
+  final buf = StringBuffer();
+  var bufLen = 0;
+  for (final s in raw) {
+    if (buf.isNotEmpty && _needSpaceBetween(buf.toString(), s)) {
+      buf.write(' ');
+      bufLen += 1;
+    }
+    buf.write(s);
+    bufLen += s.runes.length;
+    if (bufLen >= minChars) {
+      merged.add(buf.toString().trim());
+      buf.clear();
+      bufLen = 0;
+    }
+  }
+  if (buf.isNotEmpty) merged.add(buf.toString().trim());
+
+  // -- SplitLongSentence: windows of maxChars, cut nearest the end.
+  final out = <String>[];
+  for (final s in merged) {
+    final r = s.runes.toList(growable: false);
+    final n = r.length;
+    if (n <= maxChars) {
+      out.add(s);
+      continue;
+    }
+    var start = 0;
+    while (start < n) {
+      if (n - start <= maxChars) {
+        final tail = _runesToString(r, start, n).trim();
+        if (tail.isNotEmpty) out.add(tail);
+        break;
+      }
+      final end = start + maxChars;
+      var splitPos = end;
+      var found = false;
+      for (var i = end; i > start; --i) {
+        final c = r[i - 1];
+        if (_isSpaceCp(c)) {
+          splitPos = i - 1; // the space itself is dropped
+          found = true;
+          break;
+        }
+        if (_isChunkBoundaryCp(c)) {
+          splitPos = i; // the mark stays with the left piece
+          found = true;
+          break;
+        }
+      }
+      if (!found || splitPos <= start) splitPos = end;
+      final p = _runesToString(r, start, splitPos).trim();
+      if (p.isNotEmpty) out.add(p);
+      start = splitPos;
+      while (start < n && _isSpaceCp(r[start])) {
+        start += 1;
+      }
+    }
+  }
+  return out;
+}
+
+String _runesToString(List<int> r, int start, int end) =>
+    String.fromCharCodes(r.sublist(start, end));
+
+bool _isSpaceCp(int c) =>
+    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D || c == 0x0C || c == 0x0B;
+
+bool _isChunkBoundaryCp(int c) =>
+    c == 0x2E || // .
+    c == 0x21 || // !
+    c == 0x3F || // ?
+    c == 0x2C || // ,
+    c == 0x3B || // ;
+    c == 0x3A; // :
+
+/// text-utils.cc::NeedSpaceBetween for the ASCII cases the pocket pass
+/// sees in this app: no space when either side touches whitespace or a
+/// chunk boundary.
+bool _needSpaceBetween(String left, String right) {
+  if (left.isEmpty || right.isEmpty) return false;
+  final last = left.runes.last;
+  final first = right.runes.first;
+  if (_isSpaceCp(last) || _isSpaceCp(first)) return false;
+  if (_isChunkBoundaryCp(last) || _isChunkBoundaryCp(first)) return false;
+  return true;
+}
+
 /// Pocket-specific chunk merge over [splitForTts] output. Two reasons it
 /// exists, and the second one is why the rules changed:
 /// 1. a Generate call with very few text tokens misbehaves in this model

@@ -469,7 +469,8 @@ class SherpaTts implements TtsBackend {
 /// half retires — only the device-ramp silence lead remains.
 class PocketTts implements TtsBackend {
   @override
-  String get lastFeed => ''; // raw text in, no phoneme front end
+  String get lastFeed => _lastFeed; // the raw characters the model read
+  String _lastFeed = '';
   PocketTts(
     this._tts, {
     required this.refs,
@@ -508,8 +509,13 @@ class PocketTts implements TtsBackend {
       at,
       () => decodeWav(File(refs[at]).readAsBytesSync()),
     );
+    final fed = bosBeforeVoice ? text : '.... $text';
+    // +350: the tape asks what the engine read (lastFeed) — the ritual
+    // prefix rides along so the fed note shows the text C++ actually
+    // sentence-passed.
+    _lastFeed = fed;
     final audio = _tts.generateWithConfig(
-      text: bosBeforeVoice ? text : '.... $text',
+      text: fed,
       config: sherpa_onnx.OfflineTtsGenerationConfig(
         referenceAudio: reference,
         referenceSampleRate: sampleRate,

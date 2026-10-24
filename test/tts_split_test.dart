@@ -283,4 +283,71 @@ void main() {
     final tiny = Float32List.fromList([0.1, 0.2, 0.3]);
     expect(pocketLeadIn(tiny), tiny);
   });
+
+  test('pocketInternalSplit: ordinary prose, first sentence a runt', () {
+    // Even an ordinary two-sentence reply welds when the FIRST sentence
+    // is under 30 codepoints — 'Hello Tim.' buffers, the space is eaten,
+    // and the model reads one run-together sentence. Over 30 for the
+    // first sentence and this ships with its spaces intact.
+    expect(
+      pocketInternalSplit('Hello Tim. NeuTTS nano speaking, generated on device.'),
+      ['Hello Tim.NeuTTS nano speaking, generated on device.'],
+    );
+    final big =
+        'The quick brown fox jumps over the lazy dog. Another sentence here.';
+    expect(pocketInternalSplit(big), [
+      'The quick brown fox jumps over the lazy dog.',
+      'Another sentence here.',
+    ]);
+  });
+
+  test('pocketInternalSplit: the runt floor welds short sentences', () {
+    // min_char_in_sentence 30: 'Yes.' (4) buffers until the buffer passes
+    // 30 codepoints — the C++ twin of mergePocketChunks' runt floor. Note
+    // the C++ quirk the mirror keeps: NeedSpaceBetween sees the LEFT side
+    // always ending on a boundary char, so the weld eats the sentence
+    // space — the model reads run-together text at every C++ merge.
+    expect(
+      pocketInternalSplit('Yes. The answer is forty-two characters long!'),
+      ['Yes.The answer is forty-two characters long!'],
+    );
+  });
+
+  test('pocketInternalSplit: the ritual prefix absorbs into sentence one', () {
+    // '.... Hello Tim. How are...' — SplitByPunctuation flushes at every
+    // dot (no word-char anchor), so the '....' prefix is four raw runts;
+    // MergeShortSentences welds the chain, spaces eaten (see above). The
+    // whole non-BOS fed text reads as one run-together C++ sentence —
+    // exactly what the fed note must show when a pause sounds wrong.
+    expect(
+      pocketInternalSplit('.... Hello Tim. How are you today my friend.'),
+      ['....Hello Tim.How are you today my friend.'],
+    );
+  });
+
+  test('pocketInternalSplit: no word-char anchor, but the merge repairs it', () {
+    // '3.5' fakes a boundary at C++'s anchorless flush (the difference
+    // from OUR splitter) — and the runt merge puts it right back.
+    expect(
+      pocketInternalSplit('It costs 3.5 dollars total, ok.'),
+      ['It costs 3.5 dollars total, ok.'],
+    );
+  });
+
+  test('pocketInternalSplit: a merged piece over 200 re-splits at a comma '
+      'near the window end, not the middle', () {
+    // The +342 weak-seam shape, alive in C++: SplitLongSentence scans
+    // BACK from the 200-codepoint mark, so the comma at codepoint 199
+    // (nearest the end) takes the cut — 199 a's + ',' on the left.
+    final s = '${'a' * 199}, bbbbb';
+    expect(pocketInternalSplit(s), ['${'a' * 199},', 'bbbbb']);
+  });
+
+  test('pocketInternalSplit: markless text cuts at the window line', () {
+    // No space, no boundary anywhere: the 250-char runt rides the window
+    // whole, the tail ships alone (unsplittable-inside-the-floor's C++
+    // cousin).
+    final s = 'a' * 250;
+    expect(pocketInternalSplit(s), ['a' * 200, 'a' * 50]);
+  });
 }
