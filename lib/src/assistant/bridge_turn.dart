@@ -130,6 +130,16 @@ final class BridgeTurnEnv {
     /// (Absent = the single-channel rigs: the +297 suppression then
     /// answers alone, exactly as it shipped.)
     this.routeForeignTool,
+
+    /// The foreign-say ledger's two doors (the missing middle of the
+    /// 10:16 tape): [noteRefusedSay] remembers a say the +274 gate
+    /// refused, [claimRefusedSay] answers once whether that mid was
+    /// refused — the take journals the drain's pickup from it, and the
+    /// backgrounded-work retirement names what a turn closed unheard.
+    /// Absent = the single-channel rigs: the refusal logs by itself,
+    /// exactly as it shipped.
+    this.noteRefusedSay,
+    this.claimRefusedSay,
   });
 
   final InteractionMode Function() mode;
@@ -272,6 +282,11 @@ final class BridgeTurnEnv {
   /// until it isn't.
   final void Function(String sid) noteWorkHome;
   final void Function(BridgeEvent ev, String stepLine)? routeForeignTool;
+
+  /// The foreign-say ledger (see the constructor): what a refusal writes,
+  /// what a take reads. Null = absent ledger, refusal logs alone.
+  final void Function(int mid, String? sid, String preview)? noteRefusedSay;
+  final bool Function(int mid)? claimRefusedSay;
 
   final void Function(String line, {bool toJournal}) log;
   final void Function() repaint;
@@ -538,8 +553,14 @@ class BridgeTurn {
           ev.session != (_viewSid ?? seatedForFile) &&
           !(seatedForFile == null && _viewSid == null);
       if (fileForeign) {
+        // Named like the say refusal: whose bubble the owner's drain owes
+        // — a stray bubble story (the 10:18 report: another session's
+        // bubble in a fresh reply's view) starts here or at the null-
+        // stamp hole below, and the tape must say which.
         env.log(
           'foreign conversation: file left unheard for its own thread'
+          ' ("${ev.fileName}"${ev.mid == 0 ? '' : ' #${ev.mid}'}'
+          '${ev.session == null ? '' : ' sid ${_sid8(ev.session!)}'})'
           '${transport.wireTag(ev)}',
         );
         return;
@@ -669,6 +690,14 @@ class BridgeTurn {
     // otherwise.
     final sayText = cleanForSpeech(ev.text.trim());
     final age = transport.wireAgeMs(ev);
+    // The say's name on the tape: every journal line this paragraph can
+    // produce — refusal, drain pickup, chunk receipt — carries it, so a
+    // story that spans two pumps (refused here, served by the owner's
+    // drain there) reads as one story. Null for a pre-v2 frame.
+    final tag = ev.mid == 0
+        ? null
+        : 'say#${ev.mid}'
+            '${ev.session == null ? '' : ' sid ${_sid8(ev.session!)}'}';
     if (ev.mid != 0 && env.isHeard(ev.mid)) {
       // Exact redelivery — live double, drain replay, whatever. Even
       // with identical text, even freshly stamped: it cannot speak
@@ -714,9 +743,23 @@ class BridgeTurn {
     if (foreign) {
       env.log(
         'foreign conversation: say left unheard for its own thread'
+        '${tag == null ? '' : ' ($tag)'}'
+        ' "${_trunc(sayText, 32)}"'
         '${transport.wireTag(ev)}',
       );
+      // The refusal is the FIRST half of a story whose second half may
+      // play minutes later on the owner's own drain: remember the mid so
+      // the take can journal the pickup (the 10:16 tape — both of a
+      // fresh reply's says refused here, then played, and the tape showed
+      // two unrelated ends with the middle missing).
+      env.noteRefusedSay?.call(ev.mid, ev.session, sayText);
       return;
+    }
+    // The drain's pickup line: this say was refused by a pump that did
+    // not own it — the missing middle between that refusal and this
+    // playback, now on the tape. One-shot: claimed, never re-logged.
+    if (ev.mid != 0 && (env.claimRefusedSay?.call(ev.mid) ?? false)) {
+      env.log('say #${ev.mid} refused earlier as foreign — served now');
     }
     // TAKEN: the commit (and its ack) land NOW, before the speaker —
     // a barge-in from here drops the paragraph, it never re-owes it
@@ -782,7 +825,7 @@ class BridgeTurn {
         ? ev.text.trim()
         : sayText;
     env.log('msg harness: say "${_trunc(logged, 48)}"${transport.wireTag(ev)}');
-    await speak(sayText);
+    await speak(sayText, tag: tag);
   }
 
   Future<void> _onTool(BridgeEvent ev) async {
@@ -1073,7 +1116,7 @@ class BridgeTurn {
   /// mark keeps that honest). The mid was already committed at the take
   /// in [_onSay], so a redelivery dedups by id whichever way this block
   /// plays out.)
-  Future<void> speak(String text) async {
+  Future<void> speak(String text, {String? tag}) async {
     // +289: THE FOCUS LAW COVERS EVERY VOICE, not just says. _onSay
     // gates its paragraphs against the seat; the narration paths
     // (the step line, the pulse, the ack) walked past that gate
@@ -1113,6 +1156,7 @@ class BridgeTurn {
       text,
       alive: () => gen == env.generation(),
       drop: () => env.isDropped(text), // hide cut this paragraph
+      tag: tag, // the say's name on the chunk receipts
       // mid-play: skip it whole — its chunks die here, no replay
       onAir: (sinceText) {
         env.blockAired(); // this block's air outranks the hide mark
@@ -1351,4 +1395,9 @@ class BridgeTurn {
 
   static String _trunc(String s, int n) =>
       s.length > n ? '${s.substring(0, n)}…' : s;
+
+  /// A conversation id to its tape-worthy head (the assistant's own
+  /// `eight` shape): long enough to disambiguate two threads, short
+  /// enough to keep a journal line one line.
+  static String _sid8(String s) => s.length <= 8 ? s : '${s.substring(0, 8)}…';
 }

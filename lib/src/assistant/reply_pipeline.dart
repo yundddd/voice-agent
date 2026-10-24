@@ -86,10 +86,13 @@ class ReplyPipeline {
   /// panel's headline number).
   final void Function()? onAudible;
 
-  // (samples, rate, start-of-audio hook): the third slot carries the
-  // block's once-only onAir callback to the exact moment the pump hands
-  // the chunk to the player (+121) — queued is not heard.
-  final List<(Float32List, int, void Function()?)> _queue = [];
+  // (samples, rate, start-of-audio hook, say tag): the third slot
+  // carries the block's once-only onAir callback to the exact moment the
+  // pump hands the chunk to the player (+121) — queued is not heard. The
+  // fourth rides the say's identity (say#mid sid…) so every chunk receipt
+  // names the paragraph it owes the air for — the tape can tie a chunk
+  // refused by one pump and served by another's drain to its say.
+  final List<(Float32List, int, void Function()?, String?)> _queue = [];
   bool _streamDone = true; // no stream in flight until startStream
   Completer<void>? _wake; // pokes the pump loop
   Completer<void>? _chunkDone; // resolves when the current chunk ends
@@ -217,8 +220,10 @@ class ReplyPipeline {
   /// each now speak at the cut itself.
   void _noteQueueDeath(String cause) {
     if (_queue.isNotEmpty) {
+      final firstTag = _queue.first.$4;
       _log?.call(
-        'reply tail dropped: ${_queue.length} unplayed chunk(s) — $cause',
+        'reply tail dropped: ${_queue.length} unplayed chunk(s) — $cause'
+        '${firstTag == null ? '' : ' (from $firstTag)'}',
       );
     }
   }
@@ -227,8 +232,9 @@ class ReplyPipeline {
     Float32List chunk,
     int sampleRate, {
     void Function()? onStarted,
+    String? tag,
   }) {
-    _queue.add((chunk, sampleRate, onStarted));
+    _queue.add((chunk, sampleRate, onStarted, tag));
     _wakeNow();
     // +270 (Tim's tape: return to a cut turn is 'completely silent'):
     // a pump KILLED mid-stream by stopPlayback — the switch landing
@@ -266,11 +272,15 @@ class ReplyPipeline {
   /// hears as dead air (the strip's tts number).
   /// [drop] is consulted per chunk: a paragraph a hide cut mid-play is
   /// skipped whole (its chunks die here, no replay on return).
+  /// [tag] is the say's identity (say#mid sid…): it rides each chunk
+  /// receipt and the end receipts, so a refused-then-drained paragraph's
+  /// audio is nameable on the tape.
   Future<SpeakOutcome> speakBlock(
     String text, {
     required bool Function() alive,
     required void Function(Duration sinceText) onAir,
     bool Function()? drop,
+    String? tag,
   }) async {
     final w = worker();
     if (w == null) throw StateError('Models are still loading.');
@@ -310,10 +320,11 @@ class ReplyPipeline {
             chunk,
             sampleRate,
             onStarted: () => onAir(Duration(milliseconds: ms)),
+            tag: tag,
           );
           return;
         }
-        enqueue(chunk, sampleRate);
+        enqueue(chunk, sampleRate, tag: tag);
       },
     );
     sw.stop();
@@ -368,11 +379,11 @@ class ReplyPipeline {
           return;
         }
         if (_queue.isEmpty) break; // stream drained and closed
-        final (chunk, sampleRate, onStarted) = _queue.removeAt(0);
+        final (chunk, sampleRate, onStarted, tag) = _queue.removeAt(0);
         firstChunk = false;
         final seam = Completer<void>();
         _chunkDone = seam;
-        await _playWav(chunk, sampleRate, isStale, onStarted: onStarted);
+        await _playWav(chunk, sampleRate, isStale, onStarted: onStarted, tag: tag);
         if (isStale()) return; // user resumed: drop the rest
         await seam.future; // ends on natural end... or a stop
         // Seam complete: the loop owns playback again. Clearing the flag
@@ -399,6 +410,7 @@ class ReplyPipeline {
     int rate,
     bool Function() isStale, {
     void Function()? onStarted,
+    String? tag,
   }) async {
     _playing = true;
     // _startedAt marks only the FIRST chunk of an utterance: the 450 ms
@@ -413,7 +425,7 @@ class ReplyPipeline {
     }
     _playedRecently = true;
     gatePin(true);
-    _chunkLog(samples, rate);
+    _chunkLog(samples, rate, tag);
     try {
       onStarted?.call(); // +121: this is the player's hand-off — the
       // block's onAir (ledger stamp, speaking phase, latency number)
@@ -441,14 +453,16 @@ class ReplyPipeline {
 
   bool _playedRecently = false; // chunk-to-chunk carry-over (see above)
 
-  void _chunkLog(Float32List samples, int rate) {
+  void _chunkLog(Float32List samples, int rate, String? tag) {
     // +290: stamp the receipt's inputs at the hand-off — the seconds
     // this chunk owes the air, and the instant it asked for them.
     _handoffAt = clock();
     _handedSeconds = samples.length / rate;
+    _handedTag = tag;
     _log?.call(
       'chunk play ${(samples.length / rate).toStringAsFixed(1)}s'
-      '${_queue.isEmpty ? ' (last)' : ' +${_queue.length}'}',
+      '${_queue.isEmpty ? ' (last)' : ' +${_queue.length}'}'
+      '${tag == null ? '' : ' $tag'}',
     );
   }
 
@@ -461,6 +475,7 @@ class ReplyPipeline {
   // animal, visible on the tape instead of argued from ears.
   DateTime? _handoffAt;
   double _handedSeconds = 0;
+  String? _handedTag;
 
   String _receipt() {
     final st = _handoffAt;
@@ -468,7 +483,8 @@ class ReplyPipeline {
         ? 0.0
         : clock().difference(st).inMilliseconds / 1000.0;
     return 'ran ${ran.toStringAsFixed(1)}s of '
-        '${_handedSeconds.toStringAsFixed(1)}s handed';
+        '${_handedSeconds.toStringAsFixed(1)}s handed'
+        '${_handedTag == null ? '' : ' $_handedTag'}';
   }
 
   /// Journal hook for chunk seams (screenshot-able forensics).

@@ -323,6 +323,26 @@ class VoiceAssistant extends ChangeNotifier {
   String _transcript = '';
   String _error = '';
   String _lastSpoken = '';
+
+  // ── The foreign-say ledger (mid → sid + first words) ─────────────────
+  /// What the +274 gate's refusals owe the tape: the take journals the
+  /// drain's pickup from here (the missing middle of a refused-then-
+  /// served say), and a turn retired unheard names its refused paragraphs
+  /// as its audio fate. Bounded; an entry lives until its say is taken.
+  final Map<int, ({String sid, String preview})> _refusedSays = {};
+  void _noteRefusedSay(int mid, String? sid, String preview) {
+    if (mid == 0) return;
+    _refusedSays[mid] = (sid: sid ?? 'unstamped', preview: preview);
+    while (_refusedSays.length > 64) {
+      _refusedSays.remove(_refusedSays.keys.first);
+    }
+  }
+
+  /// One-shot: claiming an entry is the take's own trace — it fires the
+  /// pickup line once and keeps the retirement fate honest (a served say
+  /// is no longer 'closed unheard').
+  bool _claimRefusedSay(int mid) =>
+      mid != 0 && _refusedSays.remove(mid) != null;
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
@@ -2442,9 +2462,24 @@ class VoiceAssistant extends ChangeNotifier {
       _clearOwnedBand(wasOwner, settledLabel: detail); // +282
     }
     if (unnamed) {
+      // The audio fate (the 10:16 tape): a turn closed unheard still owes
+      // the journal WHAT it closed with — the paragraphs its +274 gate
+      // refused on other pumps' behalf. The drain's pickup lines name
+      // them again as they serve, so the story reads end to end.
+      final refusedAll = _refusedSays.entries
+          .where((e) => session == null || e.value.sid == session)
+          .toList();
+      final refused = refusedAll
+          .take(3)
+          .map(
+            (e) =>
+                '"${e.value.preview.length > 24 ? '${e.value.preview.substring(0, 24)}…' : e.value.preview}"',
+          )
+          .toList();
       _logDebug(
         'backgrounded work finished '
-        '(${detail.isEmpty ? 'unnamed turn' : detail})',
+        '(${detail.isEmpty ? 'unnamed turn' : detail})'
+        '${refused.isEmpty ? '' : ' — refused by the gate: ${refused.join(', ')}${refusedAll.length > 3 ? ' (+${refusedAll.length - 3} more)' : ''}'}',
       );
       notifyListeners();
       return;
@@ -3183,6 +3218,10 @@ class VoiceAssistant extends ChangeNotifier {
       awaitingPickup: () => chan.awaitPickup,
       isHeard: _heard.isHeard,
       commitHeard: _heard.commit,
+      // The foreign-say ledger: refusals write, takes read (the drain's
+      // pickup line, the retirement's audio fate).
+      noteRefusedSay: _noteRefusedSay,
+      claimRefusedSay: _claimRefusedSay,
       focusAtMs: () => chan.focusAtMs, // +253: the channel keeps the time
       // +257: DONE IS THE PROOF — the away marker retires when the
       // conversation it guards says its period, and not one frame

@@ -88,6 +88,10 @@ class EnvProbe {
   /// +274: every away-band filing — and WHOSE tab it was filed for.
   final List<(String?, Object)> awayBands = [];
 
+  /// The foreign-say ledger (mid → sid, preview): what refusals write,
+  /// what takes claim — the drain-pickup trace's memory.
+  final Map<int, (String?, String)> refusedSays = {};
+
   BridgeTurnEnv get env => BridgeTurnEnv(
     mode: () => mode,
     backgrounded: () => backgrounded,
@@ -154,6 +158,8 @@ class EnvProbe {
     awaitingPickup: () => false,
     isHeard: alreadyHeard.contains,
     commitHeard: took.add,
+    noteRefusedSay: (mid, sid, preview) => refusedSays[mid] = (sid, preview),
+    claimRefusedSay: (mid) => refusedSays.remove(mid) != null,
     focusAtMs: () => focusMs,
     seatedSession: () => seatedNow,
     noteWorkHome: workHomed.add,
@@ -672,7 +678,77 @@ void main() {
       await settle();
     });
 
-    test('+290: a named say reaches a nameless phone \u2014 no home to '
+    test('+A: the refusal names its say, and the drain\u2019s pickup '
+        'closes the story', () async {
+      // The 10:16 tape: a fresh reply's both says refused as foreign,
+      // then played \u2014 two unrelated ends on the tape, the middle
+      // missing. The refusal now names the say (mid, sid, first words),
+      // and the take of a previously refused mid journals the pickup.
+      probe.seatedNow = 'ses-Y'; // a stranger's pump is watching at refusal time
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'the greeting born abroad.',
+          mid: 21,
+          session: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(
+        probe.logs.any(
+          (l) =>
+              l.contains('foreign conversation: say left unheard') &&
+              l.contains('say#21') &&
+              l.contains('sid ses-X'),
+        ),
+        isTrue,
+        reason: 'the refusal names WHOSE paragraph the owner drain owes',
+      );
+      expect(probe.refusedSays.keys, contains(21));
+      wire.add(BridgeEvent.forTest('done'));
+      await r; // turn 1's part is played: the say is in the ledger, refused
+      // The OWNER's own thread reattaches: a fresh pump, born at X's
+      // address (+331 \u2014 a named pump's home is its birth address, so the
+      // pickup needs the owner's own drain, exactly as the tape ran it).
+      probe.seatedNow = 'ses-X';
+      wire = StreamController<BridgeEvent>();
+      mkTurn(origin: BridgeTurnOrigin.attach);
+      final r2 = turnLoop.run(wire.stream);
+      await settle();
+      wire.add(
+        const BridgeEvent.forTest(
+          'say',
+          text: 'the greeting born abroad.',
+          mid: 21,
+          session: 'ses-X',
+        ),
+      );
+      await settle();
+      expect(
+        probe.logs.any(
+          (l) =>
+              l.contains('say #21 refused earlier as foreign') &&
+              l.contains('served now'),
+        ),
+        isTrue,
+        reason: 'the missing middle between refusal and playback',
+      );
+      expect(probe.took, contains(21));
+      expect(
+        engine.synthesized,
+        contains('the greeting born abroad.'),
+        reason: 'and the law proceeds: the served say speaks',
+      );
+      wire.add(BridgeEvent.forTest('done'));
+      await r2;
+      out.complete();
+      await settle();
+    });
+
+    test('+290: a named say reaches a nameless phone — no home to '
         'contradict, no foreign verdict', () async {
       // The hide/foreground tape, gate-sized: the resume drain was
       // born while the phone's seat pointer named nobody, and every

@@ -259,6 +259,42 @@ void main() {
     reply.closeStream();
   });
 
+  test('+A: the say tag rides the receipts — play line and end receipt '
+      'name the paragraph', () async {
+    // The refused-then-drained say could not be tied to its audio: the
+    // chunk lines carried seconds only, so a story spanning two pumps
+    // (refused by one, served by another's drain) read as two unrelated
+    // ends. The tag (say#mid sid…) sews them together on the tape.
+    final (out, _, reply) = rig();
+    final lines = <String>[];
+    reply.log = lines.add;
+    reply.startStream();
+    unawaited(reply.runPump(isStale: () => false));
+    await settle();
+    await reply.speakBlock(
+      'a paragraph with its name',
+      alive: () => true,
+      onAir: (_) {},
+      tag: 'say#11 sid ses-X',
+    );
+    await settle();
+    out.complete();
+    await settle();
+    expect(
+      lines.any((l) => l.startsWith('chunk play') && l.contains('say#11 sid ses-X')),
+      isTrue,
+      reason: 'the hand-off names the say it owes the air for',
+    );
+    expect(
+      lines.any(
+        (l) => l.startsWith('chunk ended naturally:') && l.contains('say#11 sid ses-X'),
+      ),
+      isTrue,
+      reason: 'the receipt answers under the same name',
+    );
+    reply.closeStream();
+  });
+
   test(
     '+A: a switch-cut on the IDLE pipeline revokes the in-flight block',
     () async {
