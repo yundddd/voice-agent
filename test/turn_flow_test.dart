@@ -103,6 +103,123 @@ void main() {
       );
     });
 
+    test('+349: a press in the load window is not a stray — it '
+        'registers, the mic opens, and the release waits for the voice',
+        () async {
+      // The field tape: after an app restart the first two presses died
+      // as 'ptt UP ignored: no pointer down — the press never landed?'
+      // (the down returned before registering the pointer), and the ear
+      // read it as something else holding the mic. The press is REAL:
+      // it registers, the mic captures, and the release WAITS — bounded
+      // — for the engine the boot is still loading.
+      final (coldTime, coldEng, coldHarness, coldMic, coldOut) = build();
+      final cold = VoiceAssistant(
+        worker: null, // the load window never closes on its own
+        micSource: coldMic,
+        audioOutput: coldOut,
+        gatewayFactory: (_, _) => coldHarness,
+        scheduler: coldTime,
+        clock: () => coldTime.now,
+      );
+      coldEng.onEvent = cold.debugSpeechEvents;
+      cold.setMode(InteractionMode.pushToTalk);
+      cold.pttDown(Offset.zero);
+      await settle();
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('ptt DOWN during load: the press registers'),
+        ),
+        isTrue,
+      );
+      expect(coldMic.startCount, 1, reason: 'the mic opens in the window');
+      expect(cold.phase, AssistantPhase.listening);
+      coldMic.emit(FakeMic.audio(10)); // the user speaks into the hold
+      await settle();
+      cold.pttUp(Offset.zero);
+      await settle();
+      expect(
+        cold.debugLog.any((l) => l.contains('ptt UP ignored')),
+        isFalse,
+        reason: 'the press was registered — the release is never a stray',
+      );
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('release during load: the transcript waits'),
+        ),
+        isTrue,
+      );
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('release → denoise+ASR'),
+        ),
+        isTrue,
+        reason: 'the held audio rode the release, not eaten by the window',
+      );
+      // The voice arrives: the held recording transcribes and the
+      // prompt rides to the bridge — one press, not three.
+      coldEng.transcripts = ['a real sentence'];
+      cold.setWorkerForTest(coldEng);
+      await settle();
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('the voice is up — the held recording'),
+        ),
+        isTrue,
+      );
+      expect(
+        cold.debugLog.any((l) => l.contains('asr ✓')),
+        isTrue,
+        reason: 'the held recording transcribed once the engine landed',
+      );
+      cold.dispose();
+    });
+
+    test('+349: a conversation segment in the load window is held, not '
+        'crashed on', () async {
+      // The latent main-tree bug the PTT fix walked past: a
+      // conversation tap opened the mic with no engine, and the first
+      // VAD segment hit `_worker!` bare. The segment now waits for the
+      // voice and transcribes on arrival.
+      final (coldTime, coldEng, coldHarness, coldMic, coldOut) = build();
+      final cold = VoiceAssistant(
+        worker: null,
+        micSource: coldMic,
+        audioOutput: coldOut,
+        gatewayFactory: (_, _) => coldHarness,
+        scheduler: coldTime,
+        clock: () => coldTime.now,
+      );
+      coldEng.onEvent = cold.debugSpeechEvents;
+      await cold.toggle(); // conversation mode: the tap opens the mic
+      await settle();
+      expect(coldMic.startCount, 1, reason: 'the mic opens in the window');
+      // a VAD segment lands, engineless (the engine drives events
+      // straight into the assistant's seam — it is just not the worker)
+      coldEng.deliver(SpeechEvent.ofSegment(Float32List(32000)));
+      await settle();
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('segment during load: held for the voice'),
+        ),
+        isTrue,
+      );
+      coldEng.transcripts = ['held words'];
+      cold.setWorkerForTest(coldEng);
+      await settle();
+      expect(
+        cold.debugLog.any(
+          (l) => l.contains('the voice is up — the held segment'),
+        ),
+        isTrue,
+      );
+      expect(
+        cold.debugLog.any((l) => l.contains('asr ✓')),
+        isTrue,
+        reason: 'the held segment transcribed once the engine landed',
+      );
+      cold.dispose();
+    });
+
     test('every big-button tap journals its dispatch (0.1.0+79)', () async {
       await a.toggle();
       await settle();

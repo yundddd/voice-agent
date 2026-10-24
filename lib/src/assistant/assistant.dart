@@ -307,6 +307,21 @@ class VoiceAssistant extends ChangeNotifier {
   late final Scheduler _scheduler;
   late final HarnessGateway Function(String url, String token)? _gatewayFactory;
   SpeechEngine? _worker;
+
+  /// The boot's voice arrival (+349): a press landing in the load
+  /// window registers and the mic opens — its release WAITS here
+  /// (bounded) instead of the press dying as a stray (the field tape:
+  /// after a restart the first two presses ate themselves as 'ptt UP
+  /// ignored: no pointer down', and the ear read it as something else
+  /// holding the mic). Real init completes it at SpeechWorker.start.
+  final Completer<void> _voiceReady = Completer<void>();
+
+  /// A conversation segment captured in the load window (+349): held
+  /// until the voice arrives, then transcribed — the load window's twin
+  /// of the PTT release's wait. (The crash this field prevents was
+  /// LATENT on main: a conversation tap opened the mic with no engine,
+  /// and the first VAD segment hit `_worker!` bare.)
+  Float32List? _heldSegment;
   late final MicPipeline _mic;
   late final ReplyPipeline _reply;
   late final HopTracker _hops;
@@ -932,6 +947,17 @@ class VoiceAssistant extends ChangeNotifier {
   /// mic lifecycle, newest last. See the debug view.
   final List<String> _debugLog = [];
   List<String> get debugLog => _debugLog;
+
+  /// Test seam (+349): hand the assistant its engine LATER — the
+  /// press-during-load walk needs the arrival to be a journaled event,
+  /// not a constructor fact. Real init arrives at the same place via
+  /// [_voiceArrived].
+  @visibleForTesting
+  void setWorkerForTest(SpeechEngine w) {
+    _worker = w;
+    _logDebug('voice arrived (test seam) — the waiting release proceeds');
+    _voiceArrived();
+  }
   void _logDebug(String what, {bool toJournal = true}) {
     final t = _clock();
     final hh = t.hour.toString().padLeft(2, '0');
@@ -3807,6 +3833,9 @@ class VoiceAssistant extends ChangeNotifier {
         onEvent: _onSpeechEvent,
         endpointSilence: _endpointSilence,
       );
+      // +349: the load window closes — any press that landed in it and
+      // any release waiting on it may proceed.
+      _voiceArrived();
       // The engine loaded at start carries its own roster size: Kokoro
       // must show its style picker on a cold launch, not only after the
       // first useTts (the old slider hid itself exactly the same way).
@@ -3849,6 +3878,19 @@ class VoiceAssistant extends ChangeNotifier {
     if (_modelsRetrying || _disposed) return;
     _modelsRetrying = true;
     unawaited(init().whenComplete(() => _modelsRetrying = false));
+  }
+
+  /// +349: the engine is in — the load window closes. A PTT release
+  /// waiting on [_voiceReady] proceeds; a conversation segment held
+  /// during the load transcribes now.
+  void _voiceArrived() {
+    if (!_voiceReady.isCompleted) _voiceReady.complete();
+    final held = _heldSegment;
+    if (held == null) return;
+    _heldSegment = null;
+    _logDebug('the voice is up — the held segment transcribes now');
+    _reply.warmUpRoute();
+    unawaited(_startTurn(held));
   }
 
   void _modelProgress(String label, int done, int total) {
@@ -4801,7 +4843,27 @@ class VoiceAssistant extends ChangeNotifier {
       'worker=${_worker != null} ptr=${_ptt.pointers} busy=$_bridgeBusy '
       'bgd=$_harnessBackgrounded',
     );
-    if (_mode != InteractionMode.pushToTalk || _worker == null) return;
+    if (_mode != InteractionMode.pushToTalk) return;
+    if (_worker == null) {
+      // +349: the press landed in the load window — it is REAL. It
+      // registers (so the release is never a stray), the mic opens and
+      // captures, and the release WAITS for the voice instead of the
+      // recording dying. The barge-in branch below stays gated: the
+      // supersede machinery belongs to a loaded engine's world, and the
+      // load window's own state is idle by construction.
+      _logDebug(
+        'ptt DOWN during load: the press registers, the mic opens — '
+        'the release waits for the voice',
+      );
+      final firstPointer = _ptt.down(at);
+      if (!firstPointer) return;
+      _pttMaxTimer?.cancel();
+      _pttMaxTimer = _scheduler.after(const Duration(minutes: 2), () {
+        if (_ptt.pointers > 0) pttCancel();
+      });
+      unawaited(_startListening());
+      return;
+    }
     final firstPointer = _ptt.down(at);
     if (_phase == AssistantPhase.transcribing ||
         _phase == AssistantPhase.speaking ||
@@ -5230,6 +5292,17 @@ class VoiceAssistant extends ChangeNotifier {
       _userSpeaking = false;
       _segGotAudio = true;
       _recordSeconds = event.segment!.length / 16000.0;
+      // +349: the load window covers conversation mode too — a segment
+      // with no engine waits at the release path's twin, here: the
+      // transcribe waits for the voice instead of crashing on `!`.
+      if (_worker == null) {
+        _logDebug(
+          'segment during load: held for the voice '
+          '(${event.segment!.length / 16000}s of speech)',
+        );
+        _heldSegment = event.segment;
+        return;
+      }
       _reply.warmUpRoute(); // connect the output route while we transcribe
       unawaited(_startTurn(event.segment!));
       return;
@@ -5504,7 +5577,10 @@ class VoiceAssistant extends ChangeNotifier {
   // ── Push-to-talk mode ────────────────────────────────────────────────────
 
   Future<void> _startListening() async {
-    if (_phase == AssistantPhase.listening || _worker == null) return;
+    // +349: the worker clause is gone — the mic opens in the load
+    // window too (capture is platform-side; only denoise+ASR needs the
+    // engine, and that waits at the release now).
+    if (_phase == AssistantPhase.listening) return;
     _reply.stopDebug();
     _resetMicLevel();
     try {
@@ -5664,6 +5740,30 @@ class VoiceAssistant extends ChangeNotifier {
       _activity = const StatusText('Cleaning up the recording…');
     }
     notifyListeners();
+    // +349: the hold that landed in the load window — the release
+    // waits (bounded) for the voice instead of the recording dying.
+    // The wait rides the transcribe bubble the release already opened.
+    if (_worker == null) {
+      _logDebug(
+        'release during load: the transcript waits for the voice '
+        '(${(pcm.length / 16000).toStringAsFixed(1)}s held)',
+      );
+      _activity = const StatusText('Waiting for the voice to finish loading…');
+      notifyListeners();
+      try {
+        await _voiceReady.future.timeout(const Duration(seconds: 30));
+        _logDebug('the voice is up — the held recording transcribes now');
+      } catch (_) {
+        _logDebug(
+          'the voice never finished loading — the recording died '
+          'untranscribed',
+        );
+        _withdrawTranscribe('the voice never loaded');
+        _activity = const StatusText('The voice did not load — press again.');
+        if (_ptt.pointers == 0) _idleReady();
+        return;
+      }
+    }
     Float32List cleaned = pcm;
     try {
       cleaned = await _worker!.denoise(pcm);
