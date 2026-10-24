@@ -332,6 +332,16 @@ class VoiceAssistant extends ChangeNotifier {
   final Map<int, ({String sid, String preview})> _refusedSays = {};
   void _noteRefusedSay(int mid, String? sid, String preview) {
     if (mid == 0) return;
+    // +313: a say refused for a conversation with NO home will never
+    // be served — the +348 ledger must not hold it as an open story.
+    // The gate line is the story's honest end.
+    if (sid != null && _channelIfKnown(sid) == null) {
+      _logDebug(
+        'say#$mid refused for a departed conversation — dies at the '
+        'gate: "${preview.length > 24 ? '${preview.substring(0, 24)}…' : preview}"',
+      );
+      return;
+    }
     _refusedSays[mid] = (sid: sid ?? 'unstamped', preview: preview);
     while (_refusedSays.length > 64) {
       _refusedSays.remove(_refusedSays.keys.first);
@@ -343,6 +353,24 @@ class VoiceAssistant extends ChangeNotifier {
   /// is no longer 'closed unheard').
   bool _claimRefusedSay(int mid) =>
       mid != 0 && _refusedSays.remove(mid) != null;
+
+  /// A conversation's death takes its refused says: no owner drain will
+  /// ever serve them (+313's 'nothing to pay', now covering the +347
+  /// ledger too). Journalled, so the tape says the story ENDED rather
+  /// than went missing.
+  void _purgeRefusedSays(Iterable<String> sids) {
+    final doomed = _refusedSays.entries
+        .where((e) => sids.contains(e.value.sid))
+        .toList();
+    if (doomed.isEmpty) return;
+    for (final e in doomed) {
+      _refusedSays.remove(e.key);
+    }
+    _logDebug(
+      'departed conversation: ${doomed.length} refused say(s) die with '
+      'it (${doomed.map((e) => 'say#${e.key}').join(', ')})',
+    );
+  }
   double _recordSeconds = 0;
   double _asrSeconds = 0;
   double _ttsSeconds = 0;
@@ -1845,6 +1873,11 @@ class VoiceAssistant extends ChangeNotifier {
     // nothing will ever report a backgrounded shell whose thread
     // the user threw away.
     _purgeChannelsOwned(doomed.sessionIds);
+    // +348: its refused says die with it too — no owner drain will
+    // ever serve them, so the ledger's entries leave WITH the tab,
+    // on the record (the journal walker reads this line as the
+    // refused story's honest end).
+    _purgeRefusedSays(doomed.sessionIds);
     _chat.removeSessions({
       ...doomed.sessionIds,
       ChatStore.pendingSession, // its nameless birth turn goes too
@@ -2473,6 +2506,7 @@ class VoiceAssistant extends ChangeNotifier {
           .take(3)
           .map(
             (e) =>
+                'say#${e.key} '
                 '"${e.value.preview.length > 24 ? '${e.value.preview.substring(0, 24)}…' : e.value.preview}"',
           )
           .toList();

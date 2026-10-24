@@ -824,7 +824,13 @@ class BridgeTurn {
     final logged = (isLive && !transport.turnViaPoll)
         ? ev.text.trim()
         : sayText;
-    env.log('msg harness: say "${_trunc(logged, 48)}"${transport.wireTag(ev)}');
+    // The take's line carries the tag too: the journal walker's audio-
+    // fate rule (every taken say shows chunk receipts under its name)
+    // reads this line to know WHICH paragraph owes the air.
+    env.log(
+      'msg harness: say "${_trunc(logged, 48)}"'
+      '${tag == null ? '' : ' ($tag)'}${transport.wireTag(ev)}',
+    );
     await speak(sayText, tag: tag);
   }
 
@@ -1137,6 +1143,7 @@ class BridgeTurn {
     if (env.ttsOff()) {
       // Eyes-only mode: nothing else to do — no audio debt exists to
       // retract, the ledger is the take, and the take is final.
+      env.log('tts off: the ledger is the take, nothing synthesises');
       return;
     }
     if (isLive && env.backgrounded()) {
@@ -1144,6 +1151,7 @@ class BridgeTurn {
       // synth and audio entirely (the speaker is gone anyway) — and
       // the most recent block is what the resume path speaks on
       // return.
+      env.log('say unheard while hidden — the resume owes it');
       env.noteUnheardSay(text);
       return;
     }

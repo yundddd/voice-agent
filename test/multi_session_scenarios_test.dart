@@ -41,6 +41,89 @@ void main() {
     // FOCUSED, and the mail speaks).
     DateTime phoneNow = DateTime(2026, 1, 1, 12);
 
+    // +348 THE JOURNAL WALKER: every walk's own tape, audited for
+    // completeness. The 10:16 tape hid a dropped reply's beginning
+    // because the instruments weren't there — a behaviour test cannot
+    // catch a missing log line, but a walk over the journal CAN: after
+    // each scenario, the tape itself must read as one story. Three
+    // invariants, each with its named allowances:
+    //  (A) every handed chunk owes a receipt (the +290 witness,
+    //      walk-wide) — the only open play allowed is the tape's last
+    //      (the rig never models the speaker running out);
+    //  (B) every say a pump REFUSED as foreign resolves later — the
+    //      owner's pickup line, its audio on air, or the unheard-turn
+    //      fate line (+347);
+    //  (C) every say TAKEN shows audio under its own name — a chunk
+    //      play carrying its tag — or an explicit no-air line (the
+    //      tail dropped, hidden while it played, tts off, the epoch
+    //      revocation). Text without voice can no longer pass silently.
+    void walkJournal() {
+      final tape = a.debugLog.map((l) {
+        final i = l.indexOf(' ');
+        return i < 0 ? l : l.substring(i + 1); // the clock prefix off
+      }).toList();
+
+      // (A) plays vs receipts.
+      final playIdx = <int>[
+        for (var i = 0; i < tape.length; i++)
+          if (tape[i].startsWith('chunk play')) i,
+      ];
+      final orphanPlays = playIdx.where((i) => !tape
+          .skip(i + 1)
+          .any((l) => l.startsWith('chunk ended'))).toList();
+      expect(
+        orphanPlays.where((i) => i != playIdx.last).length,
+        0,
+        reason: 'every handed chunk owes a receipt under it (+290, '
+            'walk-wide); only the tape\'s last play may still be on air — '
+            'orphans: ${orphanPlays.map((i) => tape[i])}',
+      );
+
+      // (B) refused says resolve.
+      final refused = RegExp(r'say left unheard.*\(say#(\d+)');
+      final resolved = RegExp(r'say #\d+ refused earlier as foreign');
+      for (final m in refused.allMatches(tape.join('\n'))) {
+        final mid = m.group(1)!;
+        expect(
+          tape.any(
+            (l) =>
+                (resolved.hasMatch(l) && l.contains('#$mid')) ||
+                (l.startsWith('chunk play') && l.contains('say#$mid')) ||
+                (l.contains('refused by the gate: say#$mid')) ||
+                (l.contains('refused say(s) die with it') &&
+                    l.contains('say#$mid')) ||
+                (l.contains('dies at the gate') && l.contains('say#$mid')),
+          ),
+          isTrue,
+          reason: 'say#$mid was refused as foreign — its story must '
+              'resolve (pickup, audio, fate, or death with its '
+              'conversation), not end at the gate',
+        );
+      }
+
+      // (C) taken says owe the air — or a named no-air line.
+      final taken = RegExp(r'msg harness: say.*\(say#(\d+)');
+      for (final m in taken.allMatches(tape.join('\n'))) {
+        final mid = m.group(1)!;
+        final at = tape.indexWhere((l) => taken.hasMatch(l) && l.contains('($mid)'));
+        expect(
+          tape.skip(at + 1).any(
+                (l) =>
+                    (l.startsWith('chunk play') && l.contains('say#$mid')) ||
+                    (l.contains('reply tail dropped') &&
+                        l.contains('say#$mid')) ||
+                    l.contains('say unheard while hidden') ||
+                    l.contains('tts off: the ledger is the take') ||
+                    l.contains('in-flight block revoked'),
+              ),
+          isTrue,
+          reason: 'say#$mid was TAKEN — its audio must reach a chunk '
+              'play or a named no-air line, never vanish between the '
+              'take and the speaker',
+        );
+      }
+    }
+
     setUp(() async {
       bridge = ScenarioBridge();
       engine = FakeSpeechEngine();
@@ -60,7 +143,10 @@ void main() {
       // reattach probe uses. One glance, and every turn rides /poll.
       await a.debugProbeTransport();
     });
-    tearDown(() => a.dispose());
+    tearDown(() {
+      walkJournal(); // the tape must read as one story (+348)
+      a.dispose();
+    });
 
     // The poll transport ticks every 250 ms; the pumps run on the
     // clock, not on microtasks (the +257 doctrine), so the walks
@@ -81,6 +167,7 @@ void main() {
       phoneNow = phoneNow.add(Duration(milliseconds: ms));
       bridge.tick(ms);
     }
+
 
     Future<ScenarioConv> tab(String dir) async {
       final c = bridge.newConv(dir);
@@ -192,6 +279,100 @@ void main() {
         a.channelForTest(x.uuid).turn.agentWork,
         isFalse,
         reason: 'both receipts paid; the banner retires at home',
+      );
+    });
+
+    test('the 10:16 tape, half one: the owner takes the say live and '
+        'the chunk receipt names it (+347)', () async {
+      // The field tape's AUDIO half: two live pumps, the say rides the
+      // shared ring through both — whoever processes first wins the
+      // heard-commit (the stranger's copy then skips as a dup), and the
+      // taker's chunk receipt names the paragraph it owes the air for.
+      // Before +347 a dropped beginning had no line to say so.
+      final x = await tab('/proj-x');
+      unawaited(a.runQuickCommand('long work please'));
+      await pump();
+      bridge.toolStep(x.uuid, 'Bash', 'sleep 40');
+      await pump();
+      final y = await tab('/proj-y'); // created and seated mid-turn: Y's pump lives
+      unawaited(a.runQuickCommand('background work please'));
+      await pump();
+      bridge.toolStep(y.uuid, 'Bash', 'sleep 50');
+      await pump();
+
+      // The eye returns to X while BOTH turns are still open.
+      expect(await a.switchSession(0), isNull);
+      await pump();
+      bridge.say(x.uuid, 'The news is home.');
+      await pump(beats: 4);
+      expect(
+        engine.synthesized.contains('The news is home.'),
+        isTrue,
+        reason: 'the owner pump took it and spoke it',
+      );
+      expect(
+        a.debugLog.any(
+          (l) => l.contains('chunk play') && l.contains('say#'),
+        ),
+        isTrue,
+        reason: 'the chunk receipt names the paragraph it owes the '
+            'air for — the walker can tie the take to its playback',
+      );
+    });
+
+    test('the 10:16 tape, half two: the stranger refuses by name, and '
+        "the owner's return journals the pickup (+347)", () async {
+      // The field tape's MIDDLE: a say arrives with NO owner pump open
+      // — the stranger's live pump refuses it (naming it, since +347)
+      // and the heard ledger notes the mid. When the owner's thread
+      // reattaches, the drain serves the refused say and the pickup
+      // line fires — the missing middle between refusal and playback,
+      // now on the tape even when the +253 watermark files it silently.
+      final x = await tab('/proj-x');
+      unawaited(a.runQuickCommand('quick one please'));
+      await pump();
+      bridge.toolStep(x.uuid, 'Bash', 'sleep 5');
+      bridge.endTurn(x.uuid); // X's pump closes BEFORE the news lands
+      await pump();
+
+      final y = await tab('/proj-y'); // seated: Y's live pump wears Y
+      unawaited(a.runQuickCommand('hold the wire please'));
+      await pump();
+      bridge.toolStep(y.uuid, 'Bash', 'sleep 50');
+      await pump();
+
+      // X's report arrives with the seat on Y and X's pump closed:
+      // refused by Y's pump, kept on the bridge's unheard backlog.
+      bridge.say(x.uuid, 'The report nobody was home for.');
+      await pump(beats: 4);
+      expect(
+        a.debugLog.any(
+          (l) =>
+              l.contains('foreign conversation: say left unheard') &&
+              l.contains('say#'),
+        ),
+        isTrue,
+        reason: "Y's live pump refused it — by name now (+347)",
+      );
+
+      // The eye comes home: the attach drain serves the refused say —
+      // the pickup line fires even though the +253 watermark files it
+      // silently (the claim rides EVERY take, muted or not).
+      expect(await a.switchSession(0), isNull);
+      await pump(beats: 4);
+      expect(
+        a.debugLog.any(
+          (l) => l.contains('refused earlier as foreign') && l.contains('served now'),
+        ),
+        isTrue,
+        reason: 'the missing middle between refusal and playback',
+      );
+      expect(
+        a.view.chat.any(
+          (e) => e.blocks.any((b) => b.contains('The report nobody')),
+        ),
+        isTrue,
+        reason: 'the backlog delivered the report to ITS thread',
       );
     });
 

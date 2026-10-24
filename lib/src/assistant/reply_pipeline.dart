@@ -207,6 +207,7 @@ class ReplyPipeline {
   /// the worker's CPU debt at the next piece boundary.
   void invalidatePendingAudio() {
     _audioEpoch++;
+    _log?.call('in-flight block revoked — audio epoch $_audioEpoch');
     _ttsCancel?.call();
     _ttsCancel = null;
   }
