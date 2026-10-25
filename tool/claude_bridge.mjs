@@ -1530,10 +1530,11 @@ function handleEvent(ev) {
       }
     }
     if (ev.type === HarnessEvent.BlockStop) {
-      // The text is final: the sentence buffer must empty completely,
-      // including an un-terminated tail the streaming pass would wait
-      // on whitespace for forever.
-      if (focus.lastTextOpen && focus.lastTextBlk) relaySentences(focus.lastTextBlk, {force: true});
+      // The live sentence pass already relayed complete sentences. A block
+      // close can arrive mid-sentence — the settled snapshot carries the
+      // rest — so do NOT force the fragment out here. The snapshot's settle
+      // relays the whole remainder; TurnEnd below flushes any buffer a
+      // no-snapshot close left unspoken.
       focus.lastTextOpen = false;
     }
     // One tally line per ~0.8 s of ACTIVE generation, only while someone
@@ -1915,6 +1916,15 @@ function handleEvent(ev) {
       focus.proactiveTurn = false;
     }
     focus.bgTools.clear(); // an unpaired launch receipt dies with its turn
+    // A block close may not have supplied a snapshot (degraded upstream):
+    // flush any unspoken live text before the turn is forgotten. A normal
+    // snapshot has already settled its whole remainder and advanced the
+    // watermark, so this emits nothing there.
+    if (focus.curMsg) {
+      for (const blk of Object.values(focus.curMsg.blocks)) {
+        if (blk.spoken < blk.buf.length) relaySentences(blk, { force: true });
+      }
+    }
     // The turn's last word — processed even when no one is listening, so
     // backgrounded turns end properly: free the state machine, persist the
     // session id, hand the attached client its done (if it stayed), and

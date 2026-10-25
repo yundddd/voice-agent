@@ -100,6 +100,11 @@ test('forced flush ships the final sentence whose period has no trailing space',
   assert.equal(out.length, 2, 'loop terminates after the flush');
 });
 
+test('a whole-block short reply still speaks at block close', () => {
+  const { out } = run('Yes.', { force: true });
+  assert.deepEqual(out, ['Yes.'], 'the floor forbids fragments, not lone replies');
+});
+
 test('file names and decimals do not fake sentence ends', () => {
   const { out } = run(
     'Edited pubspec.yaml at revision 3.14 then pushed main.dart:801 ' +

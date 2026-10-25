@@ -123,6 +123,27 @@ void main() {
     expect(splitForTts(text), [text]);
   });
 
+  test('a balanced cut folds its sub-breath tail instead of speaking it '
+      'alone (+351: the runt tail the last reply exposed)', () {
+    const text =
+        "I checked all three, Kokoro and the students already split "
+        'naturally at sentence and clause breaths, while Pocket\'s hidden '
+        '200-character internal pass can still re-cut a merged chunk and '
+        'weld short sentences without spaces. I sent you the audit, '
+        'ttssplitaudit md.';
+    final chunks = splitForTts(text);
+    expect(chunks, hasLength(2));
+    expect(
+      chunks.last,
+      endsWith('I sent you the audit, ttssplitaudit md.'),
+      reason: chunks.last,
+    );
+    for (final c in chunks) {
+      expect(c.length, greaterThanOrEqualTo(minBreathChars), reason: c);
+    }
+    expect(chunks.join(' '), text); // lossless, in order
+  });
+
   test('terminator runs never split the sentence they end', () {
     // The '...' + closing quote is ONE boundary: the ellipsis and its
     // quote never orphan from each other. +233 still welds the sub-breath

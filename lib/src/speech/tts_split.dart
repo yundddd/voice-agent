@@ -97,6 +97,15 @@ List<String> splitForTts(String text) {
       chunks.insert(0, lead);
     }
   }
+  // +351: a balanced cut can still leave a sub-breath tail (a welded short
+  // sentence over the window, cut at the last clause before its end). The
+  // tail has no next, so fold it backward exactly as the +233 trailing
+  // fragment and Pocket's own merge do. A tail fold may overshoot the
+  // window by a few characters, which is cheaper than an audible end seam.
+  if (chunks.length > 1 && chunks.last.length < minBreathChars) {
+    chunks[chunks.length - 2] =
+        '${chunks[chunks.length - 2]} ${chunks.removeLast()}';
+  }
   return chunks;
 }
 
