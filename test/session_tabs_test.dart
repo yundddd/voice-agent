@@ -2594,8 +2594,11 @@ void main() {
       expect(t.hue, inInclusiveRange(0, 359));
       final back = SessionTab.fromJson(t.toJson());
       expect(back.hue, t.hue, reason: 'the colour is persisted, not redrawn');
-      // A pre-+271 tab (no hue in its JSON) wears exactly what the
-      // +230 index law painted — the upgrade changes no faces:
+      // A pre-+271 tab (no hue in its JSON) still resolves the pure
+      // fallback — but +356 retired it from the paint: inside the
+      // app a faceless tab is a tab the LOAD migration has not seen
+      // yet (see the migration tests below), never a tab rendered
+      // by its seat number:
       final legacy = SessionTab.fromJson({
         'harness': 'claude',
         'dir': '/p',
@@ -2603,6 +2606,85 @@ void main() {
       });
       expect(legacy.hue, isNull);
       expect(legacy.hueOrDefault(2), (2 * 137) % 360);
+    });
+    test('+356: the load migration draws every faceless tab a '
+        'PERMANENT, distant face — once, not per boot', () {
+      final prefs = BridgePrefs.fromJson({
+        'url': 'http://x',
+        'token': 't',
+        'tabs': [
+          {'harness': 'claude', 'dir': '/a', 'sessionIds': ['s1'], 'hue': 40},
+          {'harness': 'claude', 'dir': '/b', 'sessionIds': ['s2']},
+          {'harness': 'claude', 'dir': '/c', 'sessionIds': ['s3']},
+        ],
+        'activeTab': 0,
+      });
+      int gap(int a, int b) {
+        final d = (a - b).abs() % 360;
+        return d > 180 ? 360 - d : d;
+      }
+
+      expect(prefs.assignMissingHues(rng: Random(11)), isTrue);
+      expect(
+        prefs.assignMissingHues(rng: Random(12)),
+        isFalse,
+        reason: 'once drawn, never redrawn',
+      );
+      final hues = prefs.tabs.map((t) => t.hue).toList();
+      expect(hues[0], 40, reason: 'a worn face is never revised');
+      expect(hues[1], isNotNull);
+      expect(hues[2], isNotNull);
+      // The birth law holds on the migration too: neighbours stay
+      // distinguishable (the seeded draw is deterministic — the
+      // margin is the picker's promise, not a coin flip).
+      expect(gap(hues[1]!, 40), greaterThan(20));
+      expect(gap(hues[2]!, 40), greaterThan(20));
+      expect(gap(hues[1]!, hues[2]!), greaterThan(20));
+      // Persisted, and ORDER no longer speaks: delete the middle tab,
+      // round-trip the file, and the survivor wears the face it always
+      // wore — the re-index recolour this migration retires.
+      final disk = BridgePrefs.fromJson(prefs.toJson());
+      disk.tabs.removeAt(1);
+      final back = BridgePrefs.fromJson(disk.toJson());
+      expect(
+        back.tabs.map((t) => t.hue).toList(),
+        [40, hues[2]],
+        reason: 'faces belong to tabs, not to seats',
+      );
+    });
+    test('+356: the migration lands ON DISK — the file itself stops '
+        'carrying faceless tabs', () async {
+      final dir = await Directory.systemTemp.createTemp('prefs-hue');
+      try {
+        final f = File('${dir.path}/bridge_prefs.json');
+        f.writeAsStringSync(
+          jsonEncode({
+            'url': 'http://x',
+            'token': 't',
+            'tabs': [
+              {'harness': 'claude', 'dir': '/a', 'sessionIds': ['s1']},
+              {'harness': 'claude', 'dir': '/b', 'sessionIds': ['s2']},
+            ],
+            'activeTab': 0,
+          }),
+        );
+        final prefs = await loadBridgePrefs(dir.path);
+        expect(prefs.tabs.every((t) => t.hue != null), isTrue);
+        final drawn = prefs.tabs.map((t) => t.hue).toList();
+        final onDisk =
+            jsonDecode(f.readAsStringSync()) as Map<String, Object?>;
+        expect(
+          (onDisk['tabs'] as List).every((t) => (t as Map)['hue'] is int),
+          isTrue,
+          reason: 'the draw was saved, not just held in memory',
+        );
+        // A second boot: nothing to migrate, nothing redrawn — the
+        // face was drawn once in the install's life.
+        final again = await loadBridgePrefs(dir.path);
+        expect(again.tabs.map((t) => t.hue).toList(), drawn);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
     });
     test('a cached context reading round-trips; a fresh tab has none', () {
       // +280: the bar's memory belongs to its tab like the hue does —

@@ -1304,6 +1304,11 @@ class VoiceAssistant extends ChangeNotifier {
           model: h['model'] is String ? h['model'] as String : null,
           sessionIds: sid == null ? [] : [sid],
           createdMs: DateTime.now().millisecondsSinceEpoch,
+          // +356: the seed tab draws its OWN face at birth (the strip
+          // is empty here, so anything the picker lands on is distant
+          // by default) — even the upgrade's first seat never wears
+          // the index colour.
+          hue: SessionTab.pickHue(const []),
         ),
       );
       unawaited(_saveBridgePrefs());
@@ -1472,9 +1477,11 @@ class VoiceAssistant extends ChangeNotifier {
         sessionIds: r['sessionId'] is String ? [r['sessionId'] as String] : [],
         createdMs: DateTime.now().millisecondsSinceEpoch,
         // +271: the session's colour is drawn at its birth and kept
-        // for life — the seed tab (the upgrade's first seat) and an
-        // adopted tab wear the legacy index hue until +271-era tabs
-        // prove the random one more legible.
+        // for life. +356 closed the two loopholes the comment here
+        // once allowed: the seed tab and an adopted tab now draw at
+        // their birth too, and any still-living hueless tab is drawn
+        // one at load (BridgePrefs.assignMissingHues) — nothing
+        // renders the index colour any more.
         hue: SessionTab.pickHue([
           for (var i = 0; i < prefs.tabs.length; i++)
             prefs.tabs[i].hueOrDefault(i),
@@ -1951,6 +1958,12 @@ class VoiceAssistant extends ChangeNotifier {
         model: h['model'] is String ? h['model'] as String : null,
         sessionIds: sid is String && sid.isNotEmpty ? [sid] : [],
         createdMs: DateTime.now().millisecondsSinceEpoch,
+        // +356: an adopted seat is a birth like any other — it draws
+        // its face now and keeps it for life.
+        hue: SessionTab.pickHue([
+          for (var i = 0; i < _bridgePrefs.tabs.length; i++)
+            _bridgePrefs.tabs[i].hueOrDefault(i),
+        ]),
       ),
     );
     _bridgePrefs.activeTab = _bridgePrefs.tabs.length - 1;

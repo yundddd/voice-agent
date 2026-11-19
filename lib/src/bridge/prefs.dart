@@ -37,11 +37,15 @@ class SessionTab {
   /// +271 (Tim): each session gets its own colour, RANDOM at creation
   /// and then STUCK — identity that survives restarts and reorders,
   /// unlike the +230 index-derived hue that changed a session's face
-  /// every time a neighbour was deleted. Null on pre-+271 tabs:
-  /// [hueOrDefault] falls back to the old golden-angle of the tab's
-  /// index (existing installs keep the exact colours they wore at
-  /// upgrade — a session's colour may be random, but it is never
-  /// revised).
+  /// every time a neighbour was deleted. Null is now only an
+  /// UPGRADE state: +356 (Tim, 'swipe between sessions shows a colour
+  /// flicker — different sessions should have different persistent
+  /// colours') retired the index fallback from the paint —
+  /// [BridgePrefs.assignMissingHues] draws every faceless tab a
+  /// permanent random-but-distant hue at load and saves it, so no
+  /// live tab wears a position-derived colour. [hueOrDefault] stands
+  /// as the pure last resort; inside the app only the frames before
+  /// the migration's first save may ever reach it.
   int? hue;
 
   /// The random-but-distant picker: sample 24 hues and keep the one
@@ -67,8 +71,9 @@ class SessionTab {
     return d > 180 ? 360 - d : d;
   }
 
-  /// The colour this tab wears: its own, or the legacy index-derived
-  /// one when it predates +271.
+  /// The colour this tab wears: its own, or — +356 — only for a prefs
+  /// object that never passed the load-time migration — the legacy
+  /// golden-angle of the tab's index.
   int hueOrDefault(int index) => hue ?? (index * 137) % 360;
 
   /// +280 (Tim): the conversation's LAST KNOWN context sizes — what
@@ -226,6 +231,30 @@ class BridgePrefs {
   bool debug;
   bool get configured => url.trim().isNotEmpty && token.isNotEmpty;
 
+  /// +356 (Tim, 'swipe between sessions shows a colour flicker —
+  /// different sessions should have different persistent colours'):
+  /// the one pass that ends the index-derived face. A tab with no hue
+  /// (an upgrade's seed tab, an adopted sheet tab, any pre-+271
+  /// install) used to fall through to [SessionTab.hueOrDefault] at
+  /// RENDER time — a colour of the strip's ORDER, so deleting a
+  /// neighbour recoloured every tab behind it and the recolor landed
+  /// on the swipe that revealed it. Every faceless tab still alive
+  /// draws its own permanent face HERE, at load, with the same
+  /// random-but-distant law a birth uses; the caller saves, so the
+  /// draw happens once in the install's life, not once per boot.
+  /// Returns true when a face was drawn (work for the save).
+  bool assignMissingHues({Random? rng}) {
+    var drew = false;
+    final taken = [for (final t in tabs) if (t.hue != null) t.hue!];
+    for (final t in tabs) {
+      if (t.hue != null) continue;
+      t.hue = SessionTab.pickHue(taken, rng: rng);
+      taken.add(t.hue!);
+      drew = true;
+    }
+    return drew;
+  }
+
   Map<String, Object> toJson() => {
     'url': url,
     'token': token,
@@ -271,10 +300,16 @@ File _prefsFile(String modelsDir) =>
 
 Future<BridgePrefs> loadBridgePrefs(String modelsDir) async {
   try {
-    return BridgePrefs.fromJson(
+    final prefs = BridgePrefs.fromJson(
       jsonDecode(await _prefsFile(modelsDir).readAsString())
           as Map<String, Object?>,
     );
+    // +356: the one-time face migration (see [assignMissingHues]) —
+    // and it is saved AT ONCE: a drawn face that never reaches the
+    // file would be redrawn next boot, and a one-time recolour would
+    // become a recolour every launch.
+    if (prefs.assignMissingHues()) await saveBridgePrefs(modelsDir, prefs);
+    return prefs;
   } catch (_) {
     return BridgePrefs();
   }
