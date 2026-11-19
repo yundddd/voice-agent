@@ -41,6 +41,35 @@ void main() {
     });
 
     test(
+      '+353: the DEFAULT cap is the render bound — a long conversation '
+      'stays inside it (on screen and on disk), no caller flag needed',
+      () {
+        // Tim's lag report: the view shows all the histories and a
+        // long conversation lags — prune to an upper bound. The Column
+        // lays out every child and every touch re-encodes the whole
+        // snapshot, so the bound IS the frame budget. Pinned at the
+        // real default (no cap: argument) — a silent drift back toward
+        // an unbounded view must fail HERE.
+        final s = ChatStore(
+          persist: (_) async {},
+          repaint: () {},
+        );
+        for (var i = 0; i < s.cap + 5; i++) {
+          s.addUser('u$i');
+        }
+        expect(s.entries, hasLength(40),
+            reason: 'the default bound is 40 — half of the old 80');
+        expect(s.entries.first.blocks.single, 'u5',
+            reason: 'the newest tail survives; the head is pruned');
+        expect(
+          decodeChatLog(encodeChatLog(s.entries)).length,
+          s.cap,
+          reason: 'disk and screen wear the same bound',
+        );
+      },
+    );
+
+    test(
       '+E: retention is PER SESSION — a busy tab cannot wipe a quiet one',
       () {
         // Review E: one shared cap trimmed oldest-first across ALL

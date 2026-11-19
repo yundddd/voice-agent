@@ -17,7 +17,15 @@ class ChatStore {
   ChatStore({
     required this.persist,
     required this.repaint,
-    this.cap = 80, // entries kept on screen and on disk
+    // +353: the bound halves, 80 → 40 (Tim: 'long conversation can
+    // lag — prune old ones to an upper bound'). The bill scales with
+    // the log TWICE over: the Column lays out every child whether or
+    // not the fold shows it, and EVERY touch re-encodes the whole
+    // snapshot for disk. The second half of an eighty-deep log is
+    // older than anything the next reply answers — pruned, the view
+    // holds its frame budget and the archaeology the voice can still
+    // refer to stays on screen.
+    this.cap = 40, // entries kept on screen and on disk
     int Function()? nowMs,
     this.trace,
     this.harness,
