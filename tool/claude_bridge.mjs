@@ -1587,6 +1587,19 @@ function handleEvent(ev) {
           focus.agentTasks.delete(id);
           console.error(`  -> finished "${t.label}" ` +
             `(task notification in stream)`);
+          // +352: the receipt also LIGHTS the report debt. A
+          // notification is the CLI promising its completion response
+          // (+133's probe-verified: it runs as a normal turn), and
+          // between the promise and the first snapshot sat the gap
+          // that swallowed the APK (the 17:15 tape): the 'finished'
+          // note replayed, the phone's reattach probe a second later
+          // honestly read 'nothing open, nothing unheard: go idle',
+          // and the report — three says, a 437 MB file frame, the
+          // done — landed in a backlog no ear was watching, surfacing
+          // only when the user pressed again. Light at the PAY (see
+          // lightProactiveTurn); the +133 snapshot net stays for
+          // reports that arrive with no paid task behind them.
+          lightProactiveTurn();
           // +186: the task's own id rides the receipt — the phone
           // dedups on identity, never on the label text.
           relay('tool', { name: 'finished', detail: t.label, id });
@@ -2156,6 +2169,42 @@ function endTurn() {
   const r = focus.curRes.res;
   focus.curRes = null;
   r.end();
+}
+// +352: light the report debt AT THE NOTIFICATION, not at the first
+// assistant snapshot a second later — the gap between those two
+// instants is where the 17:15 tape lost an APK: /health honestly said
+// nothing was open, the phone's probe went 'go idle', the reattach
+// ladder retired, and the report's frames (says, the file, the done)
+// queued behind a clean-looking ledger until the next press. A paid
+// background task IS the CLI's promise to answer for it (+133's
+// probe-verified behaviour — the completion response runs as a normal
+// turn), so the promise gets the debt's lit state immediately:
+// /health says turnOpen, /attach holds the stream for the words that
+// are coming, and the catch-up nets stay armed. The belt: a promise
+// the child never keeps (a death between the notice and the API call)
+// must not hold the floor hostage — if by the deadline NOTHING has
+// happened under this exact lighting (no snapshot re-stamp, no begin-
+// turn, no close), the debt unlights itself, an ear that attached on
+// our word is closed the honest way (stream over, no done — the
+// shape the phone's reattach chain already speaks), and a prompt that
+// queued politely behind the phantom gets the floor.
+const PROACTIVE_REPORT_GRACE_MS =
+  Number(arg('proactive-grace-ms', 30000));
+function lightProactiveTurn(rec = focus) {
+  if (rec.turnOpen) return; // a live turn owns its own close
+  rec.turnOpen = true;
+  rec.proactiveTurn = true;
+  rec.turnBeganAt = Date.now();
+  const litAt = rec.turnBeganAt;
+  setTimeout(() => {
+    if (!rec.turnOpen || !rec.proactiveTurn) return; // spoken or closed
+    if (rec.turnBeganAt !== litAt) return; // some event re-stamped it
+    rec.turnOpen = false;
+    rec.proactiveTurn = false;
+    if (rec === focus) { endTurn(); flushPending(); }
+    console.error('  [proactive] the report never came — ' +
+      'the lit debt unlit itself');
+  }, PROACTIVE_REPORT_GRACE_MS).unref();
 }
 function summarize(tool) {
   const i = tool.input ?? {};

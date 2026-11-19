@@ -135,6 +135,24 @@ export const FRAMES = {
         content: resultText }])],
     ];
   },
+  // A shell the agent backgrounded ITSELF (+133's shape, from the
+  // field tapes): tool_use carries run_in_background, the instant
+  // tool_result is a LAUNCH receipt naming the task id and its output
+  // file — the debt registers there, the completion arrives later as
+  // FRAMES.taskNotification.
+  bgLaunch(conv, id, cmd) {
+    return [
+      [msgStart(conv, 1500)],
+      [cbStart(conv, { type: 'tool_use', id, name: 'Bash' }),
+        cbJson(conv, JSON.stringify({ command: cmd, run_in_background: true })),
+        cbStop(conv),
+        snap(conv, [{ type: 'tool_use', id, name: 'Bash',
+          input: { command: cmd, run_in_background: true } }])],
+      [snapUser(conv, [{ type: 'tool_result', tool_use_id: id,
+        content: `Command running in background with ID: ${id}. ` +
+          `Output is being written to /tmp/stub-tasks/${id}.output` }])],
+    ];
+  },
   // The answer that closes a tool turn (a SECOND message inside the
   // turn — the real CLI's tool-loop shape).
   toolAnswer(conv, text) {

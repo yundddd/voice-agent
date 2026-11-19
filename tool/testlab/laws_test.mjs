@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TOKEN, call, waitFor, quiesce, bootWorld } from './lab.mjs';
+import { FRAMES } from './wireframes.mjs';
 import { randomUUID } from 'node:crypto';
 
 test('+282: an init frame settles the operator\'s "default" into the model that RAN', async () => {
@@ -74,6 +75,98 @@ test('+320/+328: a NAMED /send that names nobody is refused, never guessed onto 
       { method: 'POST', body: JSON.stringify({ path: file }) });
     assert.equal(r2.json.ok, true, 'an old phone that cannot name itself still gets its delivery');
     assert.equal(r2.json.conv, conv, 'filed under the seat — the law the guess chain serves');
+  } finally { w.shutdown(); }
+});
+
+test('+352: the notification LIGHTS the report debt — no gap for a probe to fall into', async () => {
+  // The 17:15 tape, walked: build backgrounded, done note replayed,
+  // probe reads a clean ledger ('go idle'), THEN the report turn —
+  // with a 437 MB file frame — lands in an unwatched backlog. The law
+  // the tape wrote: a paid task owes its report the moment the notice
+  // is paid, and an ear that attaches on that word STAYS for the words.
+  const w = await bootWorld();
+  try {
+    const conv = randomUUID();
+    await w.phone.fresh(conv);
+    await w.phone.prompt(conv, 'build it');
+    const port = await waitForThen(() => w.ctlPortFor(conv), 2000);
+    const emit = (frags) => call(`http://127.0.0.1:${port}/emit`,
+      { method: 'POST', body: JSON.stringify(frags) });
+    await emit(FRAMES.bgLaunch(conv, 'btask1', './scripts/build-apk.sh').flat());
+    await emit(FRAMES.resultClean(conv));
+    await w.tick(100); await quiesce(w);
+    // the launch turn closed cleanly; the shell still runs, banner lit
+    const h0 = await w.health();
+    assert.equal(h0.json.turnOpen, false, 'the launch turn is over');
+    assert.ok(w.phone.chat(conv).some(c => c.ev === 'tool' &&
+      c.data.name === 'backgrounded'), 'the banner was lit');
+    // the ear hangs up (the tape's idle phone), then the task reports
+    await w.phone.drop(conv);
+    await emit(FRAMES.taskNotification(conv, 'btask1'));
+    await w.tick(100); await quiesce(w);
+    const h1 = await w.health();
+    assert.equal(h1.json.turnOpen, true,
+      '+352: the notification lights the debt AT THE PAY — the probe ' +
+      'window that swallowed the APK is closed');
+    // an attaching ear gets the receipt AND holds for the report
+    await w.phone.reconnect(conv);
+    await w.tick(50); await quiesce(w);
+    assert.ok(w.phone.chat(conv).some(c => c.ev === 'tool' &&
+      c.data.name === 'finished' && c.replaying),
+      'the finished receipt rides the replay');
+    assert.ok(!w.phone.chat(conv).some(c => c.ev === 'say'),
+      'the report has not spoken yet (the replay held only what was owed)');
+    // the report answers on the SAME still-open ear — the proof the
+    // attach was promoted, not closed: a stream that hung up at the
+    // replay would leave these words stranded in the backlog. The
+    // /send between the notice and the answer is the 17:15 tape's own
+    // order (the APK's frame, born inside the old gap).
+    const { writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const apk = join(w.home, 'xray-app.apk');
+    writeFileSync(apk, 'not really 437 MB, but the same frame\n');
+    await call(`${w.phone.base}/send?token=${TOKEN}`,
+      { method: 'POST', body: JSON.stringify({ path: apk, sessionId: conv }) });
+    await emit(FRAMES.textAnswer(conv, 'The build succeeded, the APK is sent.').flat());
+    await emit(FRAMES.resultClean(conv));
+    await w.tick(100); await quiesce(w);
+    assert.ok(w.phone.chat(conv).some(c => c.ev === 'file'),
+      '+352: the APK bubble landed on the open ear, not in a stranded backlog');
+    assert.ok(w.phone.chat(conv).some(c => c.ev === 'say'),
+      '+352: the report reached the ear that attached at the notice — ' +
+      'the old code had closed the stream at the replay and the words ' +
+      'waited for the next press');
+    const h2 = await w.health();
+    assert.equal(h2.json.turnOpen, false, 'the report turn closes its own debt');
+  } finally { w.shutdown(); }
+});
+
+test('+352 belt: a report that never comes unlights its own debt', async () => {
+  // A notification from a child that dies before the API call must not
+  // hold the floor for eternity: past the grace, /health goes honest,
+  // an attached ear is closed the ordinary wordless way, and the tape
+  // confesses.
+  const w = await bootWorld();
+  try {
+    const conv = randomUUID();
+    await w.phone.fresh(conv);
+    await w.phone.prompt(conv, 'build it');
+    const port = await waitForThen(() => w.ctlPortFor(conv), 2000);
+    const emit = (frags) => call(`http://127.0.0.1:${port}/emit`,
+      { method: 'POST', body: JSON.stringify(frags) });
+    await emit(FRAMES.bgLaunch(conv, 'btask1', './scripts/build-apk.sh').flat());
+    await emit(FRAMES.resultClean(conv));
+    await w.tick(100); await quiesce(w);
+    await w.phone.drop(conv);
+    await emit(FRAMES.taskNotification(conv, 'btask1'));
+    await w.tick(100); await quiesce(w);
+    assert.equal((await w.health()).json.turnOpen, true, 'lit at the pay');
+    await w.phone.reconnect(conv); // an ear takes the promise
+    await w.tick(31000); await quiesce(w);
+    assert.equal((await w.health()).json.turnOpen, false,
+      'the phantom unlit itself at the deadline');
+    assert.match(w.log(), /the report never came/, 'and the tape says so');
+    await w.phone.settlePumps();
   } finally { w.shutdown(); }
 });
 
