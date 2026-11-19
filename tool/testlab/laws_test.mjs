@@ -170,6 +170,62 @@ test('+352 belt: a report that never comes unlights its own debt', async () => {
   } finally { w.shutdown(); }
 });
 
+test('+354: a refused file DELIVERY survives its conversation\'s next turn', async () => {
+  // The 17:42 tape, end to end: the phone sat on the voice-agent tab
+  // while X-Ray's build reported in — the file frame was honestly
+  // refused ('left unheard for its own thread', no ack, debt kept),
+  // and then X-Ray's NEXT turn began and beginTurn's stale-buffer
+  // sweep ate the frame between two honest laws. The landing glance
+  // (+324 arms a drain for ANY owed mail, no banner needed — the
+  // app's side of this law) kept reading missed=0 because the debt
+  // was already a corpse; the bubble never surfaced. The law, whole:
+  // transcript frames retire with their turn; a file lives until the
+  // phone TAKES it.
+  const w = await bootWorld();
+  try {
+    const a = randomUUID(), b = randomUUID();
+    await w.phone.fresh(b);
+    await w.phone.prompt(b, 'build it');
+    const port = await waitForThen(() => w.ctlPortFor(b), 2000);
+    const emit = (frags) => call(`http://127.0.0.1:${port}/emit`,
+      { method: 'POST', body: JSON.stringify(frags) });
+    await emit(FRAMES.bgLaunch(b, 'btask1', './scripts/build-apk.sh').flat());
+    await emit(FRAMES.resultClean(b));
+    await w.tick(100); await quiesce(w);
+    // the reader moves to another conversation (the voice-agent tab)
+    await w.phone.fresh(a);
+    // the report: the notice pays the debt, /send files under B, the
+    // says and the done follow — no ear on B, all of it backlogged
+    await emit(FRAMES.taskNotification(b, 'btask1'));
+    const { writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const apk = join(w.home, 'refused.apk');
+    writeFileSync(apk, 'the delivery that the sweep used to eat\n');
+    await call(`${w.phone.base}/send?token=${TOKEN}`,
+      { method: 'POST', body: JSON.stringify({ path: apk, sessionId: b }) });
+    await emit(FRAMES.textAnswer(b, 'Built and sent.').flat());
+    await emit(FRAMES.resultClean(b));
+    await w.tick(100); await quiesce(w);
+    assert.ok(!w.phone.chat(b).some((c) => c.ev === 'file'),
+      'the delivery has not reached any ear yet (it rides the backlog)');
+    // the tape's killer: the SAME conversation starts its next turn
+    await w.phone.prompt(b, 'did you send it?');
+    await emit(FRAMES.textAnswer(b, 'Yes, the bubble is there.').flat());
+    await emit(FRAMES.resultClean(b));
+    await w.tick(100); await quiesce(w);
+    const h = (await w.health()).json;
+    const rowB = (h.sessions ?? []).find((r) => r.sid === b);
+    assert.ok((rowB?.missed ?? 0) > 0,
+      '+354: the file survived the new turn\'s sweep — the debt is alive, ' +
+      'not a corpse, and the landing glance can arm a drain for it');
+    // the landing drain proper: attach as owner, replay delivers
+    await w.phone.reconnect(b);
+    await w.tick(50); await quiesce(w);
+    assert.ok(w.phone.chat(b).some((c) => c.ev === 'file'),
+      '+354: the owner\'s ear gets its bubble — refused, never forgotton');
+  } finally { w.shutdown(); }
+});
+
 async function waitForThen(fn, ms) {
   let last = null;
   await waitFor(async () => { last = fn(); return !!last; }, { cap: ms, step: 25 });

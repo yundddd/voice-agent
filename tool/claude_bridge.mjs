@@ -2272,7 +2272,23 @@ function beginTurn(text, res, keep, markerKind, turnId) {
   focus.turnStartAt = Date.now() - 5000; // slack: clock skew
   focus.turnBeganAt = Date.now(); // the receipt's honest duration clock
   focus.curRes = { res, keep, turnStart: focus.turnStartAt };
+  // +354 (the 17:42 tape): a new turn thins the OLD one's buffered
+  // transcript — but a `file` frame is not transcript, it's a
+  // DELIVERY, and this wipe ate one. The walk: the APK's frame was
+  // refused honestly ('foreign conversation: file left unheard for
+  // its own thread' — the reader was on another tab, the owner's
+  // drain owes it), the conversation then started its NEXT turn,
+  // this line cleared the backlog as 'stale', and the bubble died
+  // unannounced — the tab landing minutes later read missed=0 and
+  // the tape lost the frame between two honest laws (+253's staleness
+  // and +286's refuse-and-wait). The law, stated whole: transcript
+  // frames (says, markers, receipts, the farewell) retire with their
+  // turn like the watermark wants them to; a file frame lives until
+  // the phone TAKES it — /heard trims it like any delivery — because
+  // the bytes it points at outlive every turn.
+  const owedFiles = focus.backlog.filter((b) => b.ev === 'file');
   focus.backlog.length = 0; // a new turn: the old one's buffered frames are stale
+  if (owedFiles.length) focus.backlog.push(...owedFiles);
   focus.cutForPrompt = false; // a fresh turn closes with its own done (+106)
   focus.turnOpen = true;
   focus.spokenTools.clear(); // every message lives inside one turn
