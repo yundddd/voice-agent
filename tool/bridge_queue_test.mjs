@@ -1345,7 +1345,7 @@ test('POST /send relays a file frame; GET /file streams it (Range included)',
 // the verdict — the next spoken prompt is refused here, instantly,
 // with nothing reaching the harness, and (c) lift it only on PROOF:
 // slash-through compaction (whose in-progress system/status frame the
-// phone must SEE as an 'auto-compacting' line — the wait finally
+// phone must SEE as a 'Compacting' line — the wait finally
 // named) or a clean result.
 const PORT19 = PORT1 + 50;
 test('+250 too-long: reworded, remembered, instant refusal, liftable by compaction',
@@ -1393,11 +1393,13 @@ test('+250 too-long: reworded, remembered, instant refusal, liftable by compacti
       await until('compact done', async () =>
         sseEvents(c.text).some((e) => e.ev === 'done'));
       const evsC = sseEvents(c.text);
-      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'compact'
-        && /auto-compacting/.test(e.data.detail)),
+      // +355 (Tim, 'just show Compacting'): the NAME is the whole
+      // caption — a detail clause would stack a second description
+      // onto the phone's '$name $detail…' step row.
+      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'Compacting'
+        && e.data.detail === ''),
         'the compaction in progress was invisible to the phone');
-      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'compact'
-        && /condensed/.test(e.data.detail)),
+      assert.ok(evsC.some((e) => e.ev === 'tool' && e.data.name === 'Compacted'),
         'the compaction proof did not ride the wire');
       assert.equal(evsC.find((e) => e.ev === 'done').data.isError, false);
 

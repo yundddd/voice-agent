@@ -80,7 +80,10 @@
 //                content, so the CLI executes it as a real slash command
 //                (block-array content would just feed it to the model —
 //                verified on 2.1.296); /compact emits a system
-//                compact_boundary, relayed here as `tool compact`.
+//                compact_boundary, relayed here as `tool Compacting` /
+//                `tool Compacted` (+355 — the name IS the banner: the
+//                phone's step row prints '$name $detail…', so the
+//                caption lives in one word, not a clause).
 //                Detaching (closing the SSE mid-turn) does NOT stop the
 //                harness: the turn goes BACKGROUND — it keeps working,
 //                its output is dropped, and it still ends properly. The
@@ -1845,32 +1848,31 @@ function handleEvent(ev) {
     // EARLY sign of an auto-compaction — the step that eats the 20-40 s
     // of silence the field heard as a frozen spinner (upload the
     // oversized transcript, watch it shrink, then the real call). Relay
-    // it as the activity it is: the phone paints the tool detail
-    // verbatim, so the wait reads 'auto-compacting the conversation'
-    // instead of 'thinking'. One copy per minute: the CLI re-states the
-    // status across a long compaction, and the spinner needs no ticker
-    // for the same work.
+    // it as the activity it is. +355 (Tim, 'the chip banner is a bit
+    // verbose — just show Compacting'): the NAME carries the whole
+    // caption and the detail rides empty — the phone's step row prints
+    // '$name $detail…', so a named frame WITH a clause stacked two
+    // descriptions of the same wait ('compact auto-compacting the
+    // conversation…'). One word, both frames. One copy per minute: the
+    // CLI re-states the status across a long compaction, and the spinner
+    // needs no ticker for the same work.
     if (ev.notice === 'compacting') {
       if (Date.now() - focus.lastCompactingRelay > 60000) {
         focus.lastCompactingRelay = Date.now();
-        console.error('  -> tool compacting');
-        relay('tool', {
-          name: 'compact',
-          detail: 'auto-compacting the conversation…',
-        });
+        console.error('  -> tool Compacting');
+        relay('tool', { name: 'Compacting', detail: '' });
       }
     // The compaction proof the /compact chip listens for: emitted when
     // the harness finishes condensing the transcript (silent otherwise
     // — no assistant message, empty result text), so relay it as live
-    // tool-style progress instead of dead air.
+    // tool-style progress instead of dead air — the same one-word
+    // caption. The spoken 'Done — the conversation is compacted' still
+    // comes from the chip's own ack, not this frame.
     } else if (ev.notice === 'compact_boundary') {
       focus.contextFull = false; // +250: the transcript just got smaller —
       // the recovery the refusal notice pointed at, proven on the wire
-      console.error('  -> tool compact');
-      relay('tool', {
-        name: 'compact',
-        detail: 'condensed conversation summary',
-      });
+      console.error('  -> tool Compacted');
+      relay('tool', { name: 'Compacted', detail: '' });
     }
     return;
   }
